@@ -17,6 +17,7 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { api, generateBeatStream, isAbortError } from '../api'
+import ChatDrawer from '../ChatDrawer'
 import RelationGraph from '../RelationGraph'
 import type { Character, EventInput, GraphEdge, StateSnapshot, StoryEvent, StoryNode } from '../types'
 
@@ -775,7 +776,6 @@ function StructureModeInner(): React.JSX.Element {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [inspectorTab, setInspectorTab] = useState<'beat' | 'char' | 'graph'>('beat')
   const [validation, setValidation] = useState<string[]>([])
-  const [chatOpen, setChatOpen] = useState(false)
   const [instruction, setInstruction] = useState('')
   const [generating, setGenerating] = useState(false)
   const [genStatus, setGenStatus] = useState<string | null>(null)
@@ -1164,20 +1164,13 @@ function StructureModeInner(): React.JSX.Element {
           </div>
         </aside>
       </div>
-      <div className="shrink-0 border-t" style={{ background: 'var(--bg-chat)', borderColor: 'var(--border)' }}>
-        <button
-          onClick={() => setChatOpen((v) => !v)}
-          className="flex w-full items-center gap-2 px-4 py-1.5 text-[12px]"
-          style={{ color: 'var(--text-faint)' }}
-        >
-          <span>{chatOpen ? '▾' : '▴'}</span> 相談チャット
-        </button>
-        {chatOpen && (
-          <div className="px-4 pb-4 text-[12px]" style={{ color: 'var(--text-faint)' }}>
-            相談チャットは Phase 5 で実装します。
-          </div>
-        )}
-      </div>
+      <ChatDrawer
+        selectedId={selectedId}
+        canonTailId={canonPath.length > 0 ? canonPath[canonPath.length - 1].id : null}
+        nodesById={Object.fromEntries(graphNodes.map((n) => [n.id, n]))}
+        characters={characters}
+        onGraphChanged={() => void reload()}
+      />
     </div>
   )
 }

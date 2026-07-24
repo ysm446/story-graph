@@ -72,6 +72,7 @@ class LlamaManager:
             "--ctx-size", str(ctx_size),
             "--flash-attn", "on",
             "--n-gpu-layers", "999",
+            "--jinja",  # tool calling(相談チャット)に必要
         ]
         log.info("spawning llama-server: %s", model_path)
         self.proc = subprocess.Popen(

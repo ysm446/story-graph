@@ -17,6 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+import chat_agent
 import db
 import generation
 import llm
@@ -105,6 +106,7 @@ class NodeIn(BaseModel):
     location: str | None = None
     story_time: str | None = None
     parent_id: str | None = None
+    draft: bool = False  # True で常に draft ブランチとして挿入(提案カード用)
     events: list[EventIn] = Field(default_factory=list)
 
 
@@ -223,10 +225,10 @@ async def graph() -> dict[str, Any]:
 
 @app.post("/nodes")
 async def create_node(body: NodeIn) -> dict[str, Any]:
-    data = body.model_dump(exclude={"events", "parent_id"})
+    data = body.model_dump(exclude={"events", "parent_id", "draft"})
     events = [e.model_dump() for e in body.events]
     try:
-        node = store.append_node(data, events, parent_id=body.parent_id)
+        node = store.append_node(data, events, parent_id=body.parent_id, force_draft=body.draft)
     except KeyError as e:
         raise HTTPException(404, str(e))
     node["validation"] = store.validate(node["id"])
@@ -480,6 +482,52 @@ async def promote_preview(node_id: str, body: PromoteIn) -> dict[str, Any]:
         raise HTTPException(404, "node not found")
     except RuntimeError as e:
         raise HTTPException(500, str(e))
+
+
+# ---- 相談チャット ---------------------------------------------------
+
+class ChatSendIn(BaseModel):
+    chat_id: str | None = None
+    anchor_node: str | None = None
+    scope: str = "upto"  # upto | all
+    message: str
+
+
+@app.get("/chats")
+async def list_chats() -> list[dict[str, Any]]:
+    return store.list_chats()
+
+
+@app.get("/chats/{chat_id}")
+async def get_chat(chat_id: str) -> dict[str, Any]:
+    chat = store.get_chat(chat_id)
+    if chat is None:
+        raise HTTPException(404, "chat not found")
+    return chat
+
+
+@app.delete("/chats/{chat_id}")
+async def delete_chat(chat_id: str) -> dict[str, str]:
+    store.delete_chat(chat_id)
+    return {"status": "deleted"}
+
+
+@app.post("/chat/send")
+async def chat_send(body: ChatSendIn) -> StreamingResponse:
+    try:
+        base_url = await llama.ensure_running(store.get_settings())
+    except RuntimeError as e:
+        async def error_stream():
+            yield chat_agent._sse({"error": str(e)})
+        return StreamingResponse(error_stream(), media_type="text/event-stream")
+    anchor = body.anchor_node
+    if anchor is None:
+        canon = store.canon_path()
+        anchor = canon[-1] if canon else None
+    return StreamingResponse(
+        chat_agent.chat_stream(store, base_url, body.chat_id, anchor, body.scope, body.message),
+        media_type="text/event-stream",
+    )
 
 
 # ---- settings -------------------------------------------------------

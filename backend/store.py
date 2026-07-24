@@ -210,27 +210,31 @@ class Store:
         return {"nodes": [self.get_node(nid) for nid in node_ids], "edges": edges}
 
     def append_node(self, data: dict[str, Any], events: list[dict[str, Any]] | None = None,
-                    source: str = "user", parent_id: str | None = None) -> dict[str, Any]:
+                    source: str = "user", parent_id: str | None = None,
+                    force_draft: bool = False) -> dict[str, Any]:
         """ノードを追加する。
 
         - parent_id なし: 正史タイムラインの末尾に canon として追加
         - parent_id あり: その子として追加。親に canon の子が居なければ延長(canon)、
           居れば分岐(draft)
+        - force_draft: 常に draft ブランチとして追加(チャットの提案カード用)
         """
         canon = self.canon_path()
-        if parent_id is None:
+        if parent_id is None and not force_draft:
             parent_id = canon[-1] if canon else None
             as_canon = True
             on_canon_path = True
         else:
-            if self.get_node(parent_id) is None:
+            if parent_id is None:
+                parent_id = canon[-1] if canon else None
+            if parent_id is not None and self.get_node(parent_id) is None:
                 raise KeyError(f"parent not found: {parent_id}")
             has_canon_child = self.conn.execute(
                 "SELECT 1 FROM edges WHERE from_node = ? AND is_canon = 1", (parent_id,)
-            ).fetchone()
-            as_canon = has_canon_child is None
+            ).fetchone() if parent_id else None
+            as_canon = has_canon_child is None and not force_draft
             # status は「正史パス上か」の導出値。draft 枝の延長は canon エッジでも draft
-            on_canon_path = as_canon and parent_id in canon
+            on_canon_path = as_canon and (parent_id in canon if parent_id else True)
         node_id = data.get("id") or _new_id()
         now = _now()
         self.conn.execute(
@@ -667,6 +671,56 @@ class Store:
             node = self.get_node(nid)
             result.append({"node": node, "render": self.latest_render(nid, preset_id, pov_char)})
         return result
+
+    # ---- 相談チャット -----------------------------------------------
+
+    def create_chat(self, anchor_node: str | None, scope: str) -> dict[str, Any]:
+        chat_id = _new_id()
+        now = _now()
+        self.conn.execute(
+            "INSERT INTO chats(id, anchor_node, scope, messages, created_at, updated_at) VALUES(?,?,?,?,?,?)",
+            (chat_id, anchor_node, scope, "[]", now, now),
+        )
+        self.conn.commit()
+        return self.get_chat(chat_id)  # type: ignore[return-value]
+
+    def get_chat(self, chat_id: str) -> dict[str, Any] | None:
+        row = self.conn.execute("SELECT * FROM chats WHERE id = ?", (chat_id,)).fetchone()
+        if row is None:
+            return None
+        chat = dict(row)
+        chat["messages"] = json.loads(chat["messages"])
+        return chat
+
+    def list_chats(self) -> list[dict[str, Any]]:
+        """履歴一覧(新しい順)。最初のユーザー発言をスニペットとして返す。"""
+        chats = []
+        for row in self.conn.execute("SELECT * FROM chats ORDER BY updated_at DESC"):
+            messages = json.loads(row["messages"])
+            first_user = next((m.get("content", "") for m in messages if m.get("role") == "user"), "")
+            anchor = self.get_node(row["anchor_node"]) if row["anchor_node"] else None
+            chats.append(
+                {
+                    "id": row["id"],
+                    "anchor_node": row["anchor_node"],
+                    "anchor_title": anchor["title"] if anchor else None,
+                    "scope": row["scope"],
+                    "snippet": first_user[:60],
+                    "updated_at": row["updated_at"],
+                }
+            )
+        return chats
+
+    def save_chat_messages(self, chat_id: str, messages: list[dict[str, Any]]) -> None:
+        self.conn.execute(
+            "UPDATE chats SET messages = ?, updated_at = ? WHERE id = ?",
+            (json.dumps(messages, ensure_ascii=False), _now(), chat_id),
+        )
+        self.conn.commit()
+
+    def delete_chat(self, chat_id: str) -> None:
+        self.conn.execute("DELETE FROM chats WHERE id = ?", (chat_id,))
+        self.conn.commit()
 
     # ---- settings ---------------------------------------------------
 

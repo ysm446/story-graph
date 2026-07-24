@@ -15,7 +15,7 @@
 | 清書(レンダリング) | 0.9 | なし(自由文) | **プリセットで全文編集可** + 自動追加部 | `backend/rendering.py` `build_render_messages` |
 | シーンに取り込む(散文→正史) | 0.3 | JSON schema | 固定 | `backend/rendering.py` `PROMOTE_PROMPT` |
 | LLM 検証パス | 0.1 | JSON schema | 未実装(Phase 6) | - |
-| 相談チャット | 0.7 | tool calling | 未実装(Phase 5) | - |
+| 相談チャット | 0.7 | tool calling | 固定(`build_system`) | `backend/chat_agent.py` |
 
 ## 1. 清書(レンダリング)
 
@@ -134,6 +134,32 @@ location / events)。LLM が発行できるイベントは 5 種のみ
 - 低温度でグラマー制約下の空白ループが起きうる → finish_reason=length + 空内容を検出して温度を変えてリトライ
 
 詳細は [docs/plan/progress.md](../plan/progress.md) の知見メモを参照。
+
+## 5. 相談チャット(エージェント)
+
+システムプロンプト(`chat_agent.build_system`。スコープとキャラ一覧を埋め込み):
+
+```
+あなたは物語作りの相談相手です。作者と一緒に物語の状態を確認し、展開を考えます。
+
+ルール:
+- 推測で答えず、必要に応じて get_beats / get_state / search_memories で事実を確認してから答える
+- (upto 時)あなたに見えているのはシーン N までの情報だけです。それ以降の展開について
+  聞かれたら、まだ見えていないことを伝えてください。/(all 時)物語全体が見えています。
+- 「この先の展開を提案して」のような依頼には propose_beats ツールで最大3案の下書きを提出し、
+  本文では各案の狙いを1行ずつ簡潔に説明する
+- 回答は簡潔に。作者の判断材料になる観察(関係値の流れ、未回収の記憶など)を優先する
+
+## キャラクター ID 一覧
+- {id}: {name} ...
+```
+
+- tool calling ループは news-picker 方式(最大 8 ステップ。上限到達時は「手持ちの情報で
+  まとめよ」を注入して tools なしで最終回答)
+- ツールはすべて読み取り専用。スコープ upto では get_beats / get_state / search_memories の
+  可視範囲がアンカーノードのパスに制限される(fold 状態自体がアンカー時点のものになるため、
+  記憶検索も自然に未来を含まない)
+- llama-server は `--jinja` 付きで起動する必要がある(tool calling の前提)
 
 ## プロンプトログ(デバッグ表示)
 

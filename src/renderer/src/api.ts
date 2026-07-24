@@ -55,6 +55,7 @@ export const api = {
     location?: string
     story_time?: string
     parent_id?: string
+    draft?: boolean
     events?: EventInput[]
   }) => request<StoryNode>('/nodes', { method: 'POST', body: JSON.stringify(data) }),
   updateNode: (id: string, data: Partial<Omit<StoryNode, 'id' | 'events'>>) =>
@@ -171,6 +172,77 @@ export async function renderStream(
       const line = part.trim()
       if (line.startsWith('data: ')) {
         onEvent(JSON.parse(line.slice(6)) as RenderStreamEvent)
+      }
+    }
+  }
+}
+
+export interface ChatSummary {
+  id: string
+  anchor_node: string | null
+  anchor_title: string | null
+  scope: string
+  snippet: string
+  updated_at: string
+}
+
+export interface ChatRecord {
+  id: string
+  anchor_node: string | null
+  scope: string
+  messages: Array<Record<string, unknown>>
+}
+
+export interface ChatStreamEvent {
+  chat_id?: string
+  stage?: string
+  tool_call?: { name: string; args: Record<string, unknown> }
+  tool_result?: { name: string; is_error: boolean }
+  proposals?: Array<{
+    title: string
+    beat: string
+    emotional_core?: string
+    cast?: string[]
+    location?: string
+  }>
+  answer?: string
+  error?: string
+}
+
+export const chatApi = {
+  list: () => request<ChatSummary[]>('/chats'),
+  get: (chatId: string) => request<ChatRecord>(`/chats/${chatId}`),
+  delete: (chatId: string) => request<unknown>(`/chats/${chatId}`, { method: 'DELETE' })
+}
+
+export async function chatSendStream(
+  body: { chat_id: string | null; anchor_node: string | null; scope: string; message: string },
+  onEvent: (data: ChatStreamEvent) => void,
+  signal?: AbortSignal
+): Promise<void> {
+  if (!baseUrl) throw new Error('backend not ready')
+  const res = await fetch(`${baseUrl}/chat/send`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal
+  })
+  if (!res.ok || !res.body) {
+    throw new Error(`${res.status} /chat/send: ${await res.text()}`)
+  }
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const parts = buffer.split('\n\n')
+    buffer = parts.pop() ?? ''
+    for (const part of parts) {
+      const line = part.trim()
+      if (line.startsWith('data: ')) {
+        onEvent(JSON.parse(line.slice(6)) as ChatStreamEvent)
       }
     }
   }

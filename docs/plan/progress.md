@@ -5,7 +5,7 @@
 
 ## 現在の状態
 
-- **Phase 4(鑑賞モード)完了。** 次は Phase 5(相談チャット)。
+- **Phase 5(相談チャット)完了。** 残るは Phase 6(スケール対応)と小タスク。
 - **ライブラリ方式を導入**(lm-graph 踏襲): ストーリーごとのフォルダに `story-graph.db` を置く。現在のライブラリと最近使ったライブラリは `%APPDATA%/story-graph/app.json`(Electron userData)に保存。ヘッダー右のドロップダウンで切替(切替時はレンダラをリロード)。デフォルトはリポジトリ内 `data/`。
 - `npm run dev` で Electron が起動し、FastAPI sidecar(ポート 8765〜自動探索)が自動 spawn される。
 - バックエンドは単体でも起動可能: `cd backend && ../.venv/Scripts/python.exe -m uvicorn app:app --port 8765`
@@ -33,9 +33,17 @@
 
 - [x] **Phase 4 — 鑑賞モード**(2026-07-25): `backend/rendering.py` + `modes/ReaderMode.tsx`。シーケンシャルレンダリング(直前散文の末尾 ~1400 字をスライディングウィンドウで接続、12B 実機で接続を確認)、スタイルプリセット(seed 2 種 + CRUD API)、POV(pov キャラの state にある情報のみをプロンプトへ)、部分レンダー(「このシーンのみ」「ここから最後まで」、上流編集で renders.stale 自動化)、ビート昇格(散文の選択 → LLM が追記案+イベント diff 案 → 確認して正史へ)、Markdown エクスポート、SSE トークンストリーミング表示
 
+- [x] **Phase 5 — 相談チャット**(2026-07-25): `backend/chat_agent.py` + `src/renderer/src/ChatDrawer.tsx`。
+  tool calling ループ(news-picker 方式、MAX_TOOL_STEPS=8、上限到達時は打ち切らずまとめさせる)。
+  ツール: get_beats / get_state / search_memories(読み取り専用)+ propose_beats(提案カード)。
+  スコープ upto(アンカーのパスまでしか見えない。チャット作成時に固定)/ all。
+  提案カード → 「⑂ ブランチとして挿入」で anchor から draft 挿入。履歴はアンカー付きで chats に保存。
+  llama-server に `--jinja` を追加(tool calling に必要)。12B 実機 E2E でツール使用・提案とも確認済み
+
 ## 未完了
 
-- [ ] **Phase 5 — 相談チャット**: ツール3種(get_state / search_memories / get_beats)、スコープ制御(upto/all)、提案カード → ブランチ挿入。news-picker の chat_agent.py を雛形にする
+- [ ] **Phase 6 — スケール対応**: memory_compress(記憶の自動要約圧縮)、LLM 検証パス(感情の一貫性、温度0.1)、faction フォールバック + factions UI、2ノード間差分表示、エクスポート強化
+- [ ] 生成コンテキストの絞り込み(spec §6.1 準拠: cast 相互 + オフスクリーン上位3件。現状は全キャラ・全状態を入れており、キャラが増えると肥大化する)
 - [ ] 残タスク(小): factions の UI(API のみ実装済み)、31B での動作確認、生成イベントの重複除去(12B は同一イベントを重複して出すことがある)、`GET /graph` の全ノード events 込み返却が大規模ストーリーで重くなったら分割
 
 ## 注意点

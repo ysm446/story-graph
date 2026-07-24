@@ -60,6 +60,7 @@ async def chat(
     temperature: float = 0.8,
     timeout: float = 600.0,
     response_json_schema: dict[str, Any] | None = None,
+    tools: list[dict[str, Any]] | None = None,
     label: str = "chat",
 ) -> dict[str, Any]:
     """非ストリームの chat completion。{"content", "usage"} を返す。
@@ -78,6 +79,8 @@ async def chat(
             "type": "json_schema",
             "json_schema": {"name": "result", "schema": response_json_schema},
         }
+    if tools is not None:
+        payload["tools"] = tools
 
     entry = _log_prompt(label, messages, temperature, max_tokens)
     retries = 2
@@ -106,12 +109,18 @@ async def chat(
         raise
 
     choice = data["choices"][0]
-    content = choice["message"].get("content") or ""
-    entry["response"] = content[:3000]
+    message = choice["message"]
+    content = message.get("content") or ""
+    tool_calls = message.get("tool_calls")
+    entry["response"] = (
+        content[:3000] if content else json.dumps(tool_calls, ensure_ascii=False)[:3000] if tool_calls else ""
+    )
     entry["finish_reason"] = choice.get("finish_reason")
     entry["usage"] = data.get("usage", {})
     return {
         "content": content,
+        "tool_calls": tool_calls,
+        "message": message,  # tool ループで履歴に積み直す用
         "finish_reason": choice.get("finish_reason"),
         "usage": data.get("usage", {}),
     }
