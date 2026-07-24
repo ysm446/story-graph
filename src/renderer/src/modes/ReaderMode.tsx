@@ -100,19 +100,21 @@ function PresetEditorModal({
           </select>
         </div>
         <label className="mb-1 block text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
-          文体・スタイル指示(清書のシステムプロンプトに入ります)
+          システムプロンプト
         </label>
         <textarea
-          rows={7}
+          rows={10}
           value={form.tone}
           onChange={(e) => setForm((f) => ({ ...f, tone: e.target.value }))}
-          placeholder={'例: 硬質で乾いた文体。短いセンテンスを重ね、比喩は最小限に。\n会話は少なく、行動と観察で感情を示す。'}
+          placeholder={
+            'あなたはプロの小説家です。与えられたシーン(出来事の仕様書)を散文に仕上げます。\n背景や空気感の描写、人物の仕草と表情、会話の間を丁寧に肉付けしてください。\n硬質で乾いた文体。短いセンテンスを重ね、比喩は最小限に。'
+          }
           className="mb-2 w-full rounded-lg border px-3 py-2 text-[13px] leading-relaxed outline-none"
           style={inputStyle}
         />
         <p className="mb-3 text-[11px] leading-relaxed" style={{ color: 'var(--text-faint)' }}>
-          この指示に加えて、「シーンにある出来事以外を発生させない」「描写・内面・会話の肉付けのみ」
-          「POV キャラが知らない情報を書かない」などの制約が常に自動で付きます。
+          ここに書いた全文がそのままシステムプロンプトになります。末尾に「人称(POV 指定)」と厳守事項
+          (シーンにある出来事以外を発生させない / POV キャラが知らない情報を書かない 等)だけが自動で追加されます。
         </p>
         {error && (
           <p className="mb-2 text-[12px]" style={{ color: 'var(--danger)' }}>

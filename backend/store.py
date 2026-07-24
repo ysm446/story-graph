@@ -523,16 +523,38 @@ class Store:
 
     # ---- style presets ----------------------------------------------
 
+    # tone カラムにはシステムプロンプト全文を格納する(人称指定と厳守事項は
+    # レンダリング時に自動で末尾追加される。rendering.build_render_messages 参照)
     DEFAULT_PRESETS = [
         ("default-third", "三人称・標準", "third",
-         "自然で読みやすい三人称の地の文。抑制の効いた描写と会話のバランスを取り、説明しすぎない。", "{}"),
+         "あなたはプロの小説家です。与えられたシーン(出来事の仕様書)を、一つの完成された場面として散文に仕上げます。\n"
+         "背景や空気感の描写、人物の仕草と表情、会話の間を丁寧に肉付けしてください。\n"
+         "自然で読みやすい三人称の地の文。抑制の効いた描写と会話のバランスを取り、説明しすぎないこと。", "{}"),
         ("default-first", "一人称・内省", "first",
-         "POVキャラクターの一人称。内面の声を重視し、感情の機微と身体感覚を丁寧に描く。", "{}"),
+         "あなたはプロの小説家です。与えられたシーン(出来事の仕様書)を、POVキャラクターの一人称で散文に仕上げます。\n"
+         "内面の声を重視し、感情の機微と身体感覚を丁寧に描いてください。\n"
+         "見たもの・聞いたことを、そのキャラクターの解釈と語り口を通して描写すること。", "{}"),
     ]
+
+    # 旧版のデフォルト文言(未編集ならフルプロンプト版へ差し替えるための照合用)
+    _OLD_DEFAULT_TONES = {
+        "default-third": "自然で読みやすい三人称の地の文。抑制の効いた描写と会話のバランスを取り、説明しすぎない。",
+        "default-first": "POVキャラクターの一人称。内面の声を重視し、感情の機微と身体感覚を丁寧に描く。",
+    }
 
     def seed_presets(self) -> None:
         count = self.conn.execute("SELECT COUNT(*) FROM style_presets").fetchone()[0]
         if count:
+            # 旧デフォルト文言のまま(ユーザー未編集)ならフルプロンプト版に更新する
+            for preset_id, name, person, tone, params in self.DEFAULT_PRESETS:
+                old_tone = self._OLD_DEFAULT_TONES.get(preset_id)
+                if old_tone is None:
+                    continue
+                self.conn.execute(
+                    "UPDATE style_presets SET tone = ? WHERE id = ? AND tone = ?",
+                    (tone, preset_id, old_tone),
+                )
+            self.conn.commit()
             return
         self.conn.executemany(
             "INSERT INTO style_presets(id, name, person, tone, params) VALUES(?,?,?,?,?)",

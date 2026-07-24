@@ -53,6 +53,27 @@ def test_render_stream_sequential(store, monkeypatch):
     assert "むかしむかし" in second_user
 
 
+def test_system_prompt_is_preset_text_plus_constraints(store, monkeypatch):
+    captured = []
+
+    async def fake_stream(messages, **kwargs):
+        captured.append(messages)
+        yield "本文"
+
+    monkeypatch.setattr(llm_mod, "chat_stream", fake_stream)
+    preset = store.upsert_preset({
+        "name": "カスタム", "person": "third",
+        "tone": "あなたはハードボイルド小説の名手です。乾いた文体で書いてください。",
+    })
+    node_id = store.canon_path()[0]
+    collect_sse(rendering.render_stream(store, "http://fake", [node_id], preset["id"], None))
+    system = captured[0][0]["content"]
+    # プリセット全文が先頭、制約が末尾に自動追加される
+    assert system.startswith("あなたはハードボイルド小説の名手です")
+    assert "シーンに書かれている出来事以外を発生させない" in system
+    assert "人称: 三人称" in system
+
+
 def test_render_pov_filters_state(store, monkeypatch):
     store.replace_events(store.canon_path()[0], [
         {"type": "char_introduce", "payload": {"char": "aya"}},
