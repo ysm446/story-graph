@@ -1,11 +1,12 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-07-24 22:38
-更新日時: 2026-07-24 23:31
+更新日時: 2026-07-24 23:53
 
 ## 現在の状態
 
 - **Phase 1(コアループ MVP)完了。** M1〜M4 すべて実装・E2E 検証済み。次は Phase 2(編集耐性)。
+- **ライブラリ方式を導入**(lm-graph 踏襲): ストーリーごとのフォルダに `story-graph.db` を置く。現在のライブラリと最近使ったライブラリは `%APPDATA%/story-graph/app.json`(Electron userData)に保存。ヘッダー右のドロップダウンで切替(切替時はレンダラをリロード)。デフォルトはリポジトリ内 `data/`。
 - `npm run dev` で Electron が起動し、FastAPI sidecar(ポート 8765〜自動探索)が自動 spawn される。
 - バックエンドは単体でも起動可能: `cd backend && ../.venv/Scripts/python.exe -m uvicorn app:app --port 8765`
 - テスト: `cd backend && ../.venv/Scripts/python.exe -m pytest tests/ -q`(19件、全て成功)
@@ -35,6 +36,9 @@
 - モデルは spec 目安(Q5)より上の Q6_K。VRAM が厳しければ 12B に切替。
 - Windows の `python` コマンドは Store スタブなので venv 作成は `py -3.13` を使う。
 - electron-vite dev では `app.getAppPath()` が `out/main` を返す。リポジトリルート解決は `.venv` の存在チェックで行っている(`src/main/index.ts` の `repoRoot`)。
+- sidecar の起動は `ensureSidecar()`(in-flight Promise)で一本化している。`whenReady` と `bootstrap` IPC が同時に呼んでも spawn は 1 回。Windows は占有ポートでも listen チェックをすり抜けることがあるため、spawn 前に必ず既存ポートの `/health` を確認して healthy なら再利用する。
+- バックエンドのライブラリ切替は `Store.switch_library`(接続差し替え・インスタンス再利用)。起動時は `STORY_GRAPH_LIBRARY` 環境変数(Electron が app.json から渡す)で解決。レンダラは起動時に app.json とバックエンドのライブラリが一致しているか確認して同期する(再利用 sidecar 対策)。
+- bat ファイルに日本語を書かない(UTF-8 の日本語バイト列が cp932 パースで後続コマンドを壊す)。メッセージは ASCII のみ。
 - FastAPI のエンドポイントは全て `async def` でイベントループ直列実行にして SQLite の書き込み競合を回避している(ローカル単一ユーザー前提)。ハンドラ内でブロッキングの長い処理(LLM 呼び出し等)を書くときはこの前提を崩さないよう注意(LLM 呼び出しは httpx の async 版を使う)。
 - Phase 1 のノード削除は末尾のみ許可(単線維持のため)。
 

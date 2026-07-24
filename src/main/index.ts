@@ -1,15 +1,73 @@
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { execSync } from 'node:child_process'
 import { join } from 'node:path'
-import { existsSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:net'
 
 const DEFAULT_API_PORT = 8765
 
+// ---- ライブラリ設定(%APPDATA%/story-graph/app.json) ----------------
+// ライブラリ = ストーリーごとのデータフォルダ(story-graph.db が入る)
+
+interface AppConfig {
+  libraryRoot: string | null
+  recentRoots: string[]
+}
+
+function configFilePath(): string {
+  return join(app.getPath('userData'), 'app.json')
+}
+
+function loadConfig(): AppConfig {
+  try {
+    const raw = readFileSync(configFilePath(), 'utf-8')
+    const parsed = JSON.parse(raw) as Partial<AppConfig>
+    return {
+      libraryRoot: typeof parsed.libraryRoot === 'string' ? parsed.libraryRoot : null,
+      recentRoots: Array.isArray(parsed.recentRoots) ? parsed.recentRoots.filter((r) => typeof r === 'string') : []
+    }
+  } catch {
+    return { libraryRoot: null, recentRoots: [] }
+  }
+}
+
+function saveConfig(config: AppConfig): void {
+  try {
+    mkdirSync(app.getPath('userData'), { recursive: true })
+    writeFileSync(configFilePath(), JSON.stringify(config, null, 2), 'utf-8')
+  } catch (error) {
+    console.error('[config] 保存に失敗:', error)
+  }
+}
+
+function currentLibraryRoot(): string {
+  const config = loadConfig()
+  return config.libraryRoot ?? join(repoRoot(), 'data')
+}
+
+function rememberLibraryRoot(root: string): void {
+  const config = loadConfig()
+  config.libraryRoot = root
+  config.recentRoots = [root, ...config.recentRoots.filter((r) => r !== root)].slice(0, 10)
+  saveConfig(config)
+}
+
 let mainWindow: BrowserWindow | null = null
 let sidecarProcess: ChildProcess | null = null
 let apiBaseUrl: string | null = null
+let sidecarPromise: Promise<string> | null = null
+
+// whenReady と bootstrap IPC が同時に呼んでも spawn を 1 回にする
+function ensureSidecar(): Promise<string> {
+  if (!sidecarPromise) {
+    sidecarPromise = startSidecar().catch((error) => {
+      sidecarPromise = null
+      throw error
+    })
+  }
+  return sidecarPromise
+}
 
 function repoRoot(): string {
   // dev では __dirname = out/main なので2階層上がリポジトリルート。
@@ -81,10 +139,16 @@ async function startSidecar(): Promise<string> {
     throw new Error(`.venv が見つかりません: ${pythonPath}`)
   }
   const port = await findAvailablePort(DEFAULT_API_PORT)
+  const libraryRoot = currentLibraryRoot()
+  mkdirSync(libraryRoot, { recursive: true })
   const proc = spawn(
     pythonPath,
     ['-m', 'uvicorn', 'app:app', '--host', '127.0.0.1', '--port', String(port)],
-    { cwd: join(root, 'backend'), windowsHide: true }
+    {
+      cwd: join(root, 'backend'),
+      windowsHide: true,
+      env: { ...process.env, STORY_GRAPH_LIBRARY: libraryRoot }
+    }
   )
   proc.stdout?.on('data', (chunk: Buffer) => console.log(`[sidecar] ${chunk.toString().trimEnd()}`))
   proc.stderr?.on('data', (chunk: Buffer) => console.log(`[sidecar] ${chunk.toString().trimEnd()}`))
@@ -145,17 +209,33 @@ function createWindow(): void {
 
 app.whenReady().then(async () => {
   ipcMain.handle('bootstrap', async () => {
-    if (!apiBaseUrl) {
-      try {
-        await startSidecar()
-      } catch (error) {
-        return { apiBaseUrl: null, error: String(error) }
-      }
+    try {
+      await ensureSidecar()
+    } catch (error) {
+      return { apiBaseUrl: null, error: String(error) }
     }
     return { apiBaseUrl, error: null }
   })
+  ipcMain.handle('library:info', () => {
+    const config = loadConfig()
+    return { current: currentLibraryRoot(), recents: config.recentRoots }
+  })
+  ipcMain.handle('library:choose', async () => {
+    const result = await dialog.showOpenDialog({
+      title: 'ライブラリフォルダを選択',
+      properties: ['openDirectory', 'createDirectory']
+    })
+    if (result.canceled || result.filePaths.length === 0) return null
+    const root = result.filePaths[0]
+    rememberLibraryRoot(root)
+    return root
+  })
+  ipcMain.handle('library:switch', (_event, root: string) => {
+    rememberLibraryRoot(root)
+    return root
+  })
   createWindow()
-  void startSidecar().catch((error) => console.error('[sidecar] 起動失敗:', error))
+  void ensureSidecar().catch((error) => console.error('[sidecar] 起動失敗:', error))
 })
 
 app.on('window-all-closed', () => {

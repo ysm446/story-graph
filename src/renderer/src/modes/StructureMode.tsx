@@ -555,9 +555,6 @@ function StructureModeInner(): React.JSX.Element {
             minZoom={0.1}
             maxZoom={2}
             fitView
-            zoomOnScroll={false}
-            zoomOnPinch={false}
-            panOnScroll
             panOnDrag={[1]}
             selectionOnDrag
             selectionMode={SelectionMode.Partial}

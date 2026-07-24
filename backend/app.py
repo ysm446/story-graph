@@ -31,8 +31,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# 起動時のライブラリ解決: STORY_GRAPH_LIBRARY(ルートフォルダ) >
+# STORY_GRAPH_DB(DB ファイル直指定。テスト用) > リポジトリ内 data/
+_library_root = os.environ.get("STORY_GRAPH_LIBRARY")
 _db_path = os.environ.get("STORY_GRAPH_DB")
-store = Store(db.connect(_db_path))
+if _library_root:
+    from pathlib import Path as _Path
+
+    store = Store(db.connect(_Path(_library_root) / "story-graph.db"), root=_library_root)
+else:
+    store = Store(db.connect(_db_path), root=str(db.DEFAULT_DB_PATH.parent))
 llama = LlamaManager()
 
 
@@ -107,11 +115,29 @@ class SettingsPut(BaseModel):
     values: dict[str, str]
 
 
-# ---- health ---------------------------------------------------------
+# ---- health / library ----------------------------------------------
 
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+class LibrarySwitchIn(BaseModel):
+    root: str
+
+
+@app.get("/library")
+async def get_library() -> dict[str, Any]:
+    return {"root": store.root}
+
+
+@app.post("/library/switch")
+async def switch_library(body: LibrarySwitchIn) -> dict[str, Any]:
+    try:
+        store.switch_library(body.root)
+    except OSError as e:
+        raise HTTPException(400, f"ライブラリを開けません: {e}")
+    return {"root": store.root}
 
 
 # ---- characters -----------------------------------------------------

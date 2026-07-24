@@ -25,8 +25,27 @@ def _new_id() -> str:
 
 
 class Store:
-    def __init__(self, conn: sqlite3.Connection):
+    """DB への唯一の窓口。
+
+    ライブラリ = ストーリーごとのフォルダ(中に story-graph.db)。
+    switch_library で接続を差し替える(lm-chat の openLibrary と同じ
+    インスタンス再利用方式。API ハンドラが握る参照を保つため)。
+    """
+
+    def __init__(self, conn: sqlite3.Connection, root: str | None = None):
         self.conn = conn
+        self.root = root
+
+    def switch_library(self, root: str) -> None:
+        import db as db_mod
+        from pathlib import Path
+
+        db_path = Path(root) / "story-graph.db"
+        new_conn = db_mod.connect(db_path)
+        old_conn = self.conn
+        self.conn = new_conn
+        self.root = str(root)
+        old_conn.close()
 
     # ---- characters -------------------------------------------------
 

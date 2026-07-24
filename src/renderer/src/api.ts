@@ -22,6 +22,10 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  getLibrary: () => request<{ root: string | null }>('/library'),
+  switchLibrary: (root: string) =>
+    request<{ root: string }>('/library/switch', { method: 'POST', body: JSON.stringify({ root }) }),
+
   listCharacters: () => request<Character[]>('/characters'),
   createCharacter: (data: Partial<Character> & { name: string }) =>
     request<Character>('/characters', { method: 'POST', body: JSON.stringify(data) }),
