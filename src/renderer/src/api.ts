@@ -136,15 +136,21 @@ export interface RenderStreamEvent {
   error?: string
 }
 
+export function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === 'AbortError'
+}
+
 export async function renderStream(
   body: { preset_id: string; pov_char: string | null; from_node: string | null; mode: 'single' | 'to_end' },
-  onEvent: (data: RenderStreamEvent) => void
+  onEvent: (data: RenderStreamEvent) => void,
+  signal?: AbortSignal
 ): Promise<void> {
   if (!baseUrl) throw new Error('backend not ready')
   const res = await fetch(`${baseUrl}/render`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
+    body: JSON.stringify(body),
+    signal
   })
   if (!res.ok || !res.body) {
     throw new Error(`${res.status} /render: ${await res.text()}`)
@@ -180,13 +186,15 @@ export interface GenerationEvent {
 export async function generateBeatStream(
   instruction: string | null,
   onEvent: (data: GenerationEvent) => void,
-  parentId: string | null = null
+  parentId: string | null = null,
+  signal?: AbortSignal
 ): Promise<void> {
   if (!baseUrl) throw new Error('backend not ready')
   const res = await fetch(`${baseUrl}/generate/beat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ instruction, parent_id: parentId })
+    body: JSON.stringify({ instruction, parent_id: parentId }),
+    signal
   })
   if (!res.ok || !res.body) {
     throw new Error(`${res.status} /generate/beat: ${await res.text()}`)

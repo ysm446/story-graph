@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Background,
   Handle,
@@ -13,7 +13,7 @@ import {
   type NodeProps
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { api, generateBeatStream } from '../api'
+import { api, generateBeatStream, isAbortError } from '../api'
 import RelationGraph from '../RelationGraph'
 import type { Character, EventInput, GraphEdge, StateSnapshot, StoryEvent, StoryNode } from '../types'
 
@@ -776,6 +776,7 @@ function StructureModeInner(): React.JSX.Element {
   const [instruction, setInstruction] = useState('')
   const [generating, setGenerating] = useState(false)
   const [genStatus, setGenStatus] = useState<string | null>(null)
+  const genAbortRef = useRef<AbortController | null>(null)
 
   const reload = useCallback(async (): Promise<void> => {
     const [graph, chars] = await Promise.all([api.getGraph(), api.listCharacters()])
@@ -876,6 +877,8 @@ function StructureModeInner(): React.JSX.Element {
   }
 
   const handleGenerate = async (parentId: string | null): Promise<void> => {
+    const controller = new AbortController()
+    genAbortRef.current = controller
     setGenerating(true)
     setGenStatus('LLM 準備中…(初回はモデルロードに時間がかかります)')
     try {
@@ -898,11 +901,13 @@ function StructureModeInner(): React.JSX.Element {
             })
           }
         },
-        parentId
+        parentId,
+        controller.signal
       )
     } catch (err) {
-      setGenStatus(String(err))
+      setGenStatus(isAbortError(err) ? 'キャンセルしました' : String(err))
     } finally {
+      genAbortRef.current = null
       setGenerating(false)
     }
   }
@@ -953,23 +958,34 @@ function StructureModeInner(): React.JSX.Element {
                     style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
                   />
                   <div className="flex flex-col gap-1.5">
-                    <button
-                      onClick={() => void handleGenerate(null)}
-                      disabled={generating}
-                      className="w-full rounded-lg px-3 py-1.5 text-[13px] font-medium text-white"
-                      style={{ background: generating ? 'var(--accent-hover)' : 'var(--accent)' }}
-                    >
-                      {generating ? '生成中…' : '▶ 次のシーンを生成'}
-                    </button>
-                    <button
-                      onClick={() => void handleGenerate(selectedId)}
-                      disabled={generating || !selectedId}
-                      className="w-full rounded-lg border px-3 py-1.5 text-[13px] font-medium disabled:opacity-40"
-                      style={{ borderColor: 'var(--accent-border)', color: 'var(--accent)' }}
-                      title="選択ノードから what-if 分岐を draft として生成"
-                    >
-                      ⑂ 選択ノードから分岐を生成
-                    </button>
+                    {generating ? (
+                      <button
+                        onClick={() => genAbortRef.current?.abort()}
+                        className="w-full rounded-lg border px-3 py-1.5 text-[13px] font-medium"
+                        style={{ borderColor: 'rgba(239,68,68,0.5)', color: 'var(--danger)' }}
+                      >
+                        ■ 生成を中止
+                      </button>
+                    ) : (
+                      <>
+                        <button
+                          onClick={() => void handleGenerate(null)}
+                          className="w-full rounded-lg px-3 py-1.5 text-[13px] font-medium text-white"
+                          style={{ background: 'var(--accent)' }}
+                        >
+                          ▶ 次のシーンを生成
+                        </button>
+                        <button
+                          onClick={() => void handleGenerate(selectedId)}
+                          disabled={!selectedId}
+                          className="w-full rounded-lg border px-3 py-1.5 text-[13px] font-medium disabled:opacity-40"
+                          style={{ borderColor: 'var(--accent-border)', color: 'var(--accent)' }}
+                          title="選択ノードから what-if 分岐を draft として生成"
+                        >
+                          ⑂ 選択ノードから分岐を生成
+                        </button>
+                      </>
+                    )}
                   </div>
                   {genStatus && (
                     <div className="mt-2 text-[11px] leading-relaxed" style={{ color: 'var(--text-dim)' }}>

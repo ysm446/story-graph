@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { api, renderStream } from '../api'
+import { api, isAbortError, renderStream } from '../api'
 import type { Character, PromoteProposal, SceneEntry, StylePreset } from '../types'
 
 interface PromoteState {
@@ -159,6 +159,7 @@ export default function ReaderMode(): React.JSX.Element {
   const [promote, setPromote] = useState<PromoteState | null>(null)
   const [presetEditor, setPresetEditor] = useState<PresetDraft | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
+  const renderAbortRef = useRef<AbortController | null>(null)
 
   const reloadPresets = useCallback(async (selectId?: string): Promise<void> => {
     const p = await api.listPresets()
@@ -189,29 +190,36 @@ export default function ReaderMode(): React.JSX.Element {
 
   const runRender = async (fromNode: string | null, mode: 'single' | 'to_end'): Promise<void> => {
     if (!presetId || rendering) return
+    const controller = new AbortController()
+    renderAbortRef.current = controller
     setRendering(true)
     setStatus('LLM 準備中…')
     try {
-      await renderStream({ preset_id: presetId, pov_char: povChar, from_node: fromNode, mode }, (e) => {
-        if (e.scene_start) {
-          setLiveNodeId(e.scene_start)
-          setLiveText('')
-          setStatus(`清書中: ${e.title || '(無題)'}`)
-        } else if (e.delta) {
-          setLiveText((t) => t + e.delta)
-        } else if (e.scene_done) {
-          setLiveNodeId(null)
-          setLiveText('')
-          void reloadScenes()
-        } else if (e.error) {
-          setStatus(`エラー: ${e.error}`)
-        } else if (e.done) {
-          setStatus(null)
-        }
-      })
+      await renderStream(
+        { preset_id: presetId, pov_char: povChar, from_node: fromNode, mode },
+        (e) => {
+          if (e.scene_start) {
+            setLiveNodeId(e.scene_start)
+            setLiveText('')
+            setStatus(`清書中: ${e.title || '(無題)'}`)
+          } else if (e.delta) {
+            setLiveText((t) => t + e.delta)
+          } else if (e.scene_done) {
+            setLiveNodeId(null)
+            setLiveText('')
+            void reloadScenes()
+          } else if (e.error) {
+            setStatus(`エラー: ${e.error}`)
+          } else if (e.done) {
+            setStatus(null)
+          }
+        },
+        controller.signal
+      )
     } catch (err) {
-      setStatus(String(err))
+      setStatus(isAbortError(err) ? 'キャンセルしました(書きかけのシーンは保存されません)' : String(err))
     } finally {
+      renderAbortRef.current = null
       setRendering(false)
       setLiveNodeId(null)
       void reloadScenes()
@@ -331,14 +339,24 @@ export default function ReaderMode(): React.JSX.Element {
             </option>
           ))}
         </select>
-        <button
-          onClick={() => void runRender(null, 'to_end')}
-          disabled={rendering || !presetId}
-          className="rounded-lg px-3 py-1 text-[12px] font-medium text-white disabled:opacity-50"
-          style={{ background: 'var(--accent)' }}
-        >
-          {rendering ? '清書中…' : '▶ 全編を清書'}
-        </button>
+        {rendering ? (
+          <button
+            onClick={() => renderAbortRef.current?.abort()}
+            className="rounded-lg border px-3 py-1 text-[12px] font-medium"
+            style={{ borderColor: 'rgba(239,68,68,0.5)', color: 'var(--danger)' }}
+          >
+            ■ 清書を中止
+          </button>
+        ) : (
+          <button
+            onClick={() => void runRender(null, 'to_end')}
+            disabled={!presetId}
+            className="rounded-lg px-3 py-1 text-[12px] font-medium text-white disabled:opacity-50"
+            style={{ background: 'var(--accent)' }}
+          >
+            ▶ 全編を清書
+          </button>
+        )}
         <button
           onClick={exportMarkdown}
           disabled={!hasAnyRender}
