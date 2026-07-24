@@ -144,6 +144,144 @@ textarea {
   background: #40465b;
 }
 
+/* 設定画面のスライダー・カード(lm-chat の styles.css から移植) */
+.settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.settings-field-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-field-label {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.settings-field-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.settings-reset-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  color: var(--text-faint);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.settings-reset-btn:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.settings-value-badge {
+  min-width: 72px;
+  padding: 4px 8px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 11px;
+  text-align: center;
+}
+
+.settings-field-hint {
+  font-size: 11px;
+  color: var(--text-faint);
+  margin: 0;
+}
+
+.settings-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border-strong);
+  outline: none;
+  cursor: pointer;
+}
+
+.settings-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  cursor: pointer;
+  transition: background 0.15s, transform 0.15s;
+}
+
+.settings-slider::-webkit-slider-thumb:hover {
+  background: var(--text);
+  transform: scale(1.2);
+}
+
+.settings-slider:focus::-webkit-slider-thumb {
+  background: var(--accent);
+}
+
+.settings-slider.active::-webkit-slider-thumb {
+  background: var(--accent);
+}
+
+.settings-slider.active::-webkit-slider-thumb:hover {
+  background: var(--accent-hover);
+}
+
+.settings-slider-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--text-faint);
+  margin-top: 3px;
+}
+
+.settings-group-title {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-strong);
+}
+
+.settings-group-title::before {
+  content: "";
+  width: 3px;
+  height: 14px;
+  border-radius: 2px;
+  background: var(--accent);
+  flex-shrink: 0;
+}
+
+.settings-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
 @keyframes node-glow {
   0%, 100% { box-shadow: 0 0 4px 1px rgba(124, 90, 247, 0.3), 0 0 10px 2px rgba(124, 90, 247, 0.12); }
   50% { box-shadow: 0 0 10px 3px rgba(124, 90, 247, 0.65), 0 0 22px 5px rgba(124, 90, 247, 0.25); }
