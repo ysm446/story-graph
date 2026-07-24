@@ -78,6 +78,7 @@ export interface StylePreset {
   person: 'first' | 'third'
   tone: string
   params: string
+  builtin: boolean
 }
 
 export interface RenderResult {

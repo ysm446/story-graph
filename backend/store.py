@@ -595,16 +595,27 @@ class Store:
         )
         self.conn.commit()
 
+    BUILTIN_PRESET_IDS = frozenset({"default-third", "default-first"})
+
     def list_presets(self) -> list[dict[str, Any]]:
         self.seed_presets()
-        return [dict(r) for r in self.conn.execute("SELECT * FROM style_presets ORDER BY rowid")]
+        presets = [dict(r) for r in self.conn.execute("SELECT * FROM style_presets ORDER BY rowid")]
+        for p in presets:
+            p["builtin"] = p["id"] in self.BUILTIN_PRESET_IDS
+        return presets
 
     def get_preset(self, preset_id: str) -> dict[str, Any] | None:
         row = self.conn.execute("SELECT * FROM style_presets WHERE id = ?", (preset_id,)).fetchone()
-        return dict(row) if row else None
+        if row is None:
+            return None
+        preset = dict(row)
+        preset["builtin"] = preset["id"] in self.BUILTIN_PRESET_IDS
+        return preset
 
     def upsert_preset(self, data: dict[str, Any]) -> dict[str, Any]:
         preset_id = data.get("id") or _new_id()
+        if preset_id in self.BUILTIN_PRESET_IDS:
+            raise PermissionError("組み込みプリセットは編集できません(複製して新規作成してください)")
         self.conn.execute(
             "INSERT OR REPLACE INTO style_presets(id, name, person, tone, params) VALUES(?,?,?,?,?)",
             (preset_id, data["name"], data.get("person", "third"), data.get("tone", ""),
@@ -614,6 +625,8 @@ class Store:
         return self.get_preset(preset_id)  # type: ignore[return-value]
 
     def delete_preset(self, preset_id: str) -> None:
+        if preset_id in self.BUILTIN_PRESET_IDS:
+            raise PermissionError("組み込みプリセットは削除できません")
         self.conn.execute("DELETE FROM style_presets WHERE id = ?", (preset_id,))
         self.conn.commit()
 

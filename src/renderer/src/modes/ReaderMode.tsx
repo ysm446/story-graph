@@ -291,16 +291,24 @@ export default function ReaderMode(): React.JSX.Element {
         <button
           onClick={() => {
             const current = presets.find((p) => p.id === presetId)
-            if (current) {
+            if (!current) return
+            if (current.builtin) {
+              // 組み込みは編集不可 → 複製して新規プリセットとして開く
+              setPresetEditor({ name: `${current.name} のコピー`, person: current.person, tone: current.tone })
+            } else {
               setPresetEditor({ id: current.id, name: current.name, person: current.person, tone: current.tone })
             }
           }}
           disabled={!presetId}
           className="rounded-lg border px-2 py-1 text-[12px] disabled:opacity-40"
           style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-          title="選択中のプリセットを編集"
+          title={
+            presets.find((p) => p.id === presetId)?.builtin
+              ? '組み込みプリセットは編集できません。複製して新規作成します'
+              : '選択中のプリセットを編集'
+          }
         >
-          ✎ 編集
+          {presets.find((p) => p.id === presetId)?.builtin ? '⧉ 複製して編集' : '✎ 編集'}
         </button>
         <button
           onClick={() => setPresetEditor({ name: '', person: 'third', tone: '' })}

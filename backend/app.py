@@ -408,12 +408,18 @@ async def list_presets() -> list[dict[str, Any]]:
 
 @app.post("/presets")
 async def upsert_preset(body: PresetIn) -> dict[str, Any]:
-    return store.upsert_preset(body.model_dump())
+    try:
+        return store.upsert_preset(body.model_dump())
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
 
 
 @app.delete("/presets/{preset_id}")
 async def delete_preset(preset_id: str) -> dict[str, str]:
-    store.delete_preset(preset_id)
+    try:
+        store.delete_preset(preset_id)
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
     return {"status": "deleted"}
 
 
