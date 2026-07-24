@@ -1,0 +1,6 @@
+# Changelog
+
+## 未リリース
+
+- 2026-07-24 22:56 Phase 1 M1〜M3 を実装。Electron + React + FastAPI sidecar の骨格、SQLite スキーマ、fold エンジン + state_cache + ルール検証(pytest 19件)、UI シェル(構造モード 3 ペイン / キャラクター庫 / 設定)。`npm run dev` で起動可能。
+- 2026-07-24 22:38 計画ドキュメント(docs/plan/goals.md / plan.md / progress.md)を作成。Phase 1 実装を開始。

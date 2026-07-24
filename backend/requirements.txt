@@ -1,0 +1,6 @@
+fastapi
+uvicorn[standard]
+pydantic
+pytest
+httpx
+# Phase 2 で追加予定: sqlite-vec, sentence-transformers (Ruri v3-310m)

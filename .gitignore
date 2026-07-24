@@ -1,0 +1,12 @@
+node_modules/
+out/
+*.tsbuildinfo
+dist/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+data/
+models/
+bin/
+runtime/
