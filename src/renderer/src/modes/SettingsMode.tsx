@@ -160,7 +160,7 @@ export default function SettingsMode(): React.JSX.Element {
                 </p>
               )}
               <p className="settings-field-hint">
-                ビート生成・レンダリング時に停止していれば自動起動します。外部で起動済みの llama-server があればそれを優先します。
+                シーン生成・清書時に停止していれば自動起動します。外部で起動済みの llama-server があればそれを優先します。
               </p>
             </div>
             {TEXT_FIELDS.map((def) => (

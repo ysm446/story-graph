@@ -79,7 +79,7 @@ function BeatNodeCard({ data, selected }: NodeProps<BeatFlowNode>): React.JSX.El
       <Handle type="target" position={Position.Top} className="!bg-[#6a728f]" />
       <div className="mb-1 flex items-center gap-2">
         <span className="min-w-0 flex-1 truncate text-[13px] font-semibold" style={{ color: 'var(--text)' }}>
-          {storyNode.title || '(無題のビート)'}
+          {storyNode.title || '(無題のシーン)'}
         </span>
         {isDraft && (
           <span
@@ -373,7 +373,7 @@ function BeatTab({
   }
 
   const handleDelete = async (): Promise<void> => {
-    if (!window.confirm('このビートを削除しますか?(子を持たないノードのみ)')) return
+    if (!window.confirm('このシーンを削除しますか?(子を持たないノードのみ)')) return
     try {
       await api.deleteNode(node.id)
       onDeleted()
@@ -419,7 +419,7 @@ function BeatTab({
       </label>
       <label className="block">
         <span className={labelClass} style={{ color: 'var(--text-faint)' }}>
-          Beat(出来事の仕様書)
+          シーン(出来事の仕様書)
         </span>
         <textarea
           rows={6}
@@ -882,7 +882,7 @@ function StructureModeInner(): React.JSX.Element {
       await generateBeatStream(
         instruction.trim() || null,
         (e) => {
-          if (e.stage === 'generating') setGenStatus(`ビート生成中…(${e.attempt} 回目)`)
+          if (e.stage === 'generating') setGenStatus(`シーン生成中…(${e.attempt} 回目)`)
           else if (e.stage === 'validating') setGenStatus('検証中…')
           else if (e.stage === 'retry') setGenStatus(`検証 NG、リトライ中…(${(e.errors ?? []).join(' / ')})`)
           else if (e.error) setGenStatus(`エラー: ${e.error}`)
@@ -937,7 +937,7 @@ function StructureModeInner(): React.JSX.Element {
                   style={{ background: 'var(--accent)' }}
                   title={selectedId ? '選択ノードの子として追加' : '正史の末尾に追加'}
                 >
-                  + ビート追加
+                  + シーン追加
                 </button>
                 <div
                   className={`rounded-2xl border p-3 shadow-lg shadow-black/30 ${generating ? 'node-generating-border' : ''}`}
@@ -959,7 +959,7 @@ function StructureModeInner(): React.JSX.Element {
                       className="w-full rounded-lg px-3 py-1.5 text-[13px] font-medium text-white"
                       style={{ background: generating ? 'var(--accent-hover)' : 'var(--accent)' }}
                     >
-                      {generating ? '生成中…' : '▶ 次のビートを生成'}
+                      {generating ? '生成中…' : '▶ 次のシーンを生成'}
                     </button>
                     <button
                       onClick={() => void handleGenerate(selectedId)}
@@ -985,7 +985,7 @@ function StructureModeInner(): React.JSX.Element {
                   className="mt-24 rounded-2xl border px-6 py-4 text-[13px]"
                   style={{ background: 'var(--bg-card)', borderColor: 'var(--border)', color: 'var(--text-dim)' }}
                 >
-                  「+ ビート追加」または「▶ 次のビートを生成」で物語を始めてください
+                  「+ シーン追加」または「▶ 次のシーンを生成」で物語を始めてください
                 </div>
               </Panel>
             )}
@@ -998,7 +998,7 @@ function StructureModeInner(): React.JSX.Element {
           <div className="flex gap-1 border-b px-3 py-2" style={{ borderColor: 'var(--border)' }}>
             {(
               [
-                { id: 'beat', label: 'ビート' },
+                { id: 'beat', label: 'シーン' },
                 { id: 'char', label: 'キャラ' },
                 { id: 'graph', label: '関係図' }
               ] as const

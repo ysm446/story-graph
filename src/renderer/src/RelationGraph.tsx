@@ -201,7 +201,7 @@ export default function RelationGraph({
   if (canonPath.length === 0) {
     return (
       <div className="pt-8 text-center text-[12px]" style={{ color: 'var(--text-faint)' }}>
-        正史パスにビートがありません
+        正史パスにシーンがありません
       </div>
     )
   }

@@ -391,7 +391,7 @@ async def list_renders(preset_id: str, pov_char: str | None = None) -> list[dict
 async def render(body: RenderIn) -> StreamingResponse:
     canon = store.canon_path()
     if not canon:
-        raise HTTPException(409, "正史パスにビートがありません")
+        raise HTTPException(409, "正史パスにシーンがありません")
     start = body.from_node or canon[0]
     if start not in canon:
         raise HTTPException(404, "from_node が正史パス上にありません")

@@ -40,6 +40,7 @@
 
 ## 注意点
 
+- **用語(2026-07-25 ユーザー決定)**: UI 表示は「ビート」→**「シーン」**、レンダー散文→**「清書」**。コード・DB スキーマ・spec・LLM プロンプト内は `beat` / `render` のまま変えない(表示ラベルのみ)。
 - **Python は必ず `.venv` を使う**(ユーザー指示)。
 - spec §12 の「Electron + FastAPI 起動骨格 ← lm-graph」は実態と異なる: lm-graph に Python バックエンドはない。FastAPI 構成の実例は news-picker / lm-chat 側。lm-graph からは spawn+ヘルスチェックのロジックだけ借りた。
 - 検索層の移植(Phase 2)は lm-chat 直接ではなく news-picker 版を雛形にする(lm-chat には Ruri v3 の非対称プレフィックス欠落バグがあり、news-picker で修正済み)。

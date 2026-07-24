@@ -100,7 +100,7 @@ function PresetEditorModal({
           </select>
         </div>
         <label className="mb-1 block text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
-          文体・スタイル指示(レンダリングのシステムプロンプトに入ります)
+          文体・スタイル指示(清書のシステムプロンプトに入ります)
         </label>
         <textarea
           rows={7}
@@ -111,7 +111,7 @@ function PresetEditorModal({
           style={inputStyle}
         />
         <p className="mb-3 text-[11px] leading-relaxed" style={{ color: 'var(--text-faint)' }}>
-          この指示に加えて、「ビートにある出来事以外を発生させない」「描写・内面・会話の肉付けのみ」
+          この指示に加えて、「シーンにある出来事以外を発生させない」「描写・内面・会話の肉付けのみ」
           「POV キャラが知らない情報を書かない」などの制約が常に自動で付きます。
         </p>
         {error && (
@@ -194,7 +194,7 @@ export default function ReaderMode(): React.JSX.Element {
         if (e.scene_start) {
           setLiveNodeId(e.scene_start)
           setLiveText('')
-          setStatus(`レンダリング中: ${e.title || '(無題)'}`)
+          setStatus(`清書中: ${e.title || '(無題)'}`)
         } else if (e.delta) {
           setLiveText((t) => t + e.delta)
         } else if (e.scene_done) {
@@ -327,7 +327,7 @@ export default function ReaderMode(): React.JSX.Element {
           className="rounded-lg px-3 py-1 text-[12px] font-medium text-white disabled:opacity-50"
           style={{ background: 'var(--accent)' }}
         >
-          {rendering ? 'レンダリング中…' : '▶ 全編レンダー'}
+          {rendering ? '清書中…' : '▶ 全編を清書'}
         </button>
         <button
           onClick={exportMarkdown}
@@ -349,7 +349,7 @@ export default function ReaderMode(): React.JSX.Element {
         <div className="mx-auto max-w-2xl px-6 py-8">
           {scenes.length === 0 && (
             <div className="pt-16 text-center text-[13px]" style={{ color: 'var(--text-faint)' }}>
-              正史パスにビートがありません。構造モードで物語を作成してください。
+              正史パスにシーンがありません。構造モードで物語を作成してください。
             </div>
           )}
           {scenes.map((scene) => {
@@ -409,7 +409,7 @@ export default function ReaderMode(): React.JSX.Element {
                     className="rounded-xl border border-dashed px-4 py-6 text-center text-[12px]"
                     style={{ borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }}
                   >
-                    未レンダー
+                    未清書
                     <div className="mt-1 text-[11px]">{scene.node.beat}</div>
                   </div>
                 )}
@@ -448,7 +448,7 @@ export default function ReaderMode(): React.JSX.Element {
             onClick={(e) => e.stopPropagation()}
           >
             <h3 className="mb-2 text-[14px] font-semibold" style={{ color: 'var(--text)' }}>
-              ビートに昇格
+              シーンに取り込む
             </h3>
             <div
               className="mb-3 max-h-28 overflow-y-auto rounded-lg border px-3 py-2 text-[12px] leading-relaxed"
@@ -459,7 +459,7 @@ export default function ReaderMode(): React.JSX.Element {
             {promote.proposal ? (
               <>
                 <div className="mb-1 text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
-                  ビート追記案
+                  シーン追記案
                 </div>
                 <div className="mb-3 rounded-lg border px-3 py-2 text-[13px]" style={{ background: 'var(--bg-input)', borderColor: 'var(--border)', color: 'var(--text)' }}>
                   {promote.proposal.beat_appendix}
@@ -496,7 +496,7 @@ export default function ReaderMode(): React.JSX.Element {
             ) : (
               <div className="flex items-center justify-between">
                 <span className="text-[12px]" style={{ color: promote.error ? 'var(--danger)' : 'var(--text-dim)' }}>
-                  {promote.error ?? (promote.loading ? 'LLM が提案を作成中…' : 'この一節をビート+イベントに変換します')}
+                  {promote.error ?? (promote.loading ? 'LLM が提案を作成中…' : 'この一節をシーン記述+イベントに変換します')}
                 </span>
                 <div className="flex gap-2">
                   <button onClick={() => setPromote(null)} className="px-3 py-1.5 text-[13px]" style={{ color: 'var(--text-dim)' }}>
