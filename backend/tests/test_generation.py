@@ -119,3 +119,21 @@ def test_extract_events_replaces(store, monkeypatch):
     assert events[1]["payload"]["key"] == "location"
     state = store.get_state(node["id"])
     assert state["chars"]["aya"]["facts"]["location"] == "街道"
+
+
+def test_extract_events_restores_missing_introduce(store, monkeypatch):
+    node = store.append_node({"beat": "初登場シーン", "cast": ["aya"]})  # 自動付与で intro あり
+
+    async def fake_chat_json(messages, **kwargs):
+        # LLM が char_introduce を出し忘れたケース
+        return {
+            "events": [
+                {"type": "fact_set", "payload": {"scope": "char", "char": "aya", "key": "goal", "value": "旅立ち"}},
+            ]
+        }
+
+    monkeypatch.setattr(llm_mod, "chat_json", fake_chat_json)
+    events = asyncio.run(generation.extract_events(store, "http://fake", node["id"]))
+    types = [e["type"] for e in events]
+    assert types[0] == "char_introduce"  # 自動補完される
+    assert store.validate(node["id"]) == []

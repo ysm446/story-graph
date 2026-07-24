@@ -436,7 +436,10 @@ async def extract_events(store: Store, base_url: str, node_id: str) -> list[dict
     else:
         raise last_error  # type: ignore[misc]
     normalize_events(result["events"])
-    return store.replace_events(
+    store.replace_events(
         node_id,
         [{"type": e["type"], "payload": e["payload"], "source": "llm"} for e in result["events"]],
     )
+    # 抽出結果に char_introduce が欠けていた場合の自動補完(cast 整合)
+    store._ensure_cast_introduced(node_id)
+    return store.list_events(node_id)
