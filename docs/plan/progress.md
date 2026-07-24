@@ -1,11 +1,11 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-07-24 22:38
-更新日時: 2026-07-24 22:56
+更新日時: 2026-07-24 23:31
 
 ## 現在の状態
 
-- Phase 1 の M1(骨格)・M2(データ層)が完了。M3(UI)は基本形まで実装済み。次は M4(生成)。
+- **Phase 1(コアループ MVP)完了。** M1〜M4 すべて実装・E2E 検証済み。次は Phase 2(編集耐性)。
 - `npm run dev` で Electron が起動し、FastAPI sidecar(ポート 8765〜自動探索)が自動 spawn される。
 - バックエンドは単体でも起動可能: `cd backend && ../.venv/Scripts/python.exe -m uvicorn app:app --port 8765`
 - テスト: `cd backend && ../.venv/Scripts/python.exe -m pytest tests/ -q`(19件、全て成功)
@@ -19,11 +19,12 @@
 - [x] **M1 — 骨格**: electron-vite + React 19 + Tailwind、lm-graph のデザイントークン移植(`src/renderer/src/index.css`)、`.venv`(Python 3.13) + FastAPI `/health`、Electron main からの sidecar spawn + ヘルスチェック(`src/main/index.ts`)
 - [x] **M2 — データ層**: SQLite スキーマ全テーブル(`backend/db.py`)、characters / factions CRUD、nodes / edges(単線タイムライン)、fold エンジン(`backend/fold.py`、純粋関数)、state_cache(input_hash / dirty 伝播 / 遅延再fold)、ルールベース検証(`backend/validation.py`)、memories 行の events からの再構築。pytest 19件
 - [x] **M3 — UI(基本形)**: シェル(ヘッダー + 4 モード切替、`App.tsx`)、構造モード(React Flow 縦タイムライン + インスペクタ[ビート編集 / キャラ状態閲覧] + 相談チャットドロワー枠、`modes/StructureMode.tsx`)、キャラクター庫 CRUD(`modes/CharactersMode.tsx`)、設定画面(`modes/SettingsMode.tsx`)
+- [x] **M4 — 生成**: llama-server マネージャ(`backend/llama_manager.py`、外部起動優先 + 自動 spawn)、LLM クライアント(`backend/llm.py`、httpx 非同期 + json_schema response_format)、生成パイプライン(`backend/generation.py`、コンテキスト構築 + ビート生成 SSE + 検証リトライ + イベント抽出)、UI(生成パネル / イベント抽出ボタン / LLM 起動・停止)。**12B で E2E 検証済み**(2連続ビート生成 → fold 状態確認 → 手動ビートのイベント抽出)
 
-## 未完了(Phase 1)
+## 未完了
 
-- [ ] **M4 — 生成**: llama-server マネージャ(Python、spawn / ポート / ヘルスチェック)、コンテキスト構築(直近ビート3件 + cast プロフィール)、ビート生成(JSON schema 構造化出力 + SSE)、検証 NG 時のリトライ(最大2回)、手動ビートのイベント抽出パス
-- [ ] M3 残: factions の UI(Phase 1 では API のみ)、インスペクタからの手動イベント編集 UI(spec では Phase 2)
+- [ ] **Phase 2 — 編集耐性**: 分岐 DAG + 正史切替、手動イベント編集 UI、記憶 retrieval(news-picker の検索層を移植)をコンテキスト構築に組込み
+- [ ] Phase 1 残タスク(小): factions の UI(API のみ実装済み)、31B での動作確認、生成イベントの重複除去(12B は同一イベントを重複して出すことがある)
 
 ## 注意点
 
@@ -36,3 +37,10 @@
 - electron-vite dev では `app.getAppPath()` が `out/main` を返す。リポジトリルート解決は `.venv` の存在チェックで行っている(`src/main/index.ts` の `repoRoot`)。
 - FastAPI のエンドポイントは全て `async def` でイベントループ直列実行にして SQLite の書き込み競合を回避している(ローカル単一ユーザー前提)。ハンドラ内でブロッキングの長い処理(LLM 呼び出し等)を書くときはこの前提を崩さないよう注意(LLM 呼び出しは httpx の async 版を使う)。
 - Phase 1 のノード削除は末尾のみ許可(単線維持のため)。
+
+### E2E 検証で得た LLM まわりの知見(2026-07-24)
+
+- **llama.cpp のグラマー変換は JSON schema の `minimum`/`maximum` を無視する。** 数値の範囲制約はプロンプト指示 + 生成後の clamp(`generation.normalize_events`)で担保する。
+- **条件付き required は表現できない。** fact_set の「scope=char なら char 必須」はスキーマを scope 別の 2 変種に分割して表現した。schema で強制しないと 12B は char を落とすことがあり、不正イベントが DB に入ると fold が壊れる(検証 `_missing_payload_fields` でも防御)。
+- **グラマー制約下で空白のみを max_tokens まで生成し続けることがある**(Gemma + llama.cpp の既知事象、特に低温度)。finish_reason=length + 空内容として検出し、温度を変えてリトライで回避。
+- SSE 生成器内で例外が漏れると接続が切れて原因が見えなくなる。`generate_beat_stream` は必ず error イベントに変換する構造にしている。

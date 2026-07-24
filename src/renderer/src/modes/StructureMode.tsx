@@ -13,7 +13,7 @@ import {
   type NodeProps
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { api } from '../api'
+import { api, generateBeatStream } from '../api'
 import type { Character, StateSnapshot, StoryNode } from '../types'
 
 const NODE_GAP_Y = 190
@@ -97,6 +97,7 @@ function BeatTab({
 }): React.JSX.Element {
   const [draft, setDraft] = useState<Partial<StoryNode>>({})
   const [error, setError] = useState<string | null>(null)
+  const [extracting, setExtracting] = useState(false)
 
   useEffect(() => {
     setDraft({
@@ -251,12 +252,30 @@ function BeatTab({
         </div>
       )}
       <div className="mt-2">
-        <span className="mb-1 block text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
-          Events({node.events.length})
-        </span>
+        <div className="mb-1 flex items-center justify-between">
+          <span className="text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
+            Events({node.events.length})
+          </span>
+          <button
+            onClick={() => {
+              setExtracting(true)
+              setError(null)
+              api
+                .extractEvents(node.id)
+                .then(() => onSaved())
+                .catch((e) => setError(String(e)))
+                .finally(() => setExtracting(false))
+            }}
+            disabled={extracting}
+            className="rounded-md border px-2 py-0.5 text-[11px]"
+            style={{ borderColor: 'var(--accent-border)', color: 'var(--accent)' }}
+          >
+            {extracting ? '抽出中…' : 'イベント抽出(LLM)'}
+          </button>
+        </div>
         {node.events.length === 0 && (
           <div className="text-[12px]" style={{ color: 'var(--text-faint)' }}>
-            イベントなし(生成またはイベント抽出は M4 で実装)
+            イベントなし。手動で書いたビートは「イベント抽出(LLM)」で状態差分を生成できます
           </div>
         )}
         {node.events.map((e) => (
@@ -421,6 +440,9 @@ function StructureModeInner(): React.JSX.Element {
   const [inspectorTab, setInspectorTab] = useState<'beat' | 'char'>('beat')
   const [validation, setValidation] = useState<string[]>([])
   const [chatOpen, setChatOpen] = useState(false)
+  const [instruction, setInstruction] = useState('')
+  const [generating, setGenerating] = useState(false)
+  const [genStatus, setGenStatus] = useState<string | null>(null)
 
   const reload = useCallback(async (): Promise<void> => {
     const [tl, chars] = await Promise.all([api.timeline(), api.listCharacters()])
@@ -492,6 +514,34 @@ function StructureModeInner(): React.JSX.Element {
     setInspectorTab('beat')
   }
 
+  const handleGenerate = async (): Promise<void> => {
+    setGenerating(true)
+    setGenStatus('LLM 準備中…(初回はモデルロードに時間がかかります)')
+    try {
+      await generateBeatStream(instruction.trim() || null, (e) => {
+        if (e.stage === 'generating') setGenStatus(`ビート生成中…(${e.attempt} 回目)`)
+        else if (e.stage === 'validating') setGenStatus('検証中…')
+        else if (e.stage === 'retry') setGenStatus(`検証 NG、リトライ中…(${(e.errors ?? []).join(' / ')})`)
+        else if (e.error) setGenStatus(`エラー: ${e.error}`)
+        else if (e.done && e.node) {
+          setGenStatus(
+            e.validation && e.validation.length > 0 ? `警告付きで採用: ${e.validation.join(' / ')}` : null
+          )
+          setInstruction('')
+          const newId = e.node.id
+          void reload().then(() => {
+            setSelectedId(newId)
+            setInspectorTab('beat')
+          })
+        }
+      })
+    } catch (err) {
+      setGenStatus(String(err))
+    } finally {
+      setGenerating(false)
+    }
+  }
+
   return (
     <div className="flex h-full flex-col">
       <div className="flex min-h-0 flex-1">
@@ -518,13 +568,42 @@ function StructureModeInner(): React.JSX.Element {
             <Background gap={20} size={1.4} color="#394154" />
             <MiniMap pannable zoomable nodeColor={() => '#2e3140'} />
             <Panel position="top-left">
-              <button
-                onClick={() => void handleAddBeat()}
-                className="rounded-lg px-3 py-1.5 text-[13px] font-medium text-white shadow-lg shadow-black/30"
-                style={{ background: 'var(--accent)' }}
-              >
-                + ビート追加
-              </button>
+              <div className="flex w-72 flex-col gap-2">
+                <button
+                  onClick={() => void handleAddBeat()}
+                  className="self-start rounded-lg px-3 py-1.5 text-[13px] font-medium text-white shadow-lg shadow-black/30"
+                  style={{ background: 'var(--accent)' }}
+                >
+                  + ビート追加
+                </button>
+                <div
+                  className={`rounded-2xl border p-3 shadow-lg shadow-black/30 ${generating ? 'node-generating-border' : ''}`}
+                  style={{ background: 'var(--bg-card)', borderColor: 'var(--border)' }}
+                >
+                  <textarea
+                    rows={2}
+                    value={instruction}
+                    onChange={(e) => setInstruction(e.target.value)}
+                    placeholder="生成の指示(任意)"
+                    disabled={generating}
+                    className="mb-2 w-full rounded-lg border px-2.5 py-1.5 text-[12px] outline-none"
+                    style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
+                  />
+                  <button
+                    onClick={() => void handleGenerate()}
+                    disabled={generating}
+                    className="w-full rounded-lg px-3 py-1.5 text-[13px] font-medium text-white"
+                    style={{ background: generating ? 'var(--accent-hover)' : 'var(--accent)' }}
+                  >
+                    {generating ? '生成中…' : '▶ 次のビートを生成'}
+                  </button>
+                  {genStatus && (
+                    <div className="mt-2 text-[11px] leading-relaxed" style={{ color: 'var(--text-dim)' }}>
+                      {genStatus}
+                    </div>
+                  )}
+                </div>
+              </div>
             </Panel>
             {timeline.length === 0 && (
               <Panel position="top-center">

@@ -102,7 +102,10 @@ def apply_event(state: dict[str, Any], event: dict[str, Any]) -> None:
             else:
                 state["world"]["facts"][key] = payload["value"]
         else:
-            char = _ensure_char(state, payload["char"])
+            char_id = payload.get("char")
+            if not char_id:
+                raise ValueError(f"fact_set(scope=char) に char がありません (event {event_id})")
+            char = _ensure_char(state, char_id)
             char["facts"][payload["key"]] = payload["value"]
     elif etype == "char_introduce":
         char = _ensure_char(state, payload["char"])

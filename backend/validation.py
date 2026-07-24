@@ -41,16 +41,40 @@ def validate_node(
             )
 
     for event in events:
-        if event["type"] not in EVENT_TYPES:
-            errors.append(f"未知のイベント型です: {event['type']}")
+        etype = event["type"]
+        payload = event["payload"]
+        if etype not in EVENT_TYPES:
+            errors.append(f"未知のイベント型です: {etype}")
             continue
+        for missing in _missing_payload_fields(etype, payload):
+            errors.append(f"イベント {etype} に必須フィールドがありません: {missing}")
         for key in ("char", "target"):
-            value = event["payload"].get(key)
-            if key == "target" and event["payload"].get("target_type") == "faction":
+            value = payload.get(key)
+            if key == "target" and payload.get("target_type") == "faction":
                 continue
             if isinstance(value, str) and value and value not in known_char_ids:
                 errors.append(
-                    f"イベント {event['type']} がスキーマ外の char_id を参照しています: {value}"
+                    f"イベント {etype} がスキーマ外の char_id を参照しています: {value}"
                 )
 
     return errors
+
+
+_REQUIRED_FIELDS = {
+    "memory_add": ("char", "content"),
+    "memory_compress": ("char", "replaces", "summary"),
+    "relationship_update": ("char", "target", "delta"),
+    "relationship_set": ("char", "target", "value"),
+    "char_introduce": ("char",),
+    "char_retire": ("char",),
+    "manual_override": ("path",),
+}
+
+
+def _missing_payload_fields(etype: str, payload: dict[str, Any]) -> list[str]:
+    required = list(_REQUIRED_FIELDS.get(etype, ()))
+    if etype == "fact_set":
+        required = ["scope", "key", "value"]
+        if payload.get("scope") == "char":
+            required.append("char")
+    return [f for f in required if payload.get(f) is None]

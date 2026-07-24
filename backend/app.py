@@ -14,9 +14,13 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 import db
+import generation
+import llm
+from llama_manager import LlamaManager
 from store import Store
 
 app = FastAPI(title="story-graph backend")
@@ -29,6 +33,12 @@ app.add_middleware(
 
 _db_path = os.environ.get("STORY_GRAPH_DB")
 store = Store(db.connect(_db_path))
+llama = LlamaManager()
+
+
+@app.on_event("shutdown")
+def _shutdown() -> None:
+    llama.stop()
 
 
 # ---- schemas --------------------------------------------------------
@@ -216,11 +226,68 @@ async def node_state(node_id: str) -> dict[str, Any]:
         return store.get_state(node_id)
     except KeyError:
         raise HTTPException(404, "node not on canon path")
+    except ValueError as e:
+        raise HTTPException(422, f"fold に失敗しました(不正なイベント): {e}")
 
 
 @app.get("/nodes/{node_id}/validate")
 async def node_validate(node_id: str) -> dict[str, Any]:
     return {"errors": store.validate(node_id)}
+
+
+# ---- LLM / 生成 -----------------------------------------------------
+
+class GenerateBeatIn(BaseModel):
+    instruction: str | None = None
+
+
+@app.get("/llm/status")
+async def llm_status() -> dict[str, Any]:
+    settings = store.get_settings()
+    base_url = settings.get("llm_base_url") or llm.DEFAULT_BASE_URL
+    healthy = await llm.health(base_url)
+    return {"base_url": base_url, "healthy": healthy, **llama.status()}
+
+
+@app.post("/llm/start")
+async def llm_start() -> dict[str, Any]:
+    try:
+        base_url = await llama.ensure_running(store.get_settings())
+    except RuntimeError as e:
+        raise HTTPException(500, str(e))
+    return {"base_url": base_url, "healthy": True, **llama.status()}
+
+
+@app.post("/llm/stop")
+async def llm_stop() -> dict[str, Any]:
+    llama.stop()
+    return {"stopped": True}
+
+
+@app.post("/generate/beat")
+async def generate_beat(body: GenerateBeatIn) -> StreamingResponse:
+    try:
+        base_url = await llama.ensure_running(store.get_settings())
+    except RuntimeError as e:
+        async def error_stream():
+            yield generation._sse({"error": str(e)})
+        return StreamingResponse(error_stream(), media_type="text/event-stream")
+    return StreamingResponse(
+        generation.generate_beat_stream(store, base_url, body.instruction),
+        media_type="text/event-stream",
+    )
+
+
+@app.post("/nodes/{node_id}/extract_events")
+async def extract_events(node_id: str) -> dict[str, Any]:
+    if store.get_node(node_id) is None:
+        raise HTTPException(404, "node not found")
+    try:
+        base_url = await llama.ensure_running(store.get_settings())
+        events = await generation.extract_events(store, base_url, node_id)
+    except RuntimeError as e:
+        raise HTTPException(500, str(e))
+    return {"events": events, "validation": store.validate(node_id)}
 
 
 # ---- settings -------------------------------------------------------

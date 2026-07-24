@@ -52,5 +52,55 @@ export const api = {
 
   getSettings: () => request<Record<string, string>>('/settings'),
   putSettings: (values: Record<string, string>) =>
-    request<Record<string, string>>('/settings', { method: 'PUT', body: JSON.stringify({ values }) })
+    request<Record<string, string>>('/settings', { method: 'PUT', body: JSON.stringify({ values }) }),
+
+  llmStatus: () =>
+    request<{ base_url: string; healthy: boolean; spawned: boolean; model_path: string | null }>('/llm/status'),
+  llmStart: () => request<{ base_url: string; healthy: boolean }>('/llm/start', { method: 'POST' }),
+  llmStop: () => request<{ stopped: boolean }>('/llm/stop', { method: 'POST' }),
+  extractEvents: (nodeId: string) =>
+    request<{ events: StoryEvent[]; validation: string[] }>(`/nodes/${nodeId}/extract_events`, {
+      method: 'POST'
+    })
+}
+
+export interface GenerationEvent {
+  stage?: 'generating' | 'validating' | 'retry'
+  attempt?: number
+  errors?: string[]
+  done?: boolean
+  node?: StoryNode
+  validation?: string[]
+  error?: string
+}
+
+export async function generateBeatStream(
+  instruction: string | null,
+  onEvent: (data: GenerationEvent) => void
+): Promise<void> {
+  if (!baseUrl) throw new Error('backend not ready')
+  const res = await fetch(`${baseUrl}/generate/beat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ instruction })
+  })
+  if (!res.ok || !res.body) {
+    throw new Error(`${res.status} /generate/beat: ${await res.text()}`)
+  }
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const parts = buffer.split('\n\n')
+    buffer = parts.pop() ?? ''
+    for (const part of parts) {
+      const line = part.trim()
+      if (line.startsWith('data: ')) {
+        onEvent(JSON.parse(line.slice(6)) as GenerationEvent)
+      }
+    }
+  }
 }
