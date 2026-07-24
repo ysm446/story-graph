@@ -9,6 +9,7 @@ import {
   ReactFlow,
   ReactFlowProvider,
   SelectionMode,
+  useReactFlow,
   type Edge,
   type Node,
   type NodeChange,
@@ -850,6 +851,51 @@ function StructureModeInner(): React.JSX.Element {
   const handleNodesChange = useCallback((changes: NodeChange<BeatFlowNode>[]): void => {
     setFlowNodes((nds) => applyNodeChanges(changes, nds))
   }, [])
+
+  // キーボードショートカット(lm-graph と同じ): A = 全体表示 / F = 選択にフォーカス
+  const reactFlow = useReactFlow()
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      const target = event.target as HTMLElement | null
+      if (
+        target &&
+        (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)
+      ) {
+        return
+      }
+      if (event.key === 'a') {
+        event.preventDefault()
+        void reactFlow.fitView({ duration: 300, padding: 0.1 })
+        return
+      }
+      if (event.key === 'f') {
+        let targets = flowNodes.filter((n) => n.selected)
+        if (targets.length === 0 && selectedId) {
+          targets = flowNodes.filter((n) => n.id === selectedId)
+        }
+        if (targets.length === 0) return
+        event.preventDefault()
+        let minX = Infinity
+        let minY = Infinity
+        let maxX = -Infinity
+        let maxY = -Infinity
+        for (const n of targets) {
+          const width = n.measured?.width ?? 288
+          const height = n.measured?.height ?? 160
+          minX = Math.min(minX, n.position.x)
+          minY = Math.min(minY, n.position.y)
+          maxX = Math.max(maxX, n.position.x + width)
+          maxY = Math.max(maxY, n.position.y + height)
+        }
+        void reactFlow.fitBounds(
+          { x: minX, y: minY, width: maxX - minX, height: maxY - minY },
+          { duration: 300, padding: 0.2 }
+        )
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [reactFlow, flowNodes, selectedId])
 
   // 正史パス(canon エッジを根から辿る)。関係図の時間スクラブに使う
   const canonPath = useMemo(() => {
