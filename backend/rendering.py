@@ -165,7 +165,11 @@ async def render_stream(
             messages = build_render_messages(store, node, preset, pov_char, prev_tail)
             prose_parts: list[str] = []
             async for delta in llm.chat_stream(
-                messages, base_url=base_url, temperature=RENDER_TEMPERATURE, max_tokens=4096
+                messages,
+                base_url=base_url,
+                temperature=RENDER_TEMPERATURE,
+                max_tokens=4096,
+                label=f"清書: {node['title'] or '(無題)'}",
             ):
                 prose_parts.append(delta)
                 yield _sse({"delta": delta})
@@ -226,6 +230,7 @@ async def promote_preview(
         schema=promote_schema(char_ids),
         temperature=0.3,
         max_tokens=1024,
+        label="シーン取り込み提案",
     )
     generation.normalize_events(result.get("events", []))
     return result

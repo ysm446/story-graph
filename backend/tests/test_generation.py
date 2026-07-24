@@ -84,6 +84,16 @@ def test_generate_beat_retries_on_validation_error(store, monkeypatch):
     assert events[-1]["validation"] == []
 
 
+def test_generation_system_prompt_is_editable(store):
+    default_prompt = generation.generation_system_prompt(store)
+    assert default_prompt.startswith("あなたは物語のビート")
+    assert "出力は必ず指定の JSON 形式" in default_prompt  # ルールは常に付く
+    store.set_settings({"generation_system_prompt": "あなたはミステリー専門の構成作家です。"})
+    custom = generation.generation_system_prompt(store)
+    assert custom.startswith("あなたはミステリー専門の構成作家です。")
+    assert "出力は必ず指定の JSON 形式" in custom
+
+
 def test_generate_beat_requires_characters(monkeypatch):
     empty = Store(db.connect(":memory:"))
     events = collect_sse(generation.generate_beat_stream(empty, "http://fake", None))

@@ -52,6 +52,114 @@ interface LlmStatus {
   model_path: string | null
 }
 
+interface PromptLogEntry {
+  id: number
+  time: string
+  label: string
+  messages: Array<{ role: string; content: string }>
+  temperature: number
+  max_tokens: number
+  response: string | null
+  finish_reason: string | null
+  usage: { prompt_tokens?: number; completion_tokens?: number } | null
+  error: string | null
+}
+
+function PromptLogViewer(): React.JSX.Element {
+  const [logs, setLogs] = useState<PromptLogEntry[]>([])
+  const [expandedId, setExpandedId] = useState<number | null>(null)
+
+  const reload = async (): Promise<void> => {
+    try {
+      setLogs(await api.debugPrompts())
+    } catch {
+      setLogs([])
+    }
+  }
+
+  useEffect(() => {
+    void reload()
+  }, [])
+
+  return (
+    <div className="settings-field">
+      <div className="settings-field-header">
+        <span className="settings-field-label">直近の LLM 送信プロンプト({logs.length}件)</span>
+        <button
+          onClick={() => void reload()}
+          className="rounded-md border px-2 py-0.5 text-[11px]"
+          style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+        >
+          ⟳ 更新
+        </button>
+      </div>
+      {logs.length === 0 && (
+        <p className="settings-field-hint">まだ記録がありません。シーン生成や清書を実行すると、ここに実際のプロンプトが表示されます。</p>
+      )}
+      {logs.map((entry) => {
+        const expanded = expandedId === entry.id
+        const time = new Date(entry.time).toLocaleTimeString('ja-JP')
+        return (
+          <div
+            key={entry.id}
+            className="rounded-lg border"
+            style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border)' }}
+          >
+            <button
+              onClick={() => setExpandedId(expanded ? null : entry.id)}
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12px]"
+            >
+              <span style={{ color: 'var(--text)' }}>{entry.label}</span>
+              {entry.error && <span style={{ color: 'var(--danger)' }}>エラー</span>}
+              <span className="ml-auto tabular-nums" style={{ color: 'var(--text-faint)' }}>
+                {time} / T={entry.temperature}
+                {entry.usage?.prompt_tokens !== undefined &&
+                  ` / in ${entry.usage.prompt_tokens} out ${entry.usage.completion_tokens ?? '?'}`}
+              </span>
+              <span style={{ color: 'var(--text-faint)' }}>{expanded ? '▾' : '▸'}</span>
+            </button>
+            {expanded && (
+              <div className="border-t px-3 py-2" style={{ borderColor: 'var(--border)' }}>
+                {entry.messages.map((m, i) => (
+                  <div key={i} className="mb-2">
+                    <div className="mb-0.5 text-[10px] uppercase tracking-[0.14em]" style={{ color: 'var(--accent)' }}>
+                      {m.role}
+                    </div>
+                    <pre
+                      className="inspector-scrollbar max-h-64 overflow-y-auto whitespace-pre-wrap rounded-md border p-2 font-mono text-[11px] leading-relaxed"
+                      style={{ background: 'var(--bg-input)', borderColor: 'var(--border)', color: 'var(--text-dim)' }}
+                    >
+                      {m.content}
+                    </pre>
+                  </div>
+                ))}
+                {entry.response !== null && entry.response !== '' && (
+                  <div className="mb-1">
+                    <div className="mb-0.5 text-[10px] uppercase tracking-[0.14em]" style={{ color: '#3ecf8e' }}>
+                      response{entry.finish_reason ? `(${entry.finish_reason})` : ''}
+                    </div>
+                    <pre
+                      className="inspector-scrollbar max-h-64 overflow-y-auto whitespace-pre-wrap rounded-md border p-2 font-mono text-[11px] leading-relaxed"
+                      style={{ background: 'var(--bg-input)', borderColor: 'var(--border)', color: 'var(--text-dim)' }}
+                    >
+                      {entry.response}
+                    </pre>
+                  </div>
+                )}
+                {entry.error && (
+                  <p className="text-[12px]" style={{ color: 'var(--danger)' }}>
+                    {entry.error}
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 export default function SettingsMode(): React.JSX.Element {
   const [values, setValues] = useState<Record<string, string>>({})
   const [savedMsg, setSavedMsg] = useState(false)
@@ -60,6 +168,7 @@ export default function SettingsMode(): React.JSX.Element {
   const [llmError, setLlmError] = useState<string | null>(null)
   const [models, setModels] = useState<ModelEntry[]>([])
   const [currentModel, setCurrentModel] = useState<string>('')
+  const [genPromptDefault, setGenPromptDefault] = useState('')
   const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const ctxSize = Number(values.llm_ctx_size || DEFAULT_CTX_SIZE)
@@ -80,6 +189,7 @@ export default function SettingsMode(): React.JSX.Element {
       setModels(r.models)
       setCurrentModel(r.current)
     })
+    void api.getGenerationPrompt().then((r) => setGenPromptDefault(r.default))
   }, [])
 
   const showSaved = (): void => {
@@ -282,6 +392,65 @@ export default function SettingsMode(): React.JSX.Element {
                 llama-server の <code>--ctx-size</code>。変更は次回のサーバー起動から反映されます。
               </p>
             </div>
+          </div>
+        </div>
+
+        {/* シーン生成プロンプト */}
+        <div className="flex flex-col gap-2.5">
+          <div className="settings-group-title">シーン生成プロンプト</div>
+          <div className="settings-card">
+            <div className="settings-field">
+              <div className="settings-field-header">
+                <span className="settings-field-label">システムプロンプト(構成作家の指示)</span>
+                <div className="settings-field-controls">
+                  {(values.generation_system_prompt ?? '') !== '' && (
+                    <button
+                      className="settings-reset-btn"
+                      title="デフォルトに戻す"
+                      onClick={() => void save({ generation_system_prompt: '' })}
+                    >
+                      <svg
+                        width="12"
+                        height="12"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <polyline points="3 6 5 6 21 6" />
+                        <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                        <path d="M10 11v6" />
+                        <path d="M14 11v6" />
+                        <path d="M9 6V4h6v2" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
+              </div>
+              <textarea
+                rows={6}
+                value={values.generation_system_prompt ?? ''}
+                placeholder={genPromptDefault}
+                onChange={(e) => setValues((v) => ({ ...v, generation_system_prompt: e.target.value }))}
+                onBlur={() => void save({})}
+                className="w-full rounded-lg border px-3 py-2 text-[13px] leading-relaxed outline-none"
+                style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
+              />
+              <p className="settings-field-hint">
+                空欄ならプレースホルダのデフォルトが使われます。末尾に JSON 形式の指定と
+                イベント発行ルール(char_introduce 必須 / delta 範囲 等)が自動で追加されます。
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* プロンプトログ */}
+        <div className="flex flex-col gap-2.5">
+          <div className="settings-group-title">プロンプトログ</div>
+          <div className="settings-card">
+            <PromptLogViewer />
           </div>
         </div>
 

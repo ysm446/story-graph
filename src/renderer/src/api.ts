@@ -86,6 +86,24 @@ export const api = {
       body: JSON.stringify({ selection })
     }),
 
+  debugPrompts: () =>
+    request<
+      Array<{
+        id: number
+        time: string
+        label: string
+        messages: Array<{ role: string; content: string }>
+        temperature: number
+        max_tokens: number
+        response: string | null
+        finish_reason: string | null
+        usage: { prompt_tokens?: number; completion_tokens?: number } | null
+        error: string | null
+      }>
+    >('/debug/prompts'),
+  getGenerationPrompt: () =>
+    request<{ default: string; rules: string; current: string }>('/generation_prompt'),
+
   systemResources: () =>
     request<{
       cpu_usage: number

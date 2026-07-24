@@ -298,6 +298,20 @@ async def system_resources() -> dict[str, Any]:
     return system_info.resources()
 
 
+@app.get("/debug/prompts")
+async def debug_prompts() -> list[dict[str, Any]]:
+    return list(llm.PROMPT_LOG)
+
+
+@app.get("/generation_prompt")
+async def get_generation_prompt() -> dict[str, str]:
+    return {
+        "default": generation.DEFAULT_GENERATION_PROMPT,
+        "rules": generation.GENERATION_RULES,
+        "current": store.get_settings().get("generation_system_prompt", ""),
+    }
+
+
 @app.get("/models")
 async def list_models() -> dict[str, Any]:
     import system_info

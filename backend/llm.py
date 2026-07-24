@@ -6,8 +6,11 @@ httpx の非同期クライアントで通信する(FastAPI のイベントル�
 
 from __future__ import annotations
 
+import itertools
 import json
 import logging
+from collections import deque
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -15,6 +18,29 @@ import httpx
 log = logging.getLogger(__name__)
 
 DEFAULT_BASE_URL = "http://127.0.0.1:8080"
+
+# プロンプトデバッグログ(直近 N 件。docs/design/system-prompts.md)
+PROMPT_LOG: deque[dict[str, Any]] = deque(maxlen=30)
+_log_ids = itertools.count(1)
+
+
+def _log_prompt(
+    label: str, messages: list[dict[str, Any]], temperature: float, max_tokens: int
+) -> dict[str, Any]:
+    entry: dict[str, Any] = {
+        "id": next(_log_ids),
+        "time": datetime.now(timezone.utc).isoformat(),
+        "label": label,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "response": None,
+        "finish_reason": None,
+        "usage": None,
+        "error": None,
+    }
+    PROMPT_LOG.appendleft(entry)
+    return entry
 
 
 async def health(base_url: str, timeout: float = 2.0) -> bool:
@@ -34,6 +60,7 @@ async def chat(
     temperature: float = 0.8,
     timeout: float = 600.0,
     response_json_schema: dict[str, Any] | None = None,
+    label: str = "chat",
 ) -> dict[str, Any]:
     """非ストリームの chat completion。{"content", "usage"} を返す。
 
@@ -52,30 +79,39 @@ async def chat(
             "json_schema": {"name": "result", "schema": response_json_schema},
         }
 
+    entry = _log_prompt(label, messages, temperature, max_tokens)
     retries = 2
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        for attempt in range(retries + 1):
-            attempt_payload = payload
-            if attempt > 0:
-                attempt_payload = {
-                    **payload,
-                    "temperature": 0.2,
-                    "max_tokens": max(max_tokens, 4096),
-                }
-            res = await client.post(f"{base_url}/v1/chat/completions", json=attempt_payload)
-            if res.status_code == 500 and attempt < retries:
-                body = res.text[:200]
-                if "does not match the expected" in body:
-                    log.info("llama-server parse error, retrying (%d): %s", attempt + 1, body)
-                    continue
-            if res.status_code != 200:
-                raise RuntimeError(f"llama-server {res.status_code}: {res.text[:500]}")
-            data = res.json()
-            break
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            for attempt in range(retries + 1):
+                attempt_payload = payload
+                if attempt > 0:
+                    attempt_payload = {
+                        **payload,
+                        "temperature": 0.2,
+                        "max_tokens": max(max_tokens, 4096),
+                    }
+                res = await client.post(f"{base_url}/v1/chat/completions", json=attempt_payload)
+                if res.status_code == 500 and attempt < retries:
+                    body = res.text[:200]
+                    if "does not match the expected" in body:
+                        log.info("llama-server parse error, retrying (%d): %s", attempt + 1, body)
+                        continue
+                if res.status_code != 200:
+                    raise RuntimeError(f"llama-server {res.status_code}: {res.text[:500]}")
+                data = res.json()
+                break
+    except Exception as e:
+        entry["error"] = str(e)
+        raise
 
     choice = data["choices"][0]
+    content = choice["message"].get("content") or ""
+    entry["response"] = content[:3000]
+    entry["finish_reason"] = choice.get("finish_reason")
+    entry["usage"] = data.get("usage", {})
     return {
-        "content": choice["message"].get("content") or "",
+        "content": content,
         "finish_reason": choice.get("finish_reason"),
         "usage": data.get("usage", {}),
     }
@@ -88,6 +124,7 @@ async def chat_stream(
     max_tokens: int = 4096,
     temperature: float = 0.9,
     timeout: float = 600.0,
+    label: str = "stream",
 ):
     """ストリーミング chat completion。content の delta 文字列を逐次 yield する。"""
     payload: dict[str, Any] = {
@@ -96,31 +133,40 @@ async def chat_stream(
         "temperature": temperature,
         "stream": True,
     }
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        async with client.stream(
-            "POST", f"{base_url}/v1/chat/completions", json=payload
-        ) as res:
-            if res.status_code != 200:
-                body = (await res.aread()).decode("utf-8", errors="replace")
-                raise RuntimeError(f"llama-server {res.status_code}: {body[:500]}")
-            buffer = ""
-            async for chunk in res.aiter_text():
-                buffer += chunk
-                while "\n\n" in buffer:
-                    part, buffer = buffer.split("\n\n", 1)
-                    line = part.strip()
-                    if not line.startswith("data: "):
-                        continue
-                    data = line[len("data: "):]
-                    if data == "[DONE]":
-                        return
-                    obj = json.loads(data)
-                    choices = obj.get("choices") or []
-                    if not choices:
-                        continue
-                    delta = choices[0].get("delta", {}).get("content")
-                    if delta:
-                        yield delta
+    entry = _log_prompt(label, messages, temperature, max_tokens)
+    collected: list[str] = []
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            async with client.stream(
+                "POST", f"{base_url}/v1/chat/completions", json=payload
+            ) as res:
+                if res.status_code != 200:
+                    body = (await res.aread()).decode("utf-8", errors="replace")
+                    raise RuntimeError(f"llama-server {res.status_code}: {body[:500]}")
+                buffer = ""
+                async for chunk in res.aiter_text():
+                    buffer += chunk
+                    while "\n\n" in buffer:
+                        part, buffer = buffer.split("\n\n", 1)
+                        line = part.strip()
+                        if not line.startswith("data: "):
+                            continue
+                        data = line[len("data: "):]
+                        if data == "[DONE]":
+                            return
+                        obj = json.loads(data)
+                        choices = obj.get("choices") or []
+                        if not choices:
+                            continue
+                        delta = choices[0].get("delta", {}).get("content")
+                        if delta:
+                            collected.append(delta)
+                            yield delta
+    except Exception as e:
+        entry["error"] = str(e)
+        raise
+    finally:
+        entry["response"] = "".join(collected)[:3000]
 
 
 async def chat_json(
@@ -130,6 +176,7 @@ async def chat_json(
     schema: dict[str, Any],
     max_tokens: int = 2048,
     temperature: float = 0.8,
+    label: str = "json",
 ) -> dict[str, Any]:
     """構造化出力を要求し、パース済み dict を返す。"""
     result = await chat(
@@ -138,6 +185,7 @@ async def chat_json(
         max_tokens=max_tokens,
         temperature=temperature,
         response_json_schema=schema,
+        label=label,
     )
     if result["finish_reason"] == "length":
         raise RuntimeError(

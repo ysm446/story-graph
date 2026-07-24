@@ -197,9 +197,13 @@ def _format_retrieved_memories(store: Store, path: list[str], instruction: str |
     return "\n".join(lines)
 
 
-SYSTEM_PROMPT = """あなたは物語のビート(出来事の仕様書)を設計する構成作家です。
+# シーン生成のシステムプロンプトは「編集可能な本文 + 自動追加ルール」の 2 層
+# (docs/design/system-prompts.md)。本文は settings の generation_system_prompt。
+DEFAULT_GENERATION_PROMPT = """あなたは物語のビート(出来事の仕様書)を設計する構成作家です。
 ビートは散文ではなく、そのシーンで起きる出来事を数文で記述した仕様書です。
-出力は必ず指定の JSON 形式に従ってください。
+起伏と因果を意識し、キャラクターの感情が動く出来事を設計してください。"""
+
+GENERATION_RULES = """出力は必ず指定の JSON 形式に従ってください。
 
 ルール:
 - beat は出来事の記述に徹する(描写・台詞の肉付けはしない)
@@ -210,6 +214,11 @@ SYSTEM_PROMPT = """あなたは物語のビート(出来事の仕様書)を設�
   - 場所の移動や状況変化は fact_set(key 例: location, goal, items)
 - cast はそのシーンに登場するキャラ ID のみ
 - 退場済みキャラは登場させない"""
+
+
+def generation_system_prompt(store: Store) -> str:
+    base = (store.get_settings().get("generation_system_prompt") or "").strip()
+    return f"{base or DEFAULT_GENERATION_PROMPT}\n\n{GENERATION_RULES}"
 
 
 def _build_messages(store: Store, instruction: str | None, path: list[str],
@@ -236,7 +245,7 @@ def _build_messages(store: Store, instruction: str | None, path: list[str],
         instruction or default_instruction,
     ]
     return [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": generation_system_prompt(store)},
         {"role": "user", "content": "\n".join(user_parts)},
     ]
 
@@ -316,6 +325,7 @@ async def _generate_beat_impl(
                 schema=schema,
                 temperature=GENERATION_TEMPERATURE if attempt == 0 else 0.4,
                 max_tokens=3072,
+                label=f"シーン生成({attempt + 1}回目)" if attempt else "シーン生成",
             )
         except RuntimeError as e:
             # JSON 打ち切り・パース失敗もリトライ対象(温度を下げて引き直す)
@@ -410,6 +420,7 @@ async def extract_events(store: Store, base_url: str, node_id: str) -> list[dict
                 schema=events_schema(char_ids),
                 temperature=EXTRACTION_TEMPERATURE if attempt == 0 else 0.5,
                 max_tokens=2048,
+                label="イベント抽出",
             )
             break
         except RuntimeError as e:
