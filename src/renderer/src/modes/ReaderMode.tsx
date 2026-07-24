@@ -10,6 +10,140 @@ interface PromoteState {
   error: string | null
 }
 
+interface PresetDraft {
+  id?: string
+  name: string
+  person: string
+  tone: string
+}
+
+function PresetEditorModal({
+  draft,
+  onClose,
+  onSaved,
+  onDeleted
+}: {
+  draft: PresetDraft
+  onClose: () => void
+  onSaved: (id: string) => void
+  onDeleted: () => void
+}): React.JSX.Element {
+  const [form, setForm] = useState<PresetDraft>(draft)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const inputStyle = { background: 'var(--bg-input)', borderColor: 'var(--border)' }
+
+  const handleSave = async (): Promise<void> => {
+    if (!form.name.trim()) {
+      setError('名前を入力してください')
+      return
+    }
+    setBusy(true)
+    setError(null)
+    try {
+      const saved = await api.upsertPreset({
+        id: form.id,
+        name: form.name.trim(),
+        person: form.person,
+        tone: form.tone
+      })
+      onSaved(saved.id)
+    } catch (e) {
+      setError(String(e))
+      setBusy(false)
+    }
+  }
+
+  const handleDelete = async (): Promise<void> => {
+    if (!form.id) return
+    if (!window.confirm(`プリセット「${form.name}」を削除しますか?`)) return
+    setBusy(true)
+    try {
+      await api.deletePreset(form.id)
+      onDeleted()
+    } catch (e) {
+      setError(String(e))
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center"
+      style={{ background: 'rgba(0,0,0,0.55)' }}
+      onClick={onClose}
+    >
+      <div
+        className="w-[560px] max-w-[92vw] rounded-2xl border p-5"
+        style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)' }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 className="mb-3 text-[14px] font-semibold" style={{ color: 'var(--text)' }}>
+          {form.id ? 'スタイルプリセットを編集' : 'スタイルプリセットを新規作成'}
+        </h3>
+        <div className="mb-3 flex gap-2">
+          <input
+            value={form.name}
+            onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+            placeholder="プリセット名"
+            className="min-w-0 flex-1 rounded-lg border px-3 py-1.5 text-[13px] outline-none"
+            style={inputStyle}
+          />
+          <select
+            value={form.person}
+            onChange={(e) => setForm((f) => ({ ...f, person: e.target.value }))}
+            className="rounded-lg border px-2 py-1.5 text-[13px]"
+            style={inputStyle}
+          >
+            <option value="third">三人称</option>
+            <option value="first">一人称(POV必須)</option>
+          </select>
+        </div>
+        <label className="mb-1 block text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
+          文体・スタイル指示(レンダリングのシステムプロンプトに入ります)
+        </label>
+        <textarea
+          rows={7}
+          value={form.tone}
+          onChange={(e) => setForm((f) => ({ ...f, tone: e.target.value }))}
+          placeholder={'例: 硬質で乾いた文体。短いセンテンスを重ね、比喩は最小限に。\n会話は少なく、行動と観察で感情を示す。'}
+          className="mb-2 w-full rounded-lg border px-3 py-2 text-[13px] leading-relaxed outline-none"
+          style={inputStyle}
+        />
+        <p className="mb-3 text-[11px] leading-relaxed" style={{ color: 'var(--text-faint)' }}>
+          この指示に加えて、「ビートにある出来事以外を発生させない」「描写・内面・会話の肉付けのみ」
+          「POV キャラが知らない情報を書かない」などの制約が常に自動で付きます。
+        </p>
+        {error && (
+          <p className="mb-2 text-[12px]" style={{ color: 'var(--danger)' }}>
+            {error}
+          </p>
+        )}
+        <div className="flex items-center gap-2">
+          {form.id && (
+            <button onClick={() => void handleDelete()} disabled={busy} className="text-[12px]" style={{ color: 'var(--danger)' }}>
+              削除
+            </button>
+          )}
+          <div className="ml-auto flex gap-2">
+            <button onClick={onClose} className="px-3 py-1.5 text-[13px]" style={{ color: 'var(--text-dim)' }}>
+              キャンセル
+            </button>
+            <button
+              onClick={() => void handleSave()}
+              disabled={busy}
+              className="rounded-lg px-4 py-1.5 text-[13px] font-medium text-white disabled:opacity-50"
+              style={{ background: 'var(--accent)' }}
+            >
+              保存
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function ReaderMode(): React.JSX.Element {
   const [presets, setPresets] = useState<StylePreset[]>([])
   const [presetId, setPresetId] = useState<string | null>(null)
@@ -21,7 +155,18 @@ export default function ReaderMode(): React.JSX.Element {
   const [liveText, setLiveText] = useState('')
   const [status, setStatus] = useState<string | null>(null)
   const [promote, setPromote] = useState<PromoteState | null>(null)
+  const [presetEditor, setPresetEditor] = useState<PresetDraft | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
+
+  const reloadPresets = useCallback(async (selectId?: string): Promise<void> => {
+    const p = await api.listPresets()
+    setPresets(p)
+    if (selectId) {
+      setPresetId(selectId)
+    } else {
+      setPresetId((prev) => (prev && p.some((x) => x.id === prev) ? prev : p[0]?.id ?? null))
+    }
+  }, [])
 
   useEffect(() => {
     void Promise.all([api.listPresets(), api.listCharacters()]).then(([p, chars]) => {
@@ -141,6 +286,28 @@ export default function ReaderMode(): React.JSX.Element {
             </option>
           ))}
         </select>
+        <button
+          onClick={() => {
+            const current = presets.find((p) => p.id === presetId)
+            if (current) {
+              setPresetEditor({ id: current.id, name: current.name, person: current.person, tone: current.tone })
+            }
+          }}
+          disabled={!presetId}
+          className="rounded-lg border px-2 py-1 text-[12px] disabled:opacity-40"
+          style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+          title="選択中のプリセットを編集"
+        >
+          ✎ 編集
+        </button>
+        <button
+          onClick={() => setPresetEditor({ name: '', person: 'third', tone: '' })}
+          className="rounded-lg border px-2 py-1 text-[12px]"
+          style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+          title="スタイルプリセットを新規作成"
+        >
+          + 新規
+        </button>
         <select
           value={povChar ?? ''}
           onChange={(e) => setPovChar(e.target.value || null)}
@@ -251,6 +418,22 @@ export default function ReaderMode(): React.JSX.Element {
           })}
         </div>
       </div>
+
+      {/* プリセットエディタ */}
+      {presetEditor && (
+        <PresetEditorModal
+          draft={presetEditor}
+          onClose={() => setPresetEditor(null)}
+          onSaved={(id) => {
+            setPresetEditor(null)
+            void reloadPresets(id)
+          }}
+          onDeleted={() => {
+            setPresetEditor(null)
+            void reloadPresets()
+          }}
+        />
+      )}
 
       {/* ビート昇格モーダル */}
       {promote && (

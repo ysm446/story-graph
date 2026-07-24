@@ -73,6 +73,9 @@ export const api = {
     request<Record<string, string>>('/settings', { method: 'PUT', body: JSON.stringify({ values }) }),
 
   listPresets: () => request<StylePreset[]>('/presets'),
+  upsertPreset: (data: { id?: string; name: string; person: string; tone: string }) =>
+    request<StylePreset>('/presets', { method: 'POST', body: JSON.stringify(data) }),
+  deletePreset: (presetId: string) => request<unknown>(`/presets/${presetId}`, { method: 'DELETE' }),
   listRenders: (presetId: string, povChar: string | null) =>
     request<SceneEntry[]>(
       `/renders?preset_id=${encodeURIComponent(presetId)}${povChar ? `&pov_char=${encodeURIComponent(povChar)}` : ''}`
