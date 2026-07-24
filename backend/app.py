@@ -266,6 +266,25 @@ async def delete_node(node_id: str) -> dict[str, str]:
     return {"status": "deleted"}
 
 
+class PositionIn(BaseModel):
+    x: float
+    y: float
+
+
+@app.post("/nodes/{node_id}/position")
+async def set_node_position(node_id: str, body: PositionIn) -> dict[str, str]:
+    if store.get_node(node_id) is None:
+        raise HTTPException(404, "node not found")
+    store.set_node_position(node_id, body.x, body.y)
+    return {"status": "ok"}
+
+
+@app.post("/layout/reset")
+async def reset_layout() -> dict[str, str]:
+    store.reset_positions()
+    return {"status": "ok"}
+
+
 @app.put("/nodes/{node_id}/events")
 async def put_events(node_id: str, body: EventsPut) -> dict[str, Any]:
     if store.get_node(node_id) is None:

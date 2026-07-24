@@ -10,6 +10,7 @@ import {
   SelectionMode,
   type Edge,
   type Node,
+  type NodeChange,
   type NodeProps
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
@@ -777,6 +778,7 @@ function StructureModeInner(): React.JSX.Element {
   const [generating, setGenerating] = useState(false)
   const [genStatus, setGenStatus] = useState<string | null>(null)
   const genAbortRef = useRef<AbortController | null>(null)
+  const [dragOverrides, setDragOverrides] = useState<Record<string, { x: number; y: number }>>({})
 
   const reload = useCallback(async (): Promise<void> => {
     const [graph, chars] = await Promise.all([api.getGraph(), api.listCharacters()])
@@ -814,7 +816,30 @@ function StructureModeInner(): React.JSX.Element {
     return map
   }, [graphNodes])
 
-  const positions = useMemo(() => layoutDag(graphNodes, graphEdges), [graphNodes, graphEdges])
+  // 座標: ドラッグ中の値 > 保存済み手動配置(pos_x/y) > 自動レイアウト
+  const positions = useMemo(() => {
+    const computed = layoutDag(graphNodes, graphEdges)
+    const merged: Record<string, { x: number; y: number }> = {}
+    for (const n of graphNodes) {
+      merged[n.id] =
+        dragOverrides[n.id] ??
+        (n.pos_x != null && n.pos_y != null ? { x: n.pos_x, y: n.pos_y } : computed[n.id] ?? { x: 0, y: 0 })
+    }
+    return merged
+  }, [graphNodes, graphEdges, dragOverrides])
+
+  const handleNodesChange = useCallback((changes: NodeChange<BeatFlowNode>[]): void => {
+    setDragOverrides((prev) => {
+      let next = prev
+      for (const change of changes) {
+        if (change.type === 'position' && change.position) {
+          if (next === prev) next = { ...prev }
+          next[change.id] = change.position
+        }
+      }
+      return next
+    })
+  }, [])
 
   // 正史パス(canon エッジを根から辿る)。関係図の時間スクラブに使う
   const canonPath = useMemo(() => {
@@ -922,13 +947,16 @@ function StructureModeInner(): React.JSX.Element {
             nodeTypes={nodeTypes}
             onNodeClick={(_, node) => setSelectedId(node.id)}
             onPaneClick={() => setSelectedId(null)}
+            onNodesChange={handleNodesChange}
+            onNodeDragStop={(_, node) => {
+              void api.setNodePosition(node.id, node.position.x, node.position.y)
+            }}
             minZoom={0.1}
             maxZoom={2}
             fitView
             panOnDrag={[1]}
             selectionOnDrag
             selectionMode={SelectionMode.Partial}
-            nodesDraggable={false}
             nodesConnectable={false}
             proOptions={{ hideAttribution: true }}
           >
@@ -936,14 +964,29 @@ function StructureModeInner(): React.JSX.Element {
             <MiniMap pannable zoomable nodeColor={() => '#2e3140'} />
             <Panel position="top-left">
               <div className="flex w-72 flex-col gap-2">
-                <button
-                  onClick={() => void handleAddBeat()}
-                  className="self-start rounded-lg px-3 py-1.5 text-[13px] font-medium text-white shadow-lg shadow-black/30"
-                  style={{ background: 'var(--accent)' }}
-                  title={selectedId ? '選択ノードの子として追加' : '正史の末尾に追加'}
-                >
-                  + シーン追加
-                </button>
+                <div className="flex gap-1.5">
+                  <button
+                    onClick={() => void handleAddBeat()}
+                    className="rounded-lg px-3 py-1.5 text-[13px] font-medium text-white shadow-lg shadow-black/30"
+                    style={{ background: 'var(--accent)' }}
+                    title={selectedId ? '選択ノードの子として追加' : '正史の末尾に追加'}
+                  >
+                    + シーン追加
+                  </button>
+                  <button
+                    onClick={() => {
+                      void api.resetLayout().then(() => {
+                        setDragOverrides({})
+                        void reload()
+                      })
+                    }}
+                    className="rounded-lg border px-2.5 py-1.5 text-[12px] shadow-lg shadow-black/30"
+                    style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+                    title="手動配置をリセットして自動レイアウトに戻す"
+                  >
+                    ⟲ 自動整列
+                  </button>
+                </div>
                 <div
                   className={`rounded-2xl border p-3 shadow-lg shadow-black/30 ${generating ? 'node-generating-border' : ''}`}
                   style={{ background: 'var(--bg-card)', borderColor: 'var(--border)' }}

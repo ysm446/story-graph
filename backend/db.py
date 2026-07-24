@@ -165,6 +165,15 @@ def connect(db_path: Path | str | None = None) -> sqlite3.Connection:
 
 def init_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(_SCHEMA)
+    # 単純な列追加は冪等 ALTER で行う(lm-chat の作法)
+    for ddl in (
+        "ALTER TABLE nodes ADD COLUMN pos_x REAL",  # キャンバス上の手動配置(NULL = 自動レイアウト)
+        "ALTER TABLE nodes ADD COLUMN pos_y REAL",
+    ):
+        try:
+            conn.execute(ddl)
+        except sqlite3.OperationalError:
+            pass  # 既に存在する
     version = conn.execute("PRAGMA user_version").fetchone()[0]
     if version < SCHEMA_VERSION:
         # 一回限りのデータ変換が必要になったらここに登録する(lm-chat の作法)

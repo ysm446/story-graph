@@ -35,6 +35,8 @@ export interface StoryNode {
   location: string | null
   story_time: string | null
   status: 'canon' | 'draft'
+  pos_x: number | null
+  pos_y: number | null
   created_at: string
   updated_at: string
   events: StoryEvent[]

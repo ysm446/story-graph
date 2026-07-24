@@ -60,6 +60,9 @@ export const api = {
   updateNode: (id: string, data: Partial<Omit<StoryNode, 'id' | 'events'>>) =>
     request<StoryNode>(`/nodes/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteNode: (id: string) => request<unknown>(`/nodes/${id}`, { method: 'DELETE' }),
+  setNodePosition: (id: string, x: number, y: number) =>
+    request<unknown>(`/nodes/${id}/position`, { method: 'POST', body: JSON.stringify({ x, y }) }),
+  resetLayout: () => request<unknown>('/layout/reset', { method: 'POST' }),
   putEvents: (nodeId: string, events: EventInput[]) =>
     request<{ events: StoryEvent[]; validation: string[] }>(`/nodes/${nodeId}/events`, {
       method: 'PUT',

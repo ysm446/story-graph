@@ -343,6 +343,17 @@ class Store:
         self.conn.commit()
         return self.get_node(node_id)
 
+    def set_node_position(self, node_id: str, x: float | None, y: float | None) -> None:
+        """キャンバス上の手動配置を保存する(state には影響しないので dirty 化しない)。"""
+        self.conn.execute(
+            "UPDATE nodes SET pos_x = ?, pos_y = ? WHERE id = ?", (x, y, node_id)
+        )
+        self.conn.commit()
+
+    def reset_positions(self) -> None:
+        self.conn.execute("UPDATE nodes SET pos_x = NULL, pos_y = NULL")
+        self.conn.commit()
+
     def delete_leaf_node(self, node_id: str) -> bool:
         """リーフ(子を持たない)ノードのみ削除可。"""
         has_child = self.conn.execute(
