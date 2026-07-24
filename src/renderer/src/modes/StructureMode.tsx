@@ -14,6 +14,7 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { api, generateBeatStream } from '../api'
+import RelationGraph from '../RelationGraph'
 import type { Character, EventInput, GraphEdge, StateSnapshot, StoryEvent, StoryNode } from '../types'
 
 const LANE_GAP_X = 340
@@ -769,7 +770,7 @@ function StructureModeInner(): React.JSX.Element {
   const [graphEdges, setGraphEdges] = useState<GraphEdge[]>([])
   const [characters, setCharacters] = useState<Character[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [inspectorTab, setInspectorTab] = useState<'beat' | 'char'>('beat')
+  const [inspectorTab, setInspectorTab] = useState<'beat' | 'char' | 'graph'>('beat')
   const [validation, setValidation] = useState<string[]>([])
   const [chatOpen, setChatOpen] = useState(false)
   const [instruction, setInstruction] = useState('')
@@ -813,6 +814,28 @@ function StructureModeInner(): React.JSX.Element {
   }, [graphNodes])
 
   const positions = useMemo(() => layoutDag(graphNodes, graphEdges), [graphNodes, graphEdges])
+
+  // 正史パス(canon エッジを根から辿る)。関係図の時間スクラブに使う
+  const canonPath = useMemo(() => {
+    const canonChildren = new Map(graphEdges.filter((e) => e.is_canon).map((e) => [e.from_node, e.to_node]))
+    const hasParent = new Set(graphEdges.map((e) => e.to_node))
+    const nodeById = new Map(graphNodes.map((n) => [n.id, n]))
+    const root = graphNodes.find((n) => !hasParent.has(n.id))
+    if (!root) return [] as StoryNode[]
+    const path: StoryNode[] = [root]
+    const seen = new Set([root.id])
+    let current = root.id
+    while (canonChildren.has(current)) {
+      const next = canonChildren.get(current)!
+      if (seen.has(next)) break
+      const node = nodeById.get(next)
+      if (!node) break
+      path.push(node)
+      seen.add(next)
+      current = next
+    }
+    return path
+  }, [graphNodes, graphEdges])
 
   const flowNodes: BeatFlowNode[] = useMemo(
     () =>
@@ -976,7 +999,8 @@ function StructureModeInner(): React.JSX.Element {
             {(
               [
                 { id: 'beat', label: 'ビート' },
-                { id: 'char', label: 'キャラ' }
+                { id: 'char', label: 'キャラ' },
+                { id: 'graph', label: '関係図' }
               ] as const
             ).map((t) => (
               <button
@@ -992,12 +1016,16 @@ function StructureModeInner(): React.JSX.Element {
                 {t.label}
               </button>
             ))}
-            <span className="ml-auto self-center text-[11px]" style={{ color: 'var(--text-faint)' }}>
-              関係図は Phase 3
-            </span>
           </div>
           <div className="inspector-scrollbar min-h-0 flex-1 overflow-y-auto p-3">
-            {selectedNode ? (
+            {inspectorTab === 'graph' ? (
+              <RelationGraph
+                characters={characters}
+                canonPath={canonPath}
+                allNodes={graphNodes}
+                onCharactersChanged={() => void reload()}
+              />
+            ) : selectedNode ? (
               inspectorTab === 'beat' ? (
                 <BeatTab
                   node={selectedNode}

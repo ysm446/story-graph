@@ -13,10 +13,12 @@
   },
   "dependencies": {
     "@xyflow/react": "^12.8.5",
+    "d3-force": "^3.0.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },
   "devDependencies": {
+    "@types/d3-force": "^3.0.10",
     "@types/node": "^24.6.1",
     "@types/react": "^19.2.2",
     "@types/react-dom": "^19.2.2",

@@ -1,11 +1,11 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-07-24 22:38
-更新日時: 2026-07-25 00:09
+更新日時: 2026-07-25 00:24
 
 ## 現在の状態
 
-- **Phase 2(編集耐性)完了。** 分岐 DAG・正史切替・手動イベント編集・記憶 retrieval まで実装済み。次は Phase 3(関係グラフ)。
+- **Phase 3(関係グラフ)完了。** 次は Phase 4(鑑賞モード)。
 - **ライブラリ方式を導入**(lm-graph 踏襲): ストーリーごとのフォルダに `story-graph.db` を置く。現在のライブラリと最近使ったライブラリは `%APPDATA%/story-graph/app.json`(Electron userData)に保存。ヘッダー右のドロップダウンで切替(切替時はレンダラをリロード)。デフォルトはリポジトリ内 `data/`。
 - `npm run dev` で Electron が起動し、FastAPI sidecar(ポート 8765〜自動探索)が自動 spawn される。
 - バックエンドは単体でも起動可能: `cd backend && ../.venv/Scripts/python.exe -m uvicorn app:app --port 8765`
@@ -29,9 +29,11 @@
   - 記憶 retrieval: `backend/embed.py`(Ruri v3-310m、非対称プレフィックス、CPU)+ `backend/retrieval.py`(FTS5 trigram + sqlite-vec cosine の RRF × 重要度 × story_order 半減期減衰)。生成コンテキストに cast 各キャラの想起記憶 top5 を注入(spec §6.1-2)。意味検索の実動作を確認済み
   - UI: DAG レイアウト(正史=縦一直線、分岐=右レーンへ)、canon/draft のエッジ・ノード描画分け、「このブランチを正史にする」
 
+- [x] **Phase 3 — 関係グラフ**(2026-07-25): インスペクタ「関係図」タブ(`src/renderer/src/RelationGraph.tsx`)。有向グラフ(色=感情価 / 太さ=|score| / 矢印=方向)、正史パスの時間スクラブ、|score| 閾値フィルタ、ノードクリックでエゴネットワーク、エッジクリックで reasons のイベント履歴(delta/理由/ノード)、初回 d3-force 配置 → `characters.graph_x/y` にピン留め保存(ドラッグで再配置可、新キャラのみ追加配置)
+
 ## 未完了
 
-- [ ] **Phase 3 — 関係グラフ**: d3-force 描画、時間スクラブ、履歴ドリルダウン、ピン留めレイアウト
+- [ ] **Phase 4 — 鑑賞モード**: シーケンシャルレンダリング(スライディングウィンドウ)、スタイルプリセット、pov、部分レンダー、ビート昇格
 - [ ] 残タスク(小): factions の UI(API のみ実装済み)、31B での動作確認、生成イベントの重複除去(12B は同一イベントを重複して出すことがある)、`GET /graph` の全ノード events 込み返却が大規模ストーリーで重くなったら分割
 
 ## 注意点
