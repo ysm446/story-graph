@@ -1,4 +1,4 @@
-import type { Character, EventInput, StateSnapshot, StoryEvent, StoryNode } from './types'
+import type { Character, EventInput, StateSnapshot, StoryEvent, StoryGraph, StoryNode } from './types'
 
 let baseUrl: string | null = null
 
@@ -34,6 +34,9 @@ export const api = {
   deleteCharacter: (id: string) => request<unknown>(`/characters/${id}`, { method: 'DELETE' }),
 
   timeline: () => request<StoryNode[]>('/timeline'),
+  getGraph: () => request<StoryGraph>('/graph'),
+  makeCanon: (nodeId: string) =>
+    request<{ canon_path: string[] }>(`/nodes/${nodeId}/make_canon`, { method: 'POST' }),
   createNode: (data: {
     title?: string
     beat: string
@@ -41,6 +44,7 @@ export const api = {
     cast?: string[]
     location?: string
     story_time?: string
+    parent_id?: string
     events?: EventInput[]
   }) => request<StoryNode>('/nodes', { method: 'POST', body: JSON.stringify(data) }),
   updateNode: (id: string, data: Partial<Omit<StoryNode, 'id' | 'events'>>) =>
@@ -80,13 +84,14 @@ export interface GenerationEvent {
 
 export async function generateBeatStream(
   instruction: string | null,
-  onEvent: (data: GenerationEvent) => void
+  onEvent: (data: GenerationEvent) => void,
+  parentId: string | null = null
 ): Promise<void> {
   if (!baseUrl) throw new Error('backend not ready')
   const res = await fetch(`${baseUrl}/generate/beat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ instruction })
+    body: JSON.stringify({ instruction, parent_id: parentId })
   })
   if (!res.ok || !res.body) {
     throw new Error(`${res.status} /generate/beat: ${await res.text()}`)

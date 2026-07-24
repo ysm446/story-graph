@@ -8,10 +8,13 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import struct
 import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+import db as db_mod
+import embed
 import fold as fold_mod
 from validation import validate_node
 
@@ -37,7 +40,6 @@ class Store:
         self.root = root
 
     def switch_library(self, root: str) -> None:
-        import db as db_mod
         from pathlib import Path
 
         db_path = Path(root) / "story-graph.db"
@@ -150,10 +152,11 @@ class Store:
         return node
 
     def canon_path(self) -> list[str]:
-        """ルートから正史パスのノード ID 列を返す。Phase 1 では全体で単線。"""
+        """ルートから正史パスのノード ID 列を返す(canon エッジを辿る)。"""
         rows = self.conn.execute("SELECT from_node, to_node FROM edges WHERE is_canon = 1").fetchall()
         children = {r["from_node"]: r["to_node"] for r in rows}
-        has_parent = {r["to_node"] for r in rows}
+        # ルート判定は全エッジで行う(非 canon の子をルート扱いしないため)
+        has_parent = {r["to_node"] for r in self.conn.execute("SELECT to_node FROM edges")}
         all_ids = {r["id"] for r in self.conn.execute("SELECT id FROM nodes")}
         roots = [nid for nid in all_ids if nid not in has_parent]
         if not roots:
@@ -181,10 +184,53 @@ class Store:
     def timeline(self) -> list[dict[str, Any]]:
         return [self.get_node(nid) for nid in self.canon_path()]  # type: ignore[misc]
 
+    def parent_of(self, node_id: str) -> str | None:
+        row = self.conn.execute(
+            "SELECT from_node FROM edges WHERE to_node = ?", (node_id,)
+        ).fetchone()
+        return row["from_node"] if row else None
+
+    def path_to(self, node_id: str) -> list[str]:
+        """ルートから node_id までのパス(親エッジを遡る。分岐ノードでも有効)。"""
+        path = [node_id]
+        seen = {node_id}
+        current = node_id
+        while True:
+            parent = self.parent_of(current)
+            if parent is None or parent in seen:
+                break
+            path.append(parent)
+            seen.add(parent)
+            current = parent
+        return list(reversed(path))
+
+    def graph(self) -> dict[str, Any]:
+        node_ids = [r["id"] for r in self.conn.execute("SELECT id FROM nodes ORDER BY created_at")]
+        edges = [dict(r) for r in self.conn.execute("SELECT * FROM edges")]
+        return {"nodes": [self.get_node(nid) for nid in node_ids], "edges": edges}
+
     def append_node(self, data: dict[str, Any], events: list[dict[str, Any]] | None = None,
-                    source: str = "user") -> dict[str, Any]:
-        """正史タイムラインの末尾にノードを追加する。"""
-        path = self.canon_path()
+                    source: str = "user", parent_id: str | None = None) -> dict[str, Any]:
+        """ノードを追加する。
+
+        - parent_id なし: 正史タイムラインの末尾に canon として追加
+        - parent_id あり: その子として追加。親に canon の子が居なければ延長(canon)、
+          居れば分岐(draft)
+        """
+        canon = self.canon_path()
+        if parent_id is None:
+            parent_id = canon[-1] if canon else None
+            as_canon = True
+            on_canon_path = True
+        else:
+            if self.get_node(parent_id) is None:
+                raise KeyError(f"parent not found: {parent_id}")
+            has_canon_child = self.conn.execute(
+                "SELECT 1 FROM edges WHERE from_node = ? AND is_canon = 1", (parent_id,)
+            ).fetchone()
+            as_canon = has_canon_child is None
+            # status は「正史パス上か」の導出値。draft 枝の延長は canon エッジでも draft
+            on_canon_path = as_canon and parent_id in canon
         node_id = data.get("id") or _new_id()
         now = _now()
         self.conn.execute(
@@ -199,20 +245,45 @@ class Store:
                 json.dumps(data.get("cast", []), ensure_ascii=False),
                 data.get("location"),
                 data.get("story_time"),
-                data.get("status", "canon"),
+                "canon" if on_canon_path else "draft",
                 now,
                 now,
             ),
         )
-        if path:
+        if parent_id:
             self.conn.execute(
-                "INSERT INTO edges(id, from_node, to_node, is_canon) VALUES(?,?,?,1)",
-                (_new_id(), path[-1], node_id),
+                "INSERT INTO edges(id, from_node, to_node, is_canon) VALUES(?,?,?,?)",
+                (_new_id(), parent_id, node_id, 1 if as_canon else 0),
             )
         if events:
             self.replace_events(node_id, events, source=source, commit=False)
         self.conn.commit()
         return self.get_node(node_id)  # type: ignore[return-value]
+
+    def make_canon(self, node_id: str) -> None:
+        """node_id までのパスを正史にする(各分岐点で canon エッジを付け替え)。
+
+        status は「正史パス上なら canon、外れたら draft」の導出値として全ノードを更新する。
+        正史が変わると story_order が変わるため memories も再同期する。
+        """
+        if self.get_node(node_id) is None:
+            raise KeyError(f"node not found: {node_id}")
+        path = self.path_to(node_id)
+        for parent, child in zip(path, path[1:]):
+            self.conn.execute(
+                "UPDATE edges SET is_canon = CASE WHEN to_node = ? THEN 1 ELSE 0 END"
+                " WHERE from_node = ?",
+                (child, parent),
+            )
+        # 切替先の canon 末尾から先に既存の canon 継続があれば辿って有効なままにする
+        canon = set(self.canon_path())
+        for row in self.conn.execute("SELECT id FROM nodes"):
+            self.conn.execute(
+                "UPDATE nodes SET status = ? WHERE id = ?",
+                ("canon" if row["id"] in canon else "draft", row["id"]),
+            )
+        self._resync_memory_orders(commit=False)
+        self.conn.commit()
 
     def update_node(self, node_id: str, data: dict[str, Any]) -> dict[str, Any] | None:
         row = self.conn.execute("SELECT * FROM nodes WHERE id = ?", (node_id,)).fetchone()
@@ -239,17 +310,27 @@ class Store:
         self.conn.commit()
         return self.get_node(node_id)
 
-    def delete_tail_node(self, node_id: str) -> bool:
-        """Phase 1: 末尾ノードのみ削除可(単線を保つため)。"""
-        path = self.canon_path()
-        if not path or path[-1] != node_id:
+    def delete_leaf_node(self, node_id: str) -> bool:
+        """リーフ(子を持たない)ノードのみ削除可。"""
+        has_child = self.conn.execute(
+            "SELECT 1 FROM edges WHERE from_node = ?", (node_id,)
+        ).fetchone()
+        if has_child:
             return False
-        self.conn.execute("DELETE FROM edges WHERE to_node = ?", (node_id,))
-        self.conn.execute("DELETE FROM events WHERE node_id = ?", (node_id,))
+        old_memory_ids = [
+            r["id"]
+            for r in self.conn.execute(
+                "SELECT id FROM memories WHERE event_id IN (SELECT id FROM events WHERE node_id = ?)",
+                (node_id,),
+            )
+        ]
+        self._remove_memory_index(old_memory_ids)
         self.conn.execute(
             "DELETE FROM memories WHERE event_id IN (SELECT id FROM events WHERE node_id = ?)",
             (node_id,),
         )
+        self.conn.execute("DELETE FROM edges WHERE to_node = ?", (node_id,))
+        self.conn.execute("DELETE FROM events WHERE node_id = ?", (node_id,))
         self.conn.execute("DELETE FROM state_cache WHERE node_id = ?", (node_id,))
         self.conn.execute("DELETE FROM nodes WHERE id = ?", (node_id,))
         self.conn.commit()
@@ -271,6 +352,14 @@ class Store:
     def replace_events(self, node_id: str, events: list[dict[str, Any]],
                        source: str = "user", commit: bool = True) -> list[dict[str, Any]]:
         """ノードのイベント列を置換する。events の要素は {type, payload, source?}。"""
+        old_memory_ids = [
+            r["id"]
+            for r in self.conn.execute(
+                "SELECT id FROM memories WHERE event_id IN (SELECT id FROM events WHERE node_id = ?)",
+                (node_id,),
+            )
+        ]
+        self._remove_memory_index(old_memory_ids)
         self.conn.execute(
             "DELETE FROM memories WHERE event_id IN (SELECT id FROM events WHERE node_id = ?)",
             (node_id,),
@@ -298,7 +387,10 @@ class Store:
         return self.list_events(node_id)
 
     def _sync_memories(self, node_id: str, commit: bool = True) -> None:
-        """memory_add イベントから memories 行を再構築する(導出物)。"""
+        """memory_add イベントから memories 行を再構築する(導出物)。
+
+        story_order は正史パス上の位置。分岐ノードは -1(時間減衰では「現在」扱い)。
+        """
         path = self.canon_path()
         story_order = path.index(node_id) if node_id in path else -1
         for event in self.list_events(node_id):
@@ -317,6 +409,44 @@ class Store:
                     p.get("importance"),
                     story_order,
                 ),
+            )
+            self._index_memory(event["id"], p["content"])
+        if commit:
+            self.conn.commit()
+
+    def _index_memory(self, memory_id: str, content: str) -> None:
+        """FTS / ベクトル索引を更新する。埋め込みはモデルがロード済みの時のみ
+        (未ロード分は検索時の ensure_vectors が自己修復する)。"""
+        self.conn.execute("DELETE FROM memories_fts WHERE id = ?", (memory_id,))
+        self.conn.execute(
+            "INSERT INTO memories_fts(id, content) VALUES(?,?)", (memory_id, content)
+        )
+        if db_mod.has_vec(self.conn) and embed.is_ready():
+            vector = embed.embed_document(content)
+            self.conn.execute(
+                "INSERT OR REPLACE INTO memories_vec(memory_id, embedding) VALUES(?,?)",
+                (memory_id, struct.pack(f"{len(vector)}f", *vector)),
+            )
+
+    def _remove_memory_index(self, memory_ids: list[str]) -> None:
+        for memory_id in memory_ids:
+            self.conn.execute("DELETE FROM memories_fts WHERE id = ?", (memory_id,))
+            if db_mod.has_vec(self.conn):
+                self.conn.execute(
+                    "DELETE FROM memories_vec WHERE memory_id = ?", (memory_id,)
+                )
+
+    def _resync_memory_orders(self, commit: bool = True) -> None:
+        """正史切替後に全 memories の story_order を再計算する。"""
+        path = self.canon_path()
+        order = {nid: i for i, nid in enumerate(path)}
+        rows = self.conn.execute(
+            "SELECT m.id, e.node_id FROM memories m JOIN events e ON m.event_id = e.id"
+        ).fetchall()
+        for r in rows:
+            self.conn.execute(
+                "UPDATE memories SET story_order = ? WHERE id = ?",
+                (order.get(r["node_id"], -1), r["id"]),
             )
         if commit:
             self.conn.commit()
@@ -343,10 +473,13 @@ class Store:
             self.conn.commit()
 
     def get_state(self, node_id: str) -> dict[str, Any]:
-        """正史パス順に fold し、途中経過は state_cache に保存する(遅延再計算)。"""
-        path = self.canon_path()
-        if node_id not in path:
-            raise KeyError(f"node not on canon path: {node_id}")
+        """ルートからのパス順に fold し、途中経過は state_cache に保存する(遅延再計算)。
+
+        分岐ノードは分岐点までの state を共有し、以降は独立に fold される(spec §5)。
+        """
+        if self.get_node(node_id) is None:
+            raise KeyError(f"node not found: {node_id}")
+        path = self.path_to(node_id)
         state = fold_mod.empty_state()
         parent_hash = fold_mod.state_hash(state)
         for nid in path:
@@ -370,14 +503,11 @@ class Store:
         return state
 
     def state_before(self, node_id: str) -> dict[str, Any]:
-        """ノード適用前(正史上の親まで)の状態。検証・生成コンテキストに使う。"""
-        path = self.canon_path()
-        if node_id not in path:
-            raise KeyError(f"node not on canon path: {node_id}")
-        idx = path.index(node_id)
-        if idx == 0:
+        """ノード適用前(パス上の親まで)の状態。検証・生成コンテキストに使う。"""
+        parent = self.parent_of(node_id)
+        if parent is None:
             return fold_mod.empty_state()
-        return self.get_state(path[idx - 1])
+        return self.get_state(parent)
 
     def validate(self, node_id: str) -> list[str]:
         node = self.get_node(node_id)

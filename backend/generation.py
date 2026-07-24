@@ -15,6 +15,7 @@ import json
 from typing import Any, AsyncIterator
 
 import llm
+import retrieval
 from store import Store
 from validation import validate_node
 
@@ -158,8 +159,7 @@ def _format_state(store: Store, node_id: str | None) -> str:
     return "\n".join(lines) or "(まだ状態がない)"
 
 
-def _format_recent_beats(store: Store) -> str:
-    path = store.canon_path()
+def _format_recent_beats(store: Store, path: list[str]) -> str:
     recent = path[-RECENT_BEATS:]
     lines = []
     for nid in recent:
@@ -169,6 +169,32 @@ def _format_recent_beats(store: Store) -> str:
         cast = ", ".join(node["cast"])
         lines.append(f"[{node['title'] or '無題'}] ({cast} @ {node['location'] or '?'})\n{node['beat']}")
     return "\n\n".join(lines) or "(まだビートがない)"
+
+
+def _format_retrieved_memories(store: Store, path: list[str], instruction: str | None) -> str:
+    """直近ビートの cast 各キャラについて、fold 済み state の記憶参照から
+    ハイブリッド検索で上位 5 件を想起する(spec §6.1-2)。"""
+    if not path:
+        return ""
+    tail = store.get_node(path[-1])
+    if tail is None or not tail["cast"]:
+        return ""
+    state = store.get_state(path[-1])
+    query = " ".join(filter(None, [tail["beat"], instruction])).strip()
+    if not query:
+        return ""
+    current_order = len(path) - 1
+    lines: list[str] = []
+    for char_id in tail["cast"]:
+        char_state = state["chars"].get(char_id)
+        if not char_state or not char_state["memories"]:
+            continue
+        hits = retrieval.search_memories(
+            store.conn, query, set(char_state["memories"]), current_order, top_k=5
+        )
+        for hit in hits:
+            lines.append(f"- {char_id}: {hit['content']}")
+    return "\n".join(lines)
 
 
 SYSTEM_PROMPT = """あなたは物語のビート(出来事の仕様書)を設計する構成作家です。
@@ -186,9 +212,15 @@ SYSTEM_PROMPT = """あなたは物語のビート(出来事の仕様書)を設�
 - 退場済みキャラは登場させない"""
 
 
-def _build_messages(store: Store, instruction: str | None) -> list[dict[str, str]]:
-    path = store.canon_path()
+def _build_messages(store: Store, instruction: str | None, path: list[str],
+                    branching: bool = False) -> list[dict[str, str]]:
     tail = path[-1] if path else None
+    default_instruction = (
+        "直前のビートの時点から分岐する、もう一つの展開(what-if)を 1 つ設計してください。"
+        if branching
+        else "物語の流れに沿って、次のビートを 1 つ設計してください。"
+    )
+    memories_text = _format_retrieved_memories(store, path, instruction)
     user_parts = [
         "## キャラクター一覧",
         _format_characters(store),
@@ -196,11 +228,12 @@ def _build_messages(store: Store, instruction: str | None) -> list[dict[str, str
         "## 現在の状態(直近ビート適用後)",
         _format_state(store, tail),
         "",
+        *(["## 各キャラが想起している記憶", memories_text, ""] if memories_text else []),
         "## 直近のビート",
-        _format_recent_beats(store),
+        _format_recent_beats(store, path),
         "",
         "## 指示",
-        instruction or "物語の流れに沿って、次のビートを 1 つ設計してください。",
+        instruction or default_instruction,
     ]
     return [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -237,14 +270,17 @@ async def generate_beat_stream(
     store: Store,
     base_url: str,
     instruction: str | None,
+    parent_id: str | None = None,
 ) -> AsyncIterator[str]:
     """SSE イベント列を返す。最後に done(node + validation) または error。
+
+    parent_id 指定時はそのノードからのブランチ生成(コンテキストは分岐元パス)。
 
     生成器の途中で例外が漏れると StreamingResponse が接続を切ってしまうため、
     必ず error イベントに変換する。
     """
     try:
-        async for chunk in _generate_beat_impl(store, base_url, instruction):
+        async for chunk in _generate_beat_impl(store, base_url, instruction, parent_id):
             yield chunk
     except Exception as e:  # noqa: BLE001
         yield _sse({"error": f"{type(e).__name__}: {e}"})
@@ -254,15 +290,19 @@ async def _generate_beat_impl(
     store: Store,
     base_url: str,
     instruction: str | None,
+    parent_id: str | None = None,
 ) -> AsyncIterator[str]:
     char_ids = sorted(store.known_char_ids())
     if not char_ids:
         yield _sse({"error": "キャラクターが未登録です。先にキャラクター庫で登録してください。"})
         return
+    if parent_id is not None and store.get_node(parent_id) is None:
+        yield _sse({"error": f"分岐元ノードが見つかりません: {parent_id}"})
+        return
 
+    path = store.path_to(parent_id) if parent_id else store.canon_path()
     schema = beat_schema(char_ids)
-    messages = _build_messages(store, instruction)
-    path = store.canon_path()
+    messages = _build_messages(store, instruction, path, branching=parent_id is not None)
     state_before = store.get_state(path[-1]) if path else None
 
     result: dict[str, Any] | None = None
@@ -320,6 +360,7 @@ async def _generate_beat_impl(
         },
         [{"type": e["type"], "payload": e["payload"], "source": "llm"} for e in result.get("events", [])],
         source="llm",
+        parent_id=parent_id,
     )
     yield _sse({"done": True, "node": node, "validation": errors})
 
@@ -336,9 +377,7 @@ async def extract_events(store: Store, base_url: str, node_id: str) -> list[dict
     if node is None:
         raise KeyError(f"node not found: {node_id}")
     char_ids = sorted(store.known_char_ids())
-    path = store.canon_path()
-    idx = path.index(node_id) if node_id in path else -1
-    state_text = _format_state(store, path[idx - 1] if idx > 0 else None)
+    state_text = _format_state(store, store.parent_of(node_id))
 
     messages = [
         {"role": "system", "content": EXTRACTION_PROMPT},

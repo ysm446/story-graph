@@ -113,7 +113,38 @@ CREATE TABLE IF NOT EXISTS chats(
 );
 
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT);
+
+-- 記憶の全文索引(trigram: 日本語の分かち書き不要。lm-chat の方式)
+CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+  id UNINDEXED, content, tokenize='trigram'
+);
 """
+
+_VEC_SCHEMA = """
+CREATE VIRTUAL TABLE IF NOT EXISTS memories_vec USING vec0(
+  memory_id TEXT PRIMARY KEY, embedding FLOAT[768]
+);
+"""
+
+
+def _try_load_vec(conn: sqlite3.Connection) -> bool:
+    try:
+        import sqlite_vec
+
+        conn.enable_load_extension(True)
+        sqlite_vec.load(conn)
+        conn.enable_load_extension(False)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def has_vec(conn: sqlite3.Connection) -> bool:
+    try:
+        conn.execute("SELECT 1 FROM memories_vec LIMIT 1")
+        return True
+    except sqlite3.OperationalError:
+        return False
 
 
 def connect(db_path: Path | str | None = None) -> sqlite3.Connection:
@@ -122,9 +153,13 @@ def connect(db_path: Path | str | None = None) -> sqlite3.Connection:
         path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(path), check_same_thread=False)
     conn.row_factory = sqlite3.Row
+    vec_loaded = _try_load_vec(conn)
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA foreign_keys = ON")
     init_schema(conn)
+    if vec_loaded:
+        conn.executescript(_VEC_SCHEMA)
+        conn.commit()
     return conn
 
 

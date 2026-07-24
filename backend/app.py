@@ -44,6 +44,16 @@ else:
 llama = LlamaManager()
 
 
+@app.on_event("startup")
+async def _startup() -> None:
+    # 埋め込みモデルは初回ロードが重いのでバックグラウンドで温める
+    import asyncio
+
+    import embed
+
+    asyncio.get_event_loop().run_in_executor(None, embed.warmup)
+
+
 @app.on_event("shutdown")
 def _shutdown() -> None:
     llama.stop()
@@ -93,7 +103,7 @@ class NodeIn(BaseModel):
     cast: list[str] = Field(default_factory=list)
     location: str | None = None
     story_time: str | None = None
-    status: str = "canon"
+    parent_id: str | None = None
     events: list[EventIn] = Field(default_factory=list)
 
 
@@ -205,13 +215,30 @@ async def timeline() -> list[dict[str, Any]]:
     return store.timeline()
 
 
+@app.get("/graph")
+async def graph() -> dict[str, Any]:
+    return store.graph()
+
+
 @app.post("/nodes")
 async def create_node(body: NodeIn) -> dict[str, Any]:
-    data = body.model_dump(exclude={"events"})
+    data = body.model_dump(exclude={"events", "parent_id"})
     events = [e.model_dump() for e in body.events]
-    node = store.append_node(data, events)
+    try:
+        node = store.append_node(data, events, parent_id=body.parent_id)
+    except KeyError as e:
+        raise HTTPException(404, str(e))
     node["validation"] = store.validate(node["id"])
     return node
+
+
+@app.post("/nodes/{node_id}/make_canon")
+async def make_canon(node_id: str) -> dict[str, Any]:
+    try:
+        store.make_canon(node_id)
+    except KeyError:
+        raise HTTPException(404, "node not found")
+    return {"canon_path": store.canon_path()}
 
 
 @app.get("/nodes/{node_id}")
@@ -233,8 +260,8 @@ async def update_node(node_id: str, body: NodePatch) -> dict[str, Any]:
 
 @app.delete("/nodes/{node_id}")
 async def delete_node(node_id: str) -> dict[str, str]:
-    if not store.delete_tail_node(node_id):
-        raise HTTPException(409, "Phase 1 では末尾ノードのみ削除できます")
+    if not store.delete_leaf_node(node_id):
+        raise HTTPException(409, "子を持つノードは削除できません(先に子を削除してください)")
     return {"status": "deleted"}
 
 
@@ -265,6 +292,7 @@ async def node_validate(node_id: str) -> dict[str, Any]:
 
 class GenerateBeatIn(BaseModel):
     instruction: str | None = None
+    parent_id: str | None = None  # 指定時はそのノードからのブランチ生成(draft)
 
 
 @app.get("/llm/status")
@@ -299,7 +327,7 @@ async def generate_beat(body: GenerateBeatIn) -> StreamingResponse:
             yield generation._sse({"error": str(e)})
         return StreamingResponse(error_stream(), media_type="text/event-stream")
     return StreamingResponse(
-        generation.generate_beat_stream(store, base_url, body.instruction),
+        generation.generate_beat_stream(store, base_url, body.instruction, parent_id=body.parent_id),
         media_type="text/event-stream",
     )
 

@@ -59,3 +59,15 @@ export interface StateSnapshot {
   world: { time: unknown; facts: Record<string, unknown> }
   chars: Record<string, CharState>
 }
+
+export interface GraphEdge {
+  id: string
+  from_node: string
+  to_node: string
+  is_canon: number
+}
+
+export interface StoryGraph {
+  nodes: StoryNode[]
+  edges: GraphEdge[]
+}

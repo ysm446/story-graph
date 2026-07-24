@@ -14,9 +14,45 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { api, generateBeatStream } from '../api'
-import type { Character, StateSnapshot, StoryNode } from '../types'
+import type { Character, EventInput, GraphEdge, StateSnapshot, StoryEvent, StoryNode } from '../types'
 
-const NODE_GAP_Y = 190
+const LANE_GAP_X = 340
+const NODE_GAP_Y = 200
+
+// ---- DAG レイアウト(正史は縦一直線、分岐は右のレーンへ) --------------
+
+function layoutDag(
+  nodes: StoryNode[],
+  edges: GraphEdge[]
+): Record<string, { x: number; y: number }> {
+  const childrenMap: Record<string, Array<{ id: string; canon: boolean }>> = {}
+  const hasParent = new Set<string>()
+  for (const e of edges) {
+    ;(childrenMap[e.from_node] ??= []).push({ id: e.to_node, canon: !!e.is_canon })
+    hasParent.add(e.to_node)
+  }
+  const order = new Map(nodes.map((n, i) => [n.id, i]))
+  const positions: Record<string, { x: number; y: number }> = {}
+  let laneCounter = 0
+
+  const assign = (id: string, lane: number, depth: number): void => {
+    positions[id] = { x: lane * LANE_GAP_X, y: depth * NODE_GAP_Y }
+    const kids = (childrenMap[id] ?? [])
+      .slice()
+      .sort((a, b) => Number(b.canon) - Number(a.canon) || (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0))
+    kids.forEach((kid, i) => {
+      assign(kid.id, i === 0 ? lane : ++laneCounter, depth + 1)
+    })
+  }
+
+  const roots = nodes.filter((n) => !hasParent.has(n.id))
+  roots.forEach((root, i) => {
+    assign(root.id, i === 0 ? 0 : ++laneCounter, 0)
+  })
+  return positions
+}
+
+// ---- カスタムノード --------------------------------------------------
 
 type BeatNodeData = {
   storyNode: StoryNode
@@ -35,12 +71,23 @@ function BeatNodeCard({ data, selected }: NodeProps<BeatFlowNode>): React.JSX.El
         background: 'var(--bg-card)',
         borderColor: selected ? 'var(--accent-border)' : 'var(--border-strong)',
         borderStyle: isDraft ? 'dashed' : 'solid',
+        opacity: isDraft ? 0.85 : 1,
         ['--tw-ring-color' as string]: 'var(--accent-border)'
       }}
     >
       <Handle type="target" position={Position.Top} className="!bg-[#6a728f]" />
-      <div className="mb-1 text-[13px] font-semibold" style={{ color: 'var(--text)' }}>
-        {storyNode.title || '(無題のビート)'}
+      <div className="mb-1 flex items-center gap-2">
+        <span className="min-w-0 flex-1 truncate text-[13px] font-semibold" style={{ color: 'var(--text)' }}>
+          {storyNode.title || '(無題のビート)'}
+        </span>
+        {isDraft && (
+          <span
+            className="shrink-0 rounded px-1.5 py-px text-[10px] uppercase"
+            style={{ background: 'var(--bg-elevated)', color: 'var(--text-faint)' }}
+          >
+            draft
+          </span>
+        )}
       </div>
       <div className="mb-2 line-clamp-3 text-[12px] leading-relaxed" style={{ color: 'var(--text-dim)' }}>
         {storyNode.beat}
@@ -59,10 +106,7 @@ function BeatNodeCard({ data, selected }: NodeProps<BeatFlowNode>): React.JSX.El
               className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px]"
               style={{ background: 'var(--bg-elevated)', color: 'var(--text-dim)' }}
             >
-              <span
-                className="inline-block h-2 w-2 rounded-full"
-                style={{ background: c?.color ?? '#8a8fa8' }}
-              />
+              <span className="inline-block h-2 w-2 rounded-full" style={{ background: c?.color ?? '#8a8fa8' }} />
               {c?.name ?? charId}
             </span>
           )
@@ -80,7 +124,199 @@ function BeatNodeCard({ data, selected }: NodeProps<BeatFlowNode>): React.JSX.El
 
 const nodeTypes = { beatNode: BeatNodeCard }
 
-// ---- インスペクタ ----------------------------------------------------
+// ---- イベントエディタ(手動イベントの追加・削除) ----------------------
+
+const EVENT_TEMPLATES: Record<string, string> = {
+  memory_add: '{"char": "", "content": "", "emotion": 0, "importance": 0.5, "refs": []}',
+  memory_compress: '{"char": "", "replaces": [], "summary": "", "importance": 0.5}',
+  relationship_update: '{"char": "", "target_type": "char", "target": "", "delta": 0.1, "reason": ""}',
+  relationship_set: '{"char": "", "target_type": "char", "target": "", "value": 0, "reason": ""}',
+  fact_set: '{"scope": "char", "char": "", "key": "location", "value": ""}',
+  char_introduce: '{"char": ""}',
+  char_retire: '{"char": "", "reason": "death"}',
+  manual_override: '{"path": "", "value": "", "note": ""}'
+}
+
+function EventsEditor({
+  node,
+  onChanged
+}: {
+  node: StoryNode
+  onChanged: () => void
+}): React.JSX.Element {
+  const [adding, setAdding] = useState(false)
+  const [newType, setNewType] = useState('fact_set')
+  const [payloadText, setPayloadText] = useState(EVENT_TEMPLATES['fact_set'])
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [validation, setValidation] = useState<string[]>([])
+
+  const currentEvents = (): EventInput[] =>
+    node.events.map((e) => ({ type: e.type, payload: e.payload, source: e.source }))
+
+  const save = async (events: EventInput[]): Promise<void> => {
+    setBusy(true)
+    setError(null)
+    try {
+      const result = await api.putEvents(node.id, events)
+      setValidation(result.validation)
+      onChanged()
+    } catch (e) {
+      setError(String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleDelete = (index: number): void => {
+    const events = currentEvents()
+    events.splice(index, 1)
+    void save(events)
+  }
+
+  const handleAdd = (): void => {
+    let payload: Record<string, unknown>
+    try {
+      payload = JSON.parse(payloadText) as Record<string, unknown>
+    } catch {
+      setError('payload が JSON として不正です')
+      return
+    }
+    void save([...currentEvents(), { type: newType, payload, source: 'user' }]).then(() => {
+      setAdding(false)
+      setPayloadText(EVENT_TEMPLATES[newType])
+    })
+  }
+
+  return (
+    <div className="mt-2">
+      <div className="mb-1 flex items-center justify-between">
+        <span className="text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
+          Events({node.events.length})
+        </span>
+        <div className="flex gap-1.5">
+          <button
+            onClick={() => setAdding((v) => !v)}
+            className="rounded-md border px-2 py-0.5 text-[11px]"
+            style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+          >
+            {adding ? 'キャンセル' : '+ 手動イベント'}
+          </button>
+          <button
+            onClick={() => {
+              setBusy(true)
+              setError(null)
+              api
+                .extractEvents(node.id)
+                .then((r) => {
+                  setValidation(r.validation)
+                  onChanged()
+                })
+                .catch((e) => setError(String(e)))
+                .finally(() => setBusy(false))
+            }}
+            disabled={busy}
+            className="rounded-md border px-2 py-0.5 text-[11px]"
+            style={{ borderColor: 'var(--accent-border)', color: 'var(--accent)' }}
+          >
+            {busy ? '処理中…' : 'イベント抽出(LLM)'}
+          </button>
+        </div>
+      </div>
+      {adding && (
+        <div
+          className="mb-2 rounded-lg border p-2"
+          style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border)' }}
+        >
+          <select
+            value={newType}
+            onChange={(e) => {
+              setNewType(e.target.value)
+              setPayloadText(EVENT_TEMPLATES[e.target.value])
+            }}
+            className="mb-1.5 w-full rounded-md border px-2 py-1 text-[12px]"
+            style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
+          >
+            {Object.keys(EVENT_TEMPLATES).map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+          </select>
+          <textarea
+            rows={3}
+            value={payloadText}
+            onChange={(e) => setPayloadText(e.target.value)}
+            className="mb-1.5 w-full rounded-md border px-2 py-1 font-mono text-[11px]"
+            style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
+          />
+          <button
+            onClick={handleAdd}
+            disabled={busy}
+            className="rounded-md px-3 py-1 text-[12px] font-medium text-white"
+            style={{ background: 'var(--accent)' }}
+          >
+            追加
+          </button>
+        </div>
+      )}
+      {error && (
+        <div className="mb-1 text-[12px]" style={{ color: 'var(--danger)' }}>
+          {error}
+        </div>
+      )}
+      {validation.length > 0 && (
+        <div className="mb-1 text-[12px]" style={{ color: '#f2a3a3' }}>
+          {validation.map((v, i) => (
+            <div key={i}>⚠ {v}</div>
+          ))}
+        </div>
+      )}
+      {node.events.length === 0 && (
+        <div className="text-[12px]" style={{ color: 'var(--text-faint)' }}>
+          イベントなし。手動追加か「イベント抽出(LLM)」で状態差分を作成できます
+        </div>
+      )}
+      {node.events.map((e, index) => (
+        <div
+          key={e.id}
+          className="mb-1.5 rounded-lg border px-3 py-2 text-[12px]"
+          style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border)' }}
+        >
+          <div className="mb-0.5 flex items-center gap-2">
+            <span className="font-medium" style={{ color: 'var(--text)' }}>
+              {e.type}
+            </span>
+            <span
+              className="rounded px-1.5 py-px text-[10px] uppercase"
+              style={
+                e.source === 'user'
+                  ? { background: 'var(--accent-soft)', color: 'var(--accent)' }
+                  : { background: 'var(--bg-input)', color: 'var(--text-faint)' }
+              }
+            >
+              {e.source}
+            </span>
+            <button
+              onClick={() => handleDelete(index)}
+              disabled={busy}
+              className="ml-auto text-[11px]"
+              style={{ color: 'var(--text-faint)' }}
+              title="このイベントを削除"
+            >
+              ✕
+            </button>
+          </div>
+          <div className="break-all font-mono text-[11px]" style={{ color: 'var(--text-dim)' }}>
+            {JSON.stringify(e.payload)}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// ---- ビートタブ ------------------------------------------------------
 
 function BeatTab({
   node,
@@ -97,7 +333,6 @@ function BeatTab({
 }): React.JSX.Element {
   const [draft, setDraft] = useState<Partial<StoryNode>>({})
   const [error, setError] = useState<string | null>(null)
-  const [extracting, setExtracting] = useState(false)
 
   useEffect(() => {
     setDraft({
@@ -127,20 +362,39 @@ function BeatTab({
     }
   }
 
+  const handleMakeCanon = async (): Promise<void> => {
+    try {
+      await api.makeCanon(node.id)
+      onSaved()
+    } catch (e) {
+      setError(String(e))
+    }
+  }
+
   const handleDelete = async (): Promise<void> => {
-    if (!window.confirm('このビートを削除しますか?(末尾のみ削除可)')) return
+    if (!window.confirm('このビートを削除しますか?(子を持たないノードのみ)')) return
     try {
       await api.deleteNode(node.id)
       onDeleted()
-    } catch (e) {
-      setError('削除できません: Phase 1 では末尾ノードのみ削除できます')
+    } catch {
+      setError('削除できません: 子を持つノードは先に子を削除してください')
     }
   }
 
   const inputStyle = { background: 'var(--bg-input)', borderColor: 'var(--border)' }
+  const labelClass = 'mb-1 block text-[11px] uppercase tracking-[0.14em]'
 
   return (
     <div className="flex flex-col gap-3">
+      {node.status === 'draft' && (
+        <button
+          onClick={() => void handleMakeCanon()}
+          className="rounded-lg border px-3 py-1.5 text-[13px] font-medium"
+          style={{ borderColor: 'var(--accent-border)', color: 'var(--accent)', background: 'var(--accent-soft)' }}
+        >
+          ★ このブランチを正史にする
+        </button>
+      )}
       {validation.length > 0 && (
         <div
           className="rounded-lg border px-3 py-2 text-[12px] leading-relaxed"
@@ -152,7 +406,7 @@ function BeatTab({
         </div>
       )}
       <label className="block">
-        <span className="mb-1 block text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
+        <span className={labelClass} style={{ color: 'var(--text-faint)' }}>
           Title
         </span>
         <input
@@ -163,7 +417,7 @@ function BeatTab({
         />
       </label>
       <label className="block">
-        <span className="mb-1 block text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
+        <span className={labelClass} style={{ color: 'var(--text-faint)' }}>
           Beat(出来事の仕様書)
         </span>
         <textarea
@@ -175,7 +429,7 @@ function BeatTab({
         />
       </label>
       <label className="block">
-        <span className="mb-1 block text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
+        <span className={labelClass} style={{ color: 'var(--text-faint)' }}>
           Emotional core
         </span>
         <input
@@ -186,7 +440,7 @@ function BeatTab({
         />
       </label>
       <div>
-        <span className="mb-1 block text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
+        <span className={labelClass} style={{ color: 'var(--text-faint)' }}>
           Cast
         </span>
         <div className="flex flex-wrap gap-1.5">
@@ -212,7 +466,7 @@ function BeatTab({
       </div>
       <div className="grid grid-cols-2 gap-2">
         <label className="block">
-          <span className="mb-1 block text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
+          <span className={labelClass} style={{ color: 'var(--text-faint)' }}>
             Location
           </span>
           <input
@@ -223,7 +477,7 @@ function BeatTab({
           />
         </label>
         <label className="block">
-          <span className="mb-1 block text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
+          <span className={labelClass} style={{ color: 'var(--text-faint)' }}>
             Story time
           </span>
           <input
@@ -251,84 +505,58 @@ function BeatTab({
           {error}
         </div>
       )}
-      <div className="mt-2">
-        <div className="mb-1 flex items-center justify-between">
-          <span className="text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
-            Events({node.events.length})
-          </span>
-          <button
-            onClick={() => {
-              setExtracting(true)
-              setError(null)
-              api
-                .extractEvents(node.id)
-                .then(() => onSaved())
-                .catch((e) => setError(String(e)))
-                .finally(() => setExtracting(false))
-            }}
-            disabled={extracting}
-            className="rounded-md border px-2 py-0.5 text-[11px]"
-            style={{ borderColor: 'var(--accent-border)', color: 'var(--accent)' }}
-          >
-            {extracting ? '抽出中…' : 'イベント抽出(LLM)'}
-          </button>
-        </div>
-        {node.events.length === 0 && (
-          <div className="text-[12px]" style={{ color: 'var(--text-faint)' }}>
-            イベントなし。手動で書いたビートは「イベント抽出(LLM)」で状態差分を生成できます
-          </div>
-        )}
-        {node.events.map((e) => (
-          <div
-            key={e.id}
-            className="mb-1.5 rounded-lg border px-3 py-2 text-[12px]"
-            style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border)' }}
-          >
-            <div className="mb-0.5 flex items-center gap-2">
-              <span className="font-medium" style={{ color: 'var(--text)' }}>
-                {e.type}
-              </span>
-              <span
-                className="rounded px-1.5 py-px text-[10px] uppercase"
-                style={
-                  e.source === 'user'
-                    ? { background: 'var(--accent-soft)', color: 'var(--accent)' }
-                    : { background: 'var(--bg-input)', color: 'var(--text-faint)' }
-                }
-              >
-                {e.source}
-              </span>
-            </div>
-            <div className="break-all font-mono text-[11px]" style={{ color: 'var(--text-dim)' }}>
-              {JSON.stringify(e.payload)}
-            </div>
-          </div>
-        ))}
-      </div>
+      <EventsEditor node={node} onChanged={onSaved} />
     </div>
   )
 }
 
+// ---- キャラタブ(状態閲覧 + 手動イベント化する編集) -------------------
+
 function CharTab({
   node,
   characters,
-  memoryContents
+  memoryContents,
+  onChanged
 }: {
   node: StoryNode
   characters: Character[]
   memoryContents: Record<string, string>
+  onChanged: () => void
 }): React.JSX.Element {
   const [state, setState] = useState<StateSnapshot | null>(null)
   const [charId, setCharId] = useState<string | null>(node.cast[0] ?? null)
+  const [factKey, setFactKey] = useState('')
+  const [factValue, setFactValue] = useState('')
+  const [relTarget, setRelTarget] = useState('')
+  const [relValue, setRelValue] = useState('0')
+  const [relReason, setRelReason] = useState('')
+  const [memContent, setMemContent] = useState('')
+  const [error, setError] = useState<string | null>(null)
+
+  const eventsKey = node.events.map((e) => e.id).join(',')
 
   useEffect(() => {
-    setCharId(node.cast[0] ?? null)
-    setState(null)
+    setCharId((prev) => (prev && node.cast.includes(prev) ? prev : node.cast[0] ?? null))
     void api.getState(node.id).then(setState).catch(() => setState(null))
-  }, [node.id, node.updated_at])
+  }, [node.id, node.updated_at, eventsKey])
 
   const charState = charId ? state?.chars[charId] : null
   const nameOf = (id: string): string => characters.find((c) => c.id === id)?.name ?? id
+
+  const appendEvent = async (event: StoryEvent['payload'] & object, type: string): Promise<void> => {
+    setError(null)
+    try {
+      await api.putEvents(node.id, [
+        ...node.events.map((e) => ({ type: e.type, payload: e.payload, source: e.source })),
+        { type, payload: event as Record<string, unknown>, source: 'user' as const }
+      ])
+      onChanged()
+    } catch (e) {
+      setError(String(e))
+    }
+  }
+
+  const inputStyle = { background: 'var(--bg-input)', borderColor: 'var(--border)' }
 
   return (
     <div className="flex flex-col gap-3">
@@ -353,17 +581,17 @@ function CharTab({
           cast が空です
         </div>
       )}
-      {charState && (
+      {error && (
+        <div className="text-[12px]" style={{ color: 'var(--danger)' }}>
+          {error}
+        </div>
+      )}
+      {charId && charState && (
         <>
           <section>
             <h4 className="mb-1 text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
               Facts
             </h4>
-            {Object.keys(charState.facts).length === 0 && (
-              <div className="text-[12px]" style={{ color: 'var(--text-faint)' }}>
-                なし
-              </div>
-            )}
             {Object.entries(charState.facts).map(([k, v]) => (
               <div key={k} className="flex justify-between gap-2 py-0.5 text-[12px]">
                 <span style={{ color: 'var(--text-dim)' }}>{k}</span>
@@ -375,16 +603,40 @@ function CharTab({
                 退場済み({charState.retire_reason})
               </div>
             )}
+            <div className="mt-1 flex gap-1">
+              <input
+                placeholder="key"
+                value={factKey}
+                onChange={(e) => setFactKey(e.target.value)}
+                className="w-24 rounded-md border px-2 py-1 text-[12px]"
+                style={inputStyle}
+              />
+              <input
+                placeholder="value"
+                value={factValue}
+                onChange={(e) => setFactValue(e.target.value)}
+                className="min-w-0 flex-1 rounded-md border px-2 py-1 text-[12px]"
+                style={inputStyle}
+              />
+              <button
+                onClick={() => {
+                  if (!factKey.trim()) return
+                  void appendEvent({ scope: 'char', char: charId, key: factKey.trim(), value: factValue }, 'fact_set')
+                  setFactKey('')
+                  setFactValue('')
+                }}
+                className="rounded-md px-2 text-[12px] text-white"
+                style={{ background: 'var(--accent)' }}
+                title="fact_set イベントとして記録"
+              >
+                +
+              </button>
+            </div>
           </section>
           <section>
             <h4 className="mb-1 text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
               Relationships
             </h4>
-            {Object.keys(charState.relationships).length === 0 && (
-              <div className="text-[12px]" style={{ color: 'var(--text-faint)' }}>
-                なし
-              </div>
-            )}
             {Object.entries(charState.relationships).map(([target, rel]) => (
               <div key={target} className="mb-1 flex items-center gap-2 text-[12px]">
                 <span className="w-20 truncate" style={{ color: 'var(--text-dim)' }}>
@@ -405,6 +657,61 @@ function CharTab({
                 </span>
               </div>
             ))}
+            <div className="mt-1 flex flex-wrap gap-1">
+              <select
+                value={relTarget}
+                onChange={(e) => setRelTarget(e.target.value)}
+                className="rounded-md border px-2 py-1 text-[12px]"
+                style={inputStyle}
+              >
+                <option value="">相手…</option>
+                {characters
+                  .filter((c) => c.id !== charId)
+                  .map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+              </select>
+              <input
+                type="number"
+                min={-1}
+                max={1}
+                step={0.05}
+                value={relValue}
+                onChange={(e) => setRelValue(e.target.value)}
+                className="w-20 rounded-md border px-2 py-1 text-[12px] tabular-nums"
+                style={inputStyle}
+              />
+              <input
+                placeholder="理由"
+                value={relReason}
+                onChange={(e) => setRelReason(e.target.value)}
+                className="min-w-0 flex-1 rounded-md border px-2 py-1 text-[12px]"
+                style={inputStyle}
+              />
+              <button
+                onClick={() => {
+                  if (!relTarget) return
+                  void appendEvent(
+                    {
+                      char: charId,
+                      target_type: 'char',
+                      target: relTarget,
+                      value: Number(relValue),
+                      reason: relReason || '手動修正'
+                    },
+                    'relationship_set'
+                  )
+                  setRelReason('')
+                }}
+                className="rounded-md px-2 text-[12px] text-white"
+                style={{ background: 'var(--accent)' }}
+                title="relationship_set イベントとして記録"
+              >
+                set
+              </button>
+            </div>
           </section>
           <section>
             <h4 className="mb-1 text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
@@ -419,6 +726,30 @@ function CharTab({
                 {memoryContents[eventId] ?? eventId}
               </div>
             ))}
+            <div className="mt-1 flex gap-1">
+              <input
+                placeholder="記憶を追加(このキャラ視点で)"
+                value={memContent}
+                onChange={(e) => setMemContent(e.target.value)}
+                className="min-w-0 flex-1 rounded-md border px-2 py-1 text-[12px]"
+                style={inputStyle}
+              />
+              <button
+                onClick={() => {
+                  if (!memContent.trim()) return
+                  void appendEvent(
+                    { char: charId, content: memContent.trim(), emotion: 0, importance: 0.5, refs: [] },
+                    'memory_add'
+                  )
+                  setMemContent('')
+                }}
+                className="rounded-md px-2 text-[12px] text-white"
+                style={{ background: 'var(--accent)' }}
+                title="memory_add イベントとして記録"
+              >
+                +
+              </button>
+            </div>
           </section>
         </>
       )}
@@ -434,7 +765,8 @@ function CharTab({
 // ---- 構造モード本体 --------------------------------------------------
 
 function StructureModeInner(): React.JSX.Element {
-  const [timeline, setTimeline] = useState<StoryNode[]>([])
+  const [graphNodes, setGraphNodes] = useState<StoryNode[]>([])
+  const [graphEdges, setGraphEdges] = useState<GraphEdge[]>([])
   const [characters, setCharacters] = useState<Character[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [inspectorTab, setInspectorTab] = useState<'beat' | 'char'>('beat')
@@ -445,8 +777,9 @@ function StructureModeInner(): React.JSX.Element {
   const [genStatus, setGenStatus] = useState<string | null>(null)
 
   const reload = useCallback(async (): Promise<void> => {
-    const [tl, chars] = await Promise.all([api.timeline(), api.listCharacters()])
-    setTimeline(tl)
+    const [graph, chars] = await Promise.all([api.getGraph(), api.listCharacters()])
+    setGraphNodes(graph.nodes)
+    setGraphEdges(graph.edges)
     setCharacters(chars)
   }, [])
 
@@ -463,16 +796,13 @@ function StructureModeInner(): React.JSX.Element {
       .validateNode(selectedId)
       .then((r) => setValidation(r.errors))
       .catch(() => setValidation([]))
-  }, [selectedId, timeline])
+  }, [selectedId, graphNodes])
 
-  const charMap = useMemo(
-    () => Object.fromEntries(characters.map((c) => [c.id, c])),
-    [characters]
-  )
+  const charMap = useMemo(() => Object.fromEntries(characters.map((c) => [c.id, c])), [characters])
 
   const memoryContents = useMemo(() => {
     const map: Record<string, string> = {}
-    for (const node of timeline) {
+    for (const node of graphNodes) {
       for (const e of node.events) {
         if (e.type === 'memory_add' || e.type === 'memory_compress') {
           map[e.id] = String(e.payload.content ?? e.payload.summary ?? '')
@@ -480,61 +810,73 @@ function StructureModeInner(): React.JSX.Element {
       }
     }
     return map
-  }, [timeline])
+  }, [graphNodes])
+
+  const positions = useMemo(() => layoutDag(graphNodes, graphEdges), [graphNodes, graphEdges])
 
   const flowNodes: BeatFlowNode[] = useMemo(
     () =>
-      timeline.map((n, i) => ({
+      graphNodes.map((n) => ({
         id: n.id,
         type: 'beatNode',
-        position: { x: 0, y: i * NODE_GAP_Y },
+        position: positions[n.id] ?? { x: 0, y: 0 },
         selected: n.id === selectedId,
         data: { storyNode: n, characters: charMap }
       })),
-    [timeline, charMap, selectedId]
+    [graphNodes, positions, charMap, selectedId]
   )
 
   const flowEdges: Edge[] = useMemo(
     () =>
-      timeline.slice(1).map((n, i) => ({
-        id: `${timeline[i].id}-${n.id}`,
-        source: timeline[i].id,
-        target: n.id,
-        style: { stroke: '#6a728f', strokeWidth: 2 }
+      graphEdges.map((e) => ({
+        id: e.id,
+        source: e.from_node,
+        target: e.to_node,
+        style: e.is_canon
+          ? { stroke: '#8a8fb8', strokeWidth: 2.5 }
+          : { stroke: '#4a4f66', strokeWidth: 1.5, strokeDasharray: '7 5' }
       })),
-    [timeline]
+    [graphEdges]
   )
 
-  const selectedNode = timeline.find((n) => n.id === selectedId) ?? null
+  const selectedNode = graphNodes.find((n) => n.id === selectedId) ?? null
 
   const handleAddBeat = async (): Promise<void> => {
-    const node = await api.createNode({ beat: '(ここに出来事の仕様を書く)', cast: [] })
+    const node = await api.createNode({
+      beat: '(ここに出来事の仕様を書く)',
+      cast: [],
+      parent_id: selectedId ?? undefined
+    })
     await reload()
     setSelectedId(node.id)
     setInspectorTab('beat')
   }
 
-  const handleGenerate = async (): Promise<void> => {
+  const handleGenerate = async (parentId: string | null): Promise<void> => {
     setGenerating(true)
     setGenStatus('LLM 準備中…(初回はモデルロードに時間がかかります)')
     try {
-      await generateBeatStream(instruction.trim() || null, (e) => {
-        if (e.stage === 'generating') setGenStatus(`ビート生成中…(${e.attempt} 回目)`)
-        else if (e.stage === 'validating') setGenStatus('検証中…')
-        else if (e.stage === 'retry') setGenStatus(`検証 NG、リトライ中…(${(e.errors ?? []).join(' / ')})`)
-        else if (e.error) setGenStatus(`エラー: ${e.error}`)
-        else if (e.done && e.node) {
-          setGenStatus(
-            e.validation && e.validation.length > 0 ? `警告付きで採用: ${e.validation.join(' / ')}` : null
-          )
-          setInstruction('')
-          const newId = e.node.id
-          void reload().then(() => {
-            setSelectedId(newId)
-            setInspectorTab('beat')
-          })
-        }
-      })
+      await generateBeatStream(
+        instruction.trim() || null,
+        (e) => {
+          if (e.stage === 'generating') setGenStatus(`ビート生成中…(${e.attempt} 回目)`)
+          else if (e.stage === 'validating') setGenStatus('検証中…')
+          else if (e.stage === 'retry') setGenStatus(`検証 NG、リトライ中…(${(e.errors ?? []).join(' / ')})`)
+          else if (e.error) setGenStatus(`エラー: ${e.error}`)
+          else if (e.done && e.node) {
+            setGenStatus(
+              e.validation && e.validation.length > 0 ? `警告付きで採用: ${e.validation.join(' / ')}` : null
+            )
+            setInstruction('')
+            const newId = e.node.id
+            void reload().then(() => {
+              setSelectedId(newId)
+              setInspectorTab('beat')
+            })
+          }
+        },
+        parentId
+      )
     } catch (err) {
       setGenStatus(String(err))
     } finally {
@@ -570,6 +912,7 @@ function StructureModeInner(): React.JSX.Element {
                   onClick={() => void handleAddBeat()}
                   className="self-start rounded-lg px-3 py-1.5 text-[13px] font-medium text-white shadow-lg shadow-black/30"
                   style={{ background: 'var(--accent)' }}
+                  title={selectedId ? '選択ノードの子として追加' : '正史の末尾に追加'}
                 >
                   + ビート追加
                 </button>
@@ -586,14 +929,25 @@ function StructureModeInner(): React.JSX.Element {
                     className="mb-2 w-full rounded-lg border px-2.5 py-1.5 text-[12px] outline-none"
                     style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
                   />
-                  <button
-                    onClick={() => void handleGenerate()}
-                    disabled={generating}
-                    className="w-full rounded-lg px-3 py-1.5 text-[13px] font-medium text-white"
-                    style={{ background: generating ? 'var(--accent-hover)' : 'var(--accent)' }}
-                  >
-                    {generating ? '生成中…' : '▶ 次のビートを生成'}
-                  </button>
+                  <div className="flex flex-col gap-1.5">
+                    <button
+                      onClick={() => void handleGenerate(null)}
+                      disabled={generating}
+                      className="w-full rounded-lg px-3 py-1.5 text-[13px] font-medium text-white"
+                      style={{ background: generating ? 'var(--accent-hover)' : 'var(--accent)' }}
+                    >
+                      {generating ? '生成中…' : '▶ 次のビートを生成'}
+                    </button>
+                    <button
+                      onClick={() => void handleGenerate(selectedId)}
+                      disabled={generating || !selectedId}
+                      className="w-full rounded-lg border px-3 py-1.5 text-[13px] font-medium disabled:opacity-40"
+                      style={{ borderColor: 'var(--accent-border)', color: 'var(--accent)' }}
+                      title="選択ノードから what-if 分岐を draft として生成"
+                    >
+                      ⑂ 選択ノードから分岐を生成
+                    </button>
+                  </div>
                   {genStatus && (
                     <div className="mt-2 text-[11px] leading-relaxed" style={{ color: 'var(--text-dim)' }}>
                       {genStatus}
@@ -602,13 +956,13 @@ function StructureModeInner(): React.JSX.Element {
                 </div>
               </div>
             </Panel>
-            {timeline.length === 0 && (
+            {graphNodes.length === 0 && (
               <Panel position="top-center">
                 <div
                   className="mt-24 rounded-2xl border px-6 py-4 text-[13px]"
                   style={{ background: 'var(--bg-card)', borderColor: 'var(--border)', color: 'var(--text-dim)' }}
                 >
-                  「+ ビート追加」で最初のビートを作成してください
+                  「+ ビート追加」または「▶ 次のビートを生成」で物語を始めてください
                 </div>
               </Panel>
             )}
@@ -656,7 +1010,12 @@ function StructureModeInner(): React.JSX.Element {
                   }}
                 />
               ) : (
-                <CharTab node={selectedNode} characters={characters} memoryContents={memoryContents} />
+                <CharTab
+                  node={selectedNode}
+                  characters={characters}
+                  memoryContents={memoryContents}
+                  onChanged={() => void reload()}
+                />
               )
             ) : (
               <div className="pt-8 text-center text-[12px]" style={{ color: 'var(--text-faint)' }}>

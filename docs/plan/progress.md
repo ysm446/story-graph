@@ -1,11 +1,11 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-07-24 22:38
-更新日時: 2026-07-24 23:53
+更新日時: 2026-07-25 00:09
 
 ## 現在の状態
 
-- **Phase 1(コアループ MVP)完了。** M1〜M4 すべて実装・E2E 検証済み。次は Phase 2(編集耐性)。
+- **Phase 2(編集耐性)完了。** 分岐 DAG・正史切替・手動イベント編集・記憶 retrieval まで実装済み。次は Phase 3(関係グラフ)。
 - **ライブラリ方式を導入**(lm-graph 踏襲): ストーリーごとのフォルダに `story-graph.db` を置く。現在のライブラリと最近使ったライブラリは `%APPDATA%/story-graph/app.json`(Electron userData)に保存。ヘッダー右のドロップダウンで切替(切替時はレンダラをリロード)。デフォルトはリポジトリ内 `data/`。
 - `npm run dev` で Electron が起動し、FastAPI sidecar(ポート 8765〜自動探索)が自動 spawn される。
 - バックエンドは単体でも起動可能: `cd backend && ../.venv/Scripts/python.exe -m uvicorn app:app --port 8765`
@@ -22,10 +22,17 @@
 - [x] **M3 — UI(基本形)**: シェル(ヘッダー + 4 モード切替、`App.tsx`)、構造モード(React Flow 縦タイムライン + インスペクタ[ビート編集 / キャラ状態閲覧] + 相談チャットドロワー枠、`modes/StructureMode.tsx`)、キャラクター庫 CRUD(`modes/CharactersMode.tsx`)、設定画面(`modes/SettingsMode.tsx`)
 - [x] **M4 — 生成**: llama-server マネージャ(`backend/llama_manager.py`、外部起動優先 + 自動 spawn)、LLM クライアント(`backend/llm.py`、httpx 非同期 + json_schema response_format)、生成パイプライン(`backend/generation.py`、コンテキスト構築 + ビート生成 SSE + 検証リトライ + イベント抽出)、UI(生成パネル / イベント抽出ボタン / LLM 起動・停止)。**12B で E2E 検証済み**(2連続ビート生成 → fold 状態確認 → 手動ビートのイベント抽出)
 
+- [x] **Phase 2 — 編集耐性**(2026-07-25):
+  - 分岐 DAG: 任意ノードからの分岐作成(`parent_id`)、`path_to` による分岐パスの fold(分岐点まで state 共有)、正史切替(`make_canon`: canon エッジ付け替え + status 導出 + story_order 再同期)、リーフ削除、`GET /graph`
+  - ブランチ生成: `POST /generate/beat` に `parent_id`(what-if 指示付き、draft として挿入)
+  - 手動イベント編集 UI: イベントの削除/追加(型テンプレート付き)、キャラタブから facts / relationship_set / memory_add を手動イベント化(source=user バッジ)
+  - 記憶 retrieval: `backend/embed.py`(Ruri v3-310m、非対称プレフィックス、CPU)+ `backend/retrieval.py`(FTS5 trigram + sqlite-vec cosine の RRF × 重要度 × story_order 半減期減衰)。生成コンテキストに cast 各キャラの想起記憶 top5 を注入(spec §6.1-2)。意味検索の実動作を確認済み
+  - UI: DAG レイアウト(正史=縦一直線、分岐=右レーンへ)、canon/draft のエッジ・ノード描画分け、「このブランチを正史にする」
+
 ## 未完了
 
-- [ ] **Phase 2 — 編集耐性**: 分岐 DAG + 正史切替、手動イベント編集 UI、記憶 retrieval(news-picker の検索層を移植)をコンテキスト構築に組込み
-- [ ] Phase 1 残タスク(小): factions の UI(API のみ実装済み)、31B での動作確認、生成イベントの重複除去(12B は同一イベントを重複して出すことがある)
+- [ ] **Phase 3 — 関係グラフ**: d3-force 描画、時間スクラブ、履歴ドリルダウン、ピン留めレイアウト
+- [ ] 残タスク(小): factions の UI(API のみ実装済み)、31B での動作確認、生成イベントの重複除去(12B は同一イベントを重複して出すことがある)、`GET /graph` の全ノード events 込み返却が大規模ストーリーで重くなったら分割
 
 ## 注意点
 
@@ -41,6 +48,12 @@
 - bat ファイルに日本語を書かない(UTF-8 の日本語バイト列が cp932 パースで後続コマンドを壊す)。メッセージは ASCII のみ。
 - FastAPI のエンドポイントは全て `async def` でイベントループ直列実行にして SQLite の書き込み競合を回避している(ローカル単一ユーザー前提)。ハンドラ内でブロッキングの長い処理(LLM 呼び出し等)を書くときはこの前提を崩さないよう注意(LLM 呼び出しは httpx の async 版を使う)。
 - Phase 1 のノード削除は末尾のみ許可(単線維持のため)。
+
+### 検索層の知見(2026-07-25)
+
+- **trigram FTS は 3 文字未満の語を照合できない。** 日本語クエリは「語」抽出では機能しない(助詞込みで一続きになる)ため、クエリから文字トライグラムをストライド 1 で生成して OR 検索する(`retrieval._fts_terms`)。重み付けは bm25 に任せる。
+- 埋め込みは書き込み時にモデルがロード済みの場合のみ行い、未処理分は検索時の `ensure_vectors` が自己修復する(初回ロード/ダウンロードで書き込みを塞がないため)。モデルは FastAPI startup でバックグラウンド warmup。
+- Ruri のモデルキャッシュは `models/embeddings/`(gitignore 済み、約 1.2GB)。
 
 ### E2E 検証で得た LLM まわりの知見(2026-07-24)
 

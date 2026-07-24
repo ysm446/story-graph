@@ -101,10 +101,65 @@ def test_memories_index_rebuilt_from_events(store):
     assert rows == []
 
 
-def test_delete_only_tail(store):
+def test_delete_only_leaf(store):
     _setup_chars(store)
     n1 = store.append_node({"beat": "b1", "cast": []})
     n2 = store.append_node({"beat": "b2", "cast": []})
-    assert store.delete_tail_node(n1["id"]) is False
-    assert store.delete_tail_node(n2["id"]) is True
+    assert store.delete_leaf_node(n1["id"]) is False
+    assert store.delete_leaf_node(n2["id"]) is True
     assert store.canon_path() == [n1["id"]]
+
+
+def test_branch_creation_and_state_isolation(store):
+    _setup_chars(store)
+    n1 = store.append_node({"beat": "b1", "cast": ["aya"]}, _intro_events("aya") + [
+        {"type": "fact_set", "payload": {"scope": "char", "char": "aya", "key": "location", "value": "村"}},
+    ])
+    n2 = store.append_node({"beat": "正史: 街へ", "cast": ["aya"]}, [
+        {"type": "fact_set", "payload": {"scope": "char", "char": "aya", "key": "location", "value": "街"}},
+    ])
+    # n1 から分岐(what-if): 山へ
+    b1 = store.append_node({"beat": "分岐: 山へ", "cast": ["aya"]}, [
+        {"type": "fact_set", "payload": {"scope": "char", "char": "aya", "key": "location", "value": "山"}},
+    ], parent_id=n1["id"])
+    assert b1["status"] == "draft"
+    assert store.canon_path() == [n1["id"], n2["id"]]
+    assert store.path_to(b1["id"]) == [n1["id"], b1["id"]]
+    # 状態は独立: 正史側は街、分岐側は山
+    assert store.get_state(n2["id"])["chars"]["aya"]["facts"]["location"] == "街"
+    assert store.get_state(b1["id"])["chars"]["aya"]["facts"]["location"] == "山"
+
+
+def test_make_canon_switches_path_and_status(store):
+    _setup_chars(store)
+    n1 = store.append_node({"beat": "b1", "cast": ["aya"]}, _intro_events("aya"))
+    n2 = store.append_node({"beat": "旧正史", "cast": ["aya"]}, [
+        {"type": "memory_add", "payload": {"char": "aya", "content": "旧正史の記憶"}},
+    ])
+    b1 = store.append_node({"beat": "新ルート", "cast": ["aya"]}, [
+        {"type": "memory_add", "payload": {"char": "aya", "content": "新ルートの記憶"}},
+    ], parent_id=n1["id"])
+    store.make_canon(b1["id"])
+    assert store.canon_path() == [n1["id"], b1["id"]]
+    assert store.get_node(b1["id"])["status"] == "canon"
+    assert store.get_node(n2["id"])["status"] == "draft"
+    # story_order も付け替わる(正史から外れた記憶は -1)
+    orders = {r["content"]: r["story_order"] for r in store.conn.execute("SELECT * FROM memories")}
+    assert orders["新ルートの記憶"] == 1
+    assert orders["旧正史の記憶"] == -1
+
+
+def test_extend_from_branch_and_make_canon(store):
+    _setup_chars(store)
+    n1 = store.append_node({"beat": "b1", "cast": ["aya"]}, _intro_events("aya"))
+    n2 = store.append_node({"beat": "正史側", "cast": ["aya"]})
+    b1 = store.append_node({"beat": "分岐", "cast": ["aya"]}, parent_id=n1["id"])
+    assert b1["status"] == "draft"
+    # 分岐の先に伸ばす(b1 に canon の子は居ないので、b1 の線内では延長)
+    b2 = store.append_node({"beat": "分岐の続き", "cast": ["aya"]}, parent_id=b1["id"])
+    assert store.path_to(b2["id"]) == [n1["id"], b1["id"], b2["id"]]
+    # 正史は n1 → n2 のまま(n1 → b1 が canon でないため)
+    assert store.canon_path() == [n1["id"], n2["id"]]
+    store.make_canon(b2["id"])
+    assert store.canon_path() == [n1["id"], b1["id"], b2["id"]]
+    assert store.get_node(n2["id"])["status"] == "draft"
