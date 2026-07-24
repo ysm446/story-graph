@@ -48,11 +48,32 @@ async function waitForHealthy(baseUrl: string, timeoutMs: number): Promise<boole
   return false
 }
 
+async function probeHealthy(port: number): Promise<boolean> {
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/health`, {
+      signal: AbortSignal.timeout(1000)
+    })
+    return res.ok
+  } catch {
+    return false
+  }
+}
+
 async function startSidecar(): Promise<string> {
   const override = process.env.STORY_GRAPH_API_URL
   if (override) {
     apiBaseUrl = override
     return override
+  }
+  // 既に healthy な sidecar が居ればそれを使う(前回セッションの残存や手動起動。
+  // Windows ではポートが塞がっていても listen チェックをすり抜けることがあるため、
+  // 空きポート探索の前に必ず health を確認する)
+  for (let port = DEFAULT_API_PORT; port < DEFAULT_API_PORT + 20; port += 1) {
+    if (await probeHealthy(port)) {
+      apiBaseUrl = `http://127.0.0.1:${port}`
+      console.log(`[sidecar] 既存のバックエンドを再利用: ${apiBaseUrl}`)
+      return apiBaseUrl
+    }
   }
   const root = repoRoot()
   const pythonPath = join(root, '.venv', 'Scripts', 'python.exe')

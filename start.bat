@@ -1,37 +1,36 @@
 @echo off
 setlocal
-chcp 65001 >nul
 cd /d "%~dp0"
 
-rem ---- Node 依存関係 ----
+rem ---- Node dependencies ----
 if not exist node_modules (
-    echo [start] node_modules がありません。npm install を実行します...
+    echo [start] Installing npm dependencies...
     call npm install
     if errorlevel 1 (
-        echo [start] npm install に失敗しました。
+        echo [start] npm install failed.
         pause
         exit /b 1
     )
 )
 
-rem ---- Python venv (バックエンド) ----
+rem ---- Python venv for backend ----
 if not exist .venv\Scripts\python.exe (
-    echo [start] .venv がありません。py -3.13 で作成します...
+    echo [start] Creating .venv with Python 3.13...
     py -3.13 -m venv .venv
     if errorlevel 1 (
-        echo [start] venv の作成に失敗しました。Python 3.13 がインストールされているか確認してください。
+        echo [start] Failed to create venv. Is Python 3.13 installed?
         pause
         exit /b 1
     )
     .venv\Scripts\python.exe -m pip install --upgrade pip -q
     .venv\Scripts\python.exe -m pip install -r backend\requirements.txt -q
     if errorlevel 1 (
-        echo [start] バックエンド依存のインストールに失敗しました。
+        echo [start] Failed to install backend dependencies.
         pause
         exit /b 1
     )
 )
 
-echo [start] Story Graph を起動します...
+echo [start] Launching Story Graph...
 call npm run dev
 if errorlevel 1 pause
