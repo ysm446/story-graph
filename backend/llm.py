@@ -81,6 +81,48 @@ async def chat(
     }
 
 
+async def chat_stream(
+    messages: list[dict[str, Any]],
+    *,
+    base_url: str,
+    max_tokens: int = 4096,
+    temperature: float = 0.9,
+    timeout: float = 600.0,
+):
+    """ストリーミング chat completion。content の delta 文字列を逐次 yield する。"""
+    payload: dict[str, Any] = {
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "stream": True,
+    }
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        async with client.stream(
+            "POST", f"{base_url}/v1/chat/completions", json=payload
+        ) as res:
+            if res.status_code != 200:
+                body = (await res.aread()).decode("utf-8", errors="replace")
+                raise RuntimeError(f"llama-server {res.status_code}: {body[:500]}")
+            buffer = ""
+            async for chunk in res.aiter_text():
+                buffer += chunk
+                while "\n\n" in buffer:
+                    part, buffer = buffer.split("\n\n", 1)
+                    line = part.strip()
+                    if not line.startswith("data: "):
+                        continue
+                    data = line[len("data: "):]
+                    if data == "[DONE]":
+                        return
+                    obj = json.loads(data)
+                    choices = obj.get("choices") or []
+                    if not choices:
+                        continue
+                    delta = choices[0].get("delta", {}).get("content")
+                    if delta:
+                        yield delta
+
+
 async def chat_json(
     messages: list[dict[str, Any]],
     *,

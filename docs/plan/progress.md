@@ -1,11 +1,11 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-07-24 22:38
-更新日時: 2026-07-25 00:24
+更新日時: 2026-07-25 00:35
 
 ## 現在の状態
 
-- **Phase 3(関係グラフ)完了。** 次は Phase 4(鑑賞モード)。
+- **Phase 4(鑑賞モード)完了。** 次は Phase 5(相談チャット)。
 - **ライブラリ方式を導入**(lm-graph 踏襲): ストーリーごとのフォルダに `story-graph.db` を置く。現在のライブラリと最近使ったライブラリは `%APPDATA%/story-graph/app.json`(Electron userData)に保存。ヘッダー右のドロップダウンで切替(切替時はレンダラをリロード)。デフォルトはリポジトリ内 `data/`。
 - `npm run dev` で Electron が起動し、FastAPI sidecar(ポート 8765〜自動探索)が自動 spawn される。
 - バックエンドは単体でも起動可能: `cd backend && ../.venv/Scripts/python.exe -m uvicorn app:app --port 8765`
@@ -31,9 +31,11 @@
 
 - [x] **Phase 3 — 関係グラフ**(2026-07-25): インスペクタ「関係図」タブ(`src/renderer/src/RelationGraph.tsx`)。有向グラフ(色=感情価 / 太さ=|score| / 矢印=方向)、正史パスの時間スクラブ、|score| 閾値フィルタ、ノードクリックでエゴネットワーク、エッジクリックで reasons のイベント履歴(delta/理由/ノード)、初回 d3-force 配置 → `characters.graph_x/y` にピン留め保存(ドラッグで再配置可、新キャラのみ追加配置)
 
+- [x] **Phase 4 — 鑑賞モード**(2026-07-25): `backend/rendering.py` + `modes/ReaderMode.tsx`。シーケンシャルレンダリング(直前散文の末尾 ~1400 字をスライディングウィンドウで接続、12B 実機で接続を確認)、スタイルプリセット(seed 2 種 + CRUD API)、POV(pov キャラの state にある情報のみをプロンプトへ)、部分レンダー(「このシーンのみ」「ここから最後まで」、上流編集で renders.stale 自動化)、ビート昇格(散文の選択 → LLM が追記案+イベント diff 案 → 確認して正史へ)、Markdown エクスポート、SSE トークンストリーミング表示
+
 ## 未完了
 
-- [ ] **Phase 4 — 鑑賞モード**: シーケンシャルレンダリング(スライディングウィンドウ)、スタイルプリセット、pov、部分レンダー、ビート昇格
+- [ ] **Phase 5 — 相談チャット**: ツール3種(get_state / search_memories / get_beats)、スコープ制御(upto/all)、提案カード → ブランチ挿入。news-picker の chat_agent.py を雛形にする
 - [ ] 残タスク(小): factions の UI(API のみ実装済み)、31B での動作確認、生成イベントの重複除去(12B は同一イベントを重複して出すことがある)、`GET /graph` の全ノード events 込み返却が大規模ストーリーで重くなったら分割
 
 ## 注意点

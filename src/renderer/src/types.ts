@@ -71,3 +71,31 @@ export interface StoryGraph {
   nodes: StoryNode[]
   edges: GraphEdge[]
 }
+
+export interface StylePreset {
+  id: string
+  name: string
+  person: 'first' | 'third'
+  tone: string
+  params: string
+}
+
+export interface RenderResult {
+  id: string
+  node_id: string
+  preset_id: string
+  pov_char: string | null
+  prose: string
+  stale: number
+  created_at: string
+}
+
+export interface SceneEntry {
+  node: StoryNode
+  render: RenderResult | null
+}
+
+export interface PromoteProposal {
+  beat_appendix: string
+  events: Array<{ type: string; payload: Record<string, unknown> }>
+}

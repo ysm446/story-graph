@@ -469,6 +469,10 @@ class Store:
         self.conn.executemany(
             "UPDATE state_cache SET dirty = 1 WHERE node_id = ?", [(n,) for n in dirty]
         )
+        # 上流のビート/イベント変更でレンダー結果も陳腐化する(spec §7 部分レンダー)
+        self.conn.executemany(
+            "UPDATE renders SET stale = 1 WHERE node_id = ?", [(n,) for n in dirty]
+        )
         if commit:
             self.conn.commit()
 
@@ -516,6 +520,74 @@ class Store:
         return validate_node(
             self.state_before(node_id), node["cast"], node["events"], self.known_char_ids()
         )
+
+    # ---- style presets ----------------------------------------------
+
+    DEFAULT_PRESETS = [
+        ("default-third", "三人称・標準", "third",
+         "自然で読みやすい三人称の地の文。抑制の効いた描写と会話のバランスを取り、説明しすぎない。", "{}"),
+        ("default-first", "一人称・内省", "first",
+         "POVキャラクターの一人称。内面の声を重視し、感情の機微と身体感覚を丁寧に描く。", "{}"),
+    ]
+
+    def seed_presets(self) -> None:
+        count = self.conn.execute("SELECT COUNT(*) FROM style_presets").fetchone()[0]
+        if count:
+            return
+        self.conn.executemany(
+            "INSERT INTO style_presets(id, name, person, tone, params) VALUES(?,?,?,?,?)",
+            self.DEFAULT_PRESETS,
+        )
+        self.conn.commit()
+
+    def list_presets(self) -> list[dict[str, Any]]:
+        self.seed_presets()
+        return [dict(r) for r in self.conn.execute("SELECT * FROM style_presets ORDER BY rowid")]
+
+    def get_preset(self, preset_id: str) -> dict[str, Any] | None:
+        row = self.conn.execute("SELECT * FROM style_presets WHERE id = ?", (preset_id,)).fetchone()
+        return dict(row) if row else None
+
+    def upsert_preset(self, data: dict[str, Any]) -> dict[str, Any]:
+        preset_id = data.get("id") or _new_id()
+        self.conn.execute(
+            "INSERT OR REPLACE INTO style_presets(id, name, person, tone, params) VALUES(?,?,?,?,?)",
+            (preset_id, data["name"], data.get("person", "third"), data.get("tone", ""),
+             data.get("params", "{}")),
+        )
+        self.conn.commit()
+        return self.get_preset(preset_id)  # type: ignore[return-value]
+
+    def delete_preset(self, preset_id: str) -> None:
+        self.conn.execute("DELETE FROM style_presets WHERE id = ?", (preset_id,))
+        self.conn.commit()
+
+    # ---- renders ----------------------------------------------------
+
+    def latest_render(self, node_id: str, preset_id: str, pov_char: str | None) -> dict[str, Any] | None:
+        row = self.conn.execute(
+            """SELECT * FROM renders WHERE node_id = ? AND preset_id = ? AND pov_char IS ?
+               ORDER BY created_at DESC LIMIT 1""",
+            (node_id, preset_id, pov_char),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def save_render(self, node_id: str, preset_id: str, pov_char: str | None, prose: str) -> dict[str, Any]:
+        render_id = _new_id()
+        self.conn.execute(
+            "INSERT INTO renders(id, node_id, preset_id, pov_char, prose, stale, created_at) VALUES(?,?,?,?,?,0,?)",
+            (render_id, node_id, preset_id, pov_char, prose, _now()),
+        )
+        self.conn.commit()
+        return dict(self.conn.execute("SELECT * FROM renders WHERE id = ?", (render_id,)).fetchone())
+
+    def list_renders(self, preset_id: str, pov_char: str | None) -> list[dict[str, Any]]:
+        """正史パス順に各ノードの最新レンダーを返す(無ければ render: None)。"""
+        result = []
+        for nid in self.canon_path():
+            node = self.get_node(nid)
+            result.append({"node": node, "render": self.latest_render(nid, preset_id, pov_char)})
+        return result
 
     # ---- settings ---------------------------------------------------
 

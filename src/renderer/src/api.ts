@@ -1,4 +1,14 @@
-import type { Character, EventInput, StateSnapshot, StoryEvent, StoryGraph, StoryNode } from './types'
+import type {
+  Character,
+  EventInput,
+  PromoteProposal,
+  SceneEntry,
+  StateSnapshot,
+  StoryEvent,
+  StoryGraph,
+  StoryNode,
+  StylePreset
+} from './types'
 
 let baseUrl: string | null = null
 
@@ -62,6 +72,17 @@ export const api = {
   putSettings: (values: Record<string, string>) =>
     request<Record<string, string>>('/settings', { method: 'PUT', body: JSON.stringify({ values }) }),
 
+  listPresets: () => request<StylePreset[]>('/presets'),
+  listRenders: (presetId: string, povChar: string | null) =>
+    request<SceneEntry[]>(
+      `/renders?preset_id=${encodeURIComponent(presetId)}${povChar ? `&pov_char=${encodeURIComponent(povChar)}` : ''}`
+    ),
+  promotePreview: (nodeId: string, selection: string) =>
+    request<PromoteProposal>(`/nodes/${nodeId}/promote_preview`, {
+      method: 'POST',
+      body: JSON.stringify({ selection })
+    }),
+
   llmStatus: () =>
     request<{ base_url: string; healthy: boolean; spawned: boolean; model_path: string | null }>('/llm/status'),
   llmStart: () => request<{ base_url: string; healthy: boolean }>('/llm/start', { method: 'POST' }),
@@ -70,6 +91,47 @@ export const api = {
     request<{ events: StoryEvent[]; validation: string[] }>(`/nodes/${nodeId}/extract_events`, {
       method: 'POST'
     })
+}
+
+export interface RenderStreamEvent {
+  scene_start?: string
+  title?: string | null
+  delta?: string
+  scene_done?: string
+  render?: import('./types').RenderResult
+  done?: boolean
+  error?: string
+}
+
+export async function renderStream(
+  body: { preset_id: string; pov_char: string | null; from_node: string | null; mode: 'single' | 'to_end' },
+  onEvent: (data: RenderStreamEvent) => void
+): Promise<void> {
+  if (!baseUrl) throw new Error('backend not ready')
+  const res = await fetch(`${baseUrl}/render`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  })
+  if (!res.ok || !res.body) {
+    throw new Error(`${res.status} /render: ${await res.text()}`)
+  }
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const parts = buffer.split('\n\n')
+    buffer = parts.pop() ?? ''
+    for (const part of parts) {
+      const line = part.trim()
+      if (line.startsWith('data: ')) {
+        onEvent(JSON.parse(line.slice(6)) as RenderStreamEvent)
+      }
+    }
+  }
 }
 
 export interface GenerationEvent {

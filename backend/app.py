@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 import db
 import generation
 import llm
+import rendering
 from llama_manager import LlamaManager
 from store import Store
 
@@ -342,6 +343,83 @@ async def extract_events(node_id: str) -> dict[str, Any]:
     except RuntimeError as e:
         raise HTTPException(500, str(e))
     return {"events": events, "validation": store.validate(node_id)}
+
+
+# ---- レンダリング(鑑賞モード) --------------------------------------
+
+class PresetIn(BaseModel):
+    id: str | None = None
+    name: str
+    person: str = "third"
+    tone: str = ""
+    params: str = "{}"
+
+
+class RenderIn(BaseModel):
+    preset_id: str
+    pov_char: str | None = None
+    from_node: str | None = None
+    mode: str = "to_end"  # single | to_end
+
+
+class PromoteIn(BaseModel):
+    selection: str
+
+
+@app.get("/presets")
+async def list_presets() -> list[dict[str, Any]]:
+    return store.list_presets()
+
+
+@app.post("/presets")
+async def upsert_preset(body: PresetIn) -> dict[str, Any]:
+    return store.upsert_preset(body.model_dump())
+
+
+@app.delete("/presets/{preset_id}")
+async def delete_preset(preset_id: str) -> dict[str, str]:
+    store.delete_preset(preset_id)
+    return {"status": "deleted"}
+
+
+@app.get("/renders")
+async def list_renders(preset_id: str, pov_char: str | None = None) -> list[dict[str, Any]]:
+    return store.list_renders(preset_id, pov_char)
+
+
+@app.post("/render")
+async def render(body: RenderIn) -> StreamingResponse:
+    canon = store.canon_path()
+    if not canon:
+        raise HTTPException(409, "正史パスにビートがありません")
+    start = body.from_node or canon[0]
+    if start not in canon:
+        raise HTTPException(404, "from_node が正史パス上にありません")
+    if body.mode == "single":
+        node_ids = [start]
+    else:
+        node_ids = canon[canon.index(start):]
+    try:
+        base_url = await llama.ensure_running(store.get_settings())
+    except RuntimeError as e:
+        async def error_stream():
+            yield rendering._sse({"error": str(e)})
+        return StreamingResponse(error_stream(), media_type="text/event-stream")
+    return StreamingResponse(
+        rendering.render_stream(store, base_url, node_ids, body.preset_id, body.pov_char),
+        media_type="text/event-stream",
+    )
+
+
+@app.post("/nodes/{node_id}/promote_preview")
+async def promote_preview(node_id: str, body: PromoteIn) -> dict[str, Any]:
+    try:
+        base_url = await llama.ensure_running(store.get_settings())
+        return await rendering.promote_preview(store, base_url, node_id, body.selection)
+    except KeyError:
+        raise HTTPException(404, "node not found")
+    except RuntimeError as e:
+        raise HTTPException(500, str(e))
 
 
 # ---- settings -------------------------------------------------------
