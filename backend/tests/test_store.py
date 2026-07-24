@@ -80,6 +80,34 @@ def test_validation_rejects_retired_and_unintroduced(store):
     assert any("未登録" in e for e in errors)
 
 
+def test_cast_auto_introduces_new_chars(store):
+    _setup_chars(store)
+    # イベントなしで cast だけ指定 → char_introduce が自動追加され警告なし
+    n1 = store.append_node({"beat": "初登場", "cast": ["aya", "ken"]})
+    types = [e["type"] for e in n1["events"]]
+    assert types == ["char_introduce", "char_introduce"]
+    assert store.validate(n1["id"]) == []
+    # cast 追加の編集でも自動付与される
+    store.create_character({"name": "ミオ", "id": "mio"})
+    n2 = store.append_node({"beat": "続き", "cast": ["aya"]})
+    updated = store.update_node(n2["id"], {"cast": ["aya", "mio"]})
+    intro_chars = [e["payload"]["char"] for e in updated["events"] if e["type"] == "char_introduce"]
+    assert intro_chars == ["mio"]  # aya は登場済みなので追加されない
+    assert store.validate(n2["id"]) == []
+
+
+def test_cast_does_not_resurrect_retired(store):
+    _setup_chars(store)
+    store.append_node({"beat": "b1", "cast": ["aya", "ken"]})
+    store.append_node({"beat": "ケン死亡", "cast": ["aya", "ken"]}, [
+        {"type": "char_retire", "payload": {"char": "ken", "reason": "death"}},
+    ])
+    n3 = store.append_node({"beat": "その後", "cast": ["aya", "ken"]})
+    # 退場済みキャラには char_introduce を自動追加しない(警告に任せる)
+    assert [e for e in n3["events"] if e["type"] == "char_introduce"] == []
+    assert any("退場済み" in v for v in store.validate(n3["id"]))
+
+
 def test_validation_allows_introduce_in_same_node(store):
     _setup_chars(store)
     n1 = store.append_node({"beat": "初登場", "cast": ["aya"]}, _intro_events("aya"))

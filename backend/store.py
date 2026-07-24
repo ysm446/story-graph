@@ -257,8 +257,39 @@ class Store:
             )
         if events:
             self.replace_events(node_id, events, source=source, commit=False)
+        self._ensure_cast_introduced(node_id, commit=False)
         self.conn.commit()
         return self.get_node(node_id)  # type: ignore[return-value]
+
+    def _ensure_cast_introduced(self, node_id: str, commit: bool = True) -> None:
+        """cast のキャラがパス上で未登場なら char_introduce を自動追加する。
+
+        物語に一度も現れていないキャラのみが対象。退場済み(char_retire 済み)の
+        キャラには追加しない(意図しない「蘇生」を防ぎ、検証警告に任せる)。
+        """
+        node = self.get_node(node_id)
+        if node is None or not node["cast"]:
+            return
+        state_before = self.state_before(node_id)
+        known = self.known_char_ids()
+        introduced_here = {
+            e["payload"].get("char") for e in node["events"] if e["type"] == "char_introduce"
+        }
+        missing = [
+            c
+            for c in node["cast"]
+            if c in known and c not in state_before["chars"] and c not in introduced_here
+        ]
+        if not missing:
+            return
+        current = [
+            {"type": e["type"], "payload": e["payload"], "source": e["source"]}
+            for e in node["events"]
+        ]
+        intros = [
+            {"type": "char_introduce", "payload": {"char": c}, "source": "user"} for c in missing
+        ]
+        self.replace_events(node_id, intros + current, commit=commit)
 
     def make_canon(self, node_id: str) -> None:
         """node_id までのパスを正史にする(各分岐点で canon エッジを付け替え)。
@@ -306,6 +337,8 @@ class Store:
                 node_id,
             ),
         )
+        if cast is not None:
+            self._ensure_cast_introduced(node_id, commit=False)
         self.mark_dirty_downstream(node_id, commit=False)
         self.conn.commit()
         return self.get_node(node_id)

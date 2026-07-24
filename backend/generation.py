@@ -203,17 +203,23 @@ DEFAULT_GENERATION_PROMPT = """あなたは物語のビート(出来事の仕様
 ビートは散文ではなく、そのシーンで起きる出来事を数文で記述した仕様書です。
 起伏と因果を意識し、キャラクターの感情が動く出来事を設計してください。"""
 
-GENERATION_RULES = """出力は必ず指定の JSON 形式に従ってください。
+EVENT_RULES = """イベント発行のルール:
+- キャラの初登場シーンでは char_introduce を必ず発行する
+- char_retire は死亡・物語からの永久退場のみ。シーンから立ち去る・別れる程度では発行しない
+- 心に残る出来事は memory_add(そのキャラ視点の一人称的内容で)
+- 関係が動いたら relationship_update(delta は -0.3〜+0.3 程度の小さな変化。±1.0 は人生を変える出来事のみ。reason 必須)
+- 事実の変化は fact_set。キャラ個人の事実(location, goal, items 等)は scope="char" + char にキャラ ID。
+  scope="world" は天気・日付・世界情勢など、特定キャラに属さない事実のみ"""
+
+GENERATION_RULES = f"""出力は必ず指定の JSON 形式に従ってください。
 
 ルール:
 - beat は出来事の記述に徹する(描写・台詞の肉付けはしない)
 - events はビートで起きた出来事による状態変化を漏れなく列挙する
-  - キャラの初登場シーンでは char_introduce を必ず発行する
-  - 心に残る出来事は memory_add(そのキャラ視点の一人称的内容で)
-  - 関係が動いたら relationship_update(delta は -1.0〜1.0 の小さな変化。reason 必須)
-  - 場所の移動や状況変化は fact_set(key 例: location, goal, items)
 - cast はそのシーンに登場するキャラ ID のみ
-- 退場済みキャラは登場させない"""
+- 退場済みキャラは登場させない
+
+{EVENT_RULES}"""
 
 
 def generation_system_prompt(store: Store) -> str:
@@ -377,9 +383,11 @@ async def _generate_beat_impl(
 
 # ---- イベント抽出(手動ビート用) -------------------------------------
 
-EXTRACTION_PROMPT = """あなたは物語のビート(出来事の仕様書)から状態変化イベントを抽出する解析器です。
+EXTRACTION_PROMPT = f"""あなたは物語のビート(出来事の仕様書)から状態変化イベントを抽出する解析器です。
 ビートに書かれている出来事だけを対象に、状態変化を JSON で列挙してください。
-書かれていない出来事を推測で追加してはいけません。"""
+書かれていない出来事を推測で追加してはいけません。
+
+{EVENT_RULES}"""
 
 
 async def extract_events(store: Store, base_url: str, node_id: str) -> list[dict[str, Any]]:
