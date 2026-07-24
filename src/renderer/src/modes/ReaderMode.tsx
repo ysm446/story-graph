@@ -166,17 +166,24 @@ export default function ReaderMode(): React.JSX.Element {
     setPresets(p)
     if (selectId) {
       setPresetId(selectId)
+      void api.putSettings({ reader_preset_id: selectId })
     } else {
       setPresetId((prev) => (prev && p.some((x) => x.id === prev) ? prev : p[0]?.id ?? null))
     }
   }, [])
 
   useEffect(() => {
-    void Promise.all([api.listPresets(), api.listCharacters()]).then(([p, chars]) => {
-      setPresets(p)
-      setCharacters(chars)
-      setPresetId((prev) => prev ?? p[0]?.id ?? null)
-    })
+    void Promise.all([api.listPresets(), api.listCharacters(), api.getSettings()]).then(
+      ([p, chars, settings]) => {
+        setPresets(p)
+        setCharacters(chars)
+        // 前回の選択を復元(ライブラリごとの settings に保存)
+        const savedPreset = settings.reader_preset_id
+        setPresetId(savedPreset && p.some((x) => x.id === savedPreset) ? savedPreset : p[0]?.id ?? null)
+        const savedPov = settings.reader_pov_char
+        if (savedPov && chars.some((c) => c.id === savedPov)) setPovChar(savedPov)
+      }
+    )
   }, [])
 
   const reloadScenes = useCallback(async (): Promise<void> => {
@@ -286,7 +293,10 @@ export default function ReaderMode(): React.JSX.Element {
       >
         <select
           value={presetId ?? ''}
-          onChange={(e) => setPresetId(e.target.value)}
+          onChange={(e) => {
+            setPresetId(e.target.value)
+            void api.putSettings({ reader_preset_id: e.target.value })
+          }}
           className="rounded-lg border px-2 py-1 text-[12px]"
           style={selectStyle}
         >
@@ -328,7 +338,10 @@ export default function ReaderMode(): React.JSX.Element {
         </button>
         <select
           value={povChar ?? ''}
-          onChange={(e) => setPovChar(e.target.value || null)}
+          onChange={(e) => {
+            setPovChar(e.target.value || null)
+            void api.putSettings({ reader_pov_char: e.target.value })
+          }}
           className="rounded-lg border px-2 py-1 text-[12px]"
           style={selectStyle}
         >

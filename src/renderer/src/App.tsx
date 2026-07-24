@@ -10,8 +10,8 @@ type Mode = 'structure' | 'reader' | 'characters' | 'settings'
 
 const MODES: Array<{ id: Mode; label: string }> = [
   { id: 'structure', label: '構造' },
+  { id: 'characters', label: 'キャラクター' },
   { id: 'reader', label: '鑑賞' },
-  { id: 'characters', label: 'キャラクター庫' },
   { id: 'settings', label: '設定' }
 ]
 
