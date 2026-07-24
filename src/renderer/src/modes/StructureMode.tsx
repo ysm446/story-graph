@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
+  applyNodeChanges,
   Background,
   Handle,
   MiniMap,
@@ -778,7 +779,7 @@ function StructureModeInner(): React.JSX.Element {
   const [generating, setGenerating] = useState(false)
   const [genStatus, setGenStatus] = useState<string | null>(null)
   const genAbortRef = useRef<AbortController | null>(null)
-  const [dragOverrides, setDragOverrides] = useState<Record<string, { x: number; y: number }>>({})
+  const [flowNodes, setFlowNodes] = useState<BeatFlowNode[]>([])
 
   const reload = useCallback(async (): Promise<void> => {
     const [graph, chars] = await Promise.all([api.getGraph(), api.listCharacters()])
@@ -816,29 +817,38 @@ function StructureModeInner(): React.JSX.Element {
     return map
   }, [graphNodes])
 
-  // 座標: ドラッグ中の値 > 保存済み手動配置(pos_x/y) > 自動レイアウト
+  // 座標: 保存済み手動配置(pos_x/y) > 自動レイアウト
   const positions = useMemo(() => {
     const computed = layoutDag(graphNodes, graphEdges)
     const merged: Record<string, { x: number; y: number }> = {}
     for (const n of graphNodes) {
       merged[n.id] =
-        dragOverrides[n.id] ??
-        (n.pos_x != null && n.pos_y != null ? { x: n.pos_x, y: n.pos_y } : computed[n.id] ?? { x: 0, y: 0 })
+        n.pos_x != null && n.pos_y != null ? { x: n.pos_x, y: n.pos_y } : computed[n.id] ?? { x: 0, y: 0 }
     }
     return merged
-  }, [graphNodes, graphEdges, dragOverrides])
+  }, [graphNodes, graphEdges])
+
+  // グラフデータの変化時のみノード配列を再構築。ドラッグ・選択は
+  // applyNodeChanges の差分適用に任せる(毎フレーム再構築するとチラつく)
+  useEffect(() => {
+    setFlowNodes((prev) => {
+      const prevById = new Map(prev.map((n) => [n.id, n]))
+      return graphNodes.map((n) => {
+        const existing = prevById.get(n.id)
+        return {
+          id: n.id,
+          type: 'beatNode' as const,
+          position: existing?.dragging ? existing.position : positions[n.id] ?? { x: 0, y: 0 },
+          selected: existing?.selected ?? false,
+          dragging: existing?.dragging,
+          data: { storyNode: n, characters: charMap }
+        }
+      })
+    })
+  }, [graphNodes, positions, charMap])
 
   const handleNodesChange = useCallback((changes: NodeChange<BeatFlowNode>[]): void => {
-    setDragOverrides((prev) => {
-      let next = prev
-      for (const change of changes) {
-        if (change.type === 'position' && change.position) {
-          if (next === prev) next = { ...prev }
-          next[change.id] = change.position
-        }
-      }
-      return next
-    })
+    setFlowNodes((nds) => applyNodeChanges(changes, nds))
   }, [])
 
   // 正史パス(canon エッジを根から辿る)。関係図の時間スクラブに使う
@@ -862,18 +872,6 @@ function StructureModeInner(): React.JSX.Element {
     }
     return path
   }, [graphNodes, graphEdges])
-
-  const flowNodes: BeatFlowNode[] = useMemo(
-    () =>
-      graphNodes.map((n) => ({
-        id: n.id,
-        type: 'beatNode',
-        position: positions[n.id] ?? { x: 0, y: 0 },
-        selected: n.id === selectedId,
-        data: { storyNode: n, characters: charMap }
-      })),
-    [graphNodes, positions, charMap, selectedId]
-  )
 
   const flowEdges: Edge[] = useMemo(
     () =>
@@ -945,11 +943,18 @@ function StructureModeInner(): React.JSX.Element {
             nodes={flowNodes}
             edges={flowEdges}
             nodeTypes={nodeTypes}
-            onNodeClick={(_, node) => setSelectedId(node.id)}
-            onPaneClick={() => setSelectedId(null)}
             onNodesChange={handleNodesChange}
-            onNodeDragStop={(_, node) => {
-              void api.setNodePosition(node.id, node.position.x, node.position.y)
+            onSelectionChange={({ nodes }) => {
+              setSelectedId((prev) => {
+                if (nodes.length === 0) return null
+                // 複数選択中は先頭をインスペクタ対象にする
+                return nodes.some((n) => n.id === prev) ? prev : nodes[0].id
+              })
+            }}
+            onNodeDragStop={(_, __, draggedNodes) => {
+              for (const dragged of draggedNodes) {
+                void api.setNodePosition(dragged.id, dragged.position.x, dragged.position.y)
+              }
             }}
             minZoom={0.1}
             maxZoom={2}
@@ -976,7 +981,8 @@ function StructureModeInner(): React.JSX.Element {
                   <button
                     onClick={() => {
                       void api.resetLayout().then(() => {
-                        setDragOverrides({})
+                        // 保存座標を消した上でドラッグ中間状態も破棄して再構築する
+                        setFlowNodes([])
                         void reload()
                       })
                     }}
