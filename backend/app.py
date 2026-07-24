@@ -289,6 +289,27 @@ async def node_validate(node_id: str) -> dict[str, Any]:
     return {"errors": store.validate(node_id)}
 
 
+# ---- システム情報 / モデル一覧 --------------------------------------
+
+@app.get("/system/resources")
+async def system_resources() -> dict[str, Any]:
+    import system_info
+
+    return system_info.resources()
+
+
+@app.get("/models")
+async def list_models() -> dict[str, Any]:
+    import system_info
+    from llama_manager import DEFAULT_MODEL_PATH
+
+    settings = store.get_settings()
+    return {
+        "models": system_info.list_models(),
+        "current": settings.get("llm_model_path") or DEFAULT_MODEL_PATH,
+    }
+
+
 # ---- LLM / 生成 -----------------------------------------------------
 
 class GenerateBeatIn(BaseModel):

@@ -86,6 +86,18 @@ export const api = {
       body: JSON.stringify({ selection })
     }),
 
+  systemResources: () =>
+    request<{
+      cpu_usage: number
+      ram_used: number
+      ram_total: number
+      gpu_usage: number | null
+      vram_used: number | null
+      vram_total: number | null
+    }>('/system/resources'),
+  listModels: () =>
+    request<{ models: Array<{ name: string; path: string; size: number }>; current: string }>('/models'),
+
   llmStatus: () =>
     request<{ base_url: string; healthy: boolean; spawned: boolean; model_path: string | null }>('/llm/status'),
   llmStart: () => request<{ base_url: string; healthy: boolean }>('/llm/start', { method: 'POST' }),

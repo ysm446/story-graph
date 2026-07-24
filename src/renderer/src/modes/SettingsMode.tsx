@@ -29,16 +29,21 @@ function getNearestCtxPresetIndex(value: number, presets: readonly number[]): nu
 const TEXT_FIELDS: Array<{ key: string; label: string; placeholder: string }> = [
   { key: 'llm_base_url', label: 'LLM エンドポイント', placeholder: 'http://127.0.0.1:8080' },
   {
-    key: 'llm_model_path',
-    label: 'モデルパス (GGUF)',
-    placeholder: 'D:\\GitHub\\story-graph\\models\\gemma-4-31B-it-GGUF\\gemma-4-31B-it-Q6_K.gguf'
-  },
-  {
     key: 'llama_server_path',
     label: 'llama-server.exe のパス',
     placeholder: 'D:\\GitHub\\lm-graph\\bin\\llama-server\\b9496-win-cuda13-x64\\llama-server.exe'
   }
 ]
+
+interface ModelEntry {
+  name: string
+  path: string
+  size: number
+}
+
+function fmtGb(bytes: number): string {
+  return `${(bytes / 1024 ** 3).toFixed(1)} GB`
+}
 
 interface LlmStatus {
   base_url: string
@@ -53,6 +58,8 @@ export default function SettingsMode(): React.JSX.Element {
   const [status, setStatus] = useState<LlmStatus | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [llmError, setLlmError] = useState<string | null>(null)
+  const [models, setModels] = useState<ModelEntry[]>([])
+  const [currentModel, setCurrentModel] = useState<string>('')
   const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const ctxSize = Number(values.llm_ctx_size || DEFAULT_CTX_SIZE)
@@ -69,6 +76,10 @@ export default function SettingsMode(): React.JSX.Element {
   useEffect(() => {
     void api.getSettings().then(setValues)
     void refreshStatus()
+    void api.listModels().then((r) => {
+      setModels(r.models)
+      setCurrentModel(r.current)
+    })
   }, [])
 
   const showSaved = (): void => {
@@ -162,6 +173,31 @@ export default function SettingsMode(): React.JSX.Element {
               <p className="settings-field-hint">
                 シーン生成・清書時に停止していれば自動起動します。外部で起動済みの llama-server があればそれを優先します。
               </p>
+            </div>
+            <div className="settings-field">
+              <div className="settings-field-header">
+                <span className="settings-field-label">モデル (models/ フォルダから選択)</span>
+              </div>
+              <select
+                value={values.llm_model_path || currentModel}
+                onChange={(e) => void save({ llm_model_path: e.target.value })}
+                className="w-full rounded-lg border px-3 py-2 text-[13px] outline-none"
+                style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
+              >
+                {models.length === 0 && <option value="">models/ に GGUF がありません</option>}
+                {models.map((m) => (
+                  <option key={m.path} value={m.path}>
+                    {m.name}({fmtGb(m.size)})
+                  </option>
+                ))}
+                {(values.llm_model_path || currentModel) &&
+                  !models.some((m) => m.path === (values.llm_model_path || currentModel)) && (
+                    <option value={values.llm_model_path || currentModel}>
+                      {(values.llm_model_path || currentModel).split(/[\\/]/).pop()}(外部パス)
+                    </option>
+                  )}
+              </select>
+              <p className="settings-field-hint">変更は次回のサーバー起動から反映されます。mmproj は自動で除外しています。</p>
             </div>
             {TEXT_FIELDS.map((def) => (
               <div key={def.key} className="settings-field">

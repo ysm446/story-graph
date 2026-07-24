@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, initApi } from './api'
+import StatusBar from './StatusBar'
 import StructureMode from './modes/StructureMode'
 import ReaderMode from './modes/ReaderMode'
 import CharactersMode from './modes/CharactersMode'
@@ -214,6 +215,7 @@ export default function App(): React.JSX.Element {
           </>
         )}
       </div>
+      <StatusBar backendReady={backendReady === true} />
     </div>
   )
 }
