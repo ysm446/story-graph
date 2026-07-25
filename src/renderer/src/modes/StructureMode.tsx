@@ -1183,13 +1183,17 @@ function StructureModeInner(): React.JSX.Element {
             )}
           </ReactFlow>
         </main>
-        {/* リサイズハンドル */}
+        {/* リサイズハンドル(見た目は 1px のライン、当たり判定は幅 4px のまま) */}
         <div
           onPointerDown={beginInspectorResize}
-          className="w-1 shrink-0 cursor-col-resize transition-colors hover:bg-[var(--accent-border)]"
-          style={{ background: 'var(--border)' }}
+          className="group relative w-1 shrink-0 cursor-col-resize"
           title="ドラッグで幅を変更"
-        />
+        >
+          <div
+            className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 transition-colors group-hover:bg-[var(--accent-border)]"
+            style={{ background: 'var(--border)' }}
+          />
+        </div>
         <aside
           className="flex shrink-0 flex-col"
           style={{ background: 'var(--bg-sidebar)', width: inspectorWidth }}
