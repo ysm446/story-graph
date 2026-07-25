@@ -589,10 +589,10 @@ function BeatTab({
             </button>
           </span>
         </span>
-        <span className="relative block">
+        <span className="block">
           {correction && (
             <div
-              className="absolute inset-x-0 bottom-full z-20 mb-1 rounded-xl border p-2.5 shadow-lg shadow-black/40"
+              className="mb-1.5 rounded-xl border p-2.5 shadow-lg shadow-black/40"
               style={{ background: 'var(--bg-card)', borderColor: 'var(--accent-border)' }}
             >
               <div className="mb-1 text-[10px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
