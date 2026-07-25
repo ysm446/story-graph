@@ -1540,7 +1540,9 @@ function StructureModeInner(): React.JSX.Element {
   return (
     <div className="flex h-full flex-col">
       <div ref={rowRef} className="flex min-h-0 flex-1">
-        <main className="relative min-w-0 flex-1" style={{ background: 'var(--bg-canvas)' }}>
+        {/* ノードエリア + 相談チャット(インスペクタに被らないよう左カラム内に収める) */}
+        <div className="flex min-w-0 flex-1 flex-col">
+        <main className="relative min-h-0 flex-1" style={{ background: 'var(--bg-canvas)' }}>
           <ReactFlow
             nodes={flowNodes}
             edges={flowEdges}
@@ -1676,6 +1678,14 @@ function StructureModeInner(): React.JSX.Element {
             )}
           </ReactFlow>
         </main>
+        <ChatDrawer
+          selectedId={selectedId}
+          canonTailId={canonPath.length > 0 ? canonPath[canonPath.length - 1].id : null}
+          nodesById={Object.fromEntries(graphNodes.map((n) => [n.id, n]))}
+          characters={characters}
+          onGraphChanged={() => void reload()}
+        />
+        </div>
         {/* リサイズハンドル(見た目は 1px のライン、当たり判定は幅 4px のまま) */}
         <div
           onPointerDown={beginInspectorResize}
@@ -1749,13 +1759,6 @@ function StructureModeInner(): React.JSX.Element {
           </div>
         </aside>
       </div>
-      <ChatDrawer
-        selectedId={selectedId}
-        canonTailId={canonPath.length > 0 ? canonPath[canonPath.length - 1].id : null}
-        nodesById={Object.fromEntries(graphNodes.map((n) => [n.id, n]))}
-        characters={characters}
-        onGraphChanged={() => void reload()}
-      />
     </div>
   )
 }

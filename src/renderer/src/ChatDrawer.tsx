@@ -48,18 +48,21 @@ export default function ChatDrawer({
   })
   const abortRef = useRef<AbortController | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
+  const rootRef = useRef<HTMLDivElement | null>(null)
   const busyElapsed = useElapsedSeconds(busy)
 
   useEffect(() => {
     localStorage.setItem('chatDrawerHeight', String(height))
   }, [height])
 
-  // 上端ドラッグで高さを変える。上へドラッグで拡大、下で縮小(min 220 / max 画面の 85%)
+  // 上端ドラッグで高さを変える。上へドラッグで拡大、下で縮小。
+  // 上限は「同じ列に並ぶノードエリアを 160px は残す」ように親の高さから決める
   const startResize = (e: React.MouseEvent): void => {
     e.preventDefault()
     const startY = e.clientY
     const startH = height
-    const maxH = Math.round(window.innerHeight * 0.85)
+    const columnHeight = rootRef.current?.parentElement?.clientHeight
+    const maxH = columnHeight ? Math.max(columnHeight - 160, 220) : Math.round(window.innerHeight * 0.7)
     const onMove = (ev: MouseEvent): void => {
       setHeight(Math.min(Math.max(startH + (startY - ev.clientY), 220), maxH))
     }
@@ -230,7 +233,11 @@ export default function ChatDrawer({
   }
 
   return (
-    <div className="relative shrink-0 border-t" style={{ background: 'var(--bg-chat)', borderColor: 'var(--border)' }}>
+    <div
+      ref={rootRef}
+      className="relative shrink-0 border-t"
+      style={{ background: 'var(--bg-chat)', borderColor: 'var(--border)' }}
+    >
       {open && (
         <div
           onMouseDown={startResize}
