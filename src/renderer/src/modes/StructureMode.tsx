@@ -22,13 +22,16 @@ import RelationGraph from '../RelationGraph'
 import type { Character, EventInput, GraphEdge, StateSnapshot, StoryEvent, StoryNode } from '../types'
 
 const LANE_GAP_X = 340
-const NODE_GAP_Y = 200
+const NODE_GAP_Y = 56 // カード間の余白
+const FALLBACK_NODE_HEIGHT = 160
 
 // ---- DAG レイアウト(正史は縦一直線、分岐は右のレーンへ) --------------
+// 各ノードの実測高さを使い、親の y + 親の高さ + 余白 で積み上げる
 
 function layoutDag(
   nodes: StoryNode[],
-  edges: GraphEdge[]
+  edges: GraphEdge[],
+  heights: Record<string, number>
 ): Record<string, { x: number; y: number }> {
   const childrenMap: Record<string, Array<{ id: string; canon: boolean }>> = {}
   const hasParent = new Set<string>()
@@ -40,13 +43,14 @@ function layoutDag(
   const positions: Record<string, { x: number; y: number }> = {}
   let laneCounter = 0
 
-  const assign = (id: string, lane: number, depth: number): void => {
-    positions[id] = { x: lane * LANE_GAP_X, y: depth * NODE_GAP_Y }
+  const assign = (id: string, lane: number, y: number): void => {
+    positions[id] = { x: lane * LANE_GAP_X, y }
+    const height = heights[id] ?? FALLBACK_NODE_HEIGHT
     const kids = (childrenMap[id] ?? [])
       .slice()
       .sort((a, b) => Number(b.canon) - Number(a.canon) || (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0))
     kids.forEach((kid, i) => {
-      assign(kid.id, i === 0 ? lane : ++laneCounter, depth + 1)
+      assign(kid.id, i === 0 ? lane : ++laneCounter, y + height + NODE_GAP_Y)
     })
   }
 
@@ -1151,35 +1155,58 @@ function StructureModeInner(): React.JSX.Element {
     return map
   }, [graphNodes])
 
-  // 座標: 保存済み手動配置(pos_x/y) > 自動レイアウト
-  const positions = useMemo(() => {
-    const computed = layoutDag(graphNodes, graphEdges)
-    const merged: Record<string, { x: number; y: number }> = {}
-    for (const n of graphNodes) {
-      merged[n.id] =
-        n.pos_x != null && n.pos_y != null ? { x: n.pos_x, y: n.pos_y } : computed[n.id] ?? { x: 0, y: 0 }
-    }
-    return merged
-  }, [graphNodes, graphEdges])
-
   // グラフデータの変化時のみノード配列を再構築。ドラッグ・選択は
   // applyNodeChanges の差分適用に任せる(毎フレーム再構築するとチラつく)
   useEffect(() => {
     setFlowNodes((prev) => {
       const prevById = new Map(prev.map((n) => [n.id, n]))
+      const heights: Record<string, number> = {}
+      for (const n of prev) {
+        if (n.measured?.height) heights[n.id] = n.measured.height
+      }
+      const computed = layoutDag(graphNodes, graphEdges, heights)
       return graphNodes.map((n) => {
         const existing = prevById.get(n.id)
+        const position =
+          n.pos_x != null && n.pos_y != null
+            ? { x: n.pos_x, y: n.pos_y }
+            : computed[n.id] ?? { x: 0, y: 0 }
         return {
           id: n.id,
           type: 'beatNode' as const,
-          position: existing?.dragging ? existing.position : positions[n.id] ?? { x: 0, y: 0 },
+          position: existing?.dragging ? existing.position : position,
           selected: existing?.selected ?? false,
           dragging: existing?.dragging,
           data: { storyNode: n, characters: charMap }
         }
       })
     })
-  }, [graphNodes, positions, charMap])
+  }, [graphNodes, graphEdges, charMap])
+
+  // 実測高さが揃ったら、自動レイアウトのノードだけ位置を組み直す
+  // (初回マウント直後は高さ未測定のため、測定後に一度リフローする)
+  const heightsSig = flowNodes.map((n) => `${n.id}:${Math.round(n.measured?.height ?? 0)}`).join(',')
+  useEffect(() => {
+    setFlowNodes((prev) => {
+      if (prev.some((n) => n.dragging)) return prev
+      const heights: Record<string, number> = {}
+      for (const n of prev) {
+        if (n.measured?.height) heights[n.id] = n.measured.height
+      }
+      const computed = layoutDag(graphNodes, graphEdges, heights)
+      let changed = false
+      const next = prev.map((n) => {
+        const gn = graphNodes.find((g) => g.id === n.id)
+        if (!gn || (gn.pos_x != null && gn.pos_y != null)) return n // 手動配置は触らない
+        const p = computed[n.id]
+        if (!p || (Math.abs(n.position.x - p.x) < 0.5 && Math.abs(n.position.y - p.y) < 0.5)) return n
+        changed = true
+        return { ...n, position: p }
+      })
+      return changed ? next : prev
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [heightsSig])
 
   const handleNodesChange = useCallback((changes: NodeChange<BeatFlowNode>[]): void => {
     setFlowNodes((nds) => applyNodeChanges(changes, nds))
