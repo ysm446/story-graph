@@ -358,6 +358,7 @@ function BeatTab({
   const [proofreading, setProofreading] = useState(false)
   const [beatBackup, setBeatBackup] = useState<string | null>(null)
   const imageInputRef = useRef<HTMLInputElement | null>(null)
+  const beatTextareaRef = useRef<HTMLTextAreaElement | null>(null)
 
   useEffect(() => {
     void api
@@ -375,17 +376,26 @@ function BeatTab({
   }, [node.id])
 
   const runProofread = (): void => {
-    const text = (draft.beat ?? '').trim()
-    if (!text || proofreading) return
+    const full = draft.beat ?? ''
+    if (!full.trim() || proofreading) return
+    // テキストエリアに選択範囲があればその部分だけを校正する
+    const textarea = beatTextareaRef.current
+    const start = textarea?.selectionStart ?? 0
+    const end = textarea?.selectionEnd ?? 0
+    const hasSelection = textarea !== null && end > start && full.slice(start, end).trim() !== ''
+    const target = hasSelection ? full.slice(start, end) : full.trim()
+    const context = hasSelection ? { before: full.slice(0, start), after: full.slice(end) } : undefined
     setProofreading(true)
     setError(null)
     api
-      .proofread(text, proofreadPreset)
+      .proofread(target, proofreadPreset, context)
       .then(({ value }) => {
-        if (value) {
-          setBeatBackup(draft.beat ?? '')
-          setDraft((d) => ({ ...d, beat: value }))
-        }
+        if (!value) return
+        setBeatBackup(full)
+        setDraft((d) => ({
+          ...d,
+          beat: hasSelection ? full.slice(0, start) + value + full.slice(end) : value
+        }))
       })
       .catch((e) => setError(String(e)))
       .finally(() => setProofreading(false))
@@ -544,13 +554,14 @@ function BeatTab({
               disabled={proofreading || suggesting !== null || !(draft.beat ?? '').trim()}
               className="rounded-md border px-1.5 py-px text-[10px] disabled:opacity-40"
               style={{ borderColor: 'var(--accent-border)', color: 'var(--accent)' }}
-              title="選択中のプリセットで本文を校正(結果は下書きに反映、保存までは確定しない)"
+              title="本文を校正。テキストを選択していればその範囲だけを校正します(結果は下書きに反映、保存までは確定しない)"
             >
               {proofreading ? '校正中…' : '✎ 校正'}
             </button>
           </span>
         </span>
         <textarea
+          ref={beatTextareaRef}
           rows={6}
           value={draft.beat ?? ''}
           onChange={(e) => setDraft((d) => ({ ...d, beat: e.target.value }))}

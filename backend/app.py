@@ -448,6 +448,8 @@ class SuggestFieldIn(BaseModel):
 class ProofreadIn(BaseModel):
     text: str
     preset_id: str
+    context_before: str = ""
+    context_after: str = ""
 
 
 @app.get("/proofread/presets")
@@ -461,7 +463,9 @@ async def proofread(body: ProofreadIn) -> dict[str, str]:
         raise HTTPException(400, "文章が空です")
     try:
         base_url = await llama.ensure_running(store.get_settings())
-        value = await generation.proofread(store, base_url, body.text, body.preset_id)
+        value = await generation.proofread(
+            store, base_url, body.text, body.preset_id, body.context_before, body.context_after
+        )
     except ValueError as e:
         raise HTTPException(400, str(e))
     except RuntimeError as e:

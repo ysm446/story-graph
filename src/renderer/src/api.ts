@@ -87,10 +87,15 @@ export const api = {
       `/renders?preset_id=${encodeURIComponent(presetId)}${povChar ? `&pov_char=${encodeURIComponent(povChar)}` : ''}`
     ),
   listProofreadPresets: () => request<Array<{ id: string; name: string; prompt: string }>>('/proofread/presets'),
-  proofread: (text: string, presetId: string) =>
+  proofread: (text: string, presetId: string, context?: { before: string; after: string }) =>
     request<{ value: string }>('/proofread', {
       method: 'POST',
-      body: JSON.stringify({ text, preset_id: presetId })
+      body: JSON.stringify({
+        text,
+        preset_id: presetId,
+        context_before: context?.before ?? '',
+        context_after: context?.after ?? ''
+      })
     }),
   suggestSceneMeta: (beat: string, field: 'title' | 'emotional_core') =>
     request<{ value: string }>('/suggest/scene_meta', {

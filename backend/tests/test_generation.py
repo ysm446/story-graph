@@ -131,6 +131,25 @@ def test_proofread_presets_and_custom(store, monkeypatch):
         asyncio.run(generation.proofread(store, "http://fake", "x", "nonsense"))
 
 
+def test_proofread_selection_with_context(store, monkeypatch):
+    captured = {}
+
+    async def fake_chat(messages, **kwargs):
+        captured["user"] = messages[1]["content"]
+        return {"content": "直した部分。", "tool_calls": None, "message": {}, "finish_reason": "stop", "usage": {}}
+
+    monkeypatch.setattr(llm_mod, "chat", fake_chat)
+    value = asyncio.run(generation.proofread(
+        store, "http://fake", "なおす部分。", "standard",
+        context_before="前の文。", context_after="後の文。",
+    ))
+    assert value == "直した部分。"
+    assert "## 前の文脈" in captured["user"]
+    assert "前の文。" in captured["user"]
+    assert "## 校正対象" in captured["user"]
+    assert "後の文。" in captured["user"]
+
+
 def test_extract_events_replaces(store, monkeypatch):
     node = store.append_node({"beat": "アヤが村を出る", "cast": ["aya"]}, [
         {"type": "char_introduce", "payload": {"char": "aya"}},

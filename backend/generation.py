@@ -448,19 +448,49 @@ def proofread_presets(store: Store) -> list[dict[str, str]]:
     return presets
 
 
-async def proofread(store: Store, base_url: str, text: str, preset_id: str) -> str:
+async def proofread(
+    store: Store,
+    base_url: str,
+    text: str,
+    preset_id: str,
+    context_before: str = "",
+    context_after: str = "",
+) -> str:
+    """text を校正して返す。context_before/after があれば「選択範囲のみの校正」モード:
+    前後の文脈を参考として渡し、校正対象部分だけを返させる。"""
     preset = next((p for p in proofread_presets(store) if p["id"] == preset_id), None)
     if preset is None:
         raise ValueError(f"unknown proofread preset: {preset_id}")
+    if context_before or context_after:
+        user_content = "\n".join(
+            [
+                "次の【校正対象】の部分だけを校正してください。前後の文脈は参考情報です"
+                "(文脈と自然につながるようにしてください)。",
+                "修正後の【校正対象】部分の文章だけを返してください。",
+                "",
+                "## 前の文脈",
+                context_before or "(なし)",
+                "",
+                "## 校正対象",
+                text,
+                "",
+                "## 後の文脈",
+                context_after or "(なし)",
+            ]
+        )
+        label = f"校正・選択範囲({preset['name']})"
+    else:
+        user_content = text
+        label = f"校正({preset['name']})"
     result = await llm.chat(
         [
             {"role": "system", "content": preset["prompt"]},
-            {"role": "user", "content": text},
+            {"role": "user", "content": user_content},
         ],
         base_url=base_url,
         temperature=0.3,
         max_tokens=2048,
-        label=f"校正({preset['name']})",
+        label=label,
     )
     return result["content"].strip()
 
