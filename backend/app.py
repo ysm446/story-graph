@@ -691,6 +691,8 @@ class ChatSendIn(BaseModel):
     anchor_node: str | None = None
     scope: str = "upto"  # upto | all
     message: str
+    char_id: str | None = None  # 設定時は「キャラクターと話す」モード
+    mode: str = "interview"  # interview | roleplay(char_id 設定時のみ意味を持つ)
 
 
 @app.get("/chats")
@@ -725,7 +727,9 @@ async def chat_send(body: ChatSendIn) -> StreamingResponse:
         canon = store.canon_path()
         anchor = canon[-1] if canon else None
     return StreamingResponse(
-        chat_agent.chat_stream(store, base_url, body.chat_id, anchor, body.scope, body.message),
+        chat_agent.chat_stream(
+            store, base_url, body.chat_id, anchor, body.scope, body.message, body.char_id, body.mode
+        ),
         media_type="text/event-stream",
     )
 
@@ -734,6 +738,8 @@ class ChatSuggestIn(BaseModel):
     chat_id: str | None = None
     anchor_node: str | None = None
     scope: str = "upto"
+    char_id: str | None = None  # token_usage 用(キャラモードの新規チャット)
+    mode: str = "interview"
 
 
 @app.post("/chat/token_usage")
@@ -746,7 +752,9 @@ async def chat_token_usage(body: ChatSuggestIn) -> dict[str, Any]:
     if anchor is None:
         canon = store.canon_path()
         anchor = canon[-1] if canon else None
-    usage = await chat_agent.token_usage(store, base_url, body.chat_id, anchor, body.scope)
+    usage = await chat_agent.token_usage(
+        store, base_url, body.chat_id, anchor, body.scope, body.char_id, body.mode
+    )
     return {**usage, "ctx_size": int(settings.get("llm_ctx_size") or 16384)}
 
 

@@ -182,6 +182,124 @@ def dispatch_tool(store: Store, name: str, args: dict[str, Any], path: list[str]
         return {"error": f"{type(e).__name__}: {e}"}
 
 
+# ---- キャラクターと話す(キャラモード。docs/design/chat.md §6) --------
+#
+# アンカー時点の fold 済み state をキャラの人格材料にする。シーン一覧は
+# 渡さない(居合わせていない場面を含むため)。知識は facts + 記憶のみ。
+
+CHARACTER_MEMORY_LIMIT = 15  # システムプロンプトに直接入れる記憶数(importance 上位)
+
+
+def build_character_tools() -> list[dict[str, Any]]:
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": "recall",
+                "description": "自分の記憶を思い出す(意味検索)。会話で聞かれたことが手元の記憶にないときに使う。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "思い出したい内容"},
+                    },
+                    "required": ["query"],
+                },
+            },
+        },
+    ]
+
+
+def _describe_score(score: float) -> str:
+    if score >= 0.6:
+        return "深い信頼・愛情"
+    if score >= 0.3:
+        return "好意的"
+    if score >= 0.1:
+        return "やや好意的"
+    if score > -0.1:
+        return "中立"
+    if score > -0.3:
+        return "やや警戒"
+    if score > -0.6:
+        return "敵対的"
+    return "強い憎しみ・恐れ"
+
+
+def build_character_system(store: Store, path: list[str], char_id: str, mode: str) -> str:
+    char = store.get_character(char_id)
+    if char is None:
+        raise ValueError(f"キャラが見つかりません: {char_id}")
+    state = store.get_state(path[-1]) if path else {"world": {"time": None, "facts": {}}, "chars": {}}
+    cs = state["chars"].get(char_id) or {"facts": {}, "relationships": {}, "memories": []}
+
+    lines: list[str] = [f"あなたは「{char['name']}」という人物です。"]
+    if char.get("profile"):
+        lines.append(f"性格: {char['profile']}")
+    if char.get("appearance"):
+        lines.append(f"外見: {char['appearance']}")
+    if char.get("voice"):
+        lines.append(f"口調: {char['voice']}")
+
+    facts = cs.get("facts") or {}
+    if facts or state["world"]["facts"] or state["world"]["time"] is not None:
+        lines += ["", "## 現在のあなたの状況"]
+        if state["world"]["time"] is not None:
+            lines.append(f"- 時間: {state['world']['time']}")
+        for k, v in facts.items():
+            lines.append(f"- {k}: {v}")
+        for k, v in state["world"]["facts"].items():
+            lines.append(f"- (世界){k}: {v}")
+
+    rels = cs.get("relationships") or {}
+    if rels:
+        lines += ["", "## 他者への今の気持ち"]
+        for target, rel in rels.items():
+            t = store.get_character(target)
+            t_name = t["name"] if t else target
+            label = f"「{rel['label']}」" if rel.get("label") else ""
+            lines.append(f"- {t_name}: {_describe_score(float(rel['score']))}{label}(強さ {rel['score']:+.2f})")
+
+    memory_ids = list(cs.get("memories") or [])
+    if memory_ids:
+        placeholders = ",".join("?" for _ in memory_ids)
+        rows = store.conn.execute(
+            f"SELECT content, importance FROM memories WHERE id IN ({placeholders})"
+            " ORDER BY COALESCE(importance, 0) DESC",
+            memory_ids,
+        ).fetchall()
+        lines += ["", "## あなたの記憶(重要なもの)"]
+        for r in rows[:CHARACTER_MEMORY_LIMIT]:
+            lines.append(f"- {r['content']}")
+        if len(rows) > CHARACTER_MEMORY_LIMIT:
+            lines.append("(ほかにも記憶がある。思い出せないことは recall ツールで思い出せる)")
+
+    frame = (
+        [
+            "あなたは今、この物語の外で作者からインタビューを受けています。",
+            "作者の質問に、あなた自身の言葉で答えてください。これまでの出来事への気持ち、",
+            "いまの考え、これからの望みなど、あなたが知っている範囲で率直に話してください。",
+        ]
+        if mode != "roleplay"
+        else [
+            "あなたは今、見知らぬ相手と言葉を交わしています。この会話は物語の本編には含まれません。",
+            "相手が誰であっても、いまのあなたとして自然に応対してください。",
+            "初対面の相手に話さないようなこと(秘密や本心)は、簡単には明かさないでください。",
+        ]
+    )
+    lines += [
+        "",
+        "## この会話について",
+        *frame,
+        "",
+        "## 厳守すること",
+        "- 上に書かれた状況・気持ち・記憶にあることだけを知っています。それ以外を聞かれたら「知らない」「分からない」と答える",
+        "- 記憶にない大きな出来事や事実を発明しない(言い回しや細部の脚色は構いません)",
+        "- これから先に何が起きるかは知りません",
+        "- 一人称で、あなたの口調で話す。物語・シーン・登場人物などのメタな言葉は使わない",
+    ]
+    return "\n".join(lines)
+
+
 # ---- システムプロンプト ----------------------------------------------
 
 def build_system(store: Store, path: list[str], scope: str) -> str:
@@ -218,9 +336,11 @@ async def chat_stream(
     anchor_node: str | None,
     scope: str,
     user_message: str,
+    char_id: str | None = None,
+    mode: str = "interview",
 ) -> AsyncIterator[str]:
     try:
-        async for chunk in _chat_impl(store, base_url, chat_id, anchor_node, scope, user_message):
+        async for chunk in _chat_impl(store, base_url, chat_id, anchor_node, scope, user_message, char_id, mode):
             yield chunk
     except Exception as e:  # noqa: BLE001
         yield _sse({"error": f"{type(e).__name__}: {e}"})
@@ -233,6 +353,8 @@ async def _chat_impl(
     anchor_node: str | None,
     scope: str,
     user_message: str,
+    char_id: str | None,
+    mode: str,
 ) -> AsyncIterator[str]:
     if chat_id:
         chat = store.get_chat(chat_id)
@@ -241,16 +363,25 @@ async def _chat_impl(
             return
         anchor_node = chat["anchor_node"]
         scope = chat["scope"]
+        char_id = chat.get("char_id")
+        mode = chat.get("mode") or "interview"
     else:
-        chat = store.create_chat(anchor_node, scope)
+        # キャラチャットは常に upto(未来を知るキャラは成立しない)
+        if char_id:
+            scope = "upto"
+        chat = store.create_chat(anchor_node, scope, char_id=char_id, mode=mode if char_id else None)
         chat_id = chat["id"]
     yield _sse({"chat_id": chat_id})
 
     path = _visible_path(store, anchor_node, scope)
     history: list[dict[str, Any]] = list(chat["messages"])
     history.append({"role": "user", "content": user_message})
-    system = build_system(store, path, scope)
-    tools = build_tools()
+    if char_id:
+        system = build_character_system(store, path, char_id, mode)
+        tools = build_character_tools()
+    else:
+        system = build_system(store, path, scope)
+        tools = build_tools()
 
     def messages() -> list[dict[str, Any]]:
         return [{"role": "system", "content": system}, *history]
@@ -284,10 +415,18 @@ async def _chat_impl(
             except json.JSONDecodeError:
                 args = {}
             yield _sse({"tool_call": {"name": name, "args": args}})
-            if name == "propose_beats":
+            if char_id:
+                # キャラモードのツールは recall(自分の記憶の検索)だけ
+                if name == "recall":
+                    payload: dict[str, Any] = _tool_search_memories(
+                        store, path, scope, {"query": args.get("query") or "", "char_id": char_id}
+                    )
+                else:
+                    payload = {"error": f"unknown tool: {name}"}
+            elif name == "propose_beats":
                 proposals = (args.get("proposals") or [])[:3]
                 yield _sse({"proposals": proposals})
-                payload: dict[str, Any] = {"ok": True, "count": len(proposals)}
+                payload = {"ok": True, "count": len(proposals)}
             else:
                 payload = dispatch_tool(store, name, args, path, scope)
             history.append(
@@ -335,8 +474,21 @@ async def _chat_impl(
 CHAR_PER_TOKEN_FALLBACK = 2  # サーバー未起動時の概算(lm-chat と同じ len//2)
 
 
-def _usage_text(store: Store, chat: dict[str, Any] | None, path: list[str], scope: str) -> str:
-    parts = [build_system(store, path, scope), json.dumps(build_tools(), ensure_ascii=False)]
+def _usage_text(
+    store: Store,
+    chat: dict[str, Any] | None,
+    path: list[str],
+    scope: str,
+    char_id: str | None = None,
+    mode: str = "interview",
+) -> str:
+    if char_id:
+        system = build_character_system(store, path, char_id, mode)
+        tools = build_character_tools()
+    else:
+        system = build_system(store, path, scope)
+        tools = build_tools()
+    parts = [system, json.dumps(tools, ensure_ascii=False)]
     for m in list(chat["messages"]) if chat else []:
         role = str(m.get("role", ""))
         content = m.get("content")
@@ -354,13 +506,19 @@ async def token_usage(
     chat_id: str | None,
     anchor_node: str | None,
     scope: str,
+    char_id: str | None = None,
+    mode: str = "interview",
 ) -> dict[str, Any]:
     chat = store.get_chat(chat_id) if chat_id else None
     if chat is not None:
         anchor_node = chat["anchor_node"]
         scope = chat["scope"]
+        char_id = chat.get("char_id")
+        mode = chat.get("mode") or "interview"
     path = _visible_path(store, anchor_node, scope)
-    text = _usage_text(store, chat, path, scope)
+    if char_id and store.get_character(char_id) is None:
+        char_id = None  # 削除済みキャラの履歴はシステム部を相談扱いで数える
+    text = _usage_text(store, chat, path, scope, char_id, mode)
     counted = await llm.count_tokens(text, base_url=base_url)
     if counted is None:
         return {"token_count": len(text) // CHAR_PER_TOKEN_FALLBACK, "estimated": True}

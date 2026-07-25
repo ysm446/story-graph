@@ -28,6 +28,15 @@ const TEMPLATES: { label: string; text: string }[] = [
   { label: '矛盾チェック', text: 'キャラの言動と facts に矛盾がないか点検して。' },
   { label: '展開を提案', text: 'この先の展開を3案提案して。' }
 ]
+// キャラモード用の定型質問(インタビューの入り口。docs/design/chat.md §6)
+const CHAR_TEMPLATES: { label: string; text: string }[] = [
+  { label: '気がかり', text: 'いま一番気がかりなことは何ですか?' },
+  { label: '心に残る', text: '最近の出来事で心に残っていることを聞かせてください。' },
+  { label: 'これから', text: 'これからどうするつもりですか?' },
+  { label: '後悔', text: '後悔していることはありますか?' },
+  { label: '信頼と警戒', text: '誰を信頼していて、誰を警戒していますか?' },
+  { label: '大切なもの', text: 'あなたにとって一番大切なものは何ですか?' }
+]
 const TEMPLATE_WINDOW = 3 // 同時に見せる件数
 const MAX_DYNAMIC = 2 // うち、内容から生成された質問に使う枠
 const RING_RADIUS = 10 // コンテキスト使用量リング(26px の SVG 内)
@@ -58,6 +67,9 @@ export default function ChatDrawer({
   const [chatId, setChatId] = useState<string | null>(null)
   const [anchorNode, setAnchorNode] = useState<string | null>(null)
   const [scope, setScope] = useState<'upto' | 'all'>('upto')
+  // キャラモード: charId 設定時は「その時系列のキャラ本人」と話す(null = 相談)
+  const [charId, setCharId] = useState<string | null>(null)
+  const [roleplay, setRoleplay] = useState(false) // false = インタビュー
   const [items, setItems] = useState<DisplayItem[]>([])
   const [liveText, setLiveText] = useState('') // ストリーミング中の回答(確定前)
   const [input, setInput] = useState('')
@@ -81,20 +93,23 @@ export default function ChatDrawer({
   const usagePct = usage ? Math.min((usage.tokens / Math.max(usage.ctx, 1)) * 100, 100) : 0
   const ringColor = usagePct >= 90 ? '#ef4444' : usagePct >= 70 ? '#f59e0b' : 'var(--accent)'
 
-  const dynamicShown = dynamicSuggestions ? dynamicQuestions.slice(0, MAX_DYNAMIC) : []
+  const activeChar = charId ? characters.find((c) => c.id === charId) ?? null : null
+  // キャラモードは固定テンプレを差し替え、内容ベースの生成は使わない
+  const templates = charId ? CHAR_TEMPLATES : TEMPLATES
+  const dynamicShown = dynamicSuggestions && !charId ? dynamicQuestions.slice(0, MAX_DYNAMIC) : []
   // 固定の候補で残りの枠を埋める(固定が上、生成された質問が下)
   const chips = [
     ...Array.from(
       { length: Math.max(TEMPLATE_WINDOW - dynamicShown.length, 0) },
-      (_, i) => ({ text: TEMPLATES[(templateOffset + i) % TEMPLATES.length].text, dynamic: false })
+      (_, i) => ({ text: templates[(templateOffset + i) % templates.length].text, dynamic: false })
     ),
     ...dynamicShown.map((text) => ({ text, dynamic: true }))
   ]
 
   // 内容ベースの質問候補を取り直す。失敗・未起動・設定オフはすべて無視して
-  // 固定の候補のまま(バックエンドが空配列を返す)
+  // 固定の候補のまま(バックエンドが空配列を返す)。キャラモードでは使わない
   const refreshSuggestions = async (cid: string | null, anchor: string | null): Promise<void> => {
-    if (!dynamicSuggestions) return
+    if (!dynamicSuggestions || charId) return
     try {
       const res = await chatApi.suggestQuestions({ chat_id: cid, anchor_node: anchor, scope })
       if (res.questions.length > 0) setDynamicQuestions(res.questions)
@@ -104,9 +119,20 @@ export default function ChatDrawer({
   }
 
   // コンテキスト使用量を取り直す(会話トークン / ctx_size)
-  const refreshUsage = async (cid: string | null, anchor: string | null): Promise<void> => {
+  const refreshUsage = async (
+    cid: string | null,
+    anchor: string | null,
+    charOverride?: string | null
+  ): Promise<void> => {
+    const c = charOverride !== undefined ? charOverride : charId
     try {
-      const res = await chatApi.tokenUsage({ chat_id: cid, anchor_node: anchor, scope })
+      const res = await chatApi.tokenUsage({
+        chat_id: cid,
+        anchor_node: anchor,
+        scope: c ? 'upto' : scope,
+        char_id: c,
+        mode: roleplay ? 'roleplay' : 'interview'
+      })
       setUsage({ tokens: res.token_count, ctx: res.ctx_size, estimated: res.estimated })
     } catch {
       setUsage(null)
@@ -148,15 +174,30 @@ export default function ChatDrawer({
     void refreshUsage(null, anchor)
   }
 
+  // 相談 ⇄ キャラの切替。会話の前提(システムプロンプト)が変わるので新規チャット扱い
+  const switchTarget = (nextCharId: string | null): void => {
+    setCharId(nextCharId)
+    setChatId(null)
+    setItems([])
+    setInsertedTitles(new Set())
+    setDynamicQuestions([])
+    setTemplateOffset(0)
+    const anchor = anchorNode ?? selectedId ?? canonTailId
+    setAnchorNode(anchor)
+    void refreshUsage(null, anchor, nextCharId)
+  }
+
   const loadChat = async (id: string): Promise<void> => {
     const chat = await chatApi.get(id)
     setChatId(chat.id)
     setAnchorNode(chat.anchor_node)
     setScope(chat.scope === 'all' ? 'all' : 'upto')
+    setCharId(chat.char_id ?? null)
+    setRoleplay(chat.mode === 'roleplay')
     setInsertedTitles(new Set())
     setDynamicQuestions([])
-    void refreshSuggestions(chat.id, chat.anchor_node)
-    void refreshUsage(chat.id, chat.anchor_node)
+    if (!chat.char_id) void refreshSuggestions(chat.id, chat.anchor_node)
+    void refreshUsage(chat.id, chat.anchor_node, chat.char_id ?? null)
     const display: DisplayItem[] = []
     for (const m of chat.messages) {
       const role = m.role as string
@@ -209,7 +250,14 @@ export default function ChatDrawer({
     }
     try {
       await chatSendStream(
-        { chat_id: chatId, anchor_node: effectiveAnchor, scope, message },
+        {
+          chat_id: chatId,
+          anchor_node: effectiveAnchor,
+          scope: charId ? 'upto' : scope,
+          message,
+          char_id: charId,
+          mode: roleplay ? 'roleplay' : 'interview'
+        },
         (e: ChatStreamEvent) => {
           if (e.chat_id) {
             latestChatId = e.chat_id
@@ -224,7 +272,7 @@ export default function ChatDrawer({
           if (e.tool_call) {
             const name = e.tool_call.name
             flushLive() // ツール実行前までの途中テキストを確定させる
-            setStatus(`調査中: ${name}`)
+            setStatus(name === 'recall' ? '記憶をたどっています…' : `調査中: ${name}`)
             if (name !== 'propose_beats') setItems((prev) => [...prev, { kind: 'tool', name }])
           }
           if (e.proposals?.length) {
@@ -299,28 +347,74 @@ export default function ChatDrawer({
         <div className="flex min-h-0 flex-1 flex-col px-4 pb-3 pt-2">
           {/* ヘッダー: アンカー / スコープ / 履歴 */}
           <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px]" style={{ color: 'var(--text-faint)' }}>
-            <span style={{ color: 'var(--text-dim)' }}>💬 相談チャット</span>
+            {/* 話す相手: 相談(編集者) or キャラ本人。切替は新規チャット扱い */}
+            <select
+              value={charId ?? ''}
+              onChange={(e) => switchTarget(e.target.value || null)}
+              disabled={busy}
+              className="rounded-md border px-1.5 py-0.5 text-[11px]"
+              style={{
+                background: 'var(--bg-input)',
+                borderColor: activeChar?.color || 'var(--border)',
+                color: 'var(--text-dim)'
+              }}
+              title="話す相手。キャラを選ぶと、アンカー時点のそのキャラ本人と話せます"
+            >
+              <option value="">💬 相談(編集者)</option>
+              {characters.map((c) => (
+                <option key={c.id} value={c.id}>
+                  🎭 {c.name}と話す
+                </option>
+              ))}
+            </select>
             <span>
               アンカー: <span style={{ color: 'var(--text-dim)' }}>{anchorTitle(chatId ? anchorNode : anchorNode ?? selectedId ?? canonTailId)}</span> まで
             </span>
-            <div className="flex overflow-hidden rounded-md border" style={{ borderColor: 'var(--border-strong)' }}>
-              {(['upto', 'all'] as const).map((s) => (
-                <button
-                  key={s}
-                  onClick={() => !chatId && setScope(s)}
-                  disabled={!!chatId}
-                  className="px-2 py-0.5 disabled:cursor-not-allowed"
-                  style={
-                    scope === s
-                      ? { background: 'var(--accent-soft)', color: 'var(--text)' }
-                      : { color: 'var(--text-faint)' }
-                  }
-                  title={chatId ? 'スコープはチャット開始時に固定されます(変えるには新規)' : s === 'upto' ? 'アンカーまでの情報のみ' : '物語全体'}
-                >
-                  {s === 'upto' ? 'ここまで' : '全体'}
-                </button>
-              ))}
-            </div>
+            {charId ? (
+              <div className="flex overflow-hidden rounded-md border" style={{ borderColor: 'var(--border-strong)' }}>
+                {([false, true] as const).map((rp) => (
+                  <button
+                    key={String(rp)}
+                    onClick={() => !chatId && setRoleplay(rp)}
+                    disabled={!!chatId}
+                    className="px-2 py-0.5 disabled:cursor-not-allowed"
+                    style={
+                      roleplay === rp
+                        ? { background: 'var(--accent-soft)', color: 'var(--text)' }
+                        : { color: 'var(--text-faint)' }
+                    }
+                    title={
+                      chatId
+                        ? '枠組みはチャット開始時に固定されます(変えるには新規)'
+                        : rp
+                          ? '劇中の一場面として話す(あなたは見知らぬ相手。会話は本編に含まれない)'
+                          : '物語の外から、作者としてキャラにインタビューする'
+                    }
+                  >
+                    {rp ? '劇中会話' : 'インタビュー'}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="flex overflow-hidden rounded-md border" style={{ borderColor: 'var(--border-strong)' }}>
+                {(['upto', 'all'] as const).map((s) => (
+                  <button
+                    key={s}
+                    onClick={() => !chatId && setScope(s)}
+                    disabled={!!chatId}
+                    className="px-2 py-0.5 disabled:cursor-not-allowed"
+                    style={
+                      scope === s
+                        ? { background: 'var(--accent-soft)', color: 'var(--text)' }
+                        : { color: 'var(--text-faint)' }
+                    }
+                    title={chatId ? 'スコープはチャット開始時に固定されます(変えるには新規)' : s === 'upto' ? 'アンカーまでの情報のみ' : '物語全体'}
+                  >
+                    {s === 'upto' ? 'ここまで' : '全体'}
+                  </button>
+                ))}
+              </div>
+            )}
             <button
               onClick={startNewChat}
               className="rounded-md border px-2 py-0.5"
@@ -340,7 +434,10 @@ export default function ChatDrawer({
               <option value="">履歴…</option>
               {history.map((h) => (
                 <option key={h.id} value={h.id}>
-                  {(h.anchor_title || '(無題)') + ': ' + (h.snippet || '(空)')}
+                  {(h.char_name ? `🎭${h.char_name} ` : '') +
+                    (h.anchor_title || '(無題)') +
+                    ': ' +
+                    (h.snippet || '(空)')}
                 </option>
               ))}
             </select>
@@ -379,9 +476,20 @@ export default function ChatDrawer({
           <div ref={scrollRef} className="inspector-scrollbar min-h-0 flex-1 overflow-y-auto pr-1">
             {items.length === 0 && (
               <div className="pt-6 text-center text-[12px]" style={{ color: 'var(--text-faint)' }}>
-                物語の状態について質問したり、「この先の展開を提案して」と頼めます。
-                <br />
-                アンカーより先の情報は見えません(ネタバレ防止)。
+                {activeChar ? (
+                  <>
+                    アンカー時点の {activeChar.name} 本人と話せます。
+                    {roleplay ? '劇中の一場面として(本編には含まれません)。' : 'インタビュー形式で。'}
+                    <br />
+                    本人が知らないこと・まだ起きていないことは答えられません。
+                  </>
+                ) : (
+                  <>
+                    物語の状態について質問したり、「この先の展開を提案して」と頼めます。
+                    <br />
+                    アンカーより先の情報は見えません(ネタバレ防止)。
+                  </>
+                )}
               </div>
             )}
             {items.map((item, i) => {
@@ -402,7 +510,12 @@ export default function ChatDrawer({
                   <div key={i} className="mb-2 flex">
                     <div
                       className="max-w-[80%] rounded-2xl rounded-bl-md border px-3 py-1.5 text-[13px] leading-relaxed"
-                      style={{ background: 'var(--bg-card)', borderColor: 'var(--border)', color: 'var(--text)' }}
+                      style={{
+                        background: 'var(--bg-card)',
+                        // キャラモードはキャラ色の枠で「本人の発言」を示す
+                        borderColor: activeChar?.color || 'var(--border)',
+                        color: 'var(--text)'
+                      }}
                     >
                       <Markdown text={item.text} />
                     </div>
@@ -412,7 +525,7 @@ export default function ChatDrawer({
               if (item.kind === 'tool') {
                 return (
                   <div key={i} className="mb-1 text-[11px]" style={{ color: 'var(--text-faint)' }}>
-                    🔍 {item.name}
+                    {item.name === 'recall' ? '💭 記憶をたどった' : `🔍 ${item.name}`}
                   </div>
                 )
               }
@@ -506,7 +619,9 @@ export default function ChatDrawer({
                   void send()
                 }
               }}
-              placeholder="物語について相談…(Enter で送信)"
+              placeholder={
+                activeChar ? `${activeChar.name} に話しかける…(Enter で送信)` : '物語について相談…(Enter で送信)'
+              }
               className="min-w-0 flex-1 resize-none rounded-lg border px-3 py-1.5 text-[13px] outline-none"
               style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
             />

@@ -811,12 +811,19 @@ class Store:
 
     # ---- 相談チャット -----------------------------------------------
 
-    def create_chat(self, anchor_node: str | None, scope: str) -> dict[str, Any]:
+    def create_chat(
+        self,
+        anchor_node: str | None,
+        scope: str,
+        char_id: str | None = None,
+        mode: str | None = None,
+    ) -> dict[str, Any]:
         chat_id = _new_id()
         now = _now()
         self.conn.execute(
-            "INSERT INTO chats(id, anchor_node, scope, messages, created_at, updated_at) VALUES(?,?,?,?,?,?)",
-            (chat_id, anchor_node, scope, "[]", now, now),
+            "INSERT INTO chats(id, anchor_node, scope, char_id, mode, messages, created_at, updated_at)"
+            " VALUES(?,?,?,?,?,?,?,?)",
+            (chat_id, anchor_node, scope, char_id, mode, "[]", now, now),
         )
         self.conn.commit()
         return self.get_chat(chat_id)  # type: ignore[return-value]
@@ -836,12 +843,16 @@ class Store:
             messages = json.loads(row["messages"])
             first_user = next((m.get("content", "") for m in messages if m.get("role") == "user"), "")
             anchor = self.get_node(row["anchor_node"]) if row["anchor_node"] else None
+            char = self.get_character(row["char_id"]) if row["char_id"] else None
             chats.append(
                 {
                     "id": row["id"],
                     "anchor_node": row["anchor_node"],
                     "anchor_title": anchor["title"] if anchor else None,
                     "scope": row["scope"],
+                    "char_id": row["char_id"],
+                    "char_name": char["name"] if char else None,
+                    "mode": row["mode"],
                     "snippet": first_user[:60],
                     "updated_at": row["updated_at"],
                 }

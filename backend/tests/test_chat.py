@@ -174,3 +174,88 @@ def test_token_usage_uses_tokenizer_when_available(store, monkeypatch):
     monkeypatch.setattr(llm_mod, "count_tokens", counted)
     usage = asyncio.run(chat_agent.token_usage(store, "http://fake", None, store.canon_path()[-1], "upto"))
     assert usage == {"token_count": 1234, "estimated": False}
+
+
+# ---- キャラクターと話す(キャラモード) --------------------------------
+
+def test_character_system_prompt_contents(store):
+    # 関係と facts を積んでからアンカー時点のプロンプトを確認する
+    path = store.canon_path()
+    store.replace_events(path[0], store.list_events(path[0]) + [
+        {"type": "relationship_update", "payload": {"char": "aya", "target": "ken", "delta": -0.5, "reason": "裏切り", "label": "疑念"}},
+        {"type": "fact_set", "payload": {"scope": "char", "char": "aya", "key": "location", "value": "石橋の町"}},
+    ])
+    text = chat_agent.build_character_system(store, path, "aya", "interview")
+    assert "あなたは「アヤ」という人物です" in text
+    assert "location: 石橋の町" in text
+    assert "ケン" in text and "疑念" in text  # 相手は ID でなく名前で
+    assert "石橋でケンの裏切りを知った" in text  # 記憶
+    assert "インタビュー" in text  # interview 枠組み
+    assert "get_beats" not in text  # シーン一覧は渡さない
+
+
+def test_character_system_prompt_roleplay_frame(store):
+    path = store.canon_path()
+    text = chat_agent.build_character_system(store, path, "aya", "roleplay")
+    assert "見知らぬ相手" in text
+    assert "インタビュー" not in text
+
+
+def test_character_chat_uses_recall_and_saves_char(store, monkeypatch):
+    tc = _tool_call("recall", {"query": "裏切り"})
+    monkeypatch.setattr(
+        llm_mod,
+        "chat_stream_tools",
+        _fake_stream([
+            {"content": "", "tool_calls": [tc],
+             "message": {"role": "assistant", "content": None, "tool_calls": [tc]}},
+            {"content": "…あの日のことは忘れない。", "tool_calls": None,
+             "message": {"role": "assistant", "content": "…あの日のことは忘れない。"}},
+        ]),
+    )
+    events = collect_sse(
+        chat_agent.chat_stream(store, "http://fake", None, store.canon_path()[-1], "upto",
+                               "彼のことをどう思ってる?", char_id="aya", mode="interview")
+    )
+    chat_id = next(e["chat_id"] for e in events if "chat_id" in e)
+    saved = store.get_chat(chat_id)
+    assert saved["char_id"] == "aya"
+    assert saved["mode"] == "interview"
+    assert saved["scope"] == "upto"
+    # recall の結果(tool メッセージ)に該当記憶が入っている
+    tool_msg = next(m for m in saved["messages"] if m.get("role") == "tool")
+    assert "裏切り" in tool_msg["content"]
+    assert any(e.get("answer") for e in events)
+
+
+def test_character_chat_rejects_other_tools(store, monkeypatch):
+    tc = _tool_call("get_beats", {})
+    monkeypatch.setattr(
+        llm_mod,
+        "chat_stream_tools",
+        _fake_stream([
+            {"content": "", "tool_calls": [tc],
+             "message": {"role": "assistant", "content": None, "tool_calls": [tc]}},
+            {"content": "分からない。", "tool_calls": None,
+             "message": {"role": "assistant", "content": "分からない。"}},
+        ]),
+    )
+    events = collect_sse(
+        chat_agent.chat_stream(store, "http://fake", None, store.canon_path()[-1], "upto",
+                               "全シーンを教えて", char_id="aya", mode="interview")
+    )
+    assert any(e.get("tool_result", {}).get("is_error") for e in events if "tool_result" in e)
+
+
+def test_token_usage_character_mode(store, monkeypatch):
+    async def counted(text, *, base_url, timeout=10.0):
+        # キャラモードのシステムが数える対象に入っていること
+        assert "あなたは「アヤ」という人物です" in text
+        assert "recall" in text
+        return 500
+
+    monkeypatch.setattr(llm_mod, "count_tokens", counted)
+    usage = asyncio.run(chat_agent.token_usage(
+        store, "http://fake", None, store.canon_path()[-1], "upto", char_id="aya"
+    ))
+    assert usage == {"token_count": 500, "estimated": False}

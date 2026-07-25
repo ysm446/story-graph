@@ -346,6 +346,9 @@ export interface ChatSummary {
   anchor_node: string | null
   anchor_title: string | null
   scope: string
+  char_id: string | null
+  char_name: string | null
+  mode: string | null
   snippet: string
   updated_at: string
 }
@@ -354,6 +357,8 @@ export interface ChatRecord {
   id: string
   anchor_node: string | null
   scope: string
+  char_id: string | null
+  mode: string | null
   messages: Array<Record<string, unknown>>
 }
 
@@ -385,7 +390,13 @@ export const chatApi = {
       body: JSON.stringify(body)
     }),
   // コンテキスト使用量(会話トークン / ctx_size)。estimated は概算フォールバック
-  tokenUsage: (body: { chat_id: string | null; anchor_node: string | null; scope: string }) =>
+  tokenUsage: (body: {
+    chat_id: string | null
+    anchor_node: string | null
+    scope: string
+    char_id?: string | null
+    mode?: string
+  }) =>
     request<{ token_count: number; ctx_size: number; estimated: boolean }>('/chat/token_usage', {
       method: 'POST',
       body: JSON.stringify(body)
@@ -393,7 +404,14 @@ export const chatApi = {
 }
 
 export async function chatSendStream(
-  body: { chat_id: string | null; anchor_node: string | null; scope: string; message: string },
+  body: {
+    chat_id: string | null
+    anchor_node: string | null
+    scope: string
+    message: string
+    char_id?: string | null // 設定時は「キャラクターと話す」モード
+    mode?: string // interview | roleplay
+  },
   onEvent: (data: ChatStreamEvent) => void,
   signal?: AbortSignal
 ): Promise<void> {
