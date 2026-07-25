@@ -272,3 +272,65 @@ def test_set_chat_title_and_list(store):
     assert row["snippet"] == "冒頭の質問"  # 見出しが無いときのフォールバック用に残る
     store.set_chat_title(chat["id"], "   ")  # 空にすると NULL に戻る
     assert store.get_chat(chat["id"])["title"] is None
+
+
+# ---- メッセージ操作(編集 / 再生成 / 削除) ----------------------------
+
+def _two_turn_chat(store):
+    """user / assistant(tool_calls) / tool / assistant / user / assistant の履歴"""
+    chat = store.create_chat(store.canon_path()[-1], "upto")
+    tc = _tool_call("get_state", {})
+    store.save_chat_messages(chat["id"], [
+        {"role": "user", "content": "1回目の質問"},
+        {"role": "assistant", "content": None, "tool_calls": [tc]},
+        {"role": "tool", "tool_call_id": "tc1", "content": "{}"},
+        {"role": "assistant", "content": "1回目の回答"},
+        {"role": "user", "content": "2回目の質問"},
+        {"role": "assistant", "content": "2回目の回答"},
+    ])
+    return chat["id"]
+
+
+def test_delete_turn_removes_user_and_responses(store):
+    chat_id = _two_turn_chat(store)
+    chat = store.delete_chat_turn(chat_id, 0, keep_user=False)
+    assert [m.get("content") for m in chat["messages"]] == ["2回目の質問", "2回目の回答"]
+
+
+def test_delete_answer_keeps_user_message(store):
+    chat_id = _two_turn_chat(store)
+    chat = store.delete_chat_turn(chat_id, 0, keep_user=True)
+    contents = [m.get("content") for m in chat["messages"]]
+    assert contents == ["1回目の質問", "2回目の質問", "2回目の回答"]  # ツール行も往復ごと消える
+
+
+def test_delete_turn_rejects_non_user_index(store):
+    chat_id = _two_turn_chat(store)
+    assert store.delete_chat_turn(chat_id, 3, keep_user=False) is None  # assistant の位置
+
+
+def test_tool_limit_marker_is_not_a_turn_start(store):
+    chat = store.create_chat(None, "upto")
+    store.save_chat_messages(chat["id"], [
+        {"role": "user", "content": "質問"},
+        {"role": "user", "content": "(これ以上ツールは使えません。まとめてください)"},
+        {"role": "assistant", "content": "回答"},
+    ])
+    result = store.delete_chat_turn(chat["id"], 0, keep_user=False)
+    assert result["messages"] == []  # 内部指示ごと 1 往復として消える
+
+
+def test_replace_from_rewinds_history(store, monkeypatch):
+    chat_id = _two_turn_chat(store)
+    monkeypatch.setattr(
+        llm_mod,
+        "chat_stream_tools",
+        _fake_stream([{"content": "作り直した回答", "tool_calls": None,
+                      "message": {"role": "assistant", "content": "作り直した回答"}}]),
+    )
+    collect_sse(chat_agent.chat_stream(
+        store, "http://fake", chat_id, None, "upto", "2回目の質問(修正)", replace_from=4
+    ))
+    contents = [m.get("content") for m in store.get_chat(chat_id)["messages"]]
+    assert contents[:4] == ["1回目の質問", None, "{}", "1回目の回答"]  # 前半はそのまま
+    assert contents[4:] == ["2回目の質問(修正)", "作り直した回答"]

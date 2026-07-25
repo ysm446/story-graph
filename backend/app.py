@@ -693,6 +693,8 @@ class ChatSendIn(BaseModel):
     message: str
     char_id: str | None = None  # 設定時は「キャラクターと話す」モード
     mode: str = "interview"  # interview | roleplay(char_id 設定時のみ意味を持つ)
+    # 編集・再生成用。指定すると履歴をこの位置まで巻き戻してから送る
+    replace_from: int | None = None
 
 
 @app.get("/chats")
@@ -721,6 +723,15 @@ async def patch_chat(chat_id: str, body: ChatPatchIn) -> dict[str, Any]:
     return chat
 
 
+@app.delete("/chats/{chat_id}/turn/{index}")
+async def delete_chat_turn(chat_id: str, index: int, keep_user: bool = False) -> dict[str, Any]:
+    """1 往復を履歴から削除する。keep_user=true なら返事だけを消す。"""
+    chat = store.delete_chat_turn(chat_id, index, keep_user)
+    if chat is None:
+        raise HTTPException(404, "chat or message not found")
+    return chat
+
+
 @app.delete("/chats/{chat_id}")
 async def delete_chat(chat_id: str) -> dict[str, str]:
     store.delete_chat(chat_id)
@@ -741,7 +752,15 @@ async def chat_send(body: ChatSendIn) -> StreamingResponse:
         anchor = canon[-1] if canon else None
     return StreamingResponse(
         chat_agent.chat_stream(
-            store, base_url, body.chat_id, anchor, body.scope, body.message, body.char_id, body.mode
+            store,
+            base_url,
+            body.chat_id,
+            anchor,
+            body.scope,
+            body.message,
+            body.char_id,
+            body.mode,
+            body.replace_from,
         ),
         media_type="text/event-stream",
     )

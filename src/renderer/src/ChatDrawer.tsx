@@ -21,11 +21,112 @@ interface Proposal {
   location?: string
 }
 
+// turn = その項目が属する往復の開始位置(user 発言の messages 内インデックス)。
+// 編集 / 再生成 / 削除はこの位置を使ってサーバー側の履歴を操作する。
+// ストリーミング中に増えた項目は位置が未確定なので undefined。
 type DisplayItem =
-  | { kind: 'user'; text: string }
-  | { kind: 'assistant'; text: string; stats?: ChatStats | null }
-  | { kind: 'tool'; name: string }
-  | { kind: 'proposals'; proposals: Proposal[] }
+  | { kind: 'user'; text: string; turn?: number }
+  | { kind: 'assistant'; text: string; stats?: ChatStats | null; turn?: number }
+  | { kind: 'tool'; name: string; turn?: number }
+  | { kind: 'proposals'; proposals: Proposal[]; turn?: number }
+
+/** 保存済みメッセージ配列から表示用の項目を組み立てる */
+function buildDisplay(messages: Array<Record<string, unknown>>): DisplayItem[] {
+  const display: DisplayItem[] = []
+  let turn = 0
+  messages.forEach((m, index) => {
+    const role = m.role as string
+    if (role === 'user') {
+      const text = String(m.content ?? '')
+      if (text.startsWith('(これ以上ツールは使えません')) return // 内部指示は隠す
+      turn = index
+      display.push({ kind: 'user', text, turn })
+      return
+    }
+    if (role !== 'assistant') return
+    const toolCalls = m.tool_calls as Array<{ function?: { name?: string; arguments?: string } }> | undefined
+    for (const tc of toolCalls ?? []) {
+      const name = tc.function?.name ?? ''
+      if (name === 'propose_beats') {
+        try {
+          const args = JSON.parse(tc.function?.arguments ?? '{}') as { proposals?: Proposal[] }
+          if (args.proposals?.length) display.push({ kind: 'proposals', proposals: args.proposals, turn })
+        } catch {
+          // 引数が壊れている場合は無視
+        }
+      } else if (name) {
+        display.push({ kind: 'tool', name, turn })
+      }
+    }
+    if (m.content) {
+      // meta は保存時に付けた生成統計(LLM には渡していない)
+      display.push({
+        kind: 'assistant',
+        text: String(m.content),
+        stats: (m.meta as ChatStats | undefined) ?? null,
+        turn
+      })
+    }
+  })
+  return display
+}
+
+/** ホバーで出るメッセージ操作アイコン(lm-chat の msg-action-btn を移植) */
+function MsgActionButton({
+  kind,
+  title,
+  danger,
+  onClick
+}: {
+  kind: 'edit' | 'regenerate' | 'delete'
+  title: string
+  danger?: boolean
+  onClick: () => void
+}): React.JSX.Element {
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      className="rounded p-0.5 hover:bg-[var(--accent-soft)]"
+      style={{ color: danger ? 'var(--danger)' : 'var(--text-faint)' }}
+    >
+      <svg
+        width="14"
+        height="14"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        {kind === 'edit' && (
+          <>
+            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+          </>
+        )}
+        {kind === 'regenerate' && (
+          <>
+            <polyline points="23 4 23 10 17 10" />
+            <polyline points="1 20 1 14 7 14" />
+            <path d="M3.51 9a9 9 0 0 1 14.13-3.36L23 10" />
+            <path d="M20.49 15a9 9 0 0 1-14.13 3.36L1 14" />
+          </>
+        )}
+        {kind === 'delete' && (
+          <>
+            <polyline points="3 6 5 6 21 6" />
+            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+            <path d="M10 11v6" />
+            <path d="M14 11v6" />
+            <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+          </>
+        )}
+      </svg>
+    </button>
+  )
+}
 
 /** 返事の下に出す生成統計(lm-chat の qa-meta と同じ並び) */
 function StatsLine({ stats }: { stats: ChatStats }): React.JSX.Element {
@@ -136,6 +237,9 @@ export default function ChatDrawer({
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null)
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameText, setRenameText] = useState('')
+  // 発言の編集(ホバーアクションの ✎)。turn = messages 上の位置
+  const [editingTurn, setEditingTurn] = useState<number | null>(null)
+  const [editText, setEditText] = useState('')
   // 内容から作られた質問(最大 2 件。固定の候補の下=入力欄側に出す)
   const [dynamicQuestions, setDynamicQuestions] = useState<string[]>([])
   // コンテキスト使用量(lm-chat のドーナツリング相当)
@@ -287,45 +391,27 @@ export default function ChatDrawer({
     setDynamicQuestions([])
     if (!chat.char_id) void refreshSuggestions(chat.id, chat.anchor_node)
     void refreshUsage(chat.id, chat.anchor_node, chat.char_id ?? null)
-    const display: DisplayItem[] = []
-    for (const m of chat.messages) {
-      const role = m.role as string
-      if (role === 'user') {
-        const text = String(m.content ?? '')
-        if (!text.startsWith('(これ以上ツールは使えません')) display.push({ kind: 'user', text })
-      } else if (role === 'assistant') {
-        const toolCalls = m.tool_calls as Array<{ function?: { name?: string; arguments?: string } }> | undefined
-        if (toolCalls) {
-          for (const tc of toolCalls) {
-            const name = tc.function?.name ?? ''
-            if (name === 'propose_beats') {
-              try {
-                const args = JSON.parse(tc.function?.arguments ?? '{}') as { proposals?: Proposal[] }
-                if (args.proposals?.length) display.push({ kind: 'proposals', proposals: args.proposals })
-              } catch {
-                // 引数が壊れている場合は無視
-              }
-            } else if (name) {
-              display.push({ kind: 'tool', name })
-            }
-          }
-        }
-        if (m.content) {
-          // meta は保存時に付けた生成統計(LLM には渡していない)
-          display.push({
-            kind: 'assistant',
-            text: String(m.content),
-            stats: (m.meta as ChatStats | undefined) ?? null
-          })
-        }
-      }
-    }
-    setItems(display)
+    setItems(buildDisplay(chat.messages))
   }
 
-  const send = async (override?: string): Promise<void> => {
+  // 保存済みの履歴から表示を組み直す。ストリーミングで積んだ項目には
+  // messages 上の位置が無いので、往復が終わるたびにこれで揃える
+  const syncItems = async (id: string | null): Promise<void> => {
+    if (!id) return
+    try {
+      setItems(buildDisplay((await chatApi.get(id)).messages))
+    } catch {
+      /* 取得に失敗しても画面上の会話はそのまま使える */
+    }
+  }
+
+  const send = async (override?: string, replaceFrom?: number): Promise<void> => {
     const message = (override ?? input).trim()
     if (!message || busy) return
+    // 編集・再生成: 画面上もその往復以降を消してから送り直す
+    if (replaceFrom !== undefined) {
+      setItems((prev) => prev.filter((it) => it.turn === undefined || it.turn < replaceFrom))
+    }
     const controller = new AbortController()
     abortRef.current = controller
     setBusy(true)
@@ -352,7 +438,8 @@ export default function ChatDrawer({
           scope: charId ? 'upto' : scope,
           message,
           char_id: charId,
-          mode: roleplay ? 'roleplay' : 'interview'
+          mode: roleplay ? 'roleplay' : 'interview',
+          replace_from: replaceFrom ?? null
         },
         (e: ChatStreamEvent) => {
           if (e.chat_id) {
@@ -404,7 +491,32 @@ export default function ChatDrawer({
       void refreshSuggestions(latestChatId, effectiveAnchor)
       void refreshUsage(latestChatId, effectiveAnchor)
       void refreshHistory()
+      void syncItems(latestChatId) // 各項目に messages 上の位置を持たせ直す
     }
+  }
+
+  // ---- 個々のメッセージの操作(lm-chat のホバーアクション) ----------
+  const regenerateTurn = (turn: number, text: string): void => {
+    if (busy) return
+    void send(text, turn)
+  }
+
+  const deleteTurn = async (turn: number, keepUser: boolean): Promise<void> => {
+    if (!chatId || busy) return
+    const label = keepUser ? 'この返事を削除しますか?' : 'このやり取りを削除しますか?'
+    if (!window.confirm(label)) return
+    try {
+      setItems(buildDisplay((await chatApi.deleteTurn(chatId, turn, keepUser)).messages))
+    } catch {
+      return
+    }
+    void refreshUsage(chatId, anchorNode)
+    void refreshHistory()
+  }
+
+  const startEditTurn = (turn: number, text: string): void => {
+    setEditingTurn(turn)
+    setEditText(text)
   }
 
   // サイドバーの ⋯ メニューから削除。表示中のチャットを消したら新規に戻す
@@ -667,20 +779,78 @@ export default function ChatDrawer({
             )}
             {items.map((item, i) => {
               if (item.kind === 'user') {
+                const turn = item.turn
+                if (turn !== undefined && editingTurn === turn) {
+                  // 編集中: その場で書き換えて送り直す(以降のやり取りは作り直し)
+                  return (
+                    <div key={i} className="mb-2 flex justify-end">
+                      <div className="w-[70%]">
+                        <textarea
+                          autoFocus
+                          rows={3}
+                          value={editText}
+                          onChange={(e) => setEditText(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Escape') setEditingTurn(null)
+                          }}
+                          className="w-full resize-none rounded-2xl border px-3 py-1.5 text-[13px] outline-none"
+                          style={{ background: 'var(--bg-input)', borderColor: 'var(--accent-border)' }}
+                        />
+                        <div className="mt-1 flex justify-end gap-2 text-[11px]">
+                          <button onClick={() => setEditingTurn(null)} style={{ color: 'var(--text-faint)' }}>
+                            取消
+                          </button>
+                          <button
+                            onClick={() => {
+                              const text = editText.trim()
+                              setEditingTurn(null)
+                              if (text) void send(text, turn)
+                            }}
+                            disabled={!editText.trim()}
+                            className="rounded-md px-2 py-0.5 font-medium text-white disabled:opacity-40"
+                            style={{ background: 'var(--accent)' }}
+                          >
+                            送り直す
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )
+                }
                 return (
-                  <div key={i} className="mb-2 flex justify-end">
+                  <div key={i} className="group mb-2 flex flex-col items-end">
                     <div
                       className="max-w-[70%] whitespace-pre-wrap rounded-2xl rounded-br-md px-3 py-1.5 text-[13px]"
                       style={{ background: 'var(--accent-soft)', color: 'var(--text)' }}
                     >
                       {item.text}
                     </div>
+                    {turn !== undefined && !busy && (
+                      <div className="mt-0.5 flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                        <MsgActionButton
+                          kind="edit"
+                          title="この発言を編集して送り直す"
+                          onClick={() => startEditTurn(turn, item.text)}
+                        />
+                        <MsgActionButton
+                          kind="regenerate"
+                          title="この発言から返事を作り直す"
+                          onClick={() => regenerateTurn(turn, item.text)}
+                        />
+                        <MsgActionButton
+                          kind="delete"
+                          title="このやり取りを削除"
+                          danger
+                          onClick={() => void deleteTurn(turn, false)}
+                        />
+                      </div>
+                    )}
                   </div>
                 )
               }
               if (item.kind === 'assistant') {
                 return (
-                  <div key={i} className="mb-2 flex items-start gap-2">
+                  <div key={i} className="group mb-2 flex items-start gap-2">
                     {/* キャラモードでは発言者のアイコンを添える */}
                     {activeChar && <CharAvatar char={activeChar} size={56} />}
                     <div className="min-w-0 max-w-[80%]">
@@ -695,7 +865,19 @@ export default function ChatDrawer({
                       >
                         <Markdown text={item.text} />
                       </div>
-                      {item.stats && <StatsLine stats={item.stats} />}
+                      <div className="flex items-center gap-2">
+                        {item.stats && <StatsLine stats={item.stats} />}
+                        {item.turn !== undefined && !busy && (
+                          <div className="mt-0.5 flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                            <MsgActionButton
+                              kind="delete"
+                              title="この返事を削除(発言は残す)"
+                              danger
+                              onClick={() => void deleteTurn(item.turn!, true)}
+                            />
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
                 )

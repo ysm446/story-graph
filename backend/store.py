@@ -27,6 +27,18 @@ def _new_id() -> str:
     return uuid.uuid4().hex[:12]
 
 
+# チャット履歴で「1 往復の始まり」と見なすメッセージ。ツール上限に達したときの
+# 内部指示も user ロールで積まれるので、それは区切りに数えない
+TOOL_LIMIT_MARKER = "(これ以上ツールは使えません"
+
+
+def _is_turn_start(message: dict[str, Any]) -> bool:
+    if message.get("role") != "user":
+        return False
+    content = message.get("content")
+    return not (isinstance(content, str) and content.startswith(TOOL_LIMIT_MARKER))
+
+
 class Store:
     """DB への唯一の窓口。
 
@@ -866,6 +878,26 @@ class Store:
             (json.dumps(messages, ensure_ascii=False), _now(), chat_id),
         )
         self.conn.commit()
+
+    def delete_chat_turn(self, chat_id: str, index: int, keep_user: bool) -> dict[str, Any] | None:
+        """1 往復(user 発言 + それに続く assistant / tool)を履歴から取り除く。
+
+        keep_user=True なら user 発言は残し、返事だけを消す(再生成の下準備)。
+        index は user 発言の位置。ツール上限の内部指示(user ロール)は往復の
+        区切りとして扱わない。
+        """
+        chat = self.get_chat(chat_id)
+        if chat is None:
+            return None
+        messages = list(chat["messages"])
+        if not (0 <= index < len(messages)) or messages[index].get("role") != "user":
+            return None
+        end = index + 1
+        while end < len(messages) and not _is_turn_start(messages[end]):
+            end += 1
+        head = messages[: index + 1] if keep_user else messages[:index]
+        self.save_chat_messages(chat_id, head + messages[end:])
+        return self.get_chat(chat_id)
 
     def set_chat_title(self, chat_id: str, title: str | None) -> dict[str, Any] | None:
         """会話名を設定する(空文字は NULL = 冒頭の発言を見出しに使う)。"""

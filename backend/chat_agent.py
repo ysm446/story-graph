@@ -338,9 +338,12 @@ async def chat_stream(
     user_message: str,
     char_id: str | None = None,
     mode: str = "interview",
+    replace_from: int | None = None,
 ) -> AsyncIterator[str]:
     try:
-        async for chunk in _chat_impl(store, base_url, chat_id, anchor_node, scope, user_message, char_id, mode):
+        async for chunk in _chat_impl(
+            store, base_url, chat_id, anchor_node, scope, user_message, char_id, mode, replace_from
+        ):
             yield chunk
     except Exception as e:  # noqa: BLE001
         yield _sse({"error": f"{type(e).__name__}: {e}"})
@@ -355,6 +358,7 @@ async def _chat_impl(
     user_message: str,
     char_id: str | None,
     mode: str,
+    replace_from: int | None = None,
 ) -> AsyncIterator[str]:
     if chat_id:
         chat = store.get_chat(chat_id)
@@ -375,6 +379,9 @@ async def _chat_impl(
 
     path = _visible_path(store, anchor_node, scope)
     history: list[dict[str, Any]] = list(chat["messages"])
+    # 編集・再生成: 指定位置以降を捨ててから、新しい発言を積み直す
+    if replace_from is not None and 0 <= replace_from <= len(history):
+        history = history[:replace_from]
     history.append({"role": "user", "content": user_message})
     if char_id:
         system = build_character_system(store, path, char_id, mode)

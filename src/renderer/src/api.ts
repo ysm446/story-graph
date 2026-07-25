@@ -397,6 +397,9 @@ export const chatApi = {
   // 会話名の変更(空文字で既定の見出しに戻る)
   rename: (chatId: string, title: string) =>
     request<ChatRecord>(`/chats/${chatId}`, { method: 'PATCH', body: JSON.stringify({ title }) }),
+  // 1 往復の削除。keepUser=true なら返事だけ消して発言を残す
+  deleteTurn: (chatId: string, index: number, keepUser: boolean) =>
+    request<ChatRecord>(`/chats/${chatId}/turn/${index}?keep_user=${keepUser}`, { method: 'DELETE' }),
   // 内容ベースの質問候補。設定オフ・LLM 未起動・生成失敗はすべて空配列で返る
   suggestQuestions: (body: { chat_id: string | null; anchor_node: string | null; scope: string }) =>
     request<{ questions: string[] }>('/chat/suggest_questions', {
@@ -425,6 +428,7 @@ export async function chatSendStream(
     message: string
     char_id?: string | null // 設定時は「キャラクターと話す」モード
     mode?: string // interview | roleplay
+    replace_from?: number | null // 編集・再生成: この位置まで履歴を巻き戻す
   },
   onEvent: (data: ChatStreamEvent) => void,
   signal?: AbortSignal
