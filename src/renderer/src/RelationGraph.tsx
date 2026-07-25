@@ -57,6 +57,32 @@ export default function RelationGraph({
   const [positions, setPositions] = useState<Record<string, { x: number; y: number }>>({})
   const dragRef = useRef<{ id: string; moved: boolean } | null>(null)
   const svgRef = useRef<SVGSVGElement | null>(null)
+  const [view, setView] = useState({ x: 0, y: 0, zoom: 1 })
+  const viewRef = useRef(view)
+  const panRef = useRef<{ px: number; py: number; vx: number; vy: number } | null>(null)
+
+  useEffect(() => {
+    viewRef.current = view
+  }, [view])
+
+  // ホイールズーム(カーソル位置を中心に。React の onWheel は passive のため native で登録)
+  useEffect(() => {
+    const svg = svgRef.current
+    if (!svg) return
+    const onWheel = (e: WheelEvent): void => {
+      e.preventDefault()
+      const rect = svg.getBoundingClientRect()
+      const v = viewRef.current
+      const u = (e.clientX - rect.left) / rect.width
+      const w = (e.clientY - rect.top) / rect.height
+      const px = v.x + u * (WIDTH / v.zoom)
+      const py = v.y + w * (HEIGHT / v.zoom)
+      const zoom = Math.min(4, Math.max(0.4, v.zoom * (e.deltaY < 0 ? 1.15 : 1 / 1.15)))
+      setView({ x: px - u * (WIDTH / zoom), y: py - w * (HEIGHT / zoom), zoom })
+    }
+    svg.addEventListener('wheel', onWheel, { passive: false })
+    return () => svg.removeEventListener('wheel', onWheel)
+  }, [])
 
   const charMap = useMemo(() => Object.fromEntries(characters.map((c) => [c.id, c])), [characters])
 
@@ -158,26 +184,50 @@ export default function RelationGraph({
     }
   }, [visibleChars.join(','), edges.length])
 
-  // ノードドラッグ(ピン留め座標の更新)
+  // ノードドラッグ(ピン留め座標の更新)。座標変換は現在のズーム・パンを考慮
   const toSvgPoint = (event: React.PointerEvent): { x: number; y: number } => {
     const svg = svgRef.current
     if (!svg) return { x: 0, y: 0 }
     const rect = svg.getBoundingClientRect()
+    const v = viewRef.current
     return {
-      x: ((event.clientX - rect.left) / rect.width) * WIDTH,
-      y: ((event.clientY - rect.top) / rect.height) * HEIGHT
+      x: v.x + ((event.clientX - rect.left) / rect.width) * (WIDTH / v.zoom),
+      y: v.y + ((event.clientY - rect.top) / rect.height) * (HEIGHT / v.zoom)
     }
+  }
+
+  const handleBackgroundPointerDown = (event: React.PointerEvent): void => {
+    if (event.target !== svgRef.current) return
+    if (event.button !== 0 && event.button !== 1) return
+    ;(event.target as Element).setPointerCapture?.(event.pointerId)
+    const v = viewRef.current
+    panRef.current = { px: event.clientX, py: event.clientY, vx: v.x, vy: v.y }
   }
 
   const handlePointerMove = (event: React.PointerEvent): void => {
     const drag = dragRef.current
-    if (!drag) return
-    drag.moved = true
-    const p = toSvgPoint(event)
-    setPositions((prev) => ({ ...prev, [drag.id]: p }))
+    if (drag) {
+      drag.moved = true
+      const p = toSvgPoint(event)
+      setPositions((prev) => ({ ...prev, [drag.id]: p }))
+      return
+    }
+    const pan = panRef.current
+    if (pan) {
+      const svg = svgRef.current
+      if (!svg) return
+      const rect = svg.getBoundingClientRect()
+      const v = viewRef.current
+      setView({
+        x: pan.vx - ((event.clientX - pan.px) / rect.width) * (WIDTH / v.zoom),
+        y: pan.vy - ((event.clientY - pan.py) / rect.height) * (HEIGHT / v.zoom),
+        zoom: v.zoom
+      })
+    }
   }
 
   const handlePointerUp = (): void => {
+    panRef.current = null
     const drag = dragRef.current
     dragRef.current = null
     if (!drag) return
@@ -251,12 +301,16 @@ export default function RelationGraph({
       {/* グラフ本体 */}
       <svg
         ref={svgRef}
-        viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
+        viewBox={`${view.x} ${view.y} ${WIDTH / view.zoom} ${HEIGHT / view.zoom}`}
         className="w-full rounded-xl border"
         style={{ background: 'var(--bg-canvas)', borderColor: 'var(--border)', touchAction: 'none' }}
+        onPointerDown={handleBackgroundPointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerLeave={handlePointerUp}
+        onDoubleClick={(e) => {
+          if (e.target === svgRef.current) setView({ x: 0, y: 0, zoom: 1 })
+        }}
       >
         <defs>
           <marker
@@ -344,6 +398,7 @@ export default function RelationGraph({
               transform={`translate(${p.x}, ${p.y})`}
               style={{ cursor: 'grab' }}
               onPointerDown={(e) => {
+                e.stopPropagation()
                 ;(e.target as Element).setPointerCapture?.(e.pointerId)
                 dragRef.current = { id, moved: false }
               }}
@@ -469,7 +524,8 @@ export default function RelationGraph({
         </div>
       )}
       <p className="text-[11px]" style={{ color: 'var(--text-faint)' }}>
-        ノードクリック = エゴネットワーク切替 / ドラッグ = 配置(保存されます) / エッジクリック = 履歴
+        ノードクリック = エゴ切替 / ノードドラッグ = 配置(保存) / エッジクリック = 履歴 /
+        ホイール = ズーム / 背景ドラッグ = パン / 背景ダブルクリック = リセット
       </p>
     </div>
   )
