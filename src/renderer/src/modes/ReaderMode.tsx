@@ -446,6 +446,57 @@ export default function ReaderMode(): React.JSX.Element {
     URL.revokeObjectURL(url)
   }
 
+  // ---- スタイルプリセット(=散文用システムプロンプト)の入出力 --------
+  const presetImportRef = useRef<HTMLInputElement | null>(null)
+
+  const exportPresets = (): void => {
+    const custom = presets.filter((p) => !p.builtin)
+    if (custom.length === 0) {
+      setStatus('書き出せるカスタムプリセットがありません(組み込みは対象外)')
+      return
+    }
+    const payload = {
+      kind: 'story-graph-style-presets',
+      version: 1,
+      presets: custom.map((p) => ({ name: p.name, person: p.person, tone: p.tone }))
+    }
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'style-presets.json'
+    a.click()
+    URL.revokeObjectURL(url)
+    setStatus(`${custom.length} 件のプリセットを書き出しました`)
+  }
+
+  const importPresets = async (file: File): Promise<void> => {
+    try {
+      const data = JSON.parse(await file.text())
+      const list: unknown = Array.isArray(data) ? data : data?.presets
+      if (!Array.isArray(list)) throw new Error('プリセット配列が見つかりません')
+      let imported = 0
+      let lastId: string | undefined
+      for (const item of list as Array<Record<string, unknown>>) {
+        const name = String(item?.name ?? '').trim()
+        if (!name) continue
+        // id は付けない(常に新規プリセットとして取り込み、既存・組み込みを壊さない)
+        const saved = await api.upsertPreset({
+          name,
+          person: item?.person === 'first' ? 'first' : 'third',
+          tone: String(item?.tone ?? '')
+        })
+        lastId = saved.id
+        imported += 1
+      }
+      if (imported === 0) throw new Error('取り込めるプリセットがありませんでした')
+      await reloadPresets(lastId)
+      setStatus(`${imported} 件のプリセットを取り込みました`)
+    } catch (e) {
+      setStatus(`インポート失敗: ${String(e)}`)
+    }
+  }
+
   const hasAnyRender = scenes.some((s) => s.render)
   const selectStyle = { background: 'var(--bg-input)', borderColor: 'var(--border)' }
 
@@ -578,6 +629,33 @@ export default function ReaderMode(): React.JSX.Element {
         >
           + 新規
         </button>
+        <button
+          onClick={exportPresets}
+          className="rounded-lg border px-2 py-1 text-[12px]"
+          style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+          title="カスタムのスタイルプリセット(散文用システムプロンプト)を JSON に書き出す"
+        >
+          ⬆ 書き出し
+        </button>
+        <button
+          onClick={() => presetImportRef.current?.click()}
+          className="rounded-lg border px-2 py-1 text-[12px]"
+          style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+          title="JSON からスタイルプリセットを取り込む(新規プリセットとして追加)"
+        >
+          ⬇ 読み込み
+        </button>
+        <input
+          ref={presetImportRef}
+          type="file"
+          accept="application/json,.json"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0]
+            e.target.value = ''
+            if (file) void importPresets(file)
+          }}
+        />
         <select
           value={povChar ?? ''}
           onChange={(e) => {

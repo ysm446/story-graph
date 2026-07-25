@@ -15,6 +15,23 @@ const MODES: Array<{ id: Mode; label: string }> = [
   { id: 'reader', label: '鑑賞' }
 ]
 
+function FolderIcon(): React.JSX.Element {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+    </svg>
+  )
+}
+
 function GearIcon(): React.JSX.Element {
   return (
     <svg
@@ -82,7 +99,9 @@ function LibraryMenu(): React.JSX.Element {
         style={{ background: 'var(--bg-elevated)', color: 'var(--text-dim)' }}
         title={current ?? ''}
       >
-        <span style={{ color: 'var(--text-faint)' }}>📁</span>
+        <span className="flex" style={{ color: 'var(--text-faint)' }}>
+          <FolderIcon />
+        </span>
         <span className="max-w-40 truncate">{current ? baseName(current) : '…'}</span>
         <span style={{ color: 'var(--text-faint)' }}>▾</span>
       </button>
