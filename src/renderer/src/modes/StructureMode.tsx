@@ -369,6 +369,7 @@ function BeatTab({
     done: boolean
   } | null>(null)
   const [imageDragOver, setImageDragOver] = useState(false)
+  const imageDragDepth = useRef(0) // 子要素との境界で dragleave が発火してもチラつかないよう深さを数える
   const imageInputRef = useRef<HTMLInputElement | null>(null)
   const beatTextareaRef = useRef<HTMLTextAreaElement | null>(null)
   const proofreadAbortRef = useRef<AbortController | null>(null)
@@ -802,13 +803,22 @@ function BeatTab({
           }}
         />
         <div
-          onDragOver={(e) => {
+          onDragEnter={(e) => {
             e.preventDefault()
+            imageDragDepth.current += 1
             setImageDragOver(true)
           }}
-          onDragLeave={() => setImageDragOver(false)}
+          onDragOver={(e) => e.preventDefault()}
+          onDragLeave={() => {
+            imageDragDepth.current -= 1
+            if (imageDragDepth.current <= 0) {
+              imageDragDepth.current = 0
+              setImageDragOver(false)
+            }
+          }}
           onDrop={(e) => {
             e.preventDefault()
+            imageDragDepth.current = 0
             setImageDragOver(false)
             const file = e.dataTransfer.files?.[0]
             if (file) handleImageFile(file)
@@ -821,10 +831,14 @@ function BeatTab({
         >
           {assetUrl(node.image_path) ? (
             <>
-              <img src={assetUrl(node.image_path)!} className="mx-auto max-h-60 max-w-full rounded-xl" />
+              <img
+                src={assetUrl(node.image_path)!}
+                draggable={false}
+                className="pointer-events-none mx-auto max-h-60 max-w-full rounded-xl"
+              />
               {imageDragOver && (
                 <span
-                  className="absolute inset-0 flex items-center justify-center rounded-xl text-[12px] font-medium"
+                  className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-xl text-[12px] font-medium"
                   style={{ background: 'rgba(13,15,20,0.7)', color: 'var(--accent)' }}
                 >
                   ドロップで差し替え

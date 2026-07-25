@@ -120,6 +120,17 @@ export default function App(): React.JSX.Element {
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
+    // ドロップゾーン外への誤ドロップでウィンドウがファイル表示に遷移するのを防ぐ
+    const prevent = (e: DragEvent): void => e.preventDefault()
+    window.addEventListener('dragover', prevent)
+    window.addEventListener('drop', prevent)
+    return () => {
+      window.removeEventListener('dragover', prevent)
+      window.removeEventListener('drop', prevent)
+    }
+  }, [])
+
+  useEffect(() => {
     // F12 スクリーンショット保存の通知
     const off = window.storyGraph.onScreenshotSaved((path) => {
       setToast(`📷 スクリーンショットを保存: ${baseName(path)}`)
