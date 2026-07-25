@@ -397,3 +397,20 @@ textarea {
 .node-generating-border {
   animation: node-glow 1.6s ease-in-out infinite;
 }
+
+/* 相談チャットの候補チップ(video-content-analyzer の qa-suggest-chip を参考) */
+@keyframes chip-in {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: none; }
+}
+
+.chat-suggest-chip {
+  animation: chip-in 0.2s ease;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.chat-suggest-chip:hover:not(:disabled) {
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
+  color: var(--accent);
+}

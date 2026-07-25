@@ -18,6 +18,18 @@ type DisplayItem =
   | { kind: 'tool'; name: string }
   | { kind: 'proposals'; proposals: Proposal[] }
 
+// 定型質問。読み取り3ツール(get_beats / get_state / search_memories)と
+// propose_beats が一通り使われる並びにしている。詳細は docs/design/chat.md
+const TEMPLATES: { label: string; text: string }[] = [
+  { label: '流れを要約', text: 'ここまでの流れを3行で要約して。' },
+  { label: '状態を要約', text: '現在の各キャラの状態(facts と関係)を要約して。' },
+  { label: '関係の変化', text: '関係値が大きく動いたところと、その理由を挙げて。' },
+  { label: '未回収の伏線', text: '未回収の伏線・約束・謎を洗い出して。' },
+  { label: '矛盾チェック', text: 'キャラの言動と facts に矛盾がないか点検して。' },
+  { label: '展開を提案', text: 'この先の展開を3案提案して。' }
+]
+const TEMPLATE_WINDOW = 3 // 同時に見せる件数
+
 export default function ChatDrawer({
   selectedId,
   canonTailId,
@@ -47,9 +59,18 @@ export default function ChatDrawer({
   const [status, setStatus] = useState<string | null>(null)
   const [history, setHistory] = useState<ChatSummary[]>([])
   const [insertedTitles, setInsertedTitles] = useState<Set<string>>(new Set())
+  // 候補チップは常に入力欄の右上に積む。全部出すと縦を食うので窓を 3 件に
+  // 絞り、⟳ で次の 3 件へ送る(ランダムではなく決まった順。docs/design/chat.md)
+  const [templateOffset, setTemplateOffset] = useState(0)
   const abortRef = useRef<AbortController | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
+  const inputRef = useRef<HTMLTextAreaElement | null>(null)
   const busyElapsed = useElapsedSeconds(busy)
+
+  const visibleTemplates = Array.from(
+    { length: TEMPLATE_WINDOW },
+    (_, i) => TEMPLATES[(templateOffset + i) % TEMPLATES.length]
+  )
 
   useEffect(() => {
     if (open) void chatApi.list().then(setHistory).catch(() => setHistory([]))
@@ -108,8 +129,8 @@ export default function ChatDrawer({
     setItems(display)
   }
 
-  const send = async (): Promise<void> => {
-    const message = input.trim()
+  const send = async (override?: string): Promise<void> => {
+    const message = (override ?? input).trim()
     if (!message || busy) return
     const controller = new AbortController()
     abortRef.current = controller
@@ -389,9 +410,25 @@ export default function ChatDrawer({
               </div>
             )}
           </div>
+          {/* 候補チップ(常時表示。右下に縦積み。クリックで即送信) */}
+          <div className="mt-2 flex flex-col items-end gap-1.5">
+            {visibleTemplates.map((t) => (
+              <button
+                key={t.label}
+                onClick={() => void send(t.text)}
+                disabled={busy}
+                className="chat-suggest-chip max-w-full truncate rounded-full border px-3 py-1 text-[11px] disabled:opacity-40"
+                style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+                title={t.text}
+              >
+                {t.text}
+              </button>
+            ))}
+          </div>
           {/* 入力 */}
-          <div className="mt-2 flex gap-2">
+          <div className="mt-1.5 flex items-end gap-2">
             <textarea
+              ref={inputRef}
               rows={1}
               value={input}
               onChange={(e) => setInput(e.target.value)}
@@ -405,6 +442,14 @@ export default function ChatDrawer({
               className="min-w-0 flex-1 resize-none rounded-lg border px-3 py-1.5 text-[13px] outline-none"
               style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
             />
+            <button
+              onClick={() => setTemplateOffset((v) => (v + TEMPLATE_WINDOW) % TEMPLATES.length)}
+              className="shrink-0 rounded-lg border px-2.5 py-1.5 text-[13px]"
+              style={{ borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }}
+              title="ほかの候補を見る"
+            >
+              ⟳
+            </button>
             {busy ? (
               <button
                 onClick={() => abortRef.current?.abort()}
