@@ -5,6 +5,7 @@ import {
   chatApi,
   chatSendStream,
   isAbortError,
+  type ChatStats,
   type ChatStreamEvent,
   type ChatSummary
 } from './api'
@@ -22,9 +23,24 @@ interface Proposal {
 
 type DisplayItem =
   | { kind: 'user'; text: string }
-  | { kind: 'assistant'; text: string }
+  | { kind: 'assistant'; text: string; stats?: ChatStats | null }
   | { kind: 'tool'; name: string }
   | { kind: 'proposals'; proposals: Proposal[] }
+
+/** 返事の下に出す生成統計(lm-chat の qa-meta と同じ並び) */
+function StatsLine({ stats }: { stats: ChatStats }): React.JSX.Element {
+  const parts: string[] = []
+  if (stats.tokens_per_sec) parts.push(`⚡ ${stats.tokens_per_sec.toFixed(1)} tok/sec`)
+  if (stats.tokens) parts.push(`💬 ${stats.tokens.toLocaleString()} tokens`)
+  if (stats.elapsed_sec) parts.push(`🕐 ${stats.elapsed_sec.toFixed(2)}s`)
+  if (stats.steps > 1) parts.push(`🔧 ${stats.steps} ステップ`)
+  if (stats.finish_reason) parts.push(`Finish reason: ${stats.finish_reason}`)
+  return (
+    <div className="mt-0.5 text-[10px] tabular-nums" style={{ color: 'var(--text-faint)' }}>
+      {parts.join(' · ')}
+    </div>
+  )
+}
 
 // 定型質問。読み取り3ツール(get_beats / get_state / search_memories)と
 // propose_beats が一通り使われる並びにしている。詳細は docs/design/chat.md
@@ -294,7 +310,14 @@ export default function ChatDrawer({
             }
           }
         }
-        if (m.content) display.push({ kind: 'assistant', text: String(m.content) })
+        if (m.content) {
+          // meta は保存時に付けた生成統計(LLM には渡していない)
+          display.push({
+            kind: 'assistant',
+            text: String(m.content),
+            stats: (m.meta as ChatStats | undefined) ?? null
+          })
+        }
       }
     }
     setItems(display)
@@ -355,7 +378,16 @@ export default function ChatDrawer({
             setStatus(null)
             live = ''
             setLiveText('')
-            if (e.answer) setItems((prev) => [...prev, { kind: 'assistant', text: e.answer! }])
+            if (e.answer) {
+              setItems((prev) => [...prev, { kind: 'assistant', text: e.answer!, stats: e.stats ?? null }])
+            } else if (e.stats) {
+              // ストリーミングで確定済みの吹き出しに統計だけ後付けする
+              setItems((prev) => {
+                const last = prev[prev.length - 1]
+                if (last?.kind !== 'assistant') return prev
+                return [...prev.slice(0, -1), { ...last, stats: e.stats ?? null }]
+              })
+            }
           }
           if (e.error) setStatus(`エラー: ${e.error}`)
         },
@@ -651,16 +683,19 @@ export default function ChatDrawer({
                   <div key={i} className="mb-2 flex items-start gap-2">
                     {/* キャラモードでは発言者のアイコンを添える */}
                     {activeChar && <CharAvatar char={activeChar} size={56} />}
-                    <div
-                      className="max-w-[80%] rounded-2xl rounded-bl-md border px-3 py-1.5 text-[13px] leading-relaxed"
-                      style={{
-                        background: 'var(--bg-card)',
-                        // キャラモードはキャラ色の枠で「本人の発言」を示す
-                        borderColor: activeChar?.color || 'var(--border)',
-                        color: 'var(--text)'
-                      }}
-                    >
-                      <Markdown text={item.text} />
+                    <div className="min-w-0 max-w-[80%]">
+                      <div
+                        className="rounded-2xl rounded-bl-md border px-3 py-1.5 text-[13px] leading-relaxed"
+                        style={{
+                          background: 'var(--bg-card)',
+                          // キャラモードはキャラ色の枠で「本人の発言」を示す
+                          borderColor: activeChar?.color || 'var(--border)',
+                          color: 'var(--text)'
+                        }}
+                      >
+                        <Markdown text={item.text} />
+                      </div>
+                      {item.stats && <StatsLine stats={item.stats} />}
                     </div>
                   </div>
                 )

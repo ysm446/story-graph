@@ -363,10 +363,20 @@ export interface ChatRecord {
   messages: Array<Record<string, unknown>>
 }
 
+/** 1 回の返事の生成統計(llama-server の timings / usage 由来) */
+export interface ChatStats {
+  tokens: number
+  elapsed_sec: number | null
+  tokens_per_sec: number | null
+  finish_reason: string | null
+  steps: number
+}
+
 export interface ChatStreamEvent {
   chat_id?: string
   stage?: string
   delta?: string
+  stats?: ChatStats | null
   tool_call?: { name: string; args: Record<string, unknown> }
   tool_result?: { name: string; is_error: boolean }
   proposals?: Array<{

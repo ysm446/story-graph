@@ -57,6 +57,28 @@ async def health(base_url: str, timeout: float = 2.0) -> bool:
         return False
 
 
+def _extract_stats(chunk: dict[str, Any], choice: dict[str, Any]) -> dict[str, Any]:
+    """ストリーム最終チャンクから生成統計を取り出す(lm-chat と同じ読み方)。
+
+    timings は llama.cpp の拡張フィールド。無いサーバーでは usage で代替し、
+    速度が取れない場合は None のままにする(UI 側で省略される)。
+    """
+    usage = chunk.get("usage") or {}
+    timings = chunk.get("timings") or {}
+    tokens = timings.get("predicted_n") or usage.get("completion_tokens")
+    elapsed_ms = timings.get("predicted_ms")
+    per_sec = timings.get("predicted_per_second")
+    if per_sec is None and tokens and elapsed_ms:
+        per_sec = tokens / (elapsed_ms / 1000.0)
+    return {
+        "tokens": tokens,
+        "prompt_tokens": timings.get("prompt_n") or usage.get("prompt_tokens"),
+        "tokens_per_sec": per_sec,
+        "elapsed_sec": (elapsed_ms / 1000.0) if elapsed_ms is not None else None,
+        "finish_reason": choice.get("finish_reason"),
+    }
+
+
 async def count_tokens(text: str, *, base_url: str, timeout: float = 10.0) -> int | None:
     """llama-server の /tokenize でトークン数を数える(lm-chat と同方式)。
     サーバーが応答しないときは None(呼び出し側で概算に落とす)。"""
@@ -227,6 +249,7 @@ async def chat_stream_tools(
     entry = _log_prompt(label, messages, temperature, max_tokens)
     content_parts: list[str] = []
     tool_calls: dict[int, dict[str, Any]] = {}
+    stats: dict[str, Any] = {}
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             async with client.stream(
@@ -251,6 +274,10 @@ async def chat_stream_tools(
                         choices = obj.get("choices") or []
                         if not choices:
                             continue
+                        # 生成統計は finish_reason を持つ最終チャンクに入る
+                        # (timings は llama.cpp の拡張。usage は OAI 互換)
+                        if choices[0].get("finish_reason"):
+                            stats = _extract_stats(obj, choices[0])
                         delta = choices[0].get("delta") or {}
                         if delta.get("content"):
                             content_parts.append(delta["content"])
@@ -280,12 +307,16 @@ async def chat_stream_tools(
     entry["response"] = (
         content[:3000] if content else json.dumps(calls, ensure_ascii=False)[:3000] if calls else ""
     )
+    if stats:
+        entry["usage"] = {"prompt_tokens": stats.get("prompt_tokens"), "completion_tokens": stats.get("tokens")}
+        entry["finish_reason"] = stats.get("finish_reason")
     yield (
         "done",
         {
             "content": content,
             "tool_calls": calls,
             "message": message,  # tool ループで履歴に積み直す用
+            "stats": stats,  # トークン数 / 速度 / 所要時間 / finish_reason
         },
     )
 

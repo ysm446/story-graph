@@ -384,7 +384,36 @@ async def _chat_impl(
         tools = build_tools()
 
     def messages() -> list[dict[str, Any]]:
-        return [{"role": "system", "content": system}, *history]
+        # meta(生成統計)は保存用の付加情報なので LLM には渡さない
+        return [
+            {"role": "system", "content": system},
+            *({k: v for k, v in m.items() if k != "meta"} for m in history),
+        ]
+
+    # ツールステップをまたいだ合計。ツール呼び出しの分も含めて「この返事にかかった量」
+    stats_total: dict[str, Any] = {"tokens": 0, "elapsed_sec": 0.0, "steps": 0, "finish_reason": None}
+
+    def accumulate(result: dict[str, Any]) -> None:
+        s = result.get("stats") or {}
+        if s.get("tokens"):
+            stats_total["tokens"] += s["tokens"]
+        if s.get("elapsed_sec"):
+            stats_total["elapsed_sec"] += s["elapsed_sec"]
+        if s.get("finish_reason"):
+            stats_total["finish_reason"] = s["finish_reason"]
+        stats_total["steps"] += 1
+
+    def final_stats() -> dict[str, Any] | None:
+        if not stats_total["tokens"]:
+            return None
+        elapsed = stats_total["elapsed_sec"] or None
+        return {
+            "tokens": stats_total["tokens"],
+            "elapsed_sec": round(elapsed, 2) if elapsed else None,
+            "tokens_per_sec": round(stats_total["tokens"] / elapsed, 1) if elapsed else None,
+            "finish_reason": stats_total["finish_reason"],
+            "steps": stats_total["steps"],
+        }
 
     final_answer: str | None = None
     for step in range(MAX_TOOL_STEPS):
@@ -402,10 +431,14 @@ async def _chat_impl(
                 yield _sse({"delta": value})
             elif kind == "done":
                 result = value
+        accumulate(result)
         tool_calls = result.get("tool_calls")
         if not tool_calls:
             final_answer = result["content"]
-            history.append({"role": "assistant", "content": final_answer})
+            stats = final_stats()
+            history.append(
+                {"role": "assistant", "content": final_answer, **({"meta": stats} if stats else {})}
+            )
             break
         history.append(result["message"])
         for tc in tool_calls:
@@ -458,11 +491,15 @@ async def _chat_impl(
                 yield _sse({"delta": value})
             elif kind == "done":
                 result = value
+        accumulate(result)
         final_answer = result.get("content") or ""
-        history.append({"role": "assistant", "content": final_answer})
+        stats = final_stats()
+        history.append(
+            {"role": "assistant", "content": final_answer, **({"meta": stats} if stats else {})}
+        )
 
     store.save_chat_messages(chat_id, history)
-    yield _sse({"answer": final_answer or "", "chat_id": chat_id})
+    yield _sse({"answer": final_answer or "", "chat_id": chat_id, "stats": final_stats()})
 
 
 # ---- コンテキスト使用量 ----------------------------------------------
