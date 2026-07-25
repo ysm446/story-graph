@@ -18,6 +18,7 @@ import {
 import '@xyflow/react/dist/style.css'
 import { api, assetUrl, generateBeatStream, isAbortError, isVideoAsset, proofreadStream, uploadAsset } from '../api'
 import ChatDrawer from '../ChatDrawer'
+import { Icon } from '../icons'
 import RelationGraph from '../RelationGraph'
 import { useElapsedSeconds } from '../useElapsed'
 import type { Character, EventInput, GraphEdge, StateSnapshot, StoryEvent, StoryNode } from '../types'
@@ -1842,14 +1843,15 @@ function StructureModeInner({ settingsVersion }: { settingsVersion: number }): R
             <Panel position="bottom-left">
               <button
                 onClick={toggleChat}
-                className="flex h-10 w-10 items-center justify-center rounded-full border text-[16px] shadow-lg shadow-black/30"
+                className="flex h-10 w-10 items-center justify-center rounded-full border shadow-lg shadow-black/30"
                 style={{
                   background: chatOpen ? 'var(--accent-soft)' : 'var(--bg-card)',
-                  borderColor: chatOpen ? 'var(--accent-border)' : 'var(--border-strong)'
+                  borderColor: chatOpen ? 'var(--accent-border)' : 'var(--border-strong)',
+                  color: chatOpen ? 'var(--accent)' : 'var(--text-dim)'
                 }}
                 title={chatOpen ? '相談チャットを閉じる' : '相談チャットを下段に開く'}
               >
-                💬
+                <Icon name="chat" size={18} />
               </button>
             </Panel>
             {graphNodes.length === 0 && (

@@ -9,6 +9,7 @@ import {
   type ChatStreamEvent,
   type ChatSummary
 } from './api'
+import { Icon } from './icons'
 import { Markdown } from './Markdown'
 import type { Character, StoryNode } from './types'
 import { useElapsedSeconds } from './useElapsed'
@@ -75,12 +76,10 @@ function buildDisplay(messages: Array<Record<string, unknown>>): DisplayItem[] {
 function MsgActionButton({
   kind,
   title,
-  danger,
   onClick
 }: {
   kind: 'edit' | 'regenerate' | 'delete'
   title: string
-  danger?: boolean
   onClick: () => void
 }): React.JSX.Element {
   return (
@@ -88,7 +87,7 @@ function MsgActionButton({
       onClick={onClick}
       title={title}
       className="rounded p-0.5 hover:bg-[var(--accent-soft)]"
-      style={{ color: danger ? 'var(--danger)' : 'var(--text-faint)' }}
+      style={{ color: 'var(--text-faint)' }}
     >
       <svg
         width="14"
@@ -130,15 +129,37 @@ function MsgActionButton({
 
 /** 返事の下に出す生成統計(lm-chat の qa-meta と同じ並び) */
 function StatsLine({ stats }: { stats: ChatStats }): React.JSX.Element {
-  const parts: string[] = []
-  if (stats.tokens_per_sec) parts.push(`⚡ ${stats.tokens_per_sec.toFixed(1)} tok/sec`)
-  if (stats.tokens) parts.push(`💬 ${stats.tokens.toLocaleString()} tokens`)
-  if (stats.elapsed_sec) parts.push(`🕐 ${stats.elapsed_sec.toFixed(2)}s`)
-  if (stats.steps > 1) parts.push(`🔧 ${stats.steps} ステップ`)
-  if (stats.finish_reason) parts.push(`Finish reason: ${stats.finish_reason}`)
+  const parts: React.JSX.Element[] = []
+  const item = (key: string, icon: React.JSX.Element | null, text: string): React.JSX.Element => (
+    <span key={key} className="inline-flex items-center gap-1">
+      {icon}
+      {text}
+    </span>
+  )
+  if (stats.tokens_per_sec) {
+    parts.push(item('speed', <Icon name="zap" size={11} />, `${stats.tokens_per_sec.toFixed(1)} tok/sec`))
+  }
+  if (stats.tokens) {
+    parts.push(item('tokens', <Icon name="tokens" size={11} />, `${stats.tokens.toLocaleString()} tokens`))
+  }
+  if (stats.elapsed_sec) {
+    parts.push(item('elapsed', <Icon name="clock" size={11} />, `${stats.elapsed_sec.toFixed(2)}s`))
+  }
+  if (stats.steps > 1) {
+    parts.push(item('steps', <Icon name="tool" size={11} />, `${stats.steps} ステップ`))
+  }
+  if (stats.finish_reason) parts.push(item('finish', null, `Finish reason: ${stats.finish_reason}`))
   return (
-    <div className="mt-0.5 text-[10px] tabular-nums" style={{ color: 'var(--text-faint)' }}>
-      {parts.join(' · ')}
+    <div
+      className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10px] tabular-nums"
+      style={{ color: 'var(--text-faint)' }}
+    >
+      {parts.map((part, i) => (
+        <span key={part.key} className="inline-flex items-center gap-1.5">
+          {i > 0 && <span aria-hidden>·</span>}
+          {part}
+        </span>
+      ))}
     </div>
   )
 }
@@ -620,10 +641,11 @@ export default function ChatDrawer({
                       title={`${h.char_name ? h.char_name + ' / ' : ''}${h.anchor_title || '(シーンなし)'} まで`}
                     >
                       <div
-                        className="truncate text-[12px]"
+                        className="flex items-center gap-1 text-[12px]"
                         style={{ color: active ? 'var(--text)' : 'var(--text-dim)' }}
                       >
-                        {h.char_name ? `🎭 ${chatLabel(h)}` : chatLabel(h)}
+                        {h.char_name && <Icon name="mask" size={12} className="shrink-0" />}
+                        <span className="truncate">{chatLabel(h)}</span>
                       </div>
                       <div className="truncate text-[10px]" style={{ color: 'var(--text-faint)' }}>
                         {h.anchor_title || '(シーンなし)'}
@@ -661,7 +683,7 @@ export default function ChatDrawer({
                     <button
                       onClick={() => void deleteChat(h.id)}
                       className="block w-full px-3 py-1.5 text-left text-[12px] hover:bg-[var(--accent-soft)]"
-                      style={{ color: 'var(--danger)' }}
+                      style={{ color: 'var(--text-dim)' }}
                     >
                       削除
                     </button>
@@ -677,7 +699,7 @@ export default function ChatDrawer({
           {/* ヘッダー: 相手 / アンカー / スコープ */}
           <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px]" style={{ color: 'var(--text-faint)' }}>
             {/* 話す相手: 相談(編集者) or キャラ本人。切替は新規チャット扱い */}
-            {activeChar && <CharAvatar char={activeChar} size={20} />}
+            {activeChar ? <CharAvatar char={activeChar} size={20} /> : <Icon name="chat" size={14} />}
             <select
               value={charId ?? ''}
               onChange={(e) => switchTarget(e.target.value || null)}
@@ -690,10 +712,11 @@ export default function ChatDrawer({
               }}
               title="話す相手。キャラを選ぶと、アンカー時点のそのキャラ本人と話せます"
             >
-              <option value="">💬 相談(編集者)</option>
+              {/* option には SVG を置けないので、ここだけは文字だけで区別する */}
+              <option value="">相談(編集者)</option>
               {characters.map((c) => (
                 <option key={c.id} value={c.id}>
-                  🎭 {c.name}と話す
+                  {c.name}と話す
                 </option>
               ))}
             </select>
@@ -840,7 +863,6 @@ export default function ChatDrawer({
                         <MsgActionButton
                           kind="delete"
                           title="このやり取りを削除"
-                          danger
                           onClick={() => void deleteTurn(turn, false)}
                         />
                       </div>
@@ -872,7 +894,6 @@ export default function ChatDrawer({
                             <MsgActionButton
                               kind="delete"
                               title="この返事を削除(発言は残す)"
-                              danger
                               onClick={() => void deleteTurn(item.turn!, true)}
                             />
                           </div>
@@ -884,8 +905,20 @@ export default function ChatDrawer({
               }
               if (item.kind === 'tool') {
                 return (
-                  <div key={i} className="mb-1 text-[11px]" style={{ color: 'var(--text-faint)' }}>
-                    {item.name === 'recall' ? '💭 記憶をたどった' : `🔍 ${item.name}`}
+                  <div
+                    key={i}
+                    className="mb-1 flex items-center gap-1 text-[11px]"
+                    style={{ color: 'var(--text-faint)' }}
+                  >
+                    {item.name === 'recall' ? (
+                      <>
+                        <Icon name="recall" size={12} /> 記憶をたどった
+                      </>
+                    ) : (
+                      <>
+                        <Icon name="search" size={12} /> {item.name}
+                      </>
+                    )}
                   </div>
                 )
               }
@@ -959,7 +992,7 @@ export default function ChatDrawer({
                 key={c.text}
                 onClick={() => void send(c.text)}
                 disabled={busy}
-                className="chat-suggest-chip max-w-full truncate rounded-full border px-3 py-1 text-[11px] disabled:opacity-40"
+                className="chat-suggest-chip flex max-w-full items-center gap-1 rounded-full border px-3 py-1 text-[11px] disabled:opacity-40"
                 style={{
                   background: 'var(--bg-card)',
                   borderColor: c.dynamic ? 'var(--accent-border)' : 'var(--border-strong)',
@@ -967,7 +1000,8 @@ export default function ChatDrawer({
                 }}
                 title={c.dynamic ? `${c.text}(物語の内容から作られた質問)` : c.text}
               >
-                {c.dynamic ? `✨ ${c.text}` : c.text}
+                {c.dynamic && <Icon name="sparkle" size={11} className="shrink-0" />}
+                <span className="truncate">{c.text}</span>
               </button>
             ))}
           </div>
