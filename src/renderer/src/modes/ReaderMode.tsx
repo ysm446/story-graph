@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { api, assetUrl, isAbortError, renderStream } from '../api'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { api, assetUrl, isAbortError, isVideoAsset, renderStream } from '../api'
+import { CrossfadeLoopVideo, DEFAULT_VIDEO_CROSSFADE_SECONDS } from '../CrossfadeLoopVideo'
 import { useElapsedSeconds } from '../useElapsed'
 import type { Character, PromoteProposal, SceneEntry, StylePreset } from '../types'
 
@@ -201,6 +202,7 @@ export default function ReaderMode(): React.JSX.Element {
   const [viewMode, setViewMode] = useState<ViewMode>('scroll')
   const [fontId, setFontId] = useState<string>('sans')
   const [fontSize, setFontSize] = useState<number>(14)
+  const [videoFade, setVideoFade] = useState<number>(DEFAULT_VIDEO_CROSSFADE_SECONDS)
   const [pageIndex, setPageIndex] = useState(0)
   const [typedLen, setTypedLen] = useState(0)
   const [pages, setPages] = useState<PageChunk[]>([])
@@ -241,12 +243,16 @@ export default function ReaderMode(): React.JSX.Element {
         if (FONT_OPTIONS.some((f) => f.id === settings.reader_font)) setFontId(settings.reader_font)
         const savedSize = Number(settings.reader_font_size)
         if (FONT_SIZES.some((s) => s.value === savedSize)) setFontSize(savedSize)
+        const savedFade = Number(settings.video_crossfade_seconds)
+        if (Number.isFinite(savedFade) && savedFade >= 0) setVideoFade(Math.min(savedFade, 5))
       }
     )
   }, [])
 
   // ---- ページモード: 画面に収まる分量でページ分割する ----------------
   // 本文エリア全体のサイズを監視(挿絵の有無に依らず安定した基準になる)
+  // シーンが空の間は本文エリア自体が描画されないため、シーン到着後に再実行する
+  const hasScenes = scenes.length > 0
   useEffect(() => {
     if (viewMode !== 'page') return
     const area = pageAreaRef.current
@@ -260,7 +266,7 @@ export default function ReaderMode(): React.JSX.Element {
     const observer = new ResizeObserver(update)
     observer.observe(area)
     return () => observer.disconnect()
-  }, [viewMode])
+  }, [viewMode, hasScenes])
 
   // ページ分割の計算: 実測(隠し要素)で「高さに収まる最大文字数」を二分探索し、
   // 句点・改行のきりの良い位置で区切る。挿絵ありシーンは上部 42% を挿絵に
@@ -313,10 +319,11 @@ export default function ReaderMode(): React.JSX.Element {
     setPageIndex((i) => Math.min(i, Math.max(result.length - 1, 0)))
   }, [viewMode, scenesSig, fontId, fontSize, pageBoxSize])
 
-  // タイプライター表示(ページ単位)
+  // タイプライター表示(ページ単位)。リセットを描画前に行わないと、
+  // ページ切替の瞬間に前ページの typedLen 分だけ次ページの文章が見えてしまう
   const currentChunk = viewMode === 'page' ? pages[Math.min(pageIndex, Math.max(pages.length - 1, 0))] : undefined
   const currentChunkText = currentChunk?.text ?? null
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (viewMode !== 'page' || !currentChunkText) {
       setTypedLen(0)
       return
@@ -700,7 +707,11 @@ export default function ReaderMode(): React.JSX.Element {
                     <div ref={pageAreaRef} className="flex min-h-0 flex-1 flex-col overflow-hidden">
                       {img && (
                         <div className="mb-4 flex min-h-0 shrink-0 justify-center" style={{ flexBasis: '42%' }}>
-                          <img src={img} className="max-h-full max-w-full rounded-2xl object-contain" />
+                          {isVideoAsset(scene.node.image_path) ? (
+                            <CrossfadeLoopVideo src={img} fadeSeconds={videoFade} fill videoClassName="rounded-2xl" />
+                          ) : (
+                            <img src={img} className="max-h-full max-w-full rounded-2xl object-contain" />
+                          )}
                         </div>
                       )}
                       <div
@@ -781,13 +792,32 @@ export default function ReaderMode(): React.JSX.Element {
                       <div className="gap-8 md:grid md:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
                         <div className="mb-4 md:mb-0">
                           {/* 同じシーン内では左の挿絵が固定され、右の文章だけがスクロールする */}
-                          <img src={img!} className="mx-auto max-h-[70vh] max-w-full rounded-2xl md:sticky md:top-4" />
+                          {isVideoAsset(scene.node.image_path) ? (
+                            <CrossfadeLoopVideo
+                              src={img!}
+                              fadeSeconds={videoFade}
+                              className="mx-auto w-fit md:sticky md:top-4"
+                              videoClassName="max-h-[70vh] rounded-2xl"
+                            />
+                          ) : (
+                            <img src={img!} className="mx-auto max-h-[70vh] max-w-full rounded-2xl md:sticky md:top-4" />
+                          )}
                         </div>
                         <div>{renderProse(scene)}</div>
                       </div>
                     ) : (
                       <>
-                        {img && <img src={img} className="mx-auto mb-4 max-h-96 max-w-full rounded-2xl" />}
+                        {img &&
+                          (isVideoAsset(scene.node.image_path) ? (
+                            <CrossfadeLoopVideo
+                              src={img}
+                              fadeSeconds={videoFade}
+                              className="mx-auto mb-4 w-fit"
+                              videoClassName="max-h-96 rounded-2xl"
+                            />
+                          ) : (
+                            <img src={img} className="mx-auto mb-4 max-h-96 max-w-full rounded-2xl" />
+                          ))}
                         {renderProse(scene)}
                       </>
                     )}

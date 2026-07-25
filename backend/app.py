@@ -280,9 +280,12 @@ class NodeImageIn(BaseModel):
     image_path: str | None = None
 
 
-# ---- 画像アセット(装飾専用。LLM には渡さない) ----------------------
+# ---- 画像/動画アセット(装飾専用。LLM には渡さない) ------------------
 
 ALLOWED_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+ALLOWED_VIDEO_EXTS = {".mp4", ".webm"}
+MAX_IMAGE_BYTES = 20 * 1024 * 1024
+MAX_VIDEO_BYTES = 100 * 1024 * 1024
 
 
 @app.post("/assets/upload")
@@ -294,12 +297,13 @@ async def upload_asset(file: UploadFile) -> dict[str, str]:
     if assets is None:
         raise HTTPException(500, "ライブラリが未設定です")
     ext = _Path(file.filename or "").suffix.lower()
-    if ext not in ALLOWED_IMAGE_EXTS:
-        raise HTTPException(400, f"対応していない画像形式です: {ext}")
+    if ext not in ALLOWED_IMAGE_EXTS | ALLOWED_VIDEO_EXTS:
+        raise HTTPException(400, f"対応していない形式です: {ext}(画像: png/jpg/gif/webp、動画: mp4/webm)")
     name = f"{uuid.uuid4().hex[:12]}{ext}"
     data = await file.read()
-    if len(data) > 20 * 1024 * 1024:
-        raise HTTPException(400, "20MB を超える画像はアップロードできません")
+    limit = MAX_VIDEO_BYTES if ext in ALLOWED_VIDEO_EXTS else MAX_IMAGE_BYTES
+    if len(data) > limit:
+        raise HTTPException(400, f"{limit // (1024 * 1024)}MB を超えるファイルはアップロードできません")
     (_Path(assets) / name).write_bytes(data)
     return {"path": name}
 

@@ -16,7 +16,7 @@ import {
   type NodeProps
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { api, assetUrl, generateBeatStream, isAbortError, proofreadStream, uploadAsset } from '../api'
+import { api, assetUrl, generateBeatStream, isAbortError, isVideoAsset, proofreadStream, uploadAsset } from '../api'
 import ChatDrawer from '../ChatDrawer'
 import RelationGraph from '../RelationGraph'
 import { useElapsedSeconds } from '../useElapsed'
@@ -86,13 +86,24 @@ function BeatNodeCard({ data, selected }: NodeProps<BeatFlowNode>): React.JSX.El
       }}
     >
       <Handle type="target" position={Position.Top} className="!bg-[#6a728f]" />
-      {assetUrl(storyNode.image_path) && (
-        <img
-          src={assetUrl(storyNode.image_path)!}
-          className="mx-auto mb-2 max-h-40 max-w-full rounded-xl"
-          style={{ opacity: isDraft ? 0.8 : 1 }}
-        />
-      )}
+      {assetUrl(storyNode.image_path) &&
+        (isVideoAsset(storyNode.image_path) ? (
+          // グラフ上のカードでは負荷を抑えるため再生せず、先頭フレームをサムネイルとして表示
+          <video
+            src={assetUrl(storyNode.image_path)!}
+            preload="metadata"
+            muted
+            playsInline
+            className="mx-auto mb-2 max-h-40 max-w-full rounded-xl"
+            style={{ opacity: isDraft ? 0.8 : 1 }}
+          />
+        ) : (
+          <img
+            src={assetUrl(storyNode.image_path)!}
+            className="mx-auto mb-2 max-h-40 max-w-full rounded-xl"
+            style={{ opacity: isDraft ? 0.8 : 1 }}
+          />
+        ))}
       <div className="mb-1 flex items-center gap-2">
         <span className="min-w-0 flex-1 truncate text-[13px] font-semibold" style={{ color: 'var(--text)' }}>
           {storyNode.title || '(無題のシーン)'}
@@ -379,8 +390,8 @@ function BeatTab({
   const proofreadAbortRef = useRef<AbortController | null>(null)
 
   const handleImageFile = (file: File): void => {
-    if (!file.type.startsWith('image/')) {
-      setError('画像ファイルをドロップしてください')
+    if (!file.type.startsWith('image/') && !file.type.startsWith('video/')) {
+      setError('画像または動画ファイルをドロップしてください')
       return
     }
     void uploadAsset(file)
@@ -790,7 +801,7 @@ function BeatTab({
           />
         </label>
       </div>
-      {/* 挿絵(装飾専用。LLM には渡さない) */}
+      {/* 挿絵(画像/動画。装飾専用。LLM には渡さない) */}
       <div>
         <div className="mb-1 flex items-center justify-between">
           <span className="text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
@@ -802,7 +813,7 @@ function BeatTab({
               className="rounded-md border px-2 py-0.5 text-[11px]"
               style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
             >
-              {node.image_path ? '変更' : '+ 画像を添付'}
+              {node.image_path ? '変更' : '+ 画像/動画を添付'}
             </button>
             {node.image_path && (
               <button
@@ -818,7 +829,7 @@ function BeatTab({
         <input
           ref={imageInputRef}
           type="file"
-          accept="image/png,image/jpeg,image/gif,image/webp"
+          accept="image/png,image/jpeg,image/gif,image/webp,video/mp4,video/webm"
           className="hidden"
           onChange={(e) => {
             const file = e.target.files?.[0]
@@ -855,11 +866,22 @@ function BeatTab({
         >
           {assetUrl(node.image_path) ? (
             <>
-              <img
-                src={assetUrl(node.image_path)!}
-                draggable={false}
-                className="pointer-events-none mx-auto max-h-60 max-w-full rounded-xl"
-              />
+              {isVideoAsset(node.image_path) ? (
+                <video
+                  src={assetUrl(node.image_path)!}
+                  autoPlay
+                  muted
+                  loop
+                  playsInline
+                  className="pointer-events-none mx-auto max-h-60 max-w-full rounded-xl"
+                />
+              ) : (
+                <img
+                  src={assetUrl(node.image_path)!}
+                  draggable={false}
+                  className="pointer-events-none mx-auto max-h-60 max-w-full rounded-xl"
+                />
+              )}
               {imageDragOver && (
                 <span
                   className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-xl text-[12px] font-medium"
@@ -877,7 +899,7 @@ function BeatTab({
                 color: imageDragOver ? 'var(--accent)' : 'var(--text-faint)'
               }}
             >
-              ここに画像をドロップ(またはクリックで選択)
+              ここに画像/動画をドロップ(またはクリックで選択)
             </div>
           )}
         </div>

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
+import { DEFAULT_VIDEO_CROSSFADE_SECONDS } from '../CrossfadeLoopVideo'
 import { useElapsedSeconds } from '../useElapsed'
 
 // lm-chat の SettingsPanel と同じ刻み
@@ -175,6 +176,10 @@ export default function SettingsMode(): React.JSX.Element {
 
   const ctxSize = Number(values.llm_ctx_size || DEFAULT_CTX_SIZE)
   const ctxIndex = getNearestCtxPresetIndex(ctxSize, CTX_SIZE_PRESETS)
+
+  const videoFade = values.video_crossfade_seconds
+    ? Math.min(Math.max(Number(values.video_crossfade_seconds) || 0, 0), 2)
+    : DEFAULT_VIDEO_CROSSFADE_SECONDS
 
   const refreshStatus = async (): Promise<void> => {
     try {
@@ -470,6 +475,63 @@ export default function SettingsMode(): React.JSX.Element {
               />
               <p className="settings-field-hint">
                 入力すると、シーンタブの校正プリセットに「カスタム」が追加されます(組み込み: 軽く / 標準 / 積極的)。
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* 鑑賞モード */}
+        <div className="flex flex-col gap-2.5">
+          <div className="settings-group-title">鑑賞モード</div>
+          <div className="settings-card">
+            <div className="settings-field">
+              <div className="settings-field-header">
+                <span
+                  className="settings-field-label"
+                  title="動画の挿絵をループ再生するとき、終端と先頭をクロスディゾルブで重ねて継ぎ目を目立たなくします。"
+                >
+                  動画ループのつなぎ(クロスディゾルブ)
+                </span>
+                <div className="settings-field-controls">
+                  {videoFade !== DEFAULT_VIDEO_CROSSFADE_SECONDS && (
+                    <button
+                      className="settings-reset-btn"
+                      title="デフォルトに戻す"
+                      onClick={() => void save({ video_crossfade_seconds: String(DEFAULT_VIDEO_CROSSFADE_SECONDS) })}
+                    >
+                      <svg
+                        width="12"
+                        height="12"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <polyline points="3 6 5 6 21 6" />
+                        <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                        <path d="M10 11v6" />
+                        <path d="M14 11v6" />
+                        <path d="M9 6V4h6v2" />
+                      </svg>
+                    </button>
+                  )}
+                  <span className="settings-value-badge">{videoFade === 0 ? 'なし' : `${videoFade.toFixed(1)}秒`}</span>
+                </div>
+              </div>
+              <input
+                className={`settings-slider${videoFade !== DEFAULT_VIDEO_CROSSFADE_SECONDS ? ' active' : ''}`}
+                type="range"
+                min={0}
+                max={2}
+                step={0.1}
+                value={videoFade}
+                onChange={(e) => setValues((v) => ({ ...v, video_crossfade_seconds: e.target.value }))}
+                onMouseUp={() => void save({})}
+              />
+              <p className="settings-field-hint">
+                0 にするとクロスディゾルブなしの通常ループになります。フェード時間の2倍より短い動画は自動的に通常ループになります。
               </p>
             </div>
           </div>

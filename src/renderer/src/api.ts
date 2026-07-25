@@ -207,6 +207,15 @@ export function assetUrl(path: string | null | undefined): string | null {
   return `${baseUrl}/assets/${encodeURIComponent(path)}`
 }
 
+const VIDEO_EXTS = ['.mp4', '.webm']
+
+/** 添付アセットが動画かどうか(拡張子で判定) */
+export function isVideoAsset(path: string | null | undefined): boolean {
+  if (!path) return false
+  const lower = path.toLowerCase()
+  return VIDEO_EXTS.some((ext) => lower.endsWith(ext))
+}
+
 export async function uploadAsset(file: File): Promise<{ path: string }> {
   if (!baseUrl) throw new Error('backend not ready')
   const form = new FormData()
