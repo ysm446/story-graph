@@ -206,7 +206,7 @@ export default function ReaderMode(): React.JSX.Element {
   const [pageBoxSize, setPageBoxSize] = useState({ width: 0, height: 0 })
   const containerRef = useRef<HTMLDivElement | null>(null)
   const renderAbortRef = useRef<AbortController | null>(null)
-  const pageTextBoxRef = useRef<HTMLDivElement | null>(null)
+  const pageAreaRef = useRef<HTMLDivElement | null>(null) // 本文エリア全体(挿絵の有無に依らず全高・全幅)
   const measurerRef = useRef<HTMLDivElement | null>(null)
 
   const proseFont = FONT_OPTIONS.find((f) => f.id === fontId)?.stack ?? FONT_OPTIONS[0].stack
@@ -243,31 +243,32 @@ export default function ReaderMode(): React.JSX.Element {
   }, [])
 
   // ---- ページモード: 画面に収まる分量でページ分割する ----------------
-  // テキストボックスのサイズを監視(リサイズ・分割レイアウト切替で変わる)
+  // 本文エリア全体のサイズを監視(挿絵の有無に依らず安定した基準になる)
   useEffect(() => {
     if (viewMode !== 'page') return
-    const box = pageTextBoxRef.current
-    if (!box) return
+    const area = pageAreaRef.current
+    if (!area) return
     const update = (): void =>
       setPageBoxSize((prev) => {
-        const next = { width: box.clientWidth, height: box.clientHeight }
+        const next = { width: area.clientWidth, height: area.clientHeight }
         return prev.width === next.width && prev.height === next.height ? prev : next
       })
     update()
     const observer = new ResizeObserver(update)
-    observer.observe(box)
+    observer.observe(area)
     return () => observer.disconnect()
-    // 挿絵の有無でレイアウトが変わるため、現在ページのシーンにも依存
-  }, [viewMode, pages[Math.min(pageIndex, Math.max(pages.length - 1, 0))]?.sceneIndex])
+  }, [viewMode])
 
   // ページ分割の計算: 実測(隠し要素)で「高さに収まる最大文字数」を二分探索し、
-  // 句点・改行のきりの良い位置で区切る
-  const scenesSig = scenes.map((s) => s.render?.id ?? `x-${s.node.id}`).join(',')
+  // 句点・改行のきりの良い位置で区切る。本文幅はシーンごとに算出
+  // (挿絵あり = 右カラム幅 7/12、なし = 全幅)
+  const scenesSig = scenes.map((s) => `${s.render?.id ?? 'x'}-${s.node.image_path ?? ''}`).join(',')
   useEffect(() => {
     if (viewMode !== 'page') return
     const measurer = measurerRef.current
+    const areaWidth = pageBoxSize.width
     const maxHeight = pageBoxSize.height
-    if (!measurer || maxHeight < 60 || pageBoxSize.width < 60) return
+    if (!measurer || maxHeight < 60 || areaWidth < 60) return
     const result: PageChunk[] = []
     for (let si = 0; si < scenes.length; si += 1) {
       const prose = scenes[si].render?.prose
@@ -275,6 +276,9 @@ export default function ReaderMode(): React.JSX.Element {
         result.push({ sceneIndex: si, text: null })
         continue
       }
+      const hasImage = !!scenes[si].node.image_path
+      const textWidth = hasImage ? Math.max(120, ((areaWidth - 32) * 7) / 12) : areaWidth
+      measurer.style.width = `${Math.floor(textWidth)}px`
       let pos = 0
       while (pos < prose.length) {
         let lo = pos + 1
@@ -686,7 +690,8 @@ export default function ReaderMode(): React.JSX.Element {
                   <div className="mx-auto flex min-h-0 w-full max-w-5xl flex-1 flex-col overflow-hidden px-8 pt-6">
                     {renderSceneHeader(scene)}
                     <div
-                      className={`min-h-0 flex-1 ${img ? 'grid grid-cols-[minmax(0,5fr)_minmax(0,7fr)] gap-8' : ''}`}
+                      ref={pageAreaRef}
+                      className={`grid min-h-0 flex-1 gap-8 ${img ? 'grid-cols-[minmax(0,5fr)_minmax(0,7fr)]' : 'grid-cols-1'}`}
                     >
                       {img && (
                         <div className="flex min-h-0 items-start justify-center">
@@ -694,17 +699,16 @@ export default function ReaderMode(): React.JSX.Element {
                         </div>
                       )}
                       <div
-                        ref={pageTextBoxRef}
                         className={`relative min-h-0 overflow-hidden ${isLive ? 'overflow-y-auto' : ''}`}
                         onClick={() => typing && text && setTypedLen(text.length)}
                         title={typing ? 'クリックで全文表示' : undefined}
                         style={typing ? { cursor: 'pointer' } : undefined}
                       >
-                        {/* ページ分割の実測用(不可視。本文と同じ幅・書式) */}
+                        {/* ページ分割の実測用(不可視。幅は分割計算時にシーンごとに設定) */}
                         <div
                           ref={measurerRef}
                           aria-hidden
-                          className="invisible absolute inset-x-0 top-0 whitespace-pre-wrap"
+                          className="invisible absolute left-0 top-0 whitespace-pre-wrap"
                           style={{ fontFamily: proseFont, fontSize, lineHeight: 1.9 }}
                         />
                         {isLive || text === null
