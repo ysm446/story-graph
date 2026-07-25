@@ -1257,25 +1257,57 @@ function StructureModeInner({ settingsVersion }: { settingsVersion: number }): R
     return saved >= 320 && saved <= 900 ? saved : 480
   })
   const rowRef = useRef<HTMLDivElement | null>(null)
+  // 相談チャットはノードエリアとの上下分割ペイン。開閉と高さは親が持つ
+  const [chatOpen, setChatOpen] = useState(false)
+  const [chatHeight, setChatHeight] = useState(() => {
+    const saved = Number(localStorage.getItem('chatDrawerHeight'))
+    return saved >= 220 && saved <= 1200 ? saved : 440
+  })
+  const canvasColumnRef = useRef<HTMLDivElement | null>(null)
+  // 生成 UI はキャンバスの面積を食うので、既定は畳んでツールバーのボタンから開く
+  const [genPanelOpen, setGenPanelOpen] = useState(false)
+  const reactFlow = useReactFlow()
 
-  const beginInspectorResize = useCallback((event: React.PointerEvent): void => {
-    event.preventDefault()
-    const onMove = (ev: PointerEvent): void => {
-      const rect = rowRef.current?.getBoundingClientRect()
-      if (!rect) return
-      setInspectorWidth(Math.min(900, Math.max(320, rect.right - ev.clientX)))
-    }
-    const onUp = (): void => {
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', onUp)
-      setInspectorWidth((w) => {
-        localStorage.setItem('inspectorWidth', String(Math.round(w)))
-        return w
-      })
-    }
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onUp)
-  }, [])
+  // 分割でノードエリアの大きさが変わっても、React Flow はビューポート変換をそのまま
+  // 維持するため、端のノードが隠れて「パネルが被っている」ように見える。
+  // 縮んだ分の半分だけ視点をずらして、見えている内容の中心を保つ。
+  // 引数はノードエリアが縮んだ量(拡がった場合は負)。
+  const shiftViewportForShrink = useCallback(
+    (dx: number, dy: number): void => {
+      if (dx === 0 && dy === 0) return
+      const viewport = reactFlow.getViewport()
+      reactFlow.setViewport({ ...viewport, x: viewport.x - dx / 2, y: viewport.y - dy / 2 })
+    },
+    [reactFlow]
+  )
+
+  const beginInspectorResize = useCallback(
+    (event: React.PointerEvent): void => {
+      event.preventDefault()
+      let current = inspectorWidth
+      const onMove = (ev: PointerEvent): void => {
+        const rect = rowRef.current?.getBoundingClientRect()
+        if (!rect) return
+        // インスペクタが広がった分だけノードエリアは縮む
+        const next = Math.min(900, Math.max(320, rect.right - ev.clientX))
+        if (next === current) return
+        shiftViewportForShrink(next - current, 0)
+        current = next
+        setInspectorWidth(next)
+      }
+      const onUp = (): void => {
+        window.removeEventListener('pointermove', onMove)
+        window.removeEventListener('pointerup', onUp)
+        setInspectorWidth((w) => {
+          localStorage.setItem('inspectorWidth', String(Math.round(w)))
+          return w
+        })
+      }
+      window.addEventListener('pointermove', onMove)
+      window.addEventListener('pointerup', onUp)
+    },
+    [inspectorWidth, shiftViewportForShrink]
+  )
 
   const reload = useCallback(async (): Promise<void> => {
     const [graph, chars] = await Promise.all([api.getGraph(), api.listCharacters()])
@@ -1399,7 +1431,6 @@ function StructureModeInner({ settingsVersion }: { settingsVersion: number }): R
 
   // キーボードショートカット(lm-graph と同じ): A = 全体表示 / F = 選択にフォーカス
   // Delete = 選択ノードを削除
-  const reactFlow = useReactFlow()
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent): void => {
       const target = event.target as HTMLElement | null
@@ -1450,6 +1481,42 @@ function StructureModeInner({ settingsVersion }: { settingsVersion: number }): R
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [reactFlow, flowNodes, selectedId, deleteNodeById])
+
+  const toggleChat = useCallback((): void => {
+    // 分割線(1px)を含めた分だけノードエリアが縮む / 拡がる
+    shiftViewportForShrink(0, chatOpen ? -(chatHeight + 1) : chatHeight + 1)
+    setChatOpen((prev) => !prev)
+  }, [chatOpen, chatHeight, shiftViewportForShrink])
+
+  // 分割線のドラッグでチャットの高さを変える(上へドラッグで拡大)。
+  // ノードエリアは最低 160px 残す
+  const beginChatResize = useCallback(
+    (event: React.PointerEvent): void => {
+      event.preventDefault()
+      const startY = event.clientY
+      const startH = chatHeight
+      const columnHeight = canvasColumnRef.current?.clientHeight
+      const maxH = columnHeight ? Math.max(columnHeight - 160, 220) : Math.round(window.innerHeight * 0.7)
+      let current = startH
+      const onMove = (ev: PointerEvent): void => {
+        const next = Math.min(Math.max(startH + (startY - ev.clientY), 220), maxH)
+        if (next === current) return
+        shiftViewportForShrink(0, next - current)
+        current = next
+        setChatHeight(next)
+      }
+      const onUp = (): void => {
+        document.body.style.userSelect = ''
+        window.removeEventListener('pointermove', onMove)
+        window.removeEventListener('pointerup', onUp)
+        localStorage.setItem('chatDrawerHeight', String(Math.round(current)))
+      }
+      document.body.style.userSelect = 'none'
+      window.addEventListener('pointermove', onMove)
+      window.addEventListener('pointerup', onUp)
+    },
+    [chatHeight, shiftViewportForShrink]
+  )
 
   // 選択ノードまでのパス(親エッジを遡る)。関係図は選択中の時間軸を表示する
   const pathToSelected = useMemo(() => {
@@ -1570,7 +1637,7 @@ function StructureModeInner({ settingsVersion }: { settingsVersion: number }): R
     <div className="flex h-full flex-col">
       <div ref={rowRef} className="flex min-h-0 flex-1">
         {/* ノードエリア + 相談チャット(インスペクタに被らないよう左カラム内に収める) */}
-        <div className="flex min-w-0 flex-1 flex-col">
+        <div ref={canvasColumnRef} className="flex min-w-0 flex-1 flex-col">
         <main className="relative min-h-0 flex-1" style={{ background: 'var(--bg-canvas)' }}>
           <ReactFlow
             nodes={flowNodes}
@@ -1604,24 +1671,26 @@ function StructureModeInner({ settingsVersion }: { settingsVersion: number }): R
             <Background gap={20} size={1.4} color="#394154" />
             {minimapVisible && <MiniMap pannable zoomable nodeColor={() => '#2e3140'} />}
             <Panel position="top-left">
-              <div className="flex w-72 flex-col gap-2">
+              {/* 畳んでいるときは幅を詰める(パネルの領域はキャンバスのクリックを奪うため) */}
+              <div className={`flex flex-col gap-2 ${genPanelOpen || genStatus ? 'w-72' : 'w-fit'}`}>
+                {/* ツールバー: 補助操作はアイコンだけにして面積を詰める */}
                 <div className="flex gap-1.5">
                   <button
                     onClick={() => void handleAddBeat()}
                     className="rounded-lg px-3 py-1.5 text-[13px] font-medium text-white shadow-lg shadow-black/30"
                     style={{ background: 'var(--accent)' }}
-                    title={selectedId ? '選択ノードの子として追加' : '正史の末尾に追加'}
+                    title={selectedId ? '選択ノードの子としてシーンを追加' : '正史の末尾にシーンを追加'}
                   >
-                    + シーン追加
+                    + シーン
                   </button>
                   {selectedId && (
                     <button
                       onClick={() => void handleInsertAfter()}
-                      className="rounded-lg border px-2.5 py-1.5 text-[12px] shadow-lg shadow-black/30"
+                      className="rounded-lg border px-2.5 py-1.5 text-[13px] shadow-lg shadow-black/30"
                       style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
                       title="選択ノードと後続シーンの間に新しいシーンを割り込ませる"
                     >
-                      ⤵ 間に挿入
+                      ⤵
                     </button>
                   )}
                   <button
@@ -1632,68 +1701,141 @@ function StructureModeInner({ settingsVersion }: { settingsVersion: number }): R
                         void reload()
                       })
                     }}
-                    className="rounded-lg border px-2.5 py-1.5 text-[12px] shadow-lg shadow-black/30"
+                    className="rounded-lg border px-2.5 py-1.5 text-[13px] shadow-lg shadow-black/30"
                     style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
                     title="手動配置をリセットして自動レイアウトに戻す"
                   >
-                    ⟲ 自動整列
+                    ⟲
+                  </button>
+                  <button
+                    onClick={() => setGenPanelOpen((v) => !v)}
+                    className={`rounded-lg border px-2.5 py-1.5 text-[13px] font-medium shadow-lg shadow-black/30 ${
+                      generating ? 'node-generating-border' : ''
+                    }`}
+                    style={{
+                      background: genPanelOpen ? 'var(--accent-soft)' : 'var(--bg-card)',
+                      borderColor: genPanelOpen ? 'var(--accent-border)' : 'var(--border-strong)',
+                      color: 'var(--accent)'
+                    }}
+                    title={genPanelOpen ? '生成パネルを閉じる' : 'LLM でシーンを生成する'}
+                  >
+                    ▶ 生成 {genPanelOpen ? '▴' : '▾'}
                   </button>
                 </div>
-                <div
-                  className={`rounded-2xl border p-3 shadow-lg shadow-black/30 ${generating ? 'node-generating-border' : ''}`}
-                  style={{ background: 'var(--bg-card)', borderColor: 'var(--border)' }}
-                >
-                  <textarea
-                    rows={2}
-                    value={instruction}
-                    onChange={(e) => setInstruction(e.target.value)}
-                    placeholder="生成の指示(任意)"
-                    disabled={generating}
-                    className="mb-2 w-full rounded-lg border px-2.5 py-1.5 text-[12px] outline-none"
-                    style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
-                  />
-                  <div className="flex flex-col gap-1.5">
-                    {generating ? (
-                      <button
-                        onClick={() => genAbortRef.current?.abort()}
-                        className="w-full rounded-lg border px-3 py-1.5 text-[13px] font-medium"
-                        style={{ borderColor: 'rgba(239,68,68,0.5)', color: 'var(--danger)' }}
-                      >
-                        ■ 生成を中止
-                      </button>
-                    ) : (
-                      <>
+                {genPanelOpen && (
+                  <div
+                    className={`rounded-2xl border p-3 shadow-lg shadow-black/30 ${generating ? 'node-generating-border' : ''}`}
+                    style={{ background: 'var(--bg-card)', borderColor: 'var(--border)' }}
+                  >
+                    <textarea
+                      rows={2}
+                      value={instruction}
+                      onChange={(e) => setInstruction(e.target.value)}
+                      placeholder="生成の指示(任意)"
+                      disabled={generating}
+                      className="mb-2 w-full rounded-lg border px-2.5 py-1.5 text-[12px] outline-none"
+                      style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
+                    />
+                    <div className="flex flex-col gap-1.5">
+                      {generating ? (
                         <button
-                          onClick={() => void handleGenerate(null)}
-                          className="w-full rounded-lg px-3 py-1.5 text-[13px] font-medium text-white"
-                          style={{ background: 'var(--accent)' }}
+                          onClick={() => genAbortRef.current?.abort()}
+                          className="w-full rounded-lg border px-3 py-1.5 text-[13px] font-medium"
+                          style={{ borderColor: 'rgba(239,68,68,0.5)', color: 'var(--danger)' }}
                         >
-                          ▶ 次のシーンを生成
+                          ■ 生成を中止
                         </button>
-                        <button
-                          onClick={() => void handleGenerate(selectedId)}
-                          disabled={!selectedId}
-                          className="w-full rounded-lg border px-3 py-1.5 text-[13px] font-medium disabled:opacity-40"
-                          style={{ borderColor: 'var(--accent-border)', color: 'var(--accent)' }}
-                          title="選択ノードから what-if 分岐を draft として生成"
-                        >
-                          ⑂ 選択ノードから分岐を生成
-                        </button>
-                      </>
+                      ) : (
+                        <>
+                          <button
+                            onClick={() => {
+                              setGenPanelOpen(false) // 生成中はキャンバスを広く使えるよう畳む
+                              void handleGenerate(null)
+                            }}
+                            className="w-full rounded-lg px-3 py-1.5 text-[13px] font-medium text-white"
+                            style={{ background: 'var(--accent)' }}
+                          >
+                            ▶ 次のシーンを生成
+                          </button>
+                          <button
+                            onClick={() => {
+                              setGenPanelOpen(false)
+                              void handleGenerate(selectedId)
+                            }}
+                            disabled={!selectedId}
+                            className="w-full rounded-lg border px-3 py-1.5 text-[13px] font-medium disabled:opacity-40"
+                            style={{ borderColor: 'var(--accent-border)', color: 'var(--accent)' }}
+                            title="選択ノードから what-if 分岐を draft として生成"
+                          >
+                            ⑂ 選択ノードから分岐を生成
+                          </button>
+                        </>
+                      )}
+                    </div>
+                    {genStatus && (
+                      <div className="mt-2 text-[11px] leading-relaxed" style={{ color: 'var(--text-dim)' }}>
+                        {genStatus}
+                        {generating && (
+                          <span className="ml-1 tabular-nums" style={{ color: 'var(--text-faint)' }}>
+                            ({genElapsed}s)
+                          </span>
+                        )}
+                      </div>
                     )}
                   </div>
-                  {genStatus && (
-                    <div className="mt-2 text-[11px] leading-relaxed" style={{ color: 'var(--text-dim)' }}>
+                )}
+                {/* パネルを畳んでいる間の進捗表示。中止もここから行える */}
+                {!genPanelOpen && genStatus && (
+                  <div
+                    className={`flex items-start gap-2 rounded-xl border px-2.5 py-1.5 text-[11px] leading-relaxed shadow-lg shadow-black/30 ${
+                      generating ? 'node-generating-border' : ''
+                    }`}
+                    style={{ background: 'var(--bg-card)', borderColor: 'var(--border)', color: 'var(--text-dim)' }}
+                  >
+                    <span className="min-w-0 flex-1">
                       {genStatus}
                       {generating && (
                         <span className="ml-1 tabular-nums" style={{ color: 'var(--text-faint)' }}>
                           ({genElapsed}s)
                         </span>
                       )}
-                    </div>
-                  )}
-                </div>
+                    </span>
+                    {generating ? (
+                      <button
+                        onClick={() => genAbortRef.current?.abort()}
+                        className="shrink-0 rounded-md border px-1.5"
+                        style={{ borderColor: 'rgba(239,68,68,0.5)', color: 'var(--danger)' }}
+                        title="生成を中止"
+                      >
+                        ■
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => setGenStatus(null)}
+                        className="shrink-0 px-1"
+                        style={{ color: 'var(--text-faint)' }}
+                        title="表示を消す"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
+            </Panel>
+            {/* 相談チャットのトグルは左下(生成 UI と離し、ミニマップの反対側に置く) */}
+            <Panel position="bottom-left">
+              <button
+                onClick={toggleChat}
+                className="flex h-10 w-10 items-center justify-center rounded-full border text-[16px] shadow-lg shadow-black/30"
+                style={{
+                  background: chatOpen ? 'var(--accent-soft)' : 'var(--bg-card)',
+                  borderColor: chatOpen ? 'var(--accent-border)' : 'var(--border-strong)'
+                }}
+                title={chatOpen ? '相談チャットを閉じる' : '相談チャットを下段に開く'}
+              >
+                💬
+              </button>
             </Panel>
             {graphNodes.length === 0 && (
               <Panel position="top-center">
@@ -1701,19 +1843,38 @@ function StructureModeInner({ settingsVersion }: { settingsVersion: number }): R
                   className="mt-24 rounded-2xl border px-6 py-4 text-[13px]"
                   style={{ background: 'var(--bg-card)', borderColor: 'var(--border)', color: 'var(--text-dim)' }}
                 >
-                  「+ シーン追加」または「▶ 次のシーンを生成」で物語を始めてください
+                  「+ シーン」または「▶ 生成」で物語を始めてください
                 </div>
               </Panel>
             )}
           </ReactFlow>
         </main>
-        <ChatDrawer
-          selectedId={selectedId}
-          canonTailId={canonPath.length > 0 ? canonPath[canonPath.length - 1].id : null}
-          nodesById={Object.fromEntries(graphNodes.map((n) => [n.id, n]))}
-          characters={characters}
-          onGraphChanged={() => void reload()}
-        />
+        {chatOpen && (
+          <>
+            {/* 上下の分割線(インスペクタの分割線と同じ見た目・当たり判定) */}
+            <div
+              onPointerDown={beginChatResize}
+              className="group relative h-1 shrink-0 cursor-row-resize"
+              title="ドラッグで高さを変更"
+            >
+              <div
+                className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 transition-colors group-hover:bg-[var(--accent-border)]"
+                style={{ background: 'var(--border)' }}
+              />
+            </div>
+            <div className="min-h-0 shrink-0" style={{ height: chatHeight }}>
+              <ChatDrawer
+                open
+                onClose={toggleChat}
+                selectedId={selectedId}
+                canonTailId={canonPath.length > 0 ? canonPath[canonPath.length - 1].id : null}
+                nodesById={Object.fromEntries(graphNodes.map((n) => [n.id, n]))}
+                characters={characters}
+                onGraphChanged={() => void reload()}
+              />
+            </div>
+          </>
+        )}
         </div>
         {/* リサイズハンドル(見た目は 1px のライン、当たり判定は幅 4px のまま) */}
         <div

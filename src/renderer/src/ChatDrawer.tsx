@@ -23,15 +23,20 @@ export default function ChatDrawer({
   canonTailId,
   nodesById,
   characters,
-  onGraphChanged
+  onGraphChanged,
+  open,
+  onClose
 }: {
   selectedId: string | null
   canonTailId: string | null
   nodesById: Record<string, StoryNode>
   characters: Character[]
   onGraphChanged: () => void
-}): React.JSX.Element {
-  const [open, setOpen] = useState(false)
+  // 開閉と高さは親(構造モード)が持つ。相談チャットはノードエリアとの
+  // 分割ペインなので、レイアウトの権限を親側に集約している
+  open: boolean
+  onClose: () => void
+}): React.JSX.Element | null {
   const [chatId, setChatId] = useState<string | null>(null)
   const [anchorNode, setAnchorNode] = useState<string | null>(null)
   const [scope, setScope] = useState<'upto' | 'all'>('upto')
@@ -42,39 +47,9 @@ export default function ChatDrawer({
   const [status, setStatus] = useState<string | null>(null)
   const [history, setHistory] = useState<ChatSummary[]>([])
   const [insertedTitles, setInsertedTitles] = useState<Set<string>>(new Set())
-  const [height, setHeight] = useState<number>(() => {
-    const saved = Number(localStorage.getItem('chatDrawerHeight'))
-    return saved >= 220 && saved <= 1200 ? saved : 440 // 既定を h-80(320) より高めに
-  })
   const abortRef = useRef<AbortController | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
-  const rootRef = useRef<HTMLDivElement | null>(null)
   const busyElapsed = useElapsedSeconds(busy)
-
-  useEffect(() => {
-    localStorage.setItem('chatDrawerHeight', String(height))
-  }, [height])
-
-  // 上端ドラッグで高さを変える。上へドラッグで拡大、下で縮小。
-  // 上限は「同じ列に並ぶノードエリアを 160px は残す」ように親の高さから決める
-  const startResize = (e: React.MouseEvent): void => {
-    e.preventDefault()
-    const startY = e.clientY
-    const startH = height
-    const columnHeight = rootRef.current?.parentElement?.clientHeight
-    const maxH = columnHeight ? Math.max(columnHeight - 160, 220) : Math.round(window.innerHeight * 0.7)
-    const onMove = (ev: MouseEvent): void => {
-      setHeight(Math.min(Math.max(startH + (startY - ev.clientY), 220), maxH))
-    }
-    const onUp = (): void => {
-      document.body.style.userSelect = ''
-      window.removeEventListener('mousemove', onMove)
-      window.removeEventListener('mouseup', onUp)
-    }
-    document.body.style.userSelect = 'none' // ドラッグ中の文字選択を防ぐ
-    window.addEventListener('mousemove', onMove)
-    window.addEventListener('mouseup', onUp)
-  }
 
   useEffect(() => {
     if (open) void chatApi.list().then(setHistory).catch(() => setHistory([]))
@@ -232,35 +207,14 @@ export default function ChatDrawer({
     onGraphChanged()
   }
 
+  if (!open) return null
+
   return (
-    <div
-      ref={rootRef}
-      className="relative shrink-0 border-t"
-      style={{ background: 'var(--bg-chat)', borderColor: 'var(--border)' }}
-    >
-      {open && (
-        <div
-          onMouseDown={startResize}
-          className="absolute inset-x-0 top-0 z-10 h-1.5 -translate-y-1/2 cursor-row-resize"
-          title="ドラッグで高さを変更"
-        />
-      )}
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-2 px-4 py-1.5 text-[12px]"
-        style={{ color: 'var(--text-faint)' }}
-      >
-        <span>{open ? '▾' : '▴'}</span> 相談チャット
-        {!open && chatId && (
-          <span className="truncate" style={{ color: 'var(--text-dim)' }}>
-            (継続中: {anchorTitle(anchorNode)} まで)
-          </span>
-        )}
-      </button>
-      {open && (
-        <div className="flex flex-col px-4 pb-3" style={{ height }}>
+    <div className="flex h-full min-h-0 flex-col" style={{ background: 'var(--bg-chat)' }}>
+        <div className="flex min-h-0 flex-1 flex-col px-4 pb-3 pt-2">
           {/* ヘッダー: アンカー / スコープ / 履歴 */}
           <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px]" style={{ color: 'var(--text-faint)' }}>
+            <span style={{ color: 'var(--text-dim)' }}>💬 相談チャット</span>
             <span>
               アンカー: <span style={{ color: 'var(--text-dim)' }}>{anchorTitle(chatId ? anchorNode : anchorNode ?? selectedId ?? canonTailId)}</span> まで
             </span>
@@ -327,6 +281,14 @@ export default function ChatDrawer({
                 全クリア
               </button>
             )}
+            <button
+              onClick={onClose}
+              className="rounded-md border px-2 py-0.5"
+              style={{ borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }}
+              title="相談チャットを閉じる(履歴は残ります)"
+            >
+              ✕ 閉じる
+            </button>
           </div>
           {/* メッセージ */}
           <div ref={scrollRef} className="inspector-scrollbar min-h-0 flex-1 overflow-y-auto pr-1">
@@ -463,7 +425,6 @@ export default function ChatDrawer({
             )}
           </div>
         </div>
-      )}
     </div>
   )
 }
