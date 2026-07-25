@@ -42,9 +42,36 @@ export default function ChatDrawer({
   const [status, setStatus] = useState<string | null>(null)
   const [history, setHistory] = useState<ChatSummary[]>([])
   const [insertedTitles, setInsertedTitles] = useState<Set<string>>(new Set())
+  const [height, setHeight] = useState<number>(() => {
+    const saved = Number(localStorage.getItem('chatDrawerHeight'))
+    return saved >= 220 && saved <= 1200 ? saved : 440 // 既定を h-80(320) より高めに
+  })
   const abortRef = useRef<AbortController | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const busyElapsed = useElapsedSeconds(busy)
+
+  useEffect(() => {
+    localStorage.setItem('chatDrawerHeight', String(height))
+  }, [height])
+
+  // 上端ドラッグで高さを変える。上へドラッグで拡大、下で縮小(min 220 / max 画面の 85%)
+  const startResize = (e: React.MouseEvent): void => {
+    e.preventDefault()
+    const startY = e.clientY
+    const startH = height
+    const maxH = Math.round(window.innerHeight * 0.85)
+    const onMove = (ev: MouseEvent): void => {
+      setHeight(Math.min(Math.max(startH + (startY - ev.clientY), 220), maxH))
+    }
+    const onUp = (): void => {
+      document.body.style.userSelect = ''
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+    document.body.style.userSelect = 'none' // ドラッグ中の文字選択を防ぐ
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
 
   useEffect(() => {
     if (open) void chatApi.list().then(setHistory).catch(() => setHistory([]))
@@ -203,7 +230,14 @@ export default function ChatDrawer({
   }
 
   return (
-    <div className="shrink-0 border-t" style={{ background: 'var(--bg-chat)', borderColor: 'var(--border)' }}>
+    <div className="relative shrink-0 border-t" style={{ background: 'var(--bg-chat)', borderColor: 'var(--border)' }}>
+      {open && (
+        <div
+          onMouseDown={startResize}
+          className="absolute inset-x-0 top-0 z-10 h-1.5 -translate-y-1/2 cursor-row-resize"
+          title="ドラッグで高さを変更"
+        />
+      )}
       <button
         onClick={() => setOpen((v) => !v)}
         className="flex w-full items-center gap-2 px-4 py-1.5 text-[12px]"
@@ -217,7 +251,7 @@ export default function ChatDrawer({
         )}
       </button>
       {open && (
-        <div className="flex h-80 flex-col px-4 pb-3">
+        <div className="flex flex-col px-4 pb-3" style={{ height }}>
           {/* ヘッダー: アンカー / スコープ / 履歴 */}
           <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px]" style={{ color: 'var(--text-faint)' }}>
             <span>
