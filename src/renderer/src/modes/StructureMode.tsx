@@ -352,6 +352,11 @@ function EventsEditor({
 
 // ---- ビートタブ ------------------------------------------------------
 
+// 未保存のシーン下書きをノード ID ごとに保持する(セッション内)。
+// ノード非選択で BeatTab がアンマウントされても編集内容が消えないようにする。
+// 保存やキャンセルではなく「一時退避」なので、保存成功時に該当エントリを消す。
+const beatDraftCache = new Map<string, Partial<StoryNode>>()
+
 function BeatTab({
   node,
   characters,
@@ -525,14 +530,18 @@ function BeatTab({
   }
 
   useEffect(() => {
-    setDraft({
-      title: node.title,
-      beat: node.beat,
-      emotional_core: node.emotional_core,
-      cast: node.cast,
-      location: node.location,
-      story_time: node.story_time
-    })
+    // 退避済みの未保存下書きがあれば復元、無ければ保存値で初期化する
+    const cached = beatDraftCache.get(node.id)
+    setDraft(
+      cached ?? {
+        title: node.title,
+        beat: node.beat,
+        emotional_core: node.emotional_core,
+        cast: node.cast,
+        location: node.location,
+        story_time: node.story_time
+      }
+    )
     setError(null)
   }, [node.id, node.updated_at])
 
@@ -546,6 +555,7 @@ function BeatTab({
   const handleSave = async (): Promise<void> => {
     try {
       await api.updateNode(node.id, draft)
+      beatDraftCache.delete(node.id) // 保存できたら退避を破棄
       onSaved()
     } catch (e) {
       setError(String(e))
@@ -565,6 +575,7 @@ function BeatTab({
     if (!window.confirm('このシーンを削除しますか?(子を持たないノードのみ)')) return
     try {
       await api.deleteNode(node.id)
+      beatDraftCache.delete(node.id)
       onDeleted()
     } catch {
       setError('削除できません: 子を持つノードは先に子を削除してください')
@@ -583,6 +594,13 @@ function BeatTab({
       (draft.location ?? '') !== (node.location ?? '') ||
       (draft.story_time ?? '') !== (node.story_time ?? '') ||
       JSON.stringify(draft.cast ?? []) !== JSON.stringify(node.cast ?? []))
+
+  // 未保存の変更があればノード ID ごとに退避、変更が無ければ退避を掃除する
+  useEffect(() => {
+    if (draft.beat === undefined) return // 初期化前
+    if (dirty) beatDraftCache.set(node.id, draft)
+    else beatDraftCache.delete(node.id)
+  }, [draft, dirty, node.id])
 
   return (
     <div className="flex flex-col gap-3">
