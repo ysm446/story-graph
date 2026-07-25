@@ -10,6 +10,31 @@ interface PromoteState {
   error: string | null
 }
 
+// 本文フォント(ローカルにインストール済みのものが使われる。無ければ後続へフォールバック)
+const FONT_OPTIONS = [
+  { id: 'sans', label: 'ゴシック(標準)', stack: '"Inter", "Segoe UI", "Noto Sans JP", system-ui, sans-serif' },
+  {
+    id: 'mincho',
+    label: 'しっぽり明朝 / 明朝',
+    stack: '"Shippori Mincho", "しっぽり明朝", "Yu Mincho", "游明朝", "Hiragino Mincho ProN", "MS PMincho", serif'
+  },
+  {
+    id: 'serif',
+    label: 'Reading Serif',
+    stack: 'Georgia, "Times New Roman", "Yu Mincho", "游明朝", serif'
+  }
+] as const
+
+type ViewMode = 'scroll' | 'split' | 'page'
+
+const VIEW_MODES: Array<{ id: ViewMode; label: string; title: string }> = [
+  { id: 'scroll', label: '縦読み', title: 'ウェブ風の縦スクロール' },
+  { id: 'split', label: '挿絵分割', title: '挿絵を左に固定し、右で文章をスクロール' },
+  { id: 'page', label: 'ページ', title: '1シーンずつ、めくって読む' }
+]
+
+const TYPEWRITER_CHARS_PER_TICK = 4
+
 interface PresetDraft {
   id?: string
   name: string
@@ -158,8 +183,14 @@ export default function ReaderMode(): React.JSX.Element {
   const [status, setStatus] = useState<string | null>(null)
   const [promote, setPromote] = useState<PromoteState | null>(null)
   const [presetEditor, setPresetEditor] = useState<PresetDraft | null>(null)
+  const [viewMode, setViewMode] = useState<ViewMode>('scroll')
+  const [fontId, setFontId] = useState<string>('sans')
+  const [pageIndex, setPageIndex] = useState(0)
+  const [typedLen, setTypedLen] = useState(0)
   const containerRef = useRef<HTMLDivElement | null>(null)
   const renderAbortRef = useRef<AbortController | null>(null)
+
+  const proseFont = FONT_OPTIONS.find((f) => f.id === fontId)?.stack ?? FONT_OPTIONS[0].stack
 
   const reloadPresets = useCallback(async (selectId?: string): Promise<void> => {
     const p = await api.listPresets()
@@ -182,9 +213,48 @@ export default function ReaderMode(): React.JSX.Element {
         setPresetId(savedPreset && p.some((x) => x.id === savedPreset) ? savedPreset : p[0]?.id ?? null)
         const savedPov = settings.reader_pov_char
         if (savedPov && chars.some((c) => c.id === savedPov)) setPovChar(savedPov)
+        if (settings.reader_view === 'split' || settings.reader_view === 'page') {
+          setViewMode(settings.reader_view)
+        }
+        if (FONT_OPTIONS.some((f) => f.id === settings.reader_font)) setFontId(settings.reader_font)
       }
     )
   }, [])
+
+  // ページモード: シーン切替時にタイプライター表示を開始
+  const currentPageProse =
+    viewMode === 'page' ? scenes[Math.min(pageIndex, Math.max(scenes.length - 1, 0))]?.render?.prose ?? null : null
+  useEffect(() => {
+    if (viewMode !== 'page' || !currentPageProse) {
+      setTypedLen(0)
+      return
+    }
+    setTypedLen(0)
+    let count = 0
+    const timer = setInterval(() => {
+      count += TYPEWRITER_CHARS_PER_TICK
+      setTypedLen(count)
+      if (count >= currentPageProse.length) clearInterval(timer)
+    }, 16)
+    return () => clearInterval(timer)
+  }, [viewMode, pageIndex, currentPageProse])
+
+  // ページ範囲のクランプと矢印キー移動
+  useEffect(() => {
+    setPageIndex((i) => Math.min(i, Math.max(scenes.length - 1, 0)))
+  }, [scenes.length])
+
+  useEffect(() => {
+    if (viewMode !== 'page') return
+    const onKey = (e: KeyboardEvent): void => {
+      const target = e.target as HTMLElement | null
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT')) return
+      if (e.key === 'ArrowRight') setPageIndex((i) => Math.min(i + 1, scenes.length - 1))
+      if (e.key === 'ArrowLeft') setPageIndex((i) => Math.max(i - 1, 0))
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [viewMode, scenes.length])
 
   const reloadScenes = useCallback(async (): Promise<void> => {
     if (!presetId) return
@@ -284,6 +354,83 @@ export default function ReaderMode(): React.JSX.Element {
   const hasAnyRender = scenes.some((s) => s.render)
   const selectStyle = { background: 'var(--bg-input)', borderColor: 'var(--border)' }
 
+  const renderSceneHeader = (scene: SceneEntry): React.JSX.Element => {
+    const stale = scene.render?.stale === 1
+    return (
+      <div className="mb-3 flex items-center gap-2">
+        <h2 className="text-[16px] font-semibold" style={{ color: 'var(--text)' }}>
+          {scene.node.title || '(無題)'}
+        </h2>
+        {stale && (
+          <span
+            className="rounded px-1.5 py-px text-[10px] uppercase"
+            style={{ background: 'rgba(239,68,68,0.12)', color: '#f2a3a3' }}
+          >
+            stale
+          </span>
+        )}
+        <div className="ml-auto flex gap-1.5">
+          <button
+            onClick={() => void runRender(scene.node.id, 'single')}
+            disabled={rendering}
+            className="rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-40"
+            style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+          >
+            このシーンのみ
+          </button>
+          <button
+            onClick={() => void runRender(scene.node.id, 'to_end')}
+            disabled={rendering}
+            className="rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-40"
+            style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+          >
+            ここから最後まで
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  const renderProse = (scene: SceneEntry, textOverride?: string, typing = false): React.JSX.Element => {
+    const isLive = liveNodeId === scene.node.id
+    const stale = scene.render?.stale === 1
+    const proseStyle = { color: 'var(--text)', fontFamily: proseFont }
+    if (isLive) {
+      return (
+        <div className="whitespace-pre-wrap text-[14px] leading-[1.9]" style={proseStyle}>
+          {liveText}
+          <span
+            className="node-generating-border ml-0.5 inline-block h-4 w-1.5 align-middle"
+            style={{ background: 'var(--accent)' }}
+          />
+        </div>
+      )
+    }
+    if (scene.render) {
+      return (
+        <div
+          className="whitespace-pre-wrap text-[14px] leading-[1.9]"
+          style={{ ...proseStyle, opacity: stale ? 0.6 : 1 }}
+          onMouseUp={() => handleMouseUp(scene.node.id)}
+        >
+          {textOverride ?? scene.render.prose}
+          {typing && (
+            <span className="ml-0.5 inline-block h-4 w-1.5 align-middle" style={{ background: 'var(--text-faint)' }} />
+          )}
+        </div>
+      )
+    }
+    return (
+      <div
+        className="rounded-xl border border-dashed px-4 py-6 text-center text-[12px]"
+        style={{ borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }}
+      >
+        未清書
+        <div className="mt-1 text-[11px]">{scene.node.beat}</div>
+      </div>
+    )
+  }
+
   return (
     <div className="flex h-full flex-col">
       {/* コントロールバー */}
@@ -378,6 +525,42 @@ export default function ReaderMode(): React.JSX.Element {
         >
           ⬇ Markdown
         </button>
+        <div className="flex overflow-hidden rounded-lg border" style={{ borderColor: 'var(--border-strong)' }}>
+          {VIEW_MODES.map((v) => (
+            <button
+              key={v.id}
+              onClick={() => {
+                setViewMode(v.id)
+                void api.putSettings({ reader_view: v.id })
+              }}
+              className="px-2.5 py-1 text-[12px]"
+              style={
+                viewMode === v.id
+                  ? { background: 'var(--accent-soft)', color: 'var(--text)' }
+                  : { color: 'var(--text-faint)' }
+              }
+              title={v.title}
+            >
+              {v.label}
+            </button>
+          ))}
+        </div>
+        <select
+          value={fontId}
+          onChange={(e) => {
+            setFontId(e.target.value)
+            void api.putSettings({ reader_font: e.target.value })
+          }}
+          className="rounded-lg border px-2 py-1 text-[12px]"
+          style={selectStyle}
+          title="本文フォント(ローカルにインストールされているものが使われます)"
+        >
+          {FONT_OPTIONS.map((f) => (
+            <option key={f.id} value={f.id}>
+              {f.label}
+            </option>
+          ))}
+        </select>
         {status && (
           <span className="text-[12px]" style={{ color: 'var(--text-dim)' }}>
             {status}
@@ -385,84 +568,85 @@ export default function ReaderMode(): React.JSX.Element {
         )}
       </div>
 
-      {/* 縦読みビュー */}
+      {/* 本文ビュー(縦読み / 挿絵分割 / ページ) */}
       <div ref={containerRef} className="inspector-scrollbar min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-2xl px-6 py-8">
+        <div className={`mx-auto px-6 py-8 ${viewMode === 'scroll' ? 'max-w-2xl' : 'max-w-5xl'}`}>
           {scenes.length === 0 && (
             <div className="pt-16 text-center text-[13px]" style={{ color: 'var(--text-faint)' }}>
               正史パスにシーンがありません。構造モードで物語を作成してください。
             </div>
           )}
-          {scenes.map((scene) => {
-            const isLive = liveNodeId === scene.node.id
-            const stale = scene.render?.stale === 1
-            return (
-              <section key={scene.node.id} className="mb-10">
-                <div className="mb-3 flex items-center gap-2">
-                  <h2 className="text-[16px] font-semibold" style={{ color: 'var(--text)' }}>
-                    {scene.node.title || '(無題)'}
-                  </h2>
-                  {stale && (
-                    <span
-                      className="rounded px-1.5 py-px text-[10px] uppercase"
-                      style={{ background: 'rgba(239,68,68,0.12)', color: '#f2a3a3' }}
-                    >
-                      stale
-                    </span>
-                  )}
-                  <div className="ml-auto flex gap-1.5">
-                    <button
-                      onClick={() => void runRender(scene.node.id, 'single')}
-                      disabled={rendering}
-                      className="rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-40"
-                      style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-                    >
-                      このシーンのみ
-                    </button>
-                    <button
-                      onClick={() => void runRender(scene.node.id, 'to_end')}
-                      disabled={rendering}
-                      className="rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-40"
-                      style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-                    >
-                      ここから最後まで
-                    </button>
+          {viewMode === 'page'
+            ? scenes.length > 0 &&
+              (() => {
+                const scene = scenes[Math.min(pageIndex, scenes.length - 1)]
+                const img = assetUrl(scene.node.image_path)
+                const prose = scene.render?.prose ?? null
+                const typing = prose !== null && typedLen < prose.length && liveNodeId !== scene.node.id
+                return (
+                  <div key={scene.node.id}>
+                    {renderSceneHeader(scene)}
+                    <div className={img ? 'gap-8 md:grid md:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]' : ''}>
+                      {img && (
+                        <div className="mb-4 md:mb-0">
+                          <img src={img} className="mx-auto max-h-[70vh] max-w-full rounded-2xl md:sticky md:top-4" />
+                        </div>
+                      )}
+                      <div
+                        onClick={() => typing && prose && setTypedLen(prose.length)}
+                        title={typing ? 'クリックで全文表示' : undefined}
+                        style={typing ? { cursor: 'pointer' } : undefined}
+                      >
+                        {renderProse(scene, typing ? prose!.slice(0, typedLen) : undefined, typing)}
+                      </div>
+                    </div>
+                    <div className="mt-10 flex items-center justify-center gap-4">
+                      <button
+                        onClick={() => setPageIndex((i) => Math.max(i - 1, 0))}
+                        disabled={pageIndex === 0}
+                        className="rounded-lg border px-4 py-1.5 text-[13px] disabled:opacity-30"
+                        style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+                      >
+                        ◀ 前へ
+                      </button>
+                      <span className="tabular-nums text-[12px]" style={{ color: 'var(--text-faint)' }}>
+                        {Math.min(pageIndex, scenes.length - 1) + 1} / {scenes.length}
+                      </span>
+                      <button
+                        onClick={() => setPageIndex((i) => Math.min(i + 1, scenes.length - 1))}
+                        disabled={pageIndex >= scenes.length - 1}
+                        className="rounded-lg px-4 py-1.5 text-[13px] font-medium text-white disabled:opacity-30"
+                        style={{ background: 'var(--accent)' }}
+                      >
+                        次へ ▶
+                      </button>
+                    </div>
                   </div>
-                </div>
-                {assetUrl(scene.node.image_path) && (
-                  <img
-                    src={assetUrl(scene.node.image_path)!}
-                    className="mx-auto mb-4 max-h-96 max-w-full rounded-2xl"
-                  />
-                )}
-                {isLive ? (
-                  <div
-                    className="whitespace-pre-wrap text-[14px] leading-[1.9]"
-                    style={{ color: 'var(--text)' }}
-                  >
-                    {liveText}
-                    <span className="node-generating-border ml-0.5 inline-block h-4 w-1.5 align-middle" style={{ background: 'var(--accent)' }} />
-                  </div>
-                ) : scene.render ? (
-                  <div
-                    className="whitespace-pre-wrap text-[14px] leading-[1.9]"
-                    style={{ color: 'var(--text)', opacity: stale ? 0.6 : 1 }}
-                    onMouseUp={() => handleMouseUp(scene.node.id)}
-                  >
-                    {scene.render.prose}
-                  </div>
-                ) : (
-                  <div
-                    className="rounded-xl border border-dashed px-4 py-6 text-center text-[12px]"
-                    style={{ borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }}
-                  >
-                    未清書
-                    <div className="mt-1 text-[11px]">{scene.node.beat}</div>
-                  </div>
-                )}
-              </section>
-            )
-          })}
+                )
+              })()
+            : scenes.map((scene) => {
+                const img = assetUrl(scene.node.image_path)
+                const split = viewMode === 'split' && img
+                return (
+                  <section key={scene.node.id} className="mb-12">
+                    {renderSceneHeader(scene)}
+                    {split ? (
+                      <div className="gap-8 md:grid md:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
+                        <div className="mb-4 md:mb-0">
+                          {/* 同じシーン内では左の挿絵が固定され、右の文章だけがスクロールする */}
+                          <img src={img!} className="mx-auto max-h-[70vh] max-w-full rounded-2xl md:sticky md:top-4" />
+                        </div>
+                        <div>{renderProse(scene)}</div>
+                      </div>
+                    ) : (
+                      <>
+                        {img && <img src={img} className="mx-auto mb-4 max-h-96 max-w-full rounded-2xl" />}
+                        {renderProse(scene)}
+                      </>
+                    )}
+                  </section>
+                )
+              })}
         </div>
       </div>
 
