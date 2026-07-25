@@ -222,7 +222,7 @@ export default function RelationGraph({
           max={Math.max(canonPath.length - 1, 0)}
           value={clampedIndex}
           onChange={(e) => setScrubIndex(Number(e.target.value))}
-          className="graph-slider graph-slider-active w-full"
+          className="settings-slider active w-full"
         />
       </div>
       {/* フィルタ */}
@@ -235,7 +235,7 @@ export default function RelationGraph({
           step={0.05}
           value={threshold}
           onChange={(e) => setThreshold(Number(e.target.value))}
-          className="graph-slider min-w-0 flex-1"
+          className={`settings-slider min-w-0 flex-1${threshold > 0 ? ' active' : ''}`}
         />
         {egoCharId && (
           <button
