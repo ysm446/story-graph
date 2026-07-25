@@ -24,6 +24,7 @@ interface RelEdge {
   to: string
   score: number
   reasons: string[]
+  label?: string
 }
 
 interface ReasonEntry {
@@ -98,7 +99,7 @@ export default function RelationGraph({
       for (const [to, rel] of Object.entries(cs.relationships)) {
         if (rel.target_type !== 'char' || !charMap[to]) continue
         if (rel.score === 0 || Math.abs(rel.score) < threshold) continue
-        rels.push({ from, to, score: rel.score, reasons: rel.reasons })
+        rels.push({ from, to, score: rel.score, reasons: rel.reasons, label: rel.label })
       }
     }
     if (egoCharId) {
@@ -263,8 +264,8 @@ export default function RelationGraph({
             viewBox="0 0 10 10"
             refX="9"
             refY="5"
-            markerWidth="7"
-            markerHeight="7"
+            markerWidth="4.5"
+            markerHeight="4.5"
             orient="auto-start-reverse"
           >
             <path d="M 0 0 L 10 5 L 0 10 z" fill="context-stroke" />
@@ -287,6 +288,9 @@ export default function RelationGraph({
           const tx = to.x - (dx / len) * pad + nx
           const ty = to.y - (dy / len) * pad + ny
           const isSelected = selectedEdge?.from === edge.from && selectedEdge?.to === edge.to
+          // ラベル位置: エッジ中点から法線方向に少し離す
+          const labelX = (sx + tx) / 2 + nx * 1.6
+          const labelY = (sy + ty) / 2 + ny * 1.6
           return (
             <g key={`${edge.from}-${edge.to}`}>
               <line
@@ -295,10 +299,25 @@ export default function RelationGraph({
                 x2={tx}
                 y2={ty}
                 stroke={edgeColor(edge.score)}
-                strokeWidth={1 + Math.abs(edge.score) * 4}
+                strokeWidth={1 + Math.abs(edge.score) * 3}
                 strokeOpacity={isSelected ? 1 : 0.4 + Math.abs(edge.score) * 0.5}
                 markerEnd="url(#rel-arrow)"
               />
+              {edge.label && (
+                <text
+                  x={labelX}
+                  y={labelY}
+                  textAnchor="middle"
+                  fontSize="8.5"
+                  fill="var(--text-dim)"
+                  stroke="var(--bg-canvas)"
+                  strokeWidth="3"
+                  paintOrder="stroke"
+                  style={{ pointerEvents: 'none', userSelect: 'none' }}
+                >
+                  {edge.label}
+                </text>
+              )}
               {/* クリック当たり判定用の太い透明線 */}
               <line
                 x1={sx}

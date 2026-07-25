@@ -49,6 +49,7 @@ export interface Relationship {
   score: number
   target_type: 'char' | 'faction'
   reasons: string[]
+  label?: string
 }
 
 export interface CharState {

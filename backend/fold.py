@@ -89,11 +89,15 @@ def apply_event(state: dict[str, Any], event: dict[str, Any]) -> None:
         rel = _ensure_relationship(char, payload["target"], payload.get("target_type", "char"))
         rel["score"] = _clamp(rel["score"] + float(payload["delta"]))
         rel["reasons"].append(event_id)
+        if payload.get("label"):
+            rel["label"] = payload["label"]  # 関係の一言(後勝ち)
     elif etype == "relationship_set":
         char = _ensure_char(state, payload["char"])
         rel = _ensure_relationship(char, payload["target"], payload.get("target_type", "char"))
         rel["score"] = _clamp(float(payload["value"]))
         rel["reasons"].append(event_id)
+        if payload.get("label"):
+            rel["label"] = payload["label"]
     elif etype == "fact_set":
         if payload["scope"] == "world":
             key = payload["key"]

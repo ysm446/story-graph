@@ -65,8 +65,9 @@ def _event_schemas(char_ids: list[str]) -> list[dict[str, Any]]:
                 "target": char_ref,
                 "delta": {"type": "number", "minimum": -1.0, "maximum": 1.0},
                 "reason": {"type": "string"},
+                "label": {"type": "string", "description": "関係を一言で(例: 幼なじみ、ライバル視、想いを寄せる)"},
             },
-            ["char", "target", "delta", "reason"],
+            ["char", "target", "delta", "reason", "label"],
         ),
         # fact_set は scope ごとに分割する(scope=char のとき char を必須にするため。
         # JSON schema の条件付き required は llama.cpp のグラマー変換が扱えない)
@@ -208,6 +209,7 @@ EVENT_RULES = """イベント発行のルール:
 - char_retire は死亡・物語からの永久退場のみ。シーンから立ち去る・別れる程度では発行しない
 - 心に残る出来事は memory_add(そのキャラ視点の一人称的内容で)
 - 関係が動いたら relationship_update(delta は -0.3〜+0.3 程度の小さな変化。±1.0 は人生を変える出来事のみ。reason 必須)
+  - label にはその時点の関係を一言で(例: 幼なじみ、ライバル視、想いを寄せる、犯人と疑う)。相関図の矢印に表示される
 - 事実の変化は fact_set。キャラ個人の事実(location, goal, items 等)は scope="char" + char にキャラ ID。
   scope="world" は天気・日付・世界情勢など、特定キャラに属さない事実のみ"""
 

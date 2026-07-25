@@ -138,8 +138,8 @@ settings(key TEXT PRIMARY KEY, value TEXT)
 |---|---|---|
 | `memory_add` | `{char, content, emotion, importance, refs[]}` | エピソード記憶の追加。refs は関連キャラID |
 | `memory_compress` | `{char, replaces[], summary, importance}` | 古い記憶群を要約記憶1件に圧縮(replaces は memory event_id 群) |
-| `relationship_update` | `{char, target_type: "char"\|"faction", target, delta, reason}` | 関係値への加算。reason 必須 |
-| `relationship_set` | `{char, target_type, target, value, reason}` | 関係値の絶対値設定(主に手動修正用) |
+| `relationship_update` | `{char, target_type: "char"\|"faction", target, delta, reason, label?}` | 関係値への加算。reason 必須。label は関係の一言(相関図の矢印に表示、後勝ち。2026-07-25 追加) |
+| `relationship_set` | `{char, target_type, target, value, reason, label?}` | 関係値の絶対値設定(主に手動修正用) |
 | `fact_set` | `{scope: "char"\|"world", char?, key, value}` | 事実の設定。key例: location, alive, goal, items, weather, day |
 | `char_introduce` | `{char}` | 物語への初登場(以降 cast に入れる資格を得る) |
 | `char_retire` | `{char, reason: "death"\|"departure"\|...}` | 退場。以降 cast に入れると検証エラー |

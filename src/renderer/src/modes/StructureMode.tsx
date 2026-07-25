@@ -592,6 +592,7 @@ function CharTab({
   const [relTarget, setRelTarget] = useState('')
   const [relValue, setRelValue] = useState('0')
   const [relReason, setRelReason] = useState('')
+  const [relLabel, setRelLabel] = useState('')
   const [memContent, setMemContent] = useState('')
   const [error, setError] = useState<string | null>(null)
 
@@ -752,20 +753,28 @@ function CharTab({
                 className="min-w-0 flex-1 rounded-md border px-2 py-1 text-[12px]"
                 style={inputStyle}
               />
+              <input
+                placeholder="一言(相関図表示)"
+                value={relLabel}
+                onChange={(e) => setRelLabel(e.target.value)}
+                className="w-28 rounded-md border px-2 py-1 text-[12px]"
+                style={inputStyle}
+                title="相関図の矢印に添える一言(例: 幼なじみ)"
+              />
               <button
                 onClick={() => {
                   if (!relTarget) return
-                  void appendEvent(
-                    {
-                      char: charId,
-                      target_type: 'char',
-                      target: relTarget,
-                      value: Number(relValue),
-                      reason: relReason || '手動修正'
-                    },
-                    'relationship_set'
-                  )
+                  const payload: Record<string, unknown> = {
+                    char: charId,
+                    target_type: 'char',
+                    target: relTarget,
+                    value: Number(relValue),
+                    reason: relReason || '手動修正'
+                  }
+                  if (relLabel.trim()) payload.label = relLabel.trim()
+                  void appendEvent(payload, 'relationship_set')
                   setRelReason('')
+                  setRelLabel('')
                 }}
                 className="rounded-md px-2 text-[12px] text-white"
                 style={{ background: 'var(--accent)' }}

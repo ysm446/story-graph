@@ -34,6 +34,15 @@ def test_relationship_update_clamps_and_records_reasons():
     assert rel["reasons"] == ["e1", "e2"]
 
 
+def test_relationship_label_last_wins():
+    state = fold(empty_state(), [
+        ev("e1", "relationship_update", char="aya", target="ken", delta=0.2, reason="r1", label="気になる存在"),
+        ev("e2", "relationship_update", char="aya", target="ken", delta=0.2, reason="r2", label="想いを寄せる"),
+        ev("e3", "relationship_update", char="aya", target="ken", delta=0.1, reason="r3"),  # label なしは維持
+    ])
+    assert state["chars"]["aya"]["relationships"]["ken"]["label"] == "想いを寄せる"
+
+
 def test_relationship_set_overrides():
     state = fold(empty_state(), [
         ev("e1", "relationship_update", char="aya", target="ken", delta=0.5, reason="r1"),
