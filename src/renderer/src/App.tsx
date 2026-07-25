@@ -203,7 +203,7 @@ export default function App(): React.JSX.Element {
     <div className="flex h-screen flex-col" style={{ background: 'var(--bg)' }}>
       {/* 上部バー: 左=ライブラリ / 中央=モデル選択 / 右=backend状態 + 設定 */}
       <header
-        className="relative flex h-10 shrink-0 items-center border-b px-3"
+        className="relative z-30 flex h-10 shrink-0 items-center border-b px-3"
         style={{ background: 'var(--bg-sidebar)', borderColor: 'var(--border)' }}
       >
         <div className="absolute left-3 top-1/2 -translate-y-1/2">
