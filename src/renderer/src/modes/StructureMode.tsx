@@ -403,12 +403,32 @@ function BeatTab({
   }, [node.id])
 
   // シーン本文はスクロールさせず、内容に合わせて高さを自動調整する
-  useEffect(() => {
+  const autosizeBeat = useCallback((): void => {
     const textarea = beatTextareaRef.current
     if (!textarea) return
     textarea.style.height = 'auto'
     textarea.style.height = `${textarea.scrollHeight + 2}px`
-  }, [draft.beat, node.id])
+  }, [])
+
+  useEffect(() => {
+    autosizeBeat()
+  }, [draft.beat, node.id, autosizeBeat])
+
+  // サイドバーのリサイズ等で幅が変わると折り返しが変わるため、幅の変化でも再計算する
+  useEffect(() => {
+    const textarea = beatTextareaRef.current
+    if (!textarea) return
+    let lastWidth = textarea.clientWidth
+    const observer = new ResizeObserver(() => {
+      const width = textarea.clientWidth
+      if (width !== lastWidth) {
+        lastWidth = width
+        autosizeBeat()
+      }
+    })
+    observer.observe(textarea)
+    return () => observer.disconnect()
+  }, [node.id, autosizeBeat])
 
   const runProofread = (): void => {
     const full = draft.beat ?? ''
