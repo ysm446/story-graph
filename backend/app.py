@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from typing import Any
 
@@ -440,6 +441,60 @@ async def llm_start() -> dict[str, Any]:
 async def llm_stop() -> dict[str, Any]:
     llama.stop()
     return {"stopped": True}
+
+
+@app.post("/llm/load")
+async def llm_load() -> dict[str, Any]:
+    """設定中の llm_model_path でモデルを起動し直す(モデル選択からのロード)。"""
+    try:
+        base_url = await llama.switch(store.get_settings())
+    except RuntimeError as e:
+        raise HTTPException(500, str(e))
+    return {"base_url": base_url, "healthy": True, **llama.status()}
+
+
+# ---- llama.cpp の自動ダウンロード/インストール ----------------------
+
+@app.get("/llama/releases")
+async def llama_releases() -> dict[str, Any]:
+    import llama_installer
+
+    try:
+        releases = await llama_installer.fetch_releases()
+    except RuntimeError as e:
+        raise HTTPException(502, str(e))
+    return {"releases": releases}
+
+
+@app.get("/llama/server_status")
+async def llama_server_status() -> dict[str, Any]:
+    import llama_installer
+
+    return llama_installer.status()
+
+
+class LlamaInstallIn(BaseModel):
+    # フロントの variant をそのまま受け取る(asset_url / cudart_url / asset_name などを含む)
+    variant: dict[str, Any]
+
+
+@app.post("/llama/install")
+async def llama_install(body: LlamaInstallIn) -> StreamingResponse:
+    import json as _json
+
+    import llama_installer
+
+    async def stream():
+        try:
+            async for progress in llama_installer.install_variant(body.variant):
+                yield f"data: {_json.dumps(progress, ensure_ascii=False)}\n\n"
+        except asyncio.CancelledError:
+            # クライアント切断でキャンセル。ここでの yield は届かないので何もしない
+            raise
+        except Exception as e:  # noqa: BLE001
+            yield f"data: {_json.dumps({'phase': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(stream(), media_type="text/event-stream")
 
 
 @app.post("/generate/beat")

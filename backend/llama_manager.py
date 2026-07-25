@@ -51,8 +51,30 @@ class LlamaManager:
             raise RuntimeError("llama-server が応答しません(起動待ちタイムアウト)")
         return await self.start(settings)
 
+    async def switch(self, settings: dict[str, str]) -> str:
+        """現在のモデルを止めて、settings のモデルで起動し直す(モデル選択からのロード用)。"""
+        base_url = settings.get("llm_base_url") or f"http://127.0.0.1:{DEFAULT_PORT}"
+        was_managed = self.proc is not None and self.proc.poll() is None
+        self.stop()
+        if not was_managed and await llm.health(base_url):
+            # 外部で起動された llama-server は当アプリからは切り替えられない
+            raise RuntimeError(
+                "外部起動の llama-server が使用中のため切り替えられません。"
+                "その llama-server を停止してから再試行してください。"
+            )
+        # 旧プロセスのポート解放を待つ(健全応答が消えるまで)
+        deadline = asyncio.get_event_loop().time() + 10
+        while asyncio.get_event_loop().time() < deadline:
+            if not await llm.health(base_url):
+                break
+            await asyncio.sleep(0.3)
+        return await self.start(settings)
+
     async def start(self, settings: dict[str, str]) -> str:
-        server_path = settings.get("llama_server_path") or DEFAULT_SERVER_PATH
+        # 優先度: 設定の手入力パス > runtime/ 等に自動インストール済みのもの > lm-graph 流用の既定
+        import llama_installer
+
+        server_path = settings.get("llama_server_path") or llama_installer.resolve_server_path() or DEFAULT_SERVER_PATH
         model_path = settings.get("llm_model_path") or DEFAULT_MODEL_PATH
         base_url = settings.get("llm_base_url") or f"http://127.0.0.1:{DEFAULT_PORT}"
         port = int(base_url.rsplit(":", 1)[-1].rstrip("/"))

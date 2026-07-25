@@ -212,17 +212,7 @@ export default function App(): React.JSX.Element {
         <div className="mx-auto flex items-center">
           {backendReady === true && <ModelBar refreshKey={modelRefreshKey} />}
         </div>
-        <div className="absolute right-3 top-1/2 flex -translate-y-1/2 items-center gap-3 text-[12px]" style={{ color: 'var(--text-faint)' }}>
-          <span className="flex items-center gap-2">
-            <span
-              className="inline-block h-2 w-2 rounded-full"
-              style={{
-                background:
-                  backendReady === true ? '#3ecf8e' : backendReady === false ? 'var(--danger)' : '#8a8fa8'
-              }}
-            />
-            {backendReady === true ? 'backend' : backendReady === false ? 'backend 停止' : '起動中…'}
-          </span>
+        <div className="absolute right-3 top-1/2 flex -translate-y-1/2 items-center gap-3">
           <button
             onClick={() => setSettingsOpen(true)}
             disabled={backendReady !== true}

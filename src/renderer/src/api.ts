@@ -142,6 +142,10 @@ export const api = {
     request<{ base_url: string; healthy: boolean; spawned: boolean; model_path: string | null }>('/llm/status'),
   llmStart: () => request<{ base_url: string; healthy: boolean }>('/llm/start', { method: 'POST' }),
   llmStop: () => request<{ stopped: boolean }>('/llm/stop', { method: 'POST' }),
+  llmLoad: () =>
+    request<{ base_url: string; healthy: boolean; model_path: string | null }>('/llm/load', { method: 'POST' }),
+  llamaReleases: () => request<{ releases: LlamaRelease[] }>('/llama/releases'),
+  llamaServerStatus: () => request<LlamaServerStatus>('/llama/server_status'),
   extractEvents: (nodeId: string) =>
     request<{ events: StoryEvent[]; validation: string[] }>(`/nodes/${nodeId}/extract_events`, {
       method: 'POST'
@@ -205,6 +209,83 @@ export function isAbortError(error: unknown): boolean {
 export function assetUrl(path: string | null | undefined): string | null {
   if (!path || !baseUrl) return null
   return `${baseUrl}/assets/${encodeURIComponent(path)}`
+}
+
+// ---- llama.cpp インストール ----------------------------------------
+
+export interface LlamaReleaseVariant {
+  key: string
+  label: string
+  family: 'cuda' | 'cpu' | 'vulkan' | 'hip' | 'sycl' | 'other'
+  asset_name: string
+  asset_url: string
+  size_bytes: number
+  cudart_name: string | null
+  cudart_url: string | null
+  cudart_size_bytes: number | null
+}
+
+export interface LlamaRelease {
+  tag: string
+  name: string
+  published_at: string | null
+  html_url: string
+  variants: LlamaReleaseVariant[]
+}
+
+export interface LlamaServerInstall {
+  build: string | null
+  dir: string
+  path: string
+}
+
+export interface LlamaServerStatus {
+  installed: boolean
+  build: string | null
+  path: string | null
+  install_dir: string | null
+  runtime_dir: string
+  installs: LlamaServerInstall[]
+}
+
+export type LlamaInstallProgress =
+  | { phase: 'download'; file_label: string; received: number; total: number | null; percent: number | null }
+  | { phase: 'extract'; file_label: string }
+  | { phase: 'done'; build: string | null; path: string }
+  | { phase: 'error'; message: string }
+
+/** llama.cpp のインストールを開始し、進捗イベントを逐次受け取る。abort でキャンセル。 */
+export async function llamaInstallStream(
+  variant: LlamaReleaseVariant,
+  onProgress: (p: LlamaInstallProgress) => void,
+  signal?: AbortSignal
+): Promise<void> {
+  if (!baseUrl) throw new Error('backend not ready')
+  const res = await fetch(`${baseUrl}/llama/install`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ variant }),
+    signal
+  })
+  if (!res.ok || !res.body) {
+    throw new Error(`${res.status} /llama/install: ${await res.text()}`)
+  }
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const parts = buffer.split('\n\n')
+    buffer = parts.pop() ?? ''
+    for (const part of parts) {
+      const line = part.trim()
+      if (line.startsWith('data: ')) {
+        onProgress(JSON.parse(line.slice(6)) as LlamaInstallProgress)
+      }
+    }
+  }
 }
 
 const VIDEO_EXTS = ['.mp4', '.webm']

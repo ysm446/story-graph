@@ -1,5 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
-import { api } from '../api'
+import {
+  api,
+  isAbortError,
+  llamaInstallStream,
+  type LlamaInstallProgress,
+  type LlamaRelease,
+  type LlamaReleaseVariant,
+  type LlamaServerStatus
+} from '../api'
 import { DEFAULT_VIDEO_CROSSFADE_SECONDS } from '../CrossfadeLoopVideo'
 import { useElapsedSeconds } from '../useElapsed'
 
@@ -158,6 +166,217 @@ function PromptLogViewer(): React.JSX.Element {
           </div>
         )
       })}
+    </div>
+  )
+}
+
+function fmtBytes(bytes: number | null): string {
+  if (bytes == null) return '?'
+  const gb = bytes / 1024 ** 3
+  return gb >= 1 ? `${gb.toFixed(2)} GB` : `${(bytes / 1024 ** 2).toFixed(0)} MB`
+}
+
+function describeProgress(p: LlamaInstallProgress): string {
+  if (p.phase === 'download') {
+    const pct = p.percent != null ? ` ${p.percent}%` : ''
+    return `${p.file_label} をダウンロード中${pct}(${fmtBytes(p.received)}${p.total ? ` / ${fmtBytes(p.total)}` : ''})`
+  }
+  if (p.phase === 'extract') return `${p.file_label} を展開中…`
+  if (p.phase === 'done') return `インストール完了(${p.build ?? '?'})`
+  return `エラー: ${p.message}`
+}
+
+// llama.cpp(llama-server)を GitHub リリースから自動ダウンロード/インストールする
+function LlamaInstaller(): React.JSX.Element {
+  const [serverStatus, setServerStatus] = useState<LlamaServerStatus | null>(null)
+  const [releases, setReleases] = useState<LlamaRelease[]>([])
+  const [selectedTag, setSelectedTag] = useState<string>('')
+  const [selectedVariantKey, setSelectedVariantKey] = useState<string>('')
+  const [loadingReleases, setLoadingReleases] = useState(false)
+  const [installing, setInstalling] = useState(false)
+  const [progress, setProgress] = useState<LlamaInstallProgress | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const abortRef = useRef<AbortController | null>(null)
+
+  const refreshStatus = async (): Promise<void> => {
+    try {
+      setServerStatus(await api.llamaServerStatus())
+    } catch {
+      setServerStatus(null)
+    }
+  }
+
+  useEffect(() => {
+    void refreshStatus()
+  }, [])
+
+  const selectedRelease = releases.find((r) => r.tag === selectedTag) ?? releases[0]
+  const selectedVariant: LlamaReleaseVariant | undefined =
+    selectedRelease?.variants.find((v) => v.key === selectedVariantKey) ?? selectedRelease?.variants[0]
+
+  const handleFetch = async (): Promise<void> => {
+    setLoadingReleases(true)
+    setError(null)
+    try {
+      const { releases: list } = await api.llamaReleases()
+      setReleases(list)
+      const first = list.find((r) => r.variants.length > 0) ?? list[0]
+      if (first) {
+        setSelectedTag(first.tag)
+        setSelectedVariantKey(first.variants[0]?.key ?? '')
+      }
+    } catch (e) {
+      setError(String(e))
+    } finally {
+      setLoadingReleases(false)
+    }
+  }
+
+  const handleInstall = async (): Promise<void> => {
+    if (!selectedVariant) return
+    const controller = new AbortController()
+    abortRef.current = controller
+    setInstalling(true)
+    setError(null)
+    setProgress(null)
+    try {
+      await llamaInstallStream(
+        selectedVariant,
+        (p) => {
+          setProgress(p)
+          if (p.phase === 'error') setError(p.message)
+        },
+        controller.signal
+      )
+      await refreshStatus()
+    } catch (e) {
+      if (!isAbortError(e)) setError(String(e))
+    } finally {
+      abortRef.current = null
+      setInstalling(false)
+    }
+  }
+
+  const totalSize = selectedVariant ? selectedVariant.size_bytes + (selectedVariant.cudart_size_bytes ?? 0) : 0
+
+  return (
+    <div className="settings-field">
+      <div className="settings-field-header">
+        <span className="settings-field-label">llama-server の自動インストール</span>
+        <div className="settings-field-controls">
+          <span
+            className="inline-block h-2 w-2 rounded-full"
+            style={{ background: serverStatus?.installed ? '#3ecf8e' : 'var(--text-faint)' }}
+          />
+          <span className="text-[12px]" style={{ color: 'var(--text-dim)' }}>
+            {serverStatus?.installed ? `導入済み(${serverStatus.build ?? '?'})` : '未導入'}
+          </span>
+        </div>
+      </div>
+      {serverStatus?.installed && serverStatus.path && (
+        <p className="settings-field-hint break-all">{serverStatus.path}</p>
+      )}
+
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          onClick={() => void handleFetch()}
+          disabled={loadingReleases || installing}
+          className="rounded-lg border px-3 py-1.5 text-[13px] disabled:opacity-40"
+          style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+        >
+          {loadingReleases ? '取得中…' : releases.length ? '⟳ リリース一覧を更新' : 'リリース一覧を取得'}
+        </button>
+      </div>
+
+      {releases.length > 0 && (
+        <div className="mt-1 flex flex-col gap-2">
+          <div className="flex flex-wrap gap-2">
+            <select
+              value={selectedRelease?.tag ?? ''}
+              onChange={(e) => {
+                setSelectedTag(e.target.value)
+                const rel = releases.find((r) => r.tag === e.target.value)
+                setSelectedVariantKey(rel?.variants[0]?.key ?? '')
+              }}
+              disabled={installing}
+              className="rounded-lg border px-2 py-1.5 text-[13px]"
+              style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
+            >
+              {releases.map((r) => (
+                <option key={r.tag} value={r.tag}>
+                  {r.tag}
+                  {r.published_at ? `(${r.published_at.slice(0, 10)})` : ''}
+                </option>
+              ))}
+            </select>
+            <select
+              value={selectedVariant?.key ?? ''}
+              onChange={(e) => setSelectedVariantKey(e.target.value)}
+              disabled={installing}
+              className="min-w-0 flex-1 rounded-lg border px-2 py-1.5 text-[13px]"
+              style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
+            >
+              {selectedRelease?.variants.map((v) => (
+                <option key={v.key} value={v.key}>
+                  {v.label}・{fmtBytes(v.size_bytes + (v.cudart_size_bytes ?? 0))}
+                </option>
+              ))}
+            </select>
+          </div>
+          {selectedVariant?.family === 'cuda' && (
+            <p className="settings-field-hint">
+              CUDA 版は cudart(ランタイム DLL)も同時に取得して同じフォルダに配置します。NVIDIA GPU 向けです。
+            </p>
+          )}
+
+          {installing || progress ? (
+            <div className="flex flex-col gap-1.5">
+              <div className="h-1.5 overflow-hidden rounded-full" style={{ background: 'var(--border-strong)' }}>
+                <div
+                  className="h-full rounded-full transition-[width] duration-300"
+                  style={{
+                    width: `${progress?.phase === 'download' ? progress.percent ?? 0 : progress ? 100 : 0}%`,
+                    background: 'var(--accent)'
+                  }}
+                />
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-[12px]" style={{ color: progress?.phase === 'error' ? 'var(--danger)' : 'var(--text-dim)' }}>
+                  {progress ? describeProgress(progress) : '準備中…'}
+                </span>
+                {installing && (
+                  <button
+                    onClick={() => abortRef.current?.abort()}
+                    className="rounded-md border px-2 py-0.5 text-[12px]"
+                    style={{ borderColor: 'rgba(239,68,68,0.5)', color: 'var(--danger)' }}
+                  >
+                    中止
+                  </button>
+                )}
+              </div>
+            </div>
+          ) : (
+            <button
+              onClick={() => void handleInstall()}
+              disabled={!selectedVariant}
+              className="self-start rounded-lg px-4 py-1.5 text-[13px] font-medium text-white disabled:opacity-50"
+              style={{ background: 'var(--accent)' }}
+            >
+              ⬇ インストール({totalSize ? fmtBytes(totalSize) : '—'})
+            </button>
+          )}
+        </div>
+      )}
+
+      {error && (
+        <p className="text-[12px]" style={{ color: 'var(--danger)' }}>
+          {error}
+        </p>
+      )}
+      <p className="settings-field-hint">
+        GitHub の ggml-org/llama.cpp から Windows 版をダウンロードし、<code>runtime/</code> 配下に配置します。
+        導入後は手入力の実行ファイルパスが空でも自動で検出されます。
+      </p>
     </div>
   )
 }
@@ -335,6 +554,7 @@ export default function SettingsMode(): React.JSX.Element {
               </div>
             ))}
             <p className="settings-field-hint">空欄はデフォルト値(プレースホルダの値)が使われます。欄外クリックで保存されます。</p>
+            <LlamaInstaller />
           </div>
         </div>
 

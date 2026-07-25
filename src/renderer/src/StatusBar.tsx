@@ -35,7 +35,6 @@ function fmtBytes(bytes: number): string {
 
 export default function StatusBar({ backendReady }: { backendReady: boolean }): React.JSX.Element {
   const [res, setRes] = useState<SystemResources | null>(null)
-  const [llmLabel, setLlmLabel] = useState<string | null>(null)
 
   useEffect(() => {
     if (!backendReady) return
@@ -48,28 +47,11 @@ export default function StatusBar({ backendReady }: { backendReady: boolean }): 
         if (!cancelled) setRes(null)
       }
     }
-    const pollLlm = async (): Promise<void> => {
-      try {
-        const s = await api.llmStatus()
-        if (cancelled) return
-        if (s.healthy) {
-          const model = s.model_path?.split(/[\\/]/).pop()?.replace(/\.gguf$/i, '')
-          setLlmLabel(model ?? '外部 llama-server')
-        } else {
-          setLlmLabel(null)
-        }
-      } catch {
-        if (!cancelled) setLlmLabel(null)
-      }
-    }
     void pollResources()
-    void pollLlm()
     const resTimer = setInterval(() => void pollResources(), 2000)
-    const llmTimer = setInterval(() => void pollLlm(), 5000)
     return () => {
       cancelled = true
       clearInterval(resTimer)
-      clearInterval(llmTimer)
     }
   }, [backendReady])
 
@@ -78,13 +60,6 @@ export default function StatusBar({ backendReady }: { backendReady: boolean }): 
       className="flex h-7 shrink-0 items-center gap-3 border-t px-3"
       style={{ background: 'var(--bg-sidebar)', borderColor: 'var(--border)', color: 'var(--text)' }}
     >
-      <span className="flex items-center gap-1.5 text-[10px]" style={{ color: 'var(--text-faint)' }}>
-        <span
-          className="inline-block h-1.5 w-1.5 rounded-full"
-          style={{ background: llmLabel ? '#3ecf8e' : '#5c6078' }}
-        />
-        {llmLabel ? `LLM: ${llmLabel}` : 'LLM 停止中'}
-      </span>
       <div className="ml-auto flex items-center gap-3">
         {res && (
           <>
