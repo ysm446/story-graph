@@ -574,6 +574,16 @@ function BeatTab({
   const inputStyle = { background: 'var(--bg-input)', borderColor: 'var(--border)' }
   const labelClass = 'mb-1 block text-[11px] uppercase tracking-[0.14em]'
 
+  // 下書きがノードの保存値と異なるか(未初期化の間は false)
+  const dirty =
+    draft.beat !== undefined &&
+    ((draft.title ?? '') !== (node.title ?? '') ||
+      (draft.beat ?? '') !== (node.beat ?? '') ||
+      (draft.emotional_core ?? '') !== (node.emotional_core ?? '') ||
+      (draft.location ?? '') !== (node.location ?? '') ||
+      (draft.story_time ?? '') !== (node.story_time ?? '') ||
+      JSON.stringify(draft.cast ?? []) !== JSON.stringify(node.cast ?? []))
+
   return (
     <div className="flex flex-col gap-3">
       {node.status === 'draft' && (
@@ -907,8 +917,10 @@ function BeatTab({
       <div className="flex items-center gap-2">
         <button
           onClick={() => void handleSave()}
-          className="rounded-lg px-4 py-1.5 text-[13px] font-medium text-white"
+          disabled={!dirty}
+          className="rounded-lg px-4 py-1.5 text-[13px] font-medium text-white disabled:opacity-40"
           style={{ background: 'var(--accent)' }}
+          title={dirty ? undefined : '変更はありません'}
         >
           保存
         </button>
