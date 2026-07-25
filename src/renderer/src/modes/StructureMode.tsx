@@ -84,7 +84,7 @@ function BeatNodeCard({ data, selected }: NodeProps<BeatFlowNode>): React.JSX.El
       {assetUrl(storyNode.image_path) && (
         <img
           src={assetUrl(storyNode.image_path)!}
-          className="mb-2 h-24 w-full rounded-xl object-cover"
+          className="mx-auto mb-2 max-h-40 max-w-full rounded-xl"
           style={{ opacity: isDraft ? 0.8 : 1 }}
         />
       )}
@@ -790,7 +790,7 @@ function BeatTab({
           }}
         />
         {assetUrl(node.image_path) && (
-          <img src={assetUrl(node.image_path)!} className="max-h-40 w-full rounded-xl object-cover" />
+          <img src={assetUrl(node.image_path)!} className="mx-auto max-h-60 max-w-full rounded-xl" />
         )}
       </div>
       <div className="flex items-center gap-2">

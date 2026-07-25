@@ -432,7 +432,7 @@ export default function ReaderMode(): React.JSX.Element {
                 {assetUrl(scene.node.image_path) && (
                   <img
                     src={assetUrl(scene.node.image_path)!}
-                    className="mb-4 max-h-80 w-full rounded-2xl object-cover"
+                    className="mx-auto mb-4 max-h-96 max-w-full rounded-2xl"
                   />
                 )}
                 {isLive ? (
