@@ -57,6 +57,18 @@ async def health(base_url: str, timeout: float = 2.0) -> bool:
         return False
 
 
+async def count_tokens(text: str, *, base_url: str, timeout: float = 10.0) -> int | None:
+    """llama-server の /tokenize でトークン数を数える(lm-chat と同方式)。
+    サーバーが応答しないときは None(呼び出し側で概算に落とす)。"""
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            res = await client.post(f"{base_url}/tokenize", json={"content": text})
+            res.raise_for_status()
+            return len(res.json().get("tokens", []))
+    except (httpx.HTTPError, OSError, ValueError):
+        return None
+
+
 async def chat(
     messages: list[dict[str, Any]],
     *,

@@ -326,6 +326,47 @@ async def _chat_impl(
     yield _sse({"answer": final_answer or "", "chat_id": chat_id})
 
 
+# ---- コンテキスト使用量 ----------------------------------------------
+#
+# lm-chat の /history/sessions/{id}/token_count と同方式。次のターンで
+# llama-server に送られる内容(システム + ツール定義 + 保存済み履歴)を
+# 連結して /tokenize で数え、ctx_size との比を UI のリングに出す。
+
+CHAR_PER_TOKEN_FALLBACK = 2  # サーバー未起動時の概算(lm-chat と同じ len//2)
+
+
+def _usage_text(store: Store, chat: dict[str, Any] | None, path: list[str], scope: str) -> str:
+    parts = [build_system(store, path, scope), json.dumps(build_tools(), ensure_ascii=False)]
+    for m in list(chat["messages"]) if chat else []:
+        role = str(m.get("role", ""))
+        content = m.get("content")
+        if isinstance(content, str) and content:
+            parts.append(f"{role}: {content}")
+        for tc in m.get("tool_calls") or []:
+            fn = tc.get("function", {})
+            parts.append(f"{role}: {fn.get('name', '')}({fn.get('arguments', '')})")
+    return "\n".join(parts)
+
+
+async def token_usage(
+    store: Store,
+    base_url: str,
+    chat_id: str | None,
+    anchor_node: str | None,
+    scope: str,
+) -> dict[str, Any]:
+    chat = store.get_chat(chat_id) if chat_id else None
+    if chat is not None:
+        anchor_node = chat["anchor_node"]
+        scope = chat["scope"]
+    path = _visible_path(store, anchor_node, scope)
+    text = _usage_text(store, chat, path, scope)
+    counted = await llm.count_tokens(text, base_url=base_url)
+    if counted is None:
+        return {"token_count": len(text) // CHAR_PER_TOKEN_FALLBACK, "estimated": True}
+    return {"token_count": counted, "estimated": False}
+
+
 # ---- 内容ベースの質問候補 --------------------------------------------
 #
 # video-content-analyzer の /review/questions を参考にした軽量な生成。

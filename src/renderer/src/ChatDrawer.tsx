@@ -30,6 +30,8 @@ const TEMPLATES: { label: string; text: string }[] = [
 ]
 const TEMPLATE_WINDOW = 3 // 同時に見せる件数
 const MAX_DYNAMIC = 2 // うち、内容から生成された質問に使う枠
+const RING_RADIUS = 10 // コンテキスト使用量リング(26px の SVG 内)
+const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS
 
 export default function ChatDrawer({
   selectedId,
@@ -68,10 +70,16 @@ export default function ChatDrawer({
   const [templateOffset, setTemplateOffset] = useState(0)
   // 内容から作られた質問(最大 2 件。固定の候補の下=入力欄側に出す)
   const [dynamicQuestions, setDynamicQuestions] = useState<string[]>([])
+  // コンテキスト使用量(lm-chat のドーナツリング相当)
+  const [usage, setUsage] = useState<{ tokens: number; ctx: number; estimated: boolean } | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
   const busyElapsed = useElapsedSeconds(busy)
+
+  // リングの色は lm-chat と同じ閾値(70% で警告、90% で危険)
+  const usagePct = usage ? Math.min((usage.tokens / Math.max(usage.ctx, 1)) * 100, 100) : 0
+  const ringColor = usagePct >= 90 ? '#ef4444' : usagePct >= 70 ? '#f59e0b' : 'var(--accent)'
 
   const dynamicShown = dynamicSuggestions ? dynamicQuestions.slice(0, MAX_DYNAMIC) : []
   // 固定の候補で残りの枠を埋める(固定が上、生成された質問が下)
@@ -95,14 +103,26 @@ export default function ChatDrawer({
     }
   }
 
+  // コンテキスト使用量を取り直す(会話トークン / ctx_size)
+  const refreshUsage = async (cid: string | null, anchor: string | null): Promise<void> => {
+    try {
+      const res = await chatApi.tokenUsage({ chat_id: cid, anchor_node: anchor, scope })
+      setUsage({ tokens: res.token_count, ctx: res.ctx_size, estimated: res.estimated })
+    } catch {
+      setUsage(null)
+    }
+  }
+
   useEffect(() => {
     if (open) void chatApi.list().then(setHistory).catch(() => setHistory([]))
   }, [open])
 
-  // 開いたタイミング(と設定変更時)に一度生成しておく
+  // 開いたタイミング(と設定変更時)に候補と使用量を取っておく
   useEffect(() => {
-    if (!open || !dynamicSuggestions) return
-    void refreshSuggestions(chatId, anchorNode ?? selectedId ?? canonTailId)
+    if (!open) return
+    const anchor = anchorNode ?? selectedId ?? canonTailId
+    void refreshUsage(chatId, anchor)
+    if (dynamicSuggestions) void refreshSuggestions(chatId, anchor)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, dynamicSuggestions])
 
@@ -125,6 +145,7 @@ export default function ChatDrawer({
     setAnchorNode(anchor)
     setDynamicQuestions([]) // 新しいアンカーの候補を取り直す
     void refreshSuggestions(null, anchor)
+    void refreshUsage(null, anchor)
   }
 
   const loadChat = async (id: string): Promise<void> => {
@@ -135,6 +156,7 @@ export default function ChatDrawer({
     setInsertedTitles(new Set())
     setDynamicQuestions([])
     void refreshSuggestions(chat.id, chat.anchor_node)
+    void refreshUsage(chat.id, chat.anchor_node)
     const display: DisplayItem[] = []
     for (const m of chat.messages) {
       const role = m.role as string
@@ -224,8 +246,9 @@ export default function ChatDrawer({
       abortRef.current = null
       setBusy(false)
       setLiveText('')
-      // 回答後に、会話を踏まえたフォローアップ質問へ差し替える
+      // 回答後に、会話を踏まえたフォローアップ質問へ差し替え、使用量も更新する
       void refreshSuggestions(latestChatId, effectiveAnchor)
+      void refreshUsage(latestChatId, effectiveAnchor)
     }
   }
 
@@ -487,6 +510,38 @@ export default function ChatDrawer({
               className="min-w-0 flex-1 resize-none rounded-lg border px-3 py-1.5 text-[13px] outline-none"
               style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
             />
+            {/* コンテキスト使用量のリング(lm-chat の token-ring を移植) */}
+            {usage && (
+              <div
+                className="flex shrink-0 items-center gap-1"
+                title={
+                  `会話トークン: ${usage.tokens.toLocaleString()}${usage.estimated ? '(概算)' : ''}\n` +
+                  `コンテキスト上限: ${usage.ctx.toLocaleString()}\n` +
+                  `${usagePct.toFixed(1)}% 使用中(${(100 - usagePct).toFixed(1)}% 残り)`
+                }
+              >
+                <svg width="26" height="26" viewBox="0 0 26 26">
+                  <circle cx="13" cy="13" r={RING_RADIUS} fill="none" stroke="var(--border-strong)" strokeWidth="2.2" />
+                  <circle
+                    cx="13"
+                    cy="13"
+                    r={RING_RADIUS}
+                    fill="none"
+                    stroke={ringColor}
+                    strokeWidth="2.2"
+                    strokeDasharray={RING_CIRCUMFERENCE}
+                    strokeDashoffset={RING_CIRCUMFERENCE * (1 - usagePct / 100)}
+                    strokeLinecap="round"
+                    transform="rotate(-90 13 13)"
+                    style={{ transition: 'stroke-dashoffset 0.4s ease, stroke 0.3s' }}
+                  />
+                </svg>
+                <span className="text-[11px] tabular-nums" style={{ color: ringColor }}>
+                  {usage.estimated ? '≈' : ''}
+                  {Math.round(usagePct)}%
+                </span>
+              </div>
+            )}
             <button
               onClick={() => setTemplateOffset((v) => (v + TEMPLATE_WINDOW) % TEMPLATES.length)}
               className="shrink-0 rounded-lg border px-2.5 py-1.5 text-[13px]"

@@ -383,6 +383,12 @@ export const chatApi = {
     request<{ questions: string[] }>('/chat/suggest_questions', {
       method: 'POST',
       body: JSON.stringify(body)
+    }),
+  // コンテキスト使用量(会話トークン / ctx_size)。estimated は概算フォールバック
+  tokenUsage: (body: { chat_id: string | null; anchor_node: string | null; scope: string }) =>
+    request<{ token_count: number; ctx_size: number; estimated: boolean }>('/chat/token_usage', {
+      method: 'POST',
+      body: JSON.stringify(body)
     })
 }
 

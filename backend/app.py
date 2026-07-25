@@ -736,6 +736,20 @@ class ChatSuggestIn(BaseModel):
     scope: str = "upto"
 
 
+@app.post("/chat/token_usage")
+async def chat_token_usage(body: ChatSuggestIn) -> dict[str, Any]:
+    """相談チャットのコンテキスト使用量。ctx_size は設定値(llama-server の
+    --ctx-size に渡している値)。サーバー未起動時は文字数からの概算を返す。"""
+    settings = store.get_settings()
+    base_url = settings.get("llm_base_url") or llm.DEFAULT_BASE_URL
+    anchor = body.anchor_node
+    if anchor is None:
+        canon = store.canon_path()
+        anchor = canon[-1] if canon else None
+    usage = await chat_agent.token_usage(store, base_url, body.chat_id, anchor, body.scope)
+    return {**usage, "ctx_size": int(settings.get("llm_ctx_size") or 16384)}
+
+
 @app.post("/chat/suggest_questions")
 async def chat_suggest_questions(body: ChatSuggestIn) -> dict[str, Any]:
     """内容ベースの質問候補。設定が無効、LLM 未起動、生成失敗のときは空を返す

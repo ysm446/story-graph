@@ -134,3 +134,43 @@ def test_force_draft_insertion(store):
     assert node["status"] == "draft"
     # 正史は変わらない
     assert store.canon_path()[-1] == tail
+
+
+def test_usage_text_includes_system_tools_and_history(store):
+    path = store.canon_path()
+    chat = store.create_chat(path[-1], "upto")
+    tc = _tool_call("get_state", {})
+    store.save_chat_messages(
+        chat["id"],
+        [
+            {"role": "user", "content": "アヤの状態は?"},
+            {"role": "assistant", "content": None, "tool_calls": [tc]},
+            {"role": "tool", "tool_call_id": "tc1", "content": '{"chars": {}}'},
+            {"role": "assistant", "content": "落ち着いています。"},
+        ],
+    )
+    text = chat_agent._usage_text(store, store.get_chat(chat["id"]), path, "upto")
+    assert "あなたは物語作りの相談相手です" in text  # システムプロンプト
+    assert "search_memories" in text  # ツール定義
+    assert "アヤの状態は?" in text  # ユーザー発言
+    assert "get_state({})" in text  # tool_calls
+    assert "落ち着いています。" in text  # 回答
+
+
+def test_token_usage_falls_back_to_estimate_when_server_down(store, monkeypatch):
+    async def unavailable(text, *, base_url, timeout=10.0):
+        return None
+
+    monkeypatch.setattr(llm_mod, "count_tokens", unavailable)
+    usage = asyncio.run(chat_agent.token_usage(store, "http://fake", None, store.canon_path()[-1], "upto"))
+    assert usage["estimated"] is True
+    assert usage["token_count"] > 0
+
+
+def test_token_usage_uses_tokenizer_when_available(store, monkeypatch):
+    async def counted(text, *, base_url, timeout=10.0):
+        return 1234
+
+    monkeypatch.setattr(llm_mod, "count_tokens", counted)
+    usage = asyncio.run(chat_agent.token_usage(store, "http://fake", None, store.canon_path()[-1], "upto"))
+    assert usage == {"token_count": 1234, "estimated": False}
