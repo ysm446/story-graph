@@ -35,6 +35,20 @@ const VIEW_MODES: Array<{ id: ViewMode; label: string; title: string }> = [
 
 const TYPEWRITER_CHARS_PER_TICK = 4
 
+const FONT_SIZES = [
+  { value: 13, label: '小' },
+  { value: 14, label: '標準' },
+  { value: 16, label: '中' },
+  { value: 18, label: '大' },
+  { value: 20, label: '特大' }
+]
+
+/** ページモードの1ページ。text=null は未清書シーンのプレースホルダ */
+interface PageChunk {
+  sceneIndex: number
+  text: string | null
+}
+
 interface PresetDraft {
   id?: string
   name: string
@@ -185,10 +199,15 @@ export default function ReaderMode(): React.JSX.Element {
   const [presetEditor, setPresetEditor] = useState<PresetDraft | null>(null)
   const [viewMode, setViewMode] = useState<ViewMode>('scroll')
   const [fontId, setFontId] = useState<string>('sans')
+  const [fontSize, setFontSize] = useState<number>(14)
   const [pageIndex, setPageIndex] = useState(0)
   const [typedLen, setTypedLen] = useState(0)
+  const [pages, setPages] = useState<PageChunk[]>([])
+  const [pageBoxSize, setPageBoxSize] = useState({ width: 0, height: 0 })
   const containerRef = useRef<HTMLDivElement | null>(null)
   const renderAbortRef = useRef<AbortController | null>(null)
+  const pageTextBoxRef = useRef<HTMLDivElement | null>(null)
+  const measurerRef = useRef<HTMLDivElement | null>(null)
 
   const proseFont = FONT_OPTIONS.find((f) => f.id === fontId)?.stack ?? FONT_OPTIONS[0].stack
 
@@ -217,15 +236,81 @@ export default function ReaderMode(): React.JSX.Element {
           setViewMode(settings.reader_view)
         }
         if (FONT_OPTIONS.some((f) => f.id === settings.reader_font)) setFontId(settings.reader_font)
+        const savedSize = Number(settings.reader_font_size)
+        if (FONT_SIZES.some((s) => s.value === savedSize)) setFontSize(savedSize)
       }
     )
   }, [])
 
-  // ページモード: シーン切替時にタイプライター表示を開始
-  const currentPageProse =
-    viewMode === 'page' ? scenes[Math.min(pageIndex, Math.max(scenes.length - 1, 0))]?.render?.prose ?? null : null
+  // ---- ページモード: 画面に収まる分量でページ分割する ----------------
+  // テキストボックスのサイズを監視(リサイズ・分割レイアウト切替で変わる)
   useEffect(() => {
-    if (viewMode !== 'page' || !currentPageProse) {
+    if (viewMode !== 'page') return
+    const box = pageTextBoxRef.current
+    if (!box) return
+    const update = (): void =>
+      setPageBoxSize((prev) => {
+        const next = { width: box.clientWidth, height: box.clientHeight }
+        return prev.width === next.width && prev.height === next.height ? prev : next
+      })
+    update()
+    const observer = new ResizeObserver(update)
+    observer.observe(box)
+    return () => observer.disconnect()
+    // 挿絵の有無でレイアウトが変わるため、現在ページのシーンにも依存
+  }, [viewMode, pages[Math.min(pageIndex, Math.max(pages.length - 1, 0))]?.sceneIndex])
+
+  // ページ分割の計算: 実測(隠し要素)で「高さに収まる最大文字数」を二分探索し、
+  // 句点・改行のきりの良い位置で区切る
+  const scenesSig = scenes.map((s) => s.render?.id ?? `x-${s.node.id}`).join(',')
+  useEffect(() => {
+    if (viewMode !== 'page') return
+    const measurer = measurerRef.current
+    const maxHeight = pageBoxSize.height
+    if (!measurer || maxHeight < 60 || pageBoxSize.width < 60) return
+    const result: PageChunk[] = []
+    for (let si = 0; si < scenes.length; si += 1) {
+      const prose = scenes[si].render?.prose
+      if (!prose) {
+        result.push({ sceneIndex: si, text: null })
+        continue
+      }
+      let pos = 0
+      while (pos < prose.length) {
+        let lo = pos + 1
+        let hi = prose.length
+        let fit = pos + 1
+        while (lo <= hi) {
+          const mid = Math.floor((lo + hi) / 2)
+          measurer.textContent = prose.slice(pos, mid)
+          if (measurer.scrollHeight <= maxHeight) {
+            fit = mid
+            lo = mid + 1
+          } else {
+            hi = mid - 1
+          }
+        }
+        let end = fit
+        if (end < prose.length) {
+          // きりの良い位置(改行 or 句点)まで戻す。戻りすぎは避ける
+          const slice = prose.slice(pos, end)
+          const breakAt = Math.max(slice.lastIndexOf('\n'), slice.lastIndexOf('。') + 1 || -1)
+          if (breakAt > slice.length * 0.5) end = pos + breakAt
+        }
+        result.push({ sceneIndex: si, text: prose.slice(pos, end) })
+        pos = end
+      }
+    }
+    measurer.textContent = ''
+    setPages(result)
+    setPageIndex((i) => Math.min(i, Math.max(result.length - 1, 0)))
+  }, [viewMode, scenesSig, fontId, fontSize, pageBoxSize])
+
+  // タイプライター表示(ページ単位)
+  const currentChunk = viewMode === 'page' ? pages[Math.min(pageIndex, Math.max(pages.length - 1, 0))] : undefined
+  const currentChunkText = currentChunk?.text ?? null
+  useEffect(() => {
+    if (viewMode !== 'page' || !currentChunkText) {
       setTypedLen(0)
       return
     }
@@ -234,27 +319,23 @@ export default function ReaderMode(): React.JSX.Element {
     const timer = setInterval(() => {
       count += TYPEWRITER_CHARS_PER_TICK
       setTypedLen(count)
-      if (count >= currentPageProse.length) clearInterval(timer)
+      if (count >= currentChunkText.length) clearInterval(timer)
     }, 16)
     return () => clearInterval(timer)
-  }, [viewMode, pageIndex, currentPageProse])
+  }, [viewMode, pageIndex, currentChunkText])
 
-  // ページ範囲のクランプと矢印キー移動
-  useEffect(() => {
-    setPageIndex((i) => Math.min(i, Math.max(scenes.length - 1, 0)))
-  }, [scenes.length])
-
+  // 矢印キーでページ移動
   useEffect(() => {
     if (viewMode !== 'page') return
     const onKey = (e: KeyboardEvent): void => {
       const target = e.target as HTMLElement | null
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT')) return
-      if (e.key === 'ArrowRight') setPageIndex((i) => Math.min(i + 1, scenes.length - 1))
+      if (e.key === 'ArrowRight') setPageIndex((i) => Math.min(i + 1, pages.length - 1))
       if (e.key === 'ArrowLeft') setPageIndex((i) => Math.max(i - 1, 0))
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [viewMode, scenes.length])
+  }, [viewMode, pages.length])
 
   const reloadScenes = useCallback(async (): Promise<void> => {
     if (!presetId) return
@@ -394,10 +475,10 @@ export default function ReaderMode(): React.JSX.Element {
   const renderProse = (scene: SceneEntry, textOverride?: string, typing = false): React.JSX.Element => {
     const isLive = liveNodeId === scene.node.id
     const stale = scene.render?.stale === 1
-    const proseStyle = { color: 'var(--text)', fontFamily: proseFont }
+    const proseStyle = { color: 'var(--text)', fontFamily: proseFont, fontSize, lineHeight: 1.9 }
     if (isLive) {
       return (
-        <div className="whitespace-pre-wrap text-[14px] leading-[1.9]" style={proseStyle}>
+        <div className="whitespace-pre-wrap" style={proseStyle}>
           {liveText}
           <span
             className="node-generating-border ml-0.5 inline-block h-4 w-1.5 align-middle"
@@ -409,7 +490,7 @@ export default function ReaderMode(): React.JSX.Element {
     if (scene.render) {
       return (
         <div
-          className="whitespace-pre-wrap text-[14px] leading-[1.9]"
+          className="whitespace-pre-wrap"
           style={{ ...proseStyle, opacity: stale ? 0.6 : 1 }}
           onMouseUp={() => handleMouseUp(scene.node.id)}
         >
@@ -561,6 +642,22 @@ export default function ReaderMode(): React.JSX.Element {
             </option>
           ))}
         </select>
+        <select
+          value={fontSize}
+          onChange={(e) => {
+            setFontSize(Number(e.target.value))
+            void api.putSettings({ reader_font_size: e.target.value })
+          }}
+          className="rounded-lg border px-2 py-1 text-[12px]"
+          style={selectStyle}
+          title="本文の文字サイズ"
+        >
+          {FONT_SIZES.map((s) => (
+            <option key={s.value} value={s.value}>
+              {s.label}({s.value}px)
+            </option>
+          ))}
+        </select>
         {status && (
           <span className="text-[12px]" style={{ color: 'var(--text-dim)' }}>
             {status}
@@ -568,7 +665,96 @@ export default function ReaderMode(): React.JSX.Element {
         )}
       </div>
 
-      {/* 本文ビュー(縦読み / 挿絵分割 / ページ) */}
+      {/* 本文ビュー(縦読み / 挿絵分割: スクロール、ページ: 固定) */}
+      {viewMode === 'page' ? (
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          {scenes.length === 0 ? (
+            <div className="pt-16 text-center text-[13px]" style={{ color: 'var(--text-faint)' }}>
+              正史パスにシーンがありません。構造モードで物語を作成してください。
+            </div>
+          ) : (
+            (() => {
+              const chunk = pages[Math.min(pageIndex, Math.max(pages.length - 1, 0))]
+              const scene = scenes[chunk?.sceneIndex ?? 0]
+              if (!scene) return null
+              const img = assetUrl(scene.node.image_path)
+              const isLive = liveNodeId === scene.node.id
+              const text = chunk?.text ?? null
+              const typing = !isLive && text !== null && typedLen < text.length
+              return (
+                <>
+                  <div className="mx-auto flex min-h-0 w-full max-w-5xl flex-1 flex-col overflow-hidden px-8 pt-6">
+                    {renderSceneHeader(scene)}
+                    <div
+                      className={`min-h-0 flex-1 ${img ? 'grid grid-cols-[minmax(0,5fr)_minmax(0,7fr)] gap-8' : ''}`}
+                    >
+                      {img && (
+                        <div className="flex min-h-0 items-start justify-center">
+                          <img src={img} className="max-h-full max-w-full rounded-2xl object-contain" />
+                        </div>
+                      )}
+                      <div
+                        ref={pageTextBoxRef}
+                        className={`relative min-h-0 overflow-hidden ${isLive ? 'overflow-y-auto' : ''}`}
+                        onClick={() => typing && text && setTypedLen(text.length)}
+                        title={typing ? 'クリックで全文表示' : undefined}
+                        style={typing ? { cursor: 'pointer' } : undefined}
+                      >
+                        {/* ページ分割の実測用(不可視。本文と同じ幅・書式) */}
+                        <div
+                          ref={measurerRef}
+                          aria-hidden
+                          className="invisible absolute inset-x-0 top-0 whitespace-pre-wrap"
+                          style={{ fontFamily: proseFont, fontSize, lineHeight: 1.9 }}
+                        />
+                        {isLive || text === null
+                          ? renderProse(scene)
+                          : renderProse(scene, typing ? text.slice(0, typedLen) : text, typing)}
+                      </div>
+                    </div>
+                  </div>
+                  {/* ページ送り + シークバー */}
+                  <div
+                    className="shrink-0 border-t px-8 py-2.5"
+                    style={{ background: 'var(--bg-sidebar)', borderColor: 'var(--border)' }}
+                  >
+                    <div className="mx-auto flex max-w-5xl items-center gap-3">
+                      <button
+                        onClick={() => setPageIndex((i) => Math.max(i - 1, 0))}
+                        disabled={pageIndex === 0}
+                        className="shrink-0 rounded-lg border px-3 py-1 text-[12px] disabled:opacity-30"
+                        style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+                      >
+                        ◀ 前へ
+                      </button>
+                      <input
+                        type="range"
+                        min={0}
+                        max={Math.max(pages.length - 1, 0)}
+                        value={Math.min(pageIndex, Math.max(pages.length - 1, 0))}
+                        onChange={(e) => setPageIndex(Number(e.target.value))}
+                        className="settings-slider active min-w-0 flex-1"
+                        title="ドラッグで任意のページへジャンプ"
+                      />
+                      <span className="shrink-0 tabular-nums text-[12px]" style={{ color: 'var(--text-faint)' }}>
+                        {Math.min(pageIndex, Math.max(pages.length - 1, 0)) + 1} / {Math.max(pages.length, 1)}
+                      </span>
+                      <button
+                        onClick={() => setPageIndex((i) => Math.min(i + 1, pages.length - 1))}
+                        disabled={pageIndex >= pages.length - 1}
+                        className="shrink-0 rounded-lg px-3 py-1 text-[12px] font-medium text-white disabled:opacity-30"
+                        style={{ background: 'var(--accent)' }}
+                      >
+                        次へ ▶
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )
+            })()
+          )}
+        </div>
+      ) : (
       <div ref={containerRef} className="inspector-scrollbar min-h-0 flex-1 overflow-y-auto">
         <div className={`mx-auto px-6 py-8 ${viewMode === 'scroll' ? 'max-w-2xl' : 'max-w-5xl'}`}>
           {scenes.length === 0 && (
@@ -576,55 +762,7 @@ export default function ReaderMode(): React.JSX.Element {
               正史パスにシーンがありません。構造モードで物語を作成してください。
             </div>
           )}
-          {viewMode === 'page'
-            ? scenes.length > 0 &&
-              (() => {
-                const scene = scenes[Math.min(pageIndex, scenes.length - 1)]
-                const img = assetUrl(scene.node.image_path)
-                const prose = scene.render?.prose ?? null
-                const typing = prose !== null && typedLen < prose.length && liveNodeId !== scene.node.id
-                return (
-                  <div key={scene.node.id}>
-                    {renderSceneHeader(scene)}
-                    <div className={img ? 'gap-8 md:grid md:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]' : ''}>
-                      {img && (
-                        <div className="mb-4 md:mb-0">
-                          <img src={img} className="mx-auto max-h-[70vh] max-w-full rounded-2xl md:sticky md:top-4" />
-                        </div>
-                      )}
-                      <div
-                        onClick={() => typing && prose && setTypedLen(prose.length)}
-                        title={typing ? 'クリックで全文表示' : undefined}
-                        style={typing ? { cursor: 'pointer' } : undefined}
-                      >
-                        {renderProse(scene, typing ? prose!.slice(0, typedLen) : undefined, typing)}
-                      </div>
-                    </div>
-                    <div className="mt-10 flex items-center justify-center gap-4">
-                      <button
-                        onClick={() => setPageIndex((i) => Math.max(i - 1, 0))}
-                        disabled={pageIndex === 0}
-                        className="rounded-lg border px-4 py-1.5 text-[13px] disabled:opacity-30"
-                        style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-                      >
-                        ◀ 前へ
-                      </button>
-                      <span className="tabular-nums text-[12px]" style={{ color: 'var(--text-faint)' }}>
-                        {Math.min(pageIndex, scenes.length - 1) + 1} / {scenes.length}
-                      </span>
-                      <button
-                        onClick={() => setPageIndex((i) => Math.min(i + 1, scenes.length - 1))}
-                        disabled={pageIndex >= scenes.length - 1}
-                        className="rounded-lg px-4 py-1.5 text-[13px] font-medium text-white disabled:opacity-30"
-                        style={{ background: 'var(--accent)' }}
-                      >
-                        次へ ▶
-                      </button>
-                    </div>
-                  </div>
-                )
-              })()
-            : scenes.map((scene) => {
+          {scenes.map((scene) => {
                 const img = assetUrl(scene.node.image_path)
                 const split = viewMode === 'split' && img
                 return (
@@ -649,6 +787,7 @@ export default function ReaderMode(): React.JSX.Element {
               })}
         </div>
       </div>
+      )}
 
       {/* プリセットエディタ */}
       {presetEditor && (
