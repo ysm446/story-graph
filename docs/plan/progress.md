@@ -1,7 +1,7 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-07-24 22:38
-更新日時: 2026-07-25 09:44
+更新日時: 2026-07-25 22:20
 
 ## 現在の状態
 
@@ -38,7 +38,10 @@
   ツール: get_beats / get_state / search_memories(読み取り専用)+ propose_beats(提案カード)。
   スコープ upto(アンカーのパスまでしか見えない。チャット作成時に固定)/ all。
   提案カード → 「⑂ ブランチとして挿入」で anchor から draft 挿入。履歴はアンカー付きで chats に保存。
-  llama-server に `--jinja` を追加(tool calling に必要)。12B 実機 E2E でツール使用・提案とも確認済み
+  llama-server に `--jinja` を追加(tool calling に必要)。12B 実機 E2E でツール使用・提案とも確認済み。
+  UI 配置は「ノードエリアの下段の分割ペイン」。開閉トグルはノードエリアのツールバーの 💬 アイコンで、
+  開閉と高さは `StructureMode` 側が持ち(`ChatDrawer` は `open` / `onClose` を受ける制御コンポーネント)、
+  高さが変わるたびに React Flow のビューポートを差分の半分だけ動かして表示中の内容を保つ
 
 ## 未完了
 
