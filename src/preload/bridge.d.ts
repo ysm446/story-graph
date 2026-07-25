@@ -13,6 +13,7 @@ export interface StoryGraphApi {
   getLibraryInfo: () => Promise<LibraryInfo>
   chooseLibrary: () => Promise<string | null>
   switchLibrary: (root: string) => Promise<string>
+  onScreenshotSaved: (callback: (path: string) => void) => () => void
 }
 
 declare global {

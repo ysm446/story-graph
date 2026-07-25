@@ -182,10 +182,31 @@ function stopSidecar(): void {
   }
 }
 
+async function captureScreenshot(): Promise<void> {
+  const win = mainWindow
+  if (!win) return
+  try {
+    const image = await win.webContents.capturePage()
+    const dir = join(currentLibraryRoot(), 'screenshot')
+    mkdirSync(dir, { recursive: true })
+    const now = new Date()
+    const pad = (n: number): string => String(n).padStart(2, '0')
+    const stamp =
+      `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}` +
+      `-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
+    const filePath = join(dir, `screenshot-${stamp}.png`)
+    writeFileSync(filePath, image.toPNG())
+    win.webContents.send('screenshot:saved', filePath)
+  } catch (error) {
+    console.error('[screenshot] 保存に失敗:', error)
+  }
+}
+
 function createWindow(): void {
   mainWindow = new BrowserWindow({
-    width: 1720,
-    height: 1000,
+    width: 1920,
+    height: 1080,
+    useContentSize: true, // コンテンツ領域基準で 1920x1080
     minWidth: 1200,
     minHeight: 800,
     backgroundColor: '#0d0f14',
@@ -195,6 +216,11 @@ function createWindow(): void {
     }
   })
   mainWindow.setMenuBarVisibility(false)
+  mainWindow.webContents.on('before-input-event', (_event, input) => {
+    if (input.type === 'keyDown' && input.key === 'F12') {
+      void captureScreenshot()
+    }
+  })
   mainWindow.on('closed', () => {
     mainWindow = null
   })

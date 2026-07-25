@@ -116,6 +116,18 @@ export default function App(): React.JSX.Element {
   const [mode, setMode] = useState<Mode>('structure')
   const [backendReady, setBackendReady] = useState<boolean | null>(null)
   const [backendError, setBackendError] = useState<string | null>(null)
+  const [toast, setToast] = useState<string | null>(null)
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    // F12 スクリーンショット保存の通知
+    const off = window.storyGraph.onScreenshotSaved((path) => {
+      setToast(`📷 スクリーンショットを保存: ${baseName(path)}`)
+      if (toastTimer.current) clearTimeout(toastTimer.current)
+      toastTimer.current = setTimeout(() => setToast(null), 2500)
+    })
+    return off
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -216,6 +228,14 @@ export default function App(): React.JSX.Element {
         )}
       </div>
       <StatusBar backendReady={backendReady === true} />
+      {toast && (
+        <div
+          className="fixed bottom-10 right-4 z-50 rounded-xl border px-4 py-2 text-[12px] shadow-lg shadow-black/40"
+          style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)', color: 'var(--text)' }}
+        >
+          {toast}
+        </div>
+      )}
     </div>
   )
 }
