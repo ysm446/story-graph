@@ -838,6 +838,30 @@ function StructureModeInner(): React.JSX.Element {
   const [genStatus, setGenStatus] = useState<string | null>(null)
   const genAbortRef = useRef<AbortController | null>(null)
   const [flowNodes, setFlowNodes] = useState<BeatFlowNode[]>([])
+  const [inspectorWidth, setInspectorWidth] = useState(() => {
+    const saved = Number(localStorage.getItem('inspectorWidth'))
+    return saved >= 320 && saved <= 900 ? saved : 480
+  })
+  const rowRef = useRef<HTMLDivElement | null>(null)
+
+  const beginInspectorResize = useCallback((event: React.PointerEvent): void => {
+    event.preventDefault()
+    const onMove = (ev: PointerEvent): void => {
+      const rect = rowRef.current?.getBoundingClientRect()
+      if (!rect) return
+      setInspectorWidth(Math.min(900, Math.max(320, rect.right - ev.clientX)))
+    }
+    const onUp = (): void => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      setInspectorWidth((w) => {
+        localStorage.setItem('inspectorWidth', String(Math.round(w)))
+        return w
+      })
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }, [])
 
   const reload = useCallback(async (): Promise<void> => {
     const [graph, chars] = await Promise.all([api.getGraph(), api.listCharacters()])
@@ -1040,7 +1064,7 @@ function StructureModeInner(): React.JSX.Element {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex min-h-0 flex-1">
+      <div ref={rowRef} className="flex min-h-0 flex-1">
         <main className="relative min-w-0 flex-1" style={{ background: 'var(--bg-canvas)' }}>
           <ReactFlow
             nodes={flowNodes}
@@ -1159,9 +1183,16 @@ function StructureModeInner(): React.JSX.Element {
             )}
           </ReactFlow>
         </main>
+        {/* リサイズハンドル */}
+        <div
+          onPointerDown={beginInspectorResize}
+          className="w-1 shrink-0 cursor-col-resize transition-colors hover:bg-[var(--accent-border)]"
+          style={{ background: 'var(--border)' }}
+          title="ドラッグで幅を変更"
+        />
         <aside
-          className="flex w-96 shrink-0 flex-col border-l"
-          style={{ background: 'var(--bg-sidebar)', borderColor: 'var(--border)' }}
+          className="flex shrink-0 flex-col"
+          style={{ background: 'var(--bg-sidebar)', width: inspectorWidth }}
         >
           <div className="flex gap-1 border-b px-3 py-2" style={{ borderColor: 'var(--border)' }}>
             {(
