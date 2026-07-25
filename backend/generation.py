@@ -392,17 +392,17 @@ SUGGEST_SYSTEM_PROMPT = """あなたは物語のビート(出来事の仕様書)
 出力は必ず指定の JSON 形式に従ってください。
 
 - title: シーンの短いタイトル。6〜14文字程度。体言止めか短い句で、内容を説明しすぎず余韻を残す
-- emotional_core: シーンの感情的な核。1行20字前後。出来事の説明ではなく、シーンを貫く感情の質を突く言葉で
-  (例: 「怒りより深い、静かな失望」)"""
+- emotional_core: シーンの感情的な核。40字前後(長くなるときは2文まで)。出来事の説明ではなく、
+  シーンを貫く感情の質を突く言葉で(例: 「怒りより深い、静かな失望」)"""
 
-# 文字列に maxLength を与えるのが重要: 上限が無いと文法制約付き生成で
-# 文字列が暴走ループし、max_tokens で length 打ち切り(500 エラー)になる。
-# 上限を短く与えると grammar が境界付き繰り返しに落ちて暴走を防げる。
+# maxLength は暴走ループ対策として入れていたが、原因は思考モード(reasoning)
+# だったことが分かったので(全呼び出しで無効化済み)、余裕のある上限に戻した。
+# 上限自体は保険として残す。
 _SUGGEST_SCHEMA = {
     "type": "object",
     "properties": {
-        "title": {"type": "string", "minLength": 1, "maxLength": 30},
-        "emotional_core": {"type": "string", "minLength": 1, "maxLength": 60},
+        "title": {"type": "string", "minLength": 1, "maxLength": 40},
+        "emotional_core": {"type": "string", "minLength": 1, "maxLength": 160},
     },
     "required": ["title", "emotional_core"],
 }

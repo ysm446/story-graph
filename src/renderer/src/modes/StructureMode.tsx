@@ -411,6 +411,7 @@ function BeatTab({
   const imageDragDepth = useRef(0) // 子要素との境界で dragleave が発火してもチラつかないよう深さを数える
   const imageInputRef = useRef<HTMLInputElement | null>(null)
   const beatTextareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const coreTextareaRef = useRef<HTMLTextAreaElement | null>(null)
   const proofreadAbortRef = useRef<AbortController | null>(null)
 
   const handleImageFile = (file: File): void => {
@@ -441,17 +442,24 @@ function BeatTab({
     proofreadAbortRef.current?.abort()
   }, [node.id])
 
-  // シーン本文はスクロールさせず、内容に合わせて高さを自動調整する
-  const autosizeBeat = useCallback((): void => {
-    const textarea = beatTextareaRef.current
+  // シーン本文と感情の核はスクロールさせず、内容に合わせて高さを自動調整する
+  const autosize = useCallback((textarea: HTMLTextAreaElement | null): void => {
     if (!textarea) return
     textarea.style.height = 'auto'
     textarea.style.height = `${textarea.scrollHeight + 2}px`
   }, [])
+  const autosizeAll = useCallback((): void => {
+    autosize(beatTextareaRef.current)
+    autosize(coreTextareaRef.current)
+  }, [autosize])
 
   useEffect(() => {
-    autosizeBeat()
-  }, [draft.beat, node.id, autosizeBeat])
+    autosize(beatTextareaRef.current)
+  }, [draft.beat, node.id, autosize])
+
+  useEffect(() => {
+    autosize(coreTextareaRef.current)
+  }, [draft.emotional_core, node.id, autosize])
 
   // サイドバーのリサイズ等で幅が変わると折り返しが変わるため、幅の変化でも再計算する
   useEffect(() => {
@@ -462,12 +470,12 @@ function BeatTab({
       const width = textarea.clientWidth
       if (width !== lastWidth) {
         lastWidth = width
-        autosizeBeat()
+        autosizeAll()
       }
     })
     observer.observe(textarea)
     return () => observer.disconnect()
-  }, [node.id, autosizeBeat])
+  }, [node.id, autosizeAll])
 
   const runProofread = (): void => {
     const full = draft.beat ?? ''
@@ -792,10 +800,13 @@ function BeatTab({
             {suggesting === 'emotional_core' ? `生成中… (${suggestElapsed}s)` : '✨ 自動生成'}
           </button>
         </span>
-        <input
+        {/* 長い一文になることがあるので、input ではなく自動で高さが伸びる textarea */}
+        <textarea
+          ref={coreTextareaRef}
+          rows={1}
           value={draft.emotional_core ?? ''}
           onChange={(e) => setDraft((d) => ({ ...d, emotional_core: e.target.value }))}
-          className="w-full rounded-lg border px-3 py-1.5 text-[13px] outline-none"
+          className="w-full resize-none overflow-hidden rounded-lg border px-3 py-1.5 text-[13px] leading-relaxed outline-none"
           style={inputStyle}
         />
       </label>
