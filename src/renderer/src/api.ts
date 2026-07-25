@@ -58,6 +58,8 @@ export const api = {
     draft?: boolean
     events?: EventInput[]
   }) => request<StoryNode>('/nodes', { method: 'POST', body: JSON.stringify(data) }),
+  insertNodeAfter: (nodeId: string, data: { title?: string; beat: string; cast?: string[] }) =>
+    request<StoryNode>(`/nodes/${nodeId}/insert_after`, { method: 'POST', body: JSON.stringify(data) }),
   updateNode: (id: string, data: Partial<Omit<StoryNode, 'id' | 'events'>>) =>
     request<StoryNode>(`/nodes/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteNode: (id: string) => request<unknown>(`/nodes/${id}`, { method: 'DELETE' }),

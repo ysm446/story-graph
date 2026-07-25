@@ -572,13 +572,13 @@ function BeatTab({
   }
 
   const handleDelete = async (): Promise<void> => {
-    if (!window.confirm('このシーンを削除しますか?(子を持たないノードのみ)')) return
+    if (!window.confirm('このシーンを削除しますか?(後続シーンは前のシーンに繋がります)')) return
     try {
       await api.deleteNode(node.id)
       beatDraftCache.delete(node.id)
       onDeleted()
-    } catch {
-      setError('削除できません: 子を持つノードは先に子を削除してください')
+    } catch (e) {
+      setError(`削除できません: ${String(e)}`)
     }
   }
 
@@ -1350,7 +1350,26 @@ function StructureModeInner(): React.JSX.Element {
     setFlowNodes((nds) => applyNodeChanges(changes, nds))
   }, [])
 
+  // 選択ノードの削除(削除ボタンと Delete キーの共通処理)。子を持つノードは削除できない
+  const deleteNodeById = useCallback(
+    async (nodeId: string): Promise<void> => {
+      const node = graphNodes.find((n) => n.id === nodeId)
+      const label = node?.title || '(無題)'
+      if (!window.confirm(`シーン「${label}」を削除しますか?(後続シーンは前のシーンに繋がります)`)) return
+      try {
+        await api.deleteNode(nodeId)
+        beatDraftCache.delete(nodeId)
+        setSelectedId((current) => (current === nodeId ? null : current))
+        await reload()
+      } catch (e) {
+        setGenStatus(`削除できません: ${String(e)}`)
+      }
+    },
+    [graphNodes, reload]
+  )
+
   // キーボードショートカット(lm-graph と同じ): A = 全体表示 / F = 選択にフォーカス
+  // Delete = 選択ノードを削除
   const reactFlow = useReactFlow()
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent): void => {
@@ -1359,6 +1378,14 @@ function StructureModeInner(): React.JSX.Element {
         target &&
         (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)
       ) {
+        return
+      }
+      if (event.key === 'Delete') {
+        // キャンバス上で選択中のノードを優先し、無ければインスペクタの選択ノード
+        const targetId = flowNodes.find((n) => n.selected)?.id ?? selectedId
+        if (!targetId) return
+        event.preventDefault()
+        void deleteNodeById(targetId)
         return
       }
       if (event.key === 'a') {
@@ -1393,7 +1420,7 @@ function StructureModeInner(): React.JSX.Element {
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [reactFlow, flowNodes, selectedId])
+  }, [reactFlow, flowNodes, selectedId, deleteNodeById])
 
   // 選択ノードまでのパス(親エッジを遡る)。関係図は選択中の時間軸を表示する
   const pathToSelected = useMemo(() => {
@@ -1463,6 +1490,17 @@ function StructureModeInner(): React.JSX.Element {
     setInspectorTab('beat')
   }
 
+  const handleInsertAfter = async (): Promise<void> => {
+    if (!selectedId) return
+    const node = await api.insertNodeAfter(selectedId, {
+      beat: '(ここに出来事の仕様を書く)',
+      cast: []
+    })
+    await reload()
+    setSelectedId(node.id)
+    setInspectorTab('beat')
+  }
+
   const handleGenerate = async (parentId: string | null): Promise<void> => {
     const controller = new AbortController()
     genAbortRef.current = controller
@@ -1507,6 +1545,9 @@ function StructureModeInner(): React.JSX.Element {
             nodes={flowNodes}
             edges={flowEdges}
             nodeTypes={nodeTypes}
+            // 既定の Backspace 削除は API を通さず画面だけ消えてしまうため無効化し、
+            // 削除は Delete キー(下の keydown ハンドラ)に集約する
+            deleteKeyCode={null}
             onNodesChange={handleNodesChange}
             onSelectionChange={({ nodes }) => {
               setSelectedId((prev) => {
@@ -1542,6 +1583,16 @@ function StructureModeInner(): React.JSX.Element {
                   >
                     + シーン追加
                   </button>
+                  {selectedId && (
+                    <button
+                      onClick={() => void handleInsertAfter()}
+                      className="rounded-lg border px-2.5 py-1.5 text-[12px] shadow-lg shadow-black/30"
+                      style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+                      title="選択ノードと後続シーンの間に新しいシーンを割り込ませる"
+                    >
+                      ⤵ 間に挿入
+                    </button>
+                  )}
                   <button
                     onClick={() => {
                       void api.resetLayout().then(() => {

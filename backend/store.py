@@ -266,6 +266,59 @@ class Store:
         self.conn.commit()
         return self.get_node(node_id)  # type: ignore[return-value]
 
+    def insert_node_after(self, parent_id: str, data: dict[str, Any],
+                          events: list[dict[str, Any]] | None = None,
+                          source: str = "user") -> dict[str, Any]:
+        """parent_id の直後にノードを割り込ませる。
+
+        parent から出ている連鎖エッジ(is_canon=1 の子)があれば、新ノードを間に
+        挟んで付け替える(parent → 新 → 旧子)。無ければ末尾追加と同じ扱い。
+        分岐(is_canon=0)の子エッジは parent に付いたまま動かさない。
+        挿入で下流の正史順・状態が変わるため、state_cache と memories を再同期する。
+        """
+        if self.get_node(parent_id) is None:
+            raise KeyError(f"parent not found: {parent_id}")
+        chain_edge = self.conn.execute(
+            "SELECT id FROM edges WHERE from_node = ? AND is_canon = 1", (parent_id,)
+        ).fetchone()
+        if chain_edge is None:
+            # 後続が無いので通常の追加と同じ
+            return self.append_node(data, events, source=source, parent_id=parent_id)
+
+        node_id = data.get("id") or _new_id()
+        now = _now()
+        on_canon_path = parent_id in self.canon_path()
+        self.conn.execute(
+            """INSERT INTO nodes(id, title, beat, emotional_core, cast, location, story_time,
+                                 status, created_at, updated_at)
+               VALUES(?,?,?,?,?,?,?,?,?,?)""",
+            (
+                node_id,
+                data.get("title"),
+                data["beat"],
+                data.get("emotional_core"),
+                json.dumps(data.get("cast", []), ensure_ascii=False),
+                data.get("location"),
+                data.get("story_time"),
+                "canon" if on_canon_path else "draft",
+                now,
+                now,
+            ),
+        )
+        # 旧子への連鎖エッジを新ノード発に付け替え、parent → 新 を連鎖(canon)で張る
+        self.conn.execute("UPDATE edges SET from_node = ? WHERE id = ?", (node_id, chain_edge["id"]))
+        self.conn.execute(
+            "INSERT INTO edges(id, from_node, to_node, is_canon) VALUES(?,?,?,1)",
+            (_new_id(), parent_id, node_id),
+        )
+        if events:
+            self.replace_events(node_id, events, source=source, commit=False)
+        self._ensure_cast_introduced(node_id, commit=False)
+        self.mark_dirty_downstream(node_id, commit=False)
+        self._resync_memory_orders(commit=False)
+        self.conn.commit()
+        return self.get_node(node_id)  # type: ignore[return-value]
+
     def _ensure_cast_introduced(self, node_id: str, commit: bool = True) -> None:
         """cast のキャラがパス上で未登場なら char_introduce を自動追加する。
 
@@ -415,13 +468,22 @@ class Store:
         self.conn.execute("UPDATE nodes SET pos_x = NULL, pos_y = NULL")
         self.conn.commit()
 
-    def delete_leaf_node(self, node_id: str) -> bool:
-        """リーフ(子を持たない)ノードのみ削除可。"""
-        has_child = self.conn.execute(
-            "SELECT 1 FROM edges WHERE from_node = ?", (node_id,)
-        ).fetchone()
-        if has_child:
+    def delete_node(self, node_id: str) -> bool:
+        """ノードを抜き取って削除する(親 → 子を直結し、そのシーンだけを消す)。
+
+        - 途中のノードでも削除可。子はすべて親に付け替える(分岐構造は保つ)
+        - 削除ノードが連鎖(canon)の子を持っていれば、そのエッジの is_canon を
+          保ったまま親に付け替えるので正史はそのまま繋がる
+        - 根を削除した場合、子はそれぞれ新しい根になる
+        削除で下流の状態と正史順が変わるため、state_cache と memories を再同期する。
+        """
+        if self.get_node(node_id) is None:
             return False
+        parent_id = self.parent_of(node_id)
+        child_ids = [
+            r["to_node"]
+            for r in self.conn.execute("SELECT to_node FROM edges WHERE from_node = ?", (node_id,))
+        ]
         old_memory_ids = [
             r["id"]
             for r in self.conn.execute(
@@ -434,10 +496,28 @@ class Store:
             "DELETE FROM memories WHERE event_id IN (SELECT id FROM events WHERE node_id = ?)",
             (node_id,),
         )
+        if parent_id is not None:
+            # 子エッジを親発に付け替える(is_canon はそのまま引き継ぐ)
+            self.conn.execute(
+                "UPDATE edges SET from_node = ? WHERE from_node = ?", (parent_id, node_id)
+            )
+        else:
+            # 根の削除: 子は根になるので親エッジを落とす
+            self.conn.execute("DELETE FROM edges WHERE from_node = ?", (node_id,))
         self.conn.execute("DELETE FROM edges WHERE to_node = ?", (node_id,))
         self.conn.execute("DELETE FROM events WHERE node_id = ?", (node_id,))
         self.conn.execute("DELETE FROM state_cache WHERE node_id = ?", (node_id,))
         self.conn.execute("DELETE FROM nodes WHERE id = ?", (node_id,))
+        for child_id in child_ids:
+            self.mark_dirty_downstream(child_id, commit=False)
+        # status は「正史パス上か」の導出値なので、繋ぎ替え後の正史で貼り直す
+        canon = set(self.canon_path())
+        for row in self.conn.execute("SELECT id FROM nodes"):
+            self.conn.execute(
+                "UPDATE nodes SET status = ? WHERE id = ?",
+                ("canon" if row["id"] in canon else "draft", row["id"]),
+            )
+        self._resync_memory_orders(commit=False)
         self.conn.commit()
         return True
 

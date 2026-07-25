@@ -36,6 +36,45 @@ def test_timeline_is_single_line(store):
     assert path == [n1["id"], n2["id"]]
 
 
+def test_insert_node_after_splices_into_canon(store):
+    _setup_chars(store)
+    n1 = store.append_node({"beat": "出会い", "cast": ["aya", "ken"]}, _intro_events("aya", "ken"))
+    n3 = store.append_node({"beat": "決着", "cast": ["aya", "ken"]})
+    # n1 と n3 の間に割り込ませる
+    n2 = store.insert_node_after(n1["id"], {"beat": "同じ頃、村では", "cast": ["aya"]})
+    assert store.canon_path() == [n1["id"], n2["id"], n3["id"]]
+    assert n2["status"] == "canon"
+    # 下流の状態は挿入シーンのイベントを含んで再計算される
+    n2b = store.insert_node_after(n1["id"], {"beat": "評価の変化", "cast": ["aya", "ken"]},
+                                  [{"type": "relationship_update",
+                                    "payload": {"char": "aya", "target": "ken", "delta": 0.4, "reason": "再会"}}])
+    assert store.canon_path() == [n1["id"], n2b["id"], n2["id"], n3["id"]]
+    s3 = store.get_state(n3["id"])
+    assert s3["chars"]["aya"]["relationships"]["ken"]["score"] == pytest.approx(0.4)
+
+
+def test_insert_node_after_tail_appends(store):
+    _setup_chars(store)
+    n1 = store.append_node({"beat": "出会い", "cast": ["aya"]}, _intro_events("aya"))
+    # 後続が無い末尾への挿入は通常の追加と同じ
+    n2 = store.insert_node_after(n1["id"], {"beat": "続き", "cast": ["aya"]})
+    assert store.canon_path() == [n1["id"], n2["id"]]
+
+
+def test_insert_node_after_keeps_branches_on_parent(store):
+    _setup_chars(store)
+    n1 = store.append_node({"beat": "出会い", "cast": ["aya"]}, _intro_events("aya"))
+    n2 = store.append_node({"beat": "続き", "cast": ["aya"]})
+    branch = store.append_node({"beat": "if 展開", "cast": ["aya"]}, parent_id=n1["id"], force_draft=True)
+    mid = store.insert_node_after(n1["id"], {"beat": "間のシーン", "cast": ["aya"]})
+    assert store.canon_path() == [n1["id"], mid["id"], n2["id"]]
+    # 分岐エッジは n1 に付いたまま(挿入ノードの下に移動しない)
+    row = store.conn.execute(
+        "SELECT from_node FROM edges WHERE to_node = ?", (branch["id"],)
+    ).fetchone()
+    assert row["from_node"] == n1["id"]
+
+
 def test_state_folds_along_path(store):
     _setup_chars(store)
     n1 = store.append_node({"beat": "出会い", "cast": ["aya", "ken"]}, _intro_events("aya", "ken") + [
@@ -129,13 +168,50 @@ def test_memories_index_rebuilt_from_events(store):
     assert rows == []
 
 
-def test_delete_only_leaf(store):
+def test_delete_leaf_and_missing(store):
     _setup_chars(store)
     n1 = store.append_node({"beat": "b1", "cast": []})
     n2 = store.append_node({"beat": "b2", "cast": []})
-    assert store.delete_leaf_node(n1["id"]) is False
-    assert store.delete_leaf_node(n2["id"]) is True
+    assert store.delete_node(n2["id"]) is True
     assert store.canon_path() == [n1["id"]]
+    assert store.delete_node("nonexistent") is False
+
+
+def test_delete_middle_node_splices_out(store):
+    _setup_chars(store)
+    n1 = store.append_node({"beat": "出会い", "cast": ["aya", "ken"]}, _intro_events("aya", "ken"))
+    n2 = store.append_node({"beat": "誤解", "cast": ["aya", "ken"]}, [
+        {"type": "relationship_update", "payload": {"char": "aya", "target": "ken", "delta": -0.6, "reason": "誤解"}},
+    ])
+    n3 = store.append_node({"beat": "決着", "cast": ["aya", "ken"]})
+    # 途中の n2 を抜き取ると n1 → n3 が直結する
+    assert store.delete_node(n2["id"]) is True
+    assert store.canon_path() == [n1["id"], n3["id"]]
+    # 抜いたシーンのイベントは下流の状態から消える
+    s3 = store.get_state(n3["id"])
+    assert "ken" not in s3["chars"]["aya"]["relationships"]
+
+
+def test_delete_fork_node_reattaches_all_children(store):
+    _setup_chars(store)
+    n1 = store.append_node({"beat": "b1", "cast": ["aya"]}, _intro_events("aya"))
+    n2 = store.append_node({"beat": "b2", "cast": ["aya"]})
+    n3 = store.append_node({"beat": "b3", "cast": ["aya"]})
+    branch = store.append_node({"beat": "if 展開", "cast": ["aya"]}, parent_id=n2["id"], force_draft=True)
+    # 分岐点 n2 を抜くと、連鎖の子(n3)も分岐の子(branch)も n1 に付け替わる
+    assert store.delete_node(n2["id"]) is True
+    assert store.canon_path() == [n1["id"], n3["id"]]
+    assert store.parent_of(branch["id"]) == n1["id"]
+    assert store.get_node(branch["id"])["status"] == "draft"
+
+
+def test_delete_root_makes_children_roots(store):
+    _setup_chars(store)
+    n1 = store.append_node({"beat": "b1", "cast": ["aya"]}, _intro_events("aya"))
+    n2 = store.append_node({"beat": "b2", "cast": ["aya"]})
+    assert store.delete_node(n1["id"]) is True
+    assert store.parent_of(n2["id"]) is None
+    assert store.canon_path() == [n2["id"]]
 
 
 def test_branch_creation_and_state_isolation(store):

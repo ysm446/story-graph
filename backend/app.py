@@ -249,6 +249,19 @@ async def create_node(body: NodeIn) -> dict[str, Any]:
     return node
 
 
+@app.post("/nodes/{node_id}/insert_after")
+async def insert_node_after(node_id: str, body: NodeIn) -> dict[str, Any]:
+    """node_id とその後続シーンの間に新しいシーンを割り込ませる。"""
+    data = body.model_dump(exclude={"events", "parent_id", "draft"})
+    events = [e.model_dump() for e in body.events]
+    try:
+        node = store.insert_node_after(node_id, data, events)
+    except KeyError as e:
+        raise HTTPException(404, str(e))
+    node["validation"] = store.validate(node["id"])
+    return node
+
+
 @app.post("/nodes/{node_id}/make_canon")
 async def make_canon(node_id: str) -> dict[str, Any]:
     try:
@@ -277,8 +290,8 @@ async def update_node(node_id: str, body: NodePatch) -> dict[str, Any]:
 
 @app.delete("/nodes/{node_id}")
 async def delete_node(node_id: str) -> dict[str, str]:
-    if not store.delete_leaf_node(node_id):
-        raise HTTPException(409, "子を持つノードは削除できません(先に子を削除してください)")
+    if not store.delete_node(node_id):
+        raise HTTPException(404, "node not found")
     return {"status": "deleted"}
 
 
