@@ -9,7 +9,7 @@ import {
   type SimulationLinkDatum,
   type SimulationNodeDatum
 } from 'd3-force'
-import { api } from './api'
+import { api, assetUrl } from './api'
 import type { Character, StateSnapshot, StoryNode } from './types'
 
 const WIDTH = 360
@@ -329,25 +329,67 @@ export default function RelationGraph({
                 dragRef.current = { id, moved: false }
               }}
             >
-              <circle
-                r={22}
-                fill="var(--bg-card)"
-                stroke={isEgo ? 'var(--accent)' : c?.color ?? '#8a8fa8'}
-                strokeWidth={isEgo ? 3 : 2}
-                opacity={retired ? 0.45 : 1}
-              />
-              <text
-                textAnchor="middle"
-                dy="4"
-                fontSize="11"
-                fill="var(--text)"
-                opacity={retired ? 0.5 : 1}
-                style={{ pointerEvents: 'none', userSelect: 'none' }}
-              >
-                {(c?.name ?? id).slice(0, 4)}
-              </text>
+              {assetUrl(c?.portrait_path) ? (
+                <>
+                  <clipPath id={`avatar-clip-${id}`}>
+                    <circle r={20} />
+                  </clipPath>
+                  <image
+                    href={assetUrl(c?.portrait_path)!}
+                    x={-20}
+                    y={-20}
+                    width={40}
+                    height={40}
+                    clipPath={`url(#avatar-clip-${id})`}
+                    preserveAspectRatio="xMidYMid slice"
+                    opacity={retired ? 0.45 : 1}
+                  />
+                  <circle
+                    r={21}
+                    fill="none"
+                    stroke={isEgo ? 'var(--accent)' : c?.color ?? '#8a8fa8'}
+                    strokeWidth={isEgo ? 3 : 2}
+                    opacity={retired ? 0.45 : 1}
+                  />
+                  <text
+                    textAnchor="middle"
+                    dy="34"
+                    fontSize="9"
+                    fill="var(--text-dim)"
+                    style={{ pointerEvents: 'none', userSelect: 'none' }}
+                  >
+                    {(c?.name ?? id).slice(0, 5)}
+                  </text>
+                </>
+              ) : (
+                <>
+                  <circle
+                    r={22}
+                    fill="var(--bg-card)"
+                    stroke={isEgo ? 'var(--accent)' : c?.color ?? '#8a8fa8'}
+                    strokeWidth={isEgo ? 3 : 2}
+                    opacity={retired ? 0.45 : 1}
+                  />
+                  <text
+                    textAnchor="middle"
+                    dy="4"
+                    fontSize="11"
+                    fill="var(--text)"
+                    opacity={retired ? 0.5 : 1}
+                    style={{ pointerEvents: 'none', userSelect: 'none' }}
+                  >
+                    {(c?.name ?? id).slice(0, 4)}
+                  </text>
+                </>
+              )}
               {retired && (
-                <text textAnchor="middle" dy="34" fontSize="9" fill="var(--text-faint)" style={{ pointerEvents: 'none' }}>
+                <text
+                  textAnchor="middle"
+                  dy={c?.portrait_path ? 46 : 34}
+                  fontSize="9"
+                  fill="var(--text-faint)"
+                  style={{ pointerEvents: 'none' }}
+                >
                   退場
                 </text>
               )}

@@ -12,9 +12,9 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 import chat_agent
@@ -79,6 +79,7 @@ class CharacterPatch(BaseModel):
     color: str | None = None
     graph_x: float | None = None
     graph_y: float | None = None
+    portrait_path: str | None = None
 
 
 class FactionIn(BaseModel):
@@ -271,6 +272,56 @@ async def delete_node(node_id: str) -> dict[str, str]:
 class PositionIn(BaseModel):
     x: float
     y: float
+
+
+class NodeImageIn(BaseModel):
+    image_path: str | None = None
+
+
+# ---- 画像アセット(装飾専用。LLM には渡さない) ----------------------
+
+ALLOWED_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+
+
+@app.post("/assets/upload")
+async def upload_asset(file: UploadFile) -> dict[str, str]:
+    import uuid
+    from pathlib import Path as _Path
+
+    assets = store.assets_dir()
+    if assets is None:
+        raise HTTPException(500, "ライブラリが未設定です")
+    ext = _Path(file.filename or "").suffix.lower()
+    if ext not in ALLOWED_IMAGE_EXTS:
+        raise HTTPException(400, f"対応していない画像形式です: {ext}")
+    name = f"{uuid.uuid4().hex[:12]}{ext}"
+    data = await file.read()
+    if len(data) > 20 * 1024 * 1024:
+        raise HTTPException(400, "20MB を超える画像はアップロードできません")
+    (_Path(assets) / name).write_bytes(data)
+    return {"path": name}
+
+
+@app.get("/assets/{filename}")
+async def get_asset(filename: str) -> FileResponse:
+    from pathlib import Path as _Path
+
+    assets = store.assets_dir()
+    if assets is None:
+        raise HTTPException(404, "not found")
+    safe_name = _Path(filename).name  # パストラバーサル防止
+    path = _Path(assets) / safe_name
+    if not path.exists():
+        raise HTTPException(404, "not found")
+    return FileResponse(str(path))
+
+
+@app.post("/nodes/{node_id}/image")
+async def set_node_image(node_id: str, body: NodeImageIn) -> dict[str, str]:
+    if store.get_node(node_id) is None:
+        raise HTTPException(404, "node not found")
+    store.set_node_image(node_id, body.image_path)
+    return {"status": "ok"}
 
 
 @app.post("/nodes/{node_id}/position")

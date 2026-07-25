@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { api, isAbortError, renderStream } from '../api'
+import { api, assetUrl, isAbortError, renderStream } from '../api'
 import type { Character, PromoteProposal, SceneEntry, StylePreset } from '../types'
 
 interface PromoteState {
@@ -429,6 +429,12 @@ export default function ReaderMode(): React.JSX.Element {
                     </button>
                   </div>
                 </div>
+                {assetUrl(scene.node.image_path) && (
+                  <img
+                    src={assetUrl(scene.node.image_path)!}
+                    className="mb-4 max-h-80 w-full rounded-2xl object-cover"
+                  />
+                )}
                 {isLive ? (
                   <div
                     className="whitespace-pre-wrap text-[14px] leading-[1.9]"

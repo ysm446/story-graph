@@ -169,6 +169,8 @@ def init_schema(conn: sqlite3.Connection) -> None:
     for ddl in (
         "ALTER TABLE nodes ADD COLUMN pos_x REAL",  # キャンバス上の手動配置(NULL = 自動レイアウト)
         "ALTER TABLE nodes ADD COLUMN pos_y REAL",
+        "ALTER TABLE nodes ADD COLUMN image_path TEXT",  # シーン挿絵(装飾専用。LLM には渡さない)
+        "ALTER TABLE characters ADD COLUMN portrait_path TEXT",  # プロフィール画像(同上)
     ):
         try:
             conn.execute(ddl)

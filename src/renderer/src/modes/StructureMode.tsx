@@ -16,7 +16,7 @@ import {
   type NodeProps
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { api, generateBeatStream, isAbortError } from '../api'
+import { api, assetUrl, generateBeatStream, isAbortError, uploadAsset } from '../api'
 import ChatDrawer from '../ChatDrawer'
 import RelationGraph from '../RelationGraph'
 import type { Character, EventInput, GraphEdge, StateSnapshot, StoryEvent, StoryNode } from '../types'
@@ -81,6 +81,13 @@ function BeatNodeCard({ data, selected }: NodeProps<BeatFlowNode>): React.JSX.El
       }}
     >
       <Handle type="target" position={Position.Top} className="!bg-[#6a728f]" />
+      {assetUrl(storyNode.image_path) && (
+        <img
+          src={assetUrl(storyNode.image_path)!}
+          className="mb-2 h-24 w-full rounded-xl object-cover"
+          style={{ opacity: isDraft ? 0.8 : 1 }}
+        />
+      )}
       <div className="mb-1 flex items-center gap-2">
         <span className="min-w-0 flex-1 truncate text-[13px] font-semibold" style={{ color: 'var(--text)' }}>
           {storyNode.title || '(無題のシーン)'}
@@ -105,13 +112,18 @@ function BeatNodeCard({ data, selected }: NodeProps<BeatFlowNode>): React.JSX.El
       <div className="flex flex-wrap items-center gap-1">
         {storyNode.cast.map((charId) => {
           const c = characters[charId]
+          const portrait = assetUrl(c?.portrait_path)
           return (
             <span
               key={charId}
               className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px]"
               style={{ background: 'var(--bg-elevated)', color: 'var(--text-dim)' }}
             >
-              <span className="inline-block h-2 w-2 rounded-full" style={{ background: c?.color ?? '#8a8fa8' }} />
+              {portrait ? (
+                <img src={portrait} className="h-3.5 w-3.5 rounded-full object-cover" />
+              ) : (
+                <span className="inline-block h-2 w-2 rounded-full" style={{ background: c?.color ?? '#8a8fa8' }} />
+              )}
               {c?.name ?? charId}
             </span>
           )
@@ -338,6 +350,7 @@ function BeatTab({
 }): React.JSX.Element {
   const [draft, setDraft] = useState<Partial<StoryNode>>({})
   const [error, setError] = useState<string | null>(null)
+  const imageInputRef = useRef<HTMLInputElement | null>(null)
 
   useEffect(() => {
     setDraft({
@@ -492,6 +505,50 @@ function BeatTab({
             style={inputStyle}
           />
         </label>
+      </div>
+      {/* 挿絵(装飾専用。LLM には渡さない) */}
+      <div>
+        <div className="mb-1 flex items-center justify-between">
+          <span className="text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
+            挿絵
+          </span>
+          <div className="flex gap-1.5">
+            <button
+              onClick={() => imageInputRef.current?.click()}
+              className="rounded-md border px-2 py-0.5 text-[11px]"
+              style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+            >
+              {node.image_path ? '変更' : '+ 画像を添付'}
+            </button>
+            {node.image_path && (
+              <button
+                onClick={() => void api.setNodeImage(node.id, null).then(onSaved)}
+                className="rounded-md border px-2 py-0.5 text-[11px]"
+                style={{ borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }}
+              >
+                外す
+              </button>
+            )}
+          </div>
+        </div>
+        <input
+          ref={imageInputRef}
+          type="file"
+          accept="image/png,image/jpeg,image/gif,image/webp"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0]
+            e.target.value = ''
+            if (!file) return
+            void uploadAsset(file)
+              .then(({ path }) => api.setNodeImage(node.id, path))
+              .then(onSaved)
+              .catch((err) => setError(String(err)))
+          }}
+        />
+        {assetUrl(node.image_path) && (
+          <img src={assetUrl(node.image_path)!} className="max-h-40 w-full rounded-xl object-cover" />
+        )}
       </div>
       <div className="flex items-center gap-2">
         <button

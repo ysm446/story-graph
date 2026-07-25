@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { api } from '../api'
+import { useEffect, useRef, useState } from 'react'
+import { api, assetUrl, uploadAsset } from '../api'
 import type { Character } from '../types'
 
 const FIELD_DEFS: Array<{ key: 'profile' | 'appearance' | 'voice'; label: string; rows: number }> = [
@@ -13,6 +13,7 @@ export default function CharactersMode(): React.JSX.Element {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [draft, setDraft] = useState<Partial<Character>>({})
   const [saving, setSaving] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   const selected = characters.find((c) => c.id === selectedId) ?? null
 
@@ -84,10 +85,18 @@ export default function CharactersMode(): React.JSX.Element {
                   : { color: 'var(--text-dim)' }
               }
             >
-              <span
-                className="inline-block h-3 w-3 shrink-0 rounded-full"
-                style={{ background: c.color ?? '#8a8fa8' }}
-              />
+              {assetUrl(c.portrait_path) ? (
+                <img
+                  src={assetUrl(c.portrait_path)!}
+                  className="h-6 w-6 shrink-0 rounded-full object-cover"
+                  style={{ border: `1.5px solid ${c.color ?? '#8a8fa8'}` }}
+                />
+              ) : (
+                <span
+                  className="inline-block h-3 w-3 shrink-0 rounded-full"
+                  style={{ background: c.color ?? '#8a8fa8' }}
+                />
+              )}
               <span className="truncate">{c.name}</span>
             </button>
           ))}
@@ -102,6 +111,42 @@ export default function CharactersMode(): React.JSX.Element {
         {selected ? (
           <div className="mx-auto max-w-2xl">
             <div className="mb-4 flex items-center gap-3">
+              {/* プロフィール画像(装飾専用。無くても成り立つ) */}
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="group relative h-16 w-16 shrink-0 overflow-hidden rounded-full border-2"
+                style={{ borderColor: draft.color ?? '#8a8fa8', background: 'var(--bg-input)' }}
+                title="クリックで画像を設定"
+              >
+                {assetUrl(draft.portrait_path) ? (
+                  <img src={assetUrl(draft.portrait_path)!} className="h-full w-full object-cover" />
+                ) : (
+                  <span className="flex h-full w-full items-center justify-center text-[20px]" style={{ color: 'var(--text-faint)' }}>
+                    {(draft.name ?? '?').slice(0, 1)}
+                  </span>
+                )}
+                <span
+                  className="absolute inset-0 hidden items-center justify-center bg-black/50 text-[10px] text-white group-hover:flex"
+                >
+                  変更
+                </span>
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/gif,image/webp"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0]
+                  e.target.value = ''
+                  if (!file || !selectedId) return
+                  void uploadAsset(file).then(async ({ path }) => {
+                    await api.updateCharacter(selectedId, { portrait_path: path })
+                    setDraft((d) => ({ ...d, portrait_path: path }))
+                    await reload()
+                  })
+                }}
+              />
               <input
                 type="color"
                 value={draft.color ?? '#7c5af7'}
@@ -114,6 +159,22 @@ export default function CharactersMode(): React.JSX.Element {
                 className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[16px] font-semibold outline-none"
                 style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
               />
+              {draft.portrait_path && (
+                <button
+                  onClick={() => {
+                    if (!selectedId) return
+                    void api.updateCharacter(selectedId, { portrait_path: null }).then(async () => {
+                      setDraft((d) => ({ ...d, portrait_path: null }))
+                      await reload()
+                    })
+                  }}
+                  className="shrink-0 text-[11px]"
+                  style={{ color: 'var(--text-faint)' }}
+                  title="画像を外す"
+                >
+                  画像を外す
+                </button>
+              )}
             </div>
             {FIELD_DEFS.map((f) => (
               <label key={f.key} className="mb-4 block">

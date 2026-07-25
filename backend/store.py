@@ -78,7 +78,7 @@ class Store:
         return self.get_character(char_id)  # type: ignore[return-value]
 
     def update_character(self, char_id: str, data: dict[str, Any]) -> dict[str, Any] | None:
-        fields = ["name", "profile", "appearance", "voice", "color", "graph_x", "graph_y"]
+        fields = ["name", "profile", "appearance", "voice", "color", "graph_x", "graph_y", "portrait_path"]
         updates = {k: data[k] for k in fields if k in data}
         if updates:
             sets = ", ".join(f"{k} = ?" for k in updates)
@@ -346,6 +346,23 @@ class Store:
         self.mark_dirty_downstream(node_id, commit=False)
         self.conn.commit()
         return self.get_node(node_id)
+
+    def set_node_image(self, node_id: str, image_path: str | None) -> None:
+        """シーン挿絵(装飾専用)。state に影響しないので dirty 化しない。"""
+        self.conn.execute(
+            "UPDATE nodes SET image_path = ? WHERE id = ?", (image_path, node_id)
+        )
+        self.conn.commit()
+
+    def assets_dir(self) -> str | None:
+        """現在のライブラリの画像フォルダ(assets/images)。"""
+        if not self.root:
+            return None
+        from pathlib import Path
+
+        path = Path(self.root) / "assets" / "images"
+        path.mkdir(parents=True, exist_ok=True)
+        return str(path)
 
     def set_node_position(self, node_id: str, x: float | None, y: float | None) -> None:
         """キャンバス上の手動配置を保存する(state には影響しないので dirty 化しない)。"""

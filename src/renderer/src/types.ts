@@ -7,6 +7,7 @@ export interface Character {
   color: string | null
   graph_x: number | null
   graph_y: number | null
+  portrait_path: string | null
   created_at: string
 }
 
@@ -37,6 +38,7 @@ export interface StoryNode {
   status: 'canon' | 'draft'
   pos_x: number | null
   pos_y: number | null
+  image_path: string | null
   created_at: string
   updated_at: string
   events: StoryEvent[]

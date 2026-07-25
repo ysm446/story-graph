@@ -63,6 +63,8 @@ export const api = {
   deleteNode: (id: string) => request<unknown>(`/nodes/${id}`, { method: 'DELETE' }),
   setNodePosition: (id: string, x: number, y: number) =>
     request<unknown>(`/nodes/${id}/position`, { method: 'POST', body: JSON.stringify({ x, y }) }),
+  setNodeImage: (id: string, imagePath: string | null) =>
+    request<unknown>(`/nodes/${id}/image`, { method: 'POST', body: JSON.stringify({ image_path: imagePath }) }),
   resetLayout: () => request<unknown>('/layout/reset', { method: 'POST' }),
   putEvents: (nodeId: string, events: EventInput[]) =>
     request<{ events: StoryEvent[]; validation: string[] }>(`/nodes/${nodeId}/events`, {
@@ -142,6 +144,20 @@ export interface RenderStreamEvent {
 
 export function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === 'AbortError'
+}
+
+export function assetUrl(path: string | null | undefined): string | null {
+  if (!path || !baseUrl) return null
+  return `${baseUrl}/assets/${encodeURIComponent(path)}`
+}
+
+export async function uploadAsset(file: File): Promise<{ path: string }> {
+  if (!baseUrl) throw new Error('backend not ready')
+  const form = new FormData()
+  form.append('file', file)
+  const res = await fetch(`${baseUrl}/assets/upload`, { method: 'POST', body: form })
+  if (!res.ok) throw new Error(`${res.status} /assets/upload: ${await res.text()}`)
+  return res.json() as Promise<{ path: string }>
 }
 
 export async function renderStream(
