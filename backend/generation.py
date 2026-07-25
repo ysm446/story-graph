@@ -385,40 +385,76 @@ async def _generate_beat_impl(
 
 # ---- シーンメタ情報の提案(タイトル / 感情の核) ----------------------
 
-SUGGEST_FIELD_PROMPTS = {
-    "title": "このシーン(出来事の仕様書)にふさわしい短いタイトルを1つ生成してください。"
-             "6〜14文字程度。体言止めか短い句で、内容を説明しすぎず余韻を残すこと。",
-    "emotional_core": "このシーン(出来事の仕様書)の感情的な核を1行で表現してください。"
-                      "20字前後。出来事の説明ではなく、シーンを貫く感情の質を突く言葉で。"
-                      "例: 「怒りより深い、静かな失望」",
+# シーン生成で実績のある「意味を持つプロパティ名のスキーマ」に合わせる
+# ({"value": string} のような極小スキーマは空白ループに嵌まりやすかった)
+SUGGEST_SYSTEM_PROMPT = """あなたは物語のビート(出来事の仕様書)を整える構成作家です。
+与えられたビート本文にふさわしい title と emotional_core を生成してください。
+出力は必ず指定の JSON 形式に従ってください。
+
+- title: シーンの短いタイトル。6〜14文字程度。体言止めか短い句で、内容を説明しすぎず余韻を残す
+- emotional_core: シーンの感情的な核。1行20字前後。出来事の説明ではなく、シーンを貫く感情の質を突く言葉で
+  (例: 「怒りより深い、静かな失望」)"""
+
+_SUGGEST_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "title": {"type": "string"},
+        "emotional_core": {"type": "string"},
+    },
+    "required": ["title", "emotional_core"],
 }
 
 _SUGGEST_LABELS = {"title": "タイトル生成", "emotional_core": "感情の核生成"}
 
 
+def _cleanup_suggestion(text: str) -> str:
+    """出力から1行の提案を取り出す(引用符・記号・前置きの除去)。"""
+    line = next((ln.strip() for ln in text.splitlines() if ln.strip()), "")
+    line = line.strip('「」"\'`* 　')
+    for sep in (":", ":"):
+        if sep in line and len(line.split(sep, 1)[0]) <= 12:
+            line = line.split(sep, 1)[1].strip().strip('「」"\'` 　')
+    return line[:60]
+
+
 async def suggest_field(base_url: str, beat: str, field: str) -> str:
-    prompt = SUGGEST_FIELD_PROMPTS.get(field)
-    if prompt is None:
+    if field not in _SUGGEST_LABELS:
         raise ValueError(f"unknown field: {field}")
-    # グラマー制約下の空白ループ対策: 温度を変えて引き直す(他の構造化出力と同じ)
+    messages = [
+        {"role": "system", "content": SUGGEST_SYSTEM_PROMPT},
+        {"role": "user", "content": beat},
+    ]
     last_error: RuntimeError | None = None
-    for temperature in (0.6, 0.9, 0.3):
+    for temperature in (0.7, 0.4):
         try:
             result = await llm.chat_json(
-                [
-                    {"role": "system", "content": prompt + "\n出力は必ず指定の JSON 形式に従ってください。"},
-                    {"role": "user", "content": beat},
-                ],
+                messages,
                 base_url=base_url,
-                schema={"type": "object", "properties": {"value": {"type": "string"}}, "required": ["value"]},
+                schema=_SUGGEST_SCHEMA,
                 temperature=temperature,
                 max_tokens=512,
                 label=_SUGGEST_LABELS[field],
             )
-            return str(result.get("value", "")).strip()
+            value = _cleanup_suggestion(str(result.get(field, "")))
+            if value:
+                return value
         except RuntimeError as e:
             last_error = e
-    raise last_error  # type: ignore[misc]
+    # 最終フォールバック: グラマーなしの自由テキスト(原理的にループしない)
+    try:
+        result = await llm.chat(
+            messages,
+            base_url=base_url,
+            temperature=0.7,
+            max_tokens=128,
+            label=f"{_SUGGEST_LABELS[field]}(fallback)",
+        )
+        value = _cleanup_suggestion(result["content"])
+        if value:
+            return value
+    except RuntimeError as e:
+        last_error = e
+    raise last_error or RuntimeError("提案を生成できませんでした(空の応答)")
 
 
 # ---- 校正(シーン本文。lm-graph の 3 段階プリセットを踏襲) -----------

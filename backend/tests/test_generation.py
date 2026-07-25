@@ -100,32 +100,36 @@ def test_generate_beat_requires_characters(monkeypatch):
     assert "error" in events[-1]
 
 
+def _chat_result(content):
+    return {"content": content, "tool_calls": None, "message": {}, "finish_reason": "stop", "usage": {}}
+
+
 def test_suggest_field(monkeypatch):
     async def fake_chat_json(messages, **kwargs):
-        assert "タイトル" in messages[0]["content"]
+        assert "title" in messages[0]["content"]
         assert messages[1]["content"] == "アヤは橋でケンの裏切りを知る。"
-        return {"value": "石橋の告白"}
+        return {"title": "「石橋の告白」", "emotional_core": "静かな失望"}
 
     monkeypatch.setattr(llm_mod, "chat_json", fake_chat_json)
     value = asyncio.run(generation.suggest_field("http://fake", "アヤは橋でケンの裏切りを知る。", "title"))
-    assert value == "石橋の告白"
+    assert value == "石橋の告白"  # 引用符は後処理で除去
+    value = asyncio.run(generation.suggest_field("http://fake", "アヤは橋でケンの裏切りを知る。", "emotional_core"))
+    assert value == "静かな失望"
     with pytest.raises(ValueError):
         asyncio.run(generation.suggest_field("http://fake", "x", "nonsense"))
 
 
-def test_suggest_field_retries_on_truncation(monkeypatch):
-    calls = {"n": 0}
+def test_suggest_field_falls_back_to_freetext(monkeypatch):
+    async def broken_chat_json(messages, **kwargs):
+        raise RuntimeError("構造化出力が max_tokens(512) で打ち切られました。")
 
-    async def flaky_chat_json(messages, **kwargs):
-        calls["n"] += 1
-        if calls["n"] == 1:
-            raise RuntimeError("構造化出力が max_tokens(512) で打ち切られました。")
-        return {"value": "再試行で成功"}
+    async def fallback_chat(messages, **kwargs):
+        return _chat_result("タイトル: 密室のからくり\nこのタイトルは…")
 
-    monkeypatch.setattr(llm_mod, "chat_json", flaky_chat_json)
+    monkeypatch.setattr(llm_mod, "chat_json", broken_chat_json)
+    monkeypatch.setattr(llm_mod, "chat", fallback_chat)
     value = asyncio.run(generation.suggest_field("http://fake", "ビート本文", "title"))
-    assert value == "再試行で成功"
-    assert calls["n"] == 2
+    assert value == "密室のからくり"  # 前置き除去 + 最初の行のみ
 
 
 def test_proofread_presets_and_custom(store, monkeypatch):
