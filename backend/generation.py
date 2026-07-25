@@ -400,18 +400,25 @@ async def suggest_field(base_url: str, beat: str, field: str) -> str:
     prompt = SUGGEST_FIELD_PROMPTS.get(field)
     if prompt is None:
         raise ValueError(f"unknown field: {field}")
-    result = await llm.chat_json(
-        [
-            {"role": "system", "content": prompt + "\n出力は必ず指定の JSON 形式に従ってください。"},
-            {"role": "user", "content": beat},
-        ],
-        base_url=base_url,
-        schema={"type": "object", "properties": {"value": {"type": "string"}}, "required": ["value"]},
-        temperature=0.6,
-        max_tokens=256,
-        label=_SUGGEST_LABELS[field],
-    )
-    return str(result.get("value", "")).strip()
+    # グラマー制約下の空白ループ対策: 温度を変えて引き直す(他の構造化出力と同じ)
+    last_error: RuntimeError | None = None
+    for temperature in (0.6, 0.9, 0.3):
+        try:
+            result = await llm.chat_json(
+                [
+                    {"role": "system", "content": prompt + "\n出力は必ず指定の JSON 形式に従ってください。"},
+                    {"role": "user", "content": beat},
+                ],
+                base_url=base_url,
+                schema={"type": "object", "properties": {"value": {"type": "string"}}, "required": ["value"]},
+                temperature=temperature,
+                max_tokens=512,
+                label=_SUGGEST_LABELS[field],
+            )
+            return str(result.get("value", "")).strip()
+        except RuntimeError as e:
+            last_error = e
+    raise last_error  # type: ignore[misc]
 
 
 # ---- 校正(シーン本文。lm-graph の 3 段階プリセットを踏襲) -----------

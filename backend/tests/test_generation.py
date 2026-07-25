@@ -113,6 +113,21 @@ def test_suggest_field(monkeypatch):
         asyncio.run(generation.suggest_field("http://fake", "x", "nonsense"))
 
 
+def test_suggest_field_retries_on_truncation(monkeypatch):
+    calls = {"n": 0}
+
+    async def flaky_chat_json(messages, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("構造化出力が max_tokens(512) で打ち切られました。")
+        return {"value": "再試行で成功"}
+
+    monkeypatch.setattr(llm_mod, "chat_json", flaky_chat_json)
+    value = asyncio.run(generation.suggest_field("http://fake", "ビート本文", "title"))
+    assert value == "再試行で成功"
+    assert calls["n"] == 2
+
+
 def test_proofread_presets_and_custom(store, monkeypatch):
     presets = generation.proofread_presets(store)
     assert [p["id"] for p in presets] == ["light", "standard", "aggressive"]
