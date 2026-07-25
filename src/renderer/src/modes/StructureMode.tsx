@@ -1240,6 +1240,7 @@ function CharTab({
 
 function StructureModeInner({ settingsVersion }: { settingsVersion: number }): React.JSX.Element {
   const [minimapVisible, setMinimapVisible] = useState(true)
+  const [chatDynamicSuggestions, setChatDynamicSuggestions] = useState(true)
   const [graphNodes, setGraphNodes] = useState<StoryNode[]>([])
   const [graphEdges, setGraphEdges] = useState<GraphEdge[]>([])
   const [characters, setCharacters] = useState<Character[]>([])
@@ -1320,12 +1321,15 @@ function StructureModeInner({ settingsVersion }: { settingsVersion: number }): R
     void reload()
   }, [reload])
 
-  // 設定(ミニマップ表示)を読み込む。settingsVersion は設定ポップアップを
-  // 閉じたときに変わるので、そこで変更が反映される
+  // 設定(ミニマップ表示 / 質問候補の自動生成)を読み込む。settingsVersion は
+  // 設定ポップアップを閉じたときに変わるので、そこで変更が反映される
   useEffect(() => {
     void api
       .getSettings()
-      .then((s) => setMinimapVisible(s.minimap_visible !== '0'))
+      .then((s) => {
+        setMinimapVisible(s.minimap_visible !== '0')
+        setChatDynamicSuggestions(s.chat_dynamic_suggestions !== '0')
+      })
       .catch(() => undefined)
   }, [settingsVersion])
 
@@ -1871,6 +1875,7 @@ function StructureModeInner({ settingsVersion }: { settingsVersion: number }): R
                 nodesById={Object.fromEntries(graphNodes.map((n) => [n.id, n]))}
                 characters={characters}
                 onGraphChanged={() => void reload()}
+                dynamicSuggestions={chatDynamicSuggestions}
               />
             </div>
           </>

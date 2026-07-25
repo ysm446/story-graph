@@ -400,6 +400,7 @@ export default function SettingsMode(): React.JSX.Element {
     ? Math.min(Math.max(Number(values.video_crossfade_seconds) || 0, 0), 2)
     : DEFAULT_VIDEO_CROSSFADE_SECONDS
   const minimapVisible = values.minimap_visible !== '0' // 既定は表示
+  const chatDynamicSuggestions = values.chat_dynamic_suggestions !== '0' // 既定は生成する
 
   const refreshStatus = async (): Promise<void> => {
     try {
@@ -733,6 +734,46 @@ export default function SettingsMode(): React.JSX.Element {
                 </div>
               </div>
               <p className="settings-field-hint">ノードエリアの右下に表示される全体図です。</p>
+            </div>
+          </div>
+        </div>
+
+        {/* 相談チャット */}
+        <div className="flex flex-col gap-2.5">
+          <div className="settings-group-title">相談チャット</div>
+          <div className="settings-card">
+            <div className="settings-field">
+              <div className="settings-field-header">
+                <span className="settings-field-label">内容から質問候補を作る</span>
+                <div className="settings-field-controls">
+                  <div className="flex overflow-hidden rounded-md border" style={{ borderColor: 'var(--border-strong)' }}>
+                    {(
+                      [
+                        ['1', 'オン'],
+                        ['0', 'オフ']
+                      ] as const
+                    ).map(([value, label]) => (
+                      <button
+                        key={value}
+                        onClick={() => void save({ chat_dynamic_suggestions: value })}
+                        className="px-2.5 py-0.5 text-[12px]"
+                        style={
+                          chatDynamicSuggestions === (value === '1')
+                            ? { background: 'var(--accent-soft)', color: 'var(--text)' }
+                            : { color: 'var(--text-faint)' }
+                        }
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <p className="settings-field-hint">
+                オンにすると、チャットを開いたときと回答のあとに、LLM が物語の内容から質問候補を作って
+                候補チップの下段に ✨ 付きで並べます(最大2件。固定の候補は常に残ります)。
+                生成は軽い1回の呼び出しですが、回答直後に少し待ち時間が増えます。LLM 未起動時は何もしません。
+              </p>
             </div>
           </div>
         </div>

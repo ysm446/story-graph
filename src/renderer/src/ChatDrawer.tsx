@@ -29,6 +29,7 @@ const TEMPLATES: { label: string; text: string }[] = [
   { label: '展開を提案', text: 'この先の展開を3案提案して。' }
 ]
 const TEMPLATE_WINDOW = 3 // 同時に見せる件数
+const MAX_DYNAMIC = 2 // うち、内容から生成された質問に使う枠
 
 export default function ChatDrawer({
   selectedId,
@@ -37,7 +38,8 @@ export default function ChatDrawer({
   characters,
   onGraphChanged,
   open,
-  onClose
+  onClose,
+  dynamicSuggestions
 }: {
   selectedId: string | null
   canonTailId: string | null
@@ -48,6 +50,8 @@ export default function ChatDrawer({
   // 分割ペインなので、レイアウトの権限を親側に集約している
   open: boolean
   onClose: () => void
+  // 設定「内容から質問候補を作る」。オフなら生成も表示もしない
+  dynamicSuggestions: boolean
 }): React.JSX.Element | null {
   const [chatId, setChatId] = useState<string | null>(null)
   const [anchorNode, setAnchorNode] = useState<string | null>(null)
@@ -62,19 +66,45 @@ export default function ChatDrawer({
   // 候補チップは常に入力欄の右上に積む。全部出すと縦を食うので窓を 3 件に
   // 絞り、⟳ で次の 3 件へ送る(ランダムではなく決まった順。docs/design/chat.md)
   const [templateOffset, setTemplateOffset] = useState(0)
+  // 内容から作られた質問(最大 2 件。固定の候補の下=入力欄側に出す)
+  const [dynamicQuestions, setDynamicQuestions] = useState<string[]>([])
   const abortRef = useRef<AbortController | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
   const busyElapsed = useElapsedSeconds(busy)
 
-  const visibleTemplates = Array.from(
-    { length: TEMPLATE_WINDOW },
-    (_, i) => TEMPLATES[(templateOffset + i) % TEMPLATES.length]
-  )
+  const dynamicShown = dynamicSuggestions ? dynamicQuestions.slice(0, MAX_DYNAMIC) : []
+  // 固定の候補で残りの枠を埋める(固定が上、生成された質問が下)
+  const chips = [
+    ...Array.from(
+      { length: Math.max(TEMPLATE_WINDOW - dynamicShown.length, 0) },
+      (_, i) => ({ text: TEMPLATES[(templateOffset + i) % TEMPLATES.length].text, dynamic: false })
+    ),
+    ...dynamicShown.map((text) => ({ text, dynamic: true }))
+  ]
+
+  // 内容ベースの質問候補を取り直す。失敗・未起動・設定オフはすべて無視して
+  // 固定の候補のまま(バックエンドが空配列を返す)
+  const refreshSuggestions = async (cid: string | null, anchor: string | null): Promise<void> => {
+    if (!dynamicSuggestions) return
+    try {
+      const res = await chatApi.suggestQuestions({ chat_id: cid, anchor_node: anchor, scope })
+      if (res.questions.length > 0) setDynamicQuestions(res.questions)
+    } catch {
+      /* 候補は無くても困らないので黙って諦める */
+    }
+  }
 
   useEffect(() => {
     if (open) void chatApi.list().then(setHistory).catch(() => setHistory([]))
   }, [open])
+
+  // 開いたタイミング(と設定変更時)に一度生成しておく
+  useEffect(() => {
+    if (!open || !dynamicSuggestions) return
+    void refreshSuggestions(chatId, anchorNode ?? selectedId ?? canonTailId)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, dynamicSuggestions])
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
@@ -91,7 +121,10 @@ export default function ChatDrawer({
     setChatId(null)
     setItems([])
     setInsertedTitles(new Set())
-    setAnchorNode(selectedId ?? canonTailId)
+    const anchor = selectedId ?? canonTailId
+    setAnchorNode(anchor)
+    setDynamicQuestions([]) // 新しいアンカーの候補を取り直す
+    void refreshSuggestions(null, anchor)
   }
 
   const loadChat = async (id: string): Promise<void> => {
@@ -100,6 +133,8 @@ export default function ChatDrawer({
     setAnchorNode(chat.anchor_node)
     setScope(chat.scope === 'all' ? 'all' : 'upto')
     setInsertedTitles(new Set())
+    setDynamicQuestions([])
+    void refreshSuggestions(chat.id, chat.anchor_node)
     const display: DisplayItem[] = []
     for (const m of chat.messages) {
       const role = m.role as string
@@ -142,6 +177,7 @@ export default function ChatDrawer({
     if (!chatId) setAnchorNode(effectiveAnchor)
     // ストリーミング中のテキストは closure 変数で持ち、確定時に items へ移す
     let live = ''
+    let latestChatId = chatId
     const flushLive = (): void => {
       if (!live) return
       const text = live
@@ -153,7 +189,10 @@ export default function ChatDrawer({
       await chatSendStream(
         { chat_id: chatId, anchor_node: effectiveAnchor, scope, message },
         (e: ChatStreamEvent) => {
-          if (e.chat_id) setChatId(e.chat_id)
+          if (e.chat_id) {
+            latestChatId = e.chat_id
+            setChatId(e.chat_id)
+          }
           if (e.stage === 'thinking') setStatus('考え中…')
           if (e.delta) {
             live += e.delta
@@ -185,6 +224,8 @@ export default function ChatDrawer({
       abortRef.current = null
       setBusy(false)
       setLiveText('')
+      // 回答後に、会話を踏まえたフォローアップ質問へ差し替える
+      void refreshSuggestions(latestChatId, effectiveAnchor)
     }
   }
 
@@ -412,16 +453,20 @@ export default function ChatDrawer({
           </div>
           {/* 候補チップ(常時表示。右下に縦積み。クリックで即送信) */}
           <div className="mt-2 flex flex-col items-end gap-1.5">
-            {visibleTemplates.map((t) => (
+            {chips.map((c) => (
               <button
-                key={t.label}
-                onClick={() => void send(t.text)}
+                key={c.text}
+                onClick={() => void send(c.text)}
                 disabled={busy}
                 className="chat-suggest-chip max-w-full truncate rounded-full border px-3 py-1 text-[11px] disabled:opacity-40"
-                style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-                title={t.text}
+                style={{
+                  background: 'var(--bg-card)',
+                  borderColor: c.dynamic ? 'var(--accent-border)' : 'var(--border-strong)',
+                  color: c.dynamic ? 'var(--text)' : 'var(--text-dim)'
+                }}
+                title={c.dynamic ? `${c.text}(物語の内容から作られた質問)` : c.text}
               >
-                {t.text}
+                {c.dynamic ? `✨ ${c.text}` : c.text}
               </button>
             ))}
           </div>

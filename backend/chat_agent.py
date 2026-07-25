@@ -324,3 +324,102 @@ async def _chat_impl(
 
     store.save_chat_messages(chat_id, history)
     yield _sse({"answer": final_answer or "", "chat_id": chat_id})
+
+
+# ---- 内容ベースの質問候補 --------------------------------------------
+#
+# video-content-analyzer の /review/questions を参考にした軽量な生成。
+# ツールは使わせず、見えている範囲のシーン見出しと直近の会話だけを渡して
+# 3 件出させる(設定 chat_dynamic_suggestions が '0' のときは呼ばれない)。
+
+SUGGEST_TEMPERATURE = 0.9
+SUGGEST_HISTORY_TURNS = 2  # 直近の往復数
+SUGGEST_BEATS = 12  # 末尾から渡すシーン数
+
+QUESTIONS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "questions": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 3,
+            "items": {"type": "string", "minLength": 6, "maxLength": 60},
+        }
+    },
+    "required": ["questions"],
+}
+
+
+def _recent_exchanges(messages: list[dict[str, Any]], turns: int) -> list[str]:
+    """保存済み履歴から user / assistant の発言だけを取り出して末尾 turns 往復分。"""
+    lines: list[str] = []
+    for m in messages:
+        role = m.get("role")
+        content = m.get("content")
+        if role == "user" and isinstance(content, str) and not content.startswith("(これ以上ツールは使えません"):
+            lines.append(f"作者: {content}")
+        elif role == "assistant" and isinstance(content, str) and content:
+            lines.append(f"相談相手: {content}")
+    return lines[-(turns * 2) :]
+
+
+async def suggest_questions(
+    store: Store,
+    base_url: str,
+    chat_id: str | None,
+    anchor_node: str | None,
+    scope: str,
+) -> list[str]:
+    if chat_id:
+        chat = store.get_chat(chat_id)
+        if chat is not None:
+            anchor_node = chat["anchor_node"]
+            scope = chat["scope"]
+    else:
+        chat = None
+    path = _visible_path(store, anchor_node, scope)
+    if not path:
+        return []
+
+    beats: list[str] = []
+    for i, node_id in list(enumerate(path))[-SUGGEST_BEATS:]:
+        node = store.get_node(node_id)
+        if node is None:
+            continue
+        summary = (node["beat"] or "").replace("\n", " ")
+        if len(summary) > 120:
+            summary = summary[:120] + "…"
+        beats.append(f"{i + 1}. {node['title'] or '(無題)'}: {summary}")
+
+    parts = [
+        "以下は執筆中の物語の、ここまでのシーン一覧です。",
+        "作者がこの先を考えるうえで、聞いてみたくなる質問を3つ作ってください。",
+        "",
+        "条件:",
+        "- 作者が相談相手(あなた)に投げる文として書く。40字以内、日本語、疑問文または依頼文",
+        "- この物語の固有名詞(人物名・場所・出来事)を使い、この物語にしか当てはまらない内容にする",
+        "- 一般論(「テーマは何ですか」など)や、すでに答えの出ている質問は避ける",
+        "- 3つは互いに違う切り口にする(人物の内面 / 関係の変化 / 未回収の要素 / 次の展開 など)",
+        "",
+        "## シーン一覧",
+        *beats,
+    ]
+    if chat is not None:
+        recent = _recent_exchanges(list(chat["messages"]), SUGGEST_HISTORY_TURNS)
+        if recent:
+            parts += [
+                "",
+                "## 直近の会話(この続きとして自然な質問にする)",
+                *recent,
+            ]
+
+    result = await llm.chat_json(
+        [{"role": "user", "content": "\n".join(parts)}],
+        base_url=base_url,
+        schema=QUESTIONS_SCHEMA,
+        max_tokens=512,
+        temperature=SUGGEST_TEMPERATURE,
+        label="質問候補",
+    )
+    questions = [q.strip() for q in (result.get("questions") or []) if isinstance(q, str) and q.strip()]
+    return questions[:3]

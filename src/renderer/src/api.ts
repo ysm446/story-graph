@@ -377,7 +377,13 @@ export interface ChatStreamEvent {
 export const chatApi = {
   list: () => request<ChatSummary[]>('/chats'),
   get: (chatId: string) => request<ChatRecord>(`/chats/${chatId}`),
-  delete: (chatId: string) => request<unknown>(`/chats/${chatId}`, { method: 'DELETE' })
+  delete: (chatId: string) => request<unknown>(`/chats/${chatId}`, { method: 'DELETE' }),
+  // 内容ベースの質問候補。設定オフ・LLM 未起動・生成失敗はすべて空配列で返る
+  suggestQuestions: (body: { chat_id: string | null; anchor_node: string | null; scope: string }) =>
+    request<{ questions: string[] }>('/chat/suggest_questions', {
+      method: 'POST',
+      body: JSON.stringify(body)
+    })
 }
 
 export async function chatSendStream(

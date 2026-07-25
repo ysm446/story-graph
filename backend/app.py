@@ -730,6 +730,33 @@ async def chat_send(body: ChatSendIn) -> StreamingResponse:
     )
 
 
+class ChatSuggestIn(BaseModel):
+    chat_id: str | None = None
+    anchor_node: str | None = None
+    scope: str = "upto"
+
+
+@app.post("/chat/suggest_questions")
+async def chat_suggest_questions(body: ChatSuggestIn) -> dict[str, Any]:
+    """内容ベースの質問候補。設定が無効、LLM 未起動、生成失敗のときは空を返す
+    (UI 側は固定の候補を出したままにするので、失敗をエラーとして扱わない)。"""
+    settings = store.get_settings()
+    if settings.get("chat_dynamic_suggestions") == "0":
+        return {"questions": []}
+    base_url = settings.get("llm_base_url") or llm.DEFAULT_BASE_URL
+    if not await llm.health(base_url):
+        return {"questions": []}
+    anchor = body.anchor_node
+    if anchor is None:
+        canon = store.canon_path()
+        anchor = canon[-1] if canon else None
+    try:
+        questions = await chat_agent.suggest_questions(store, base_url, body.chat_id, anchor, body.scope)
+    except Exception:  # noqa: BLE001
+        return {"questions": []}
+    return {"questions": questions}
+
+
 # ---- settings -------------------------------------------------------
 
 @app.get("/settings")
