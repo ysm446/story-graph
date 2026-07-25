@@ -16,7 +16,7 @@ import {
   type NodeProps
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { api, assetUrl, generateBeatStream, isAbortError, uploadAsset } from '../api'
+import { api, assetUrl, generateBeatStream, isAbortError, proofreadStream, uploadAsset } from '../api'
 import ChatDrawer from '../ChatDrawer'
 import RelationGraph from '../RelationGraph'
 import type { Character, EventInput, GraphEdge, StateSnapshot, StoryEvent, StoryNode } from '../types'
@@ -357,9 +357,16 @@ function BeatTab({
   )
   const [proofreading, setProofreading] = useState(false)
   const [beatBackup, setBeatBackup] = useState<string | null>(null)
-  const [correction, setCorrection] = useState<{ value: string; start: number; end: number } | null>(null)
+  const [correction, setCorrection] = useState<{
+    value: string
+    base: string // 校正リクエスト時点の全文(置換はこの時点の座標で行う)
+    start: number
+    end: number
+    done: boolean
+  } | null>(null)
   const imageInputRef = useRef<HTMLInputElement | null>(null)
   const beatTextareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const proofreadAbortRef = useRef<AbortController | null>(null)
 
   useEffect(() => {
     void api
@@ -375,6 +382,7 @@ function BeatTab({
   useEffect(() => {
     setBeatBackup(null)
     setCorrection(null)
+    proofreadAbortRef.current?.abort()
   }, [node.id])
 
   // シーン本文はスクロールさせず、内容に合わせて高さを自動調整する
@@ -396,37 +404,57 @@ function BeatTab({
     const start = hasSelection ? selStart : 0
     const end = hasSelection ? selEnd : full.length
     const target = full.slice(start, end)
-    const context = hasSelection ? { before: full.slice(0, start), after: full.slice(end) } : undefined
+    const controller = new AbortController()
+    proofreadAbortRef.current = controller
     setProofreading(true)
     setError(null)
-    setCorrection(null)
-    api
-      .proofread(target, proofreadPreset, context)
-      .then(({ value }) => {
-        if (!value || value === target) return
-        // 即置換せず、プレビューを表示して「置換」で確定する(lm-chat 方式)
-        setCorrection({ value, start, end })
+    // プレビューにストリーミング表示する(lm-chat 方式 + 逐次表示)
+    setCorrection({ value: '', base: full, start, end, done: false })
+    void proofreadStream(
+      {
+        text: target,
+        preset_id: proofreadPreset,
+        context_before: hasSelection ? full.slice(0, start) : '',
+        context_after: hasSelection ? full.slice(end) : ''
+      },
+      (e) => {
+        if (e.delta) {
+          setCorrection((c) => (c ? { ...c, value: c.value + e.delta } : c))
+        } else if (e.done) {
+          const value = (e.value ?? '').trim()
+          if (!value || value === target) {
+            setCorrection(null) // 変化なし
+          } else {
+            setCorrection((c) => (c ? { ...c, value, done: true } : c))
+          }
+        } else if (e.error) {
+          setError(e.error)
+          setCorrection(null)
+        }
+      },
+      controller.signal
+    )
+      .catch((e) => {
+        if (!isAbortError(e)) setError(String(e))
+        setCorrection(null)
       })
-      .catch((e) => setError(String(e)))
-      .finally(() => setProofreading(false))
+      .finally(() => {
+        proofreadAbortRef.current = null
+        setProofreading(false)
+      })
   }
 
   const applyCorrection = (): void => {
     const c = correction
-    const textarea = beatTextareaRef.current
-    if (!c) return
+    if (!c || !c.done) return
     setBeatBackup(draft.beat ?? '')
-    if (textarea) {
-      // execCommand なら textarea の undo 履歴(Ctrl+Z)が保持される
-      textarea.focus()
-      textarea.setSelectionRange(c.start, c.end)
-      const ok = document.execCommand('insertText', false, c.value)
-      if (!ok) {
-        setDraft((d) => ({ ...d, beat: (d.beat ?? '').slice(0, c.start) + c.value + (d.beat ?? '').slice(c.end) }))
-      }
-    } else {
-      setDraft((d) => ({ ...d, beat: (d.beat ?? '').slice(0, c.start) + c.value + (d.beat ?? '').slice(c.end) }))
-    }
+    // リクエスト時点の全文(base)を基準に置換する(座標ズレを防ぐ)
+    setDraft((d) => ({ ...d, beat: c.base.slice(0, c.start) + c.value + c.base.slice(c.end) }))
+    setCorrection(null)
+  }
+
+  const cancelCorrection = (): void => {
+    proofreadAbortRef.current?.abort()
     setCorrection(null)
   }
 
@@ -596,27 +624,40 @@ function BeatTab({
               style={{ background: 'var(--bg-card)', borderColor: 'var(--accent-border)' }}
             >
               <div className="mb-1 text-[10px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
-                校正プレビュー{correction.end - correction.start < (draft.beat ?? '').length ? '(選択範囲)' : '(全文)'}
+                校正プレビュー{correction.end - correction.start < correction.base.length ? '(選択範囲)' : '(全文)'}
               </div>
               <div
                 className="inspector-scrollbar mb-2 max-h-40 overflow-y-auto whitespace-pre-wrap text-[12px] leading-relaxed"
                 style={{ color: 'var(--text)' }}
               >
                 {correction.value}
+                {!correction.done && (
+                  <span
+                    className="node-generating-border ml-0.5 inline-block h-3 w-1 align-middle"
+                    style={{ background: 'var(--accent)' }}
+                  />
+                )}
               </div>
               <div className="flex justify-end gap-1.5">
                 <button
                   onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => setCorrection(null)}
+                  onClick={(e) => {
+                    e.preventDefault()
+                    cancelCorrection()
+                  }}
                   className="rounded-md px-2.5 py-1 text-[11px]"
                   style={{ color: 'var(--text-dim)' }}
                 >
-                  キャンセル
+                  {correction.done ? 'キャンセル' : '■ 中止'}
                 </button>
                 <button
                   onMouseDown={(e) => e.preventDefault()}
-                  onClick={applyCorrection}
-                  className="rounded-md px-3 py-1 text-[11px] font-medium text-white"
+                  onClick={(e) => {
+                    e.preventDefault()
+                    applyCorrection()
+                  }}
+                  disabled={!correction.done}
+                  className="rounded-md px-3 py-1 text-[11px] font-medium text-white disabled:opacity-50"
                   style={{ background: 'var(--accent)' }}
                 >
                   置換

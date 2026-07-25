@@ -473,6 +473,24 @@ async def proofread(body: ProofreadIn) -> dict[str, str]:
     return {"value": value}
 
 
+@app.post("/proofread/stream")
+async def proofread_stream(body: ProofreadIn) -> StreamingResponse:
+    if not body.text.strip():
+        raise HTTPException(400, "文章が空です")
+    try:
+        base_url = await llama.ensure_running(store.get_settings())
+    except RuntimeError as e:
+        async def error_stream():
+            yield generation._sse({"error": str(e)})
+        return StreamingResponse(error_stream(), media_type="text/event-stream")
+    return StreamingResponse(
+        generation.proofread_stream(
+            store, base_url, body.text, body.preset_id, body.context_before, body.context_after
+        ),
+        media_type="text/event-stream",
+    )
+
+
 @app.post("/suggest/scene_meta")
 async def suggest_scene_meta(body: SuggestFieldIn) -> dict[str, str]:
     if not body.beat.strip():

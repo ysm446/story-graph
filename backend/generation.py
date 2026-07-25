@@ -455,15 +455,12 @@ def proofread_presets(store: Store) -> list[dict[str, str]]:
     return presets
 
 
-async def proofread(
-    store: Store,
-    base_url: str,
-    text: str,
-    preset_id: str,
-    context_before: str = "",
-    context_after: str = "",
-) -> str:
-    """text を校正して返す。context_before/after があれば「選択範囲のみの校正」モード:
+def _proofread_messages(
+    store: Store, text: str, preset_id: str, context_before: str, context_after: str
+) -> tuple[list[dict[str, str]], str]:
+    """校正のメッセージとログ用ラベルを組み立てる。
+
+    context_before/after があれば「選択範囲のみの校正」モード:
     前後の文脈を参考として渡し、校正対象部分だけを返させる。"""
     preset = next((p for p in proofread_presets(store) if p["id"] == preset_id), None)
     if preset is None:
@@ -489,17 +486,48 @@ async def proofread(
     else:
         user_content = text
         label = f"校正({preset['name']})"
+    messages = [
+        {"role": "system", "content": preset["prompt"]},
+        {"role": "user", "content": user_content},
+    ]
+    return messages, label
+
+
+async def proofread(
+    store: Store,
+    base_url: str,
+    text: str,
+    preset_id: str,
+    context_before: str = "",
+    context_after: str = "",
+) -> str:
+    messages, label = _proofread_messages(store, text, preset_id, context_before, context_after)
     result = await llm.chat(
-        [
-            {"role": "system", "content": preset["prompt"]},
-            {"role": "user", "content": user_content},
-        ],
-        base_url=base_url,
-        temperature=0.3,
-        max_tokens=2048,
-        label=label,
+        messages, base_url=base_url, temperature=0.3, max_tokens=2048, label=label
     )
     return result["content"].strip()
+
+
+async def proofread_stream(
+    store: Store,
+    base_url: str,
+    text: str,
+    preset_id: str,
+    context_before: str = "",
+    context_after: str = "",
+) -> AsyncIterator[str]:
+    """校正の SSE ストリーム({delta} … {done, value})。"""
+    try:
+        messages, label = _proofread_messages(store, text, preset_id, context_before, context_after)
+        parts: list[str] = []
+        async for delta in llm.chat_stream(
+            messages, base_url=base_url, temperature=0.3, max_tokens=2048, label=label
+        ):
+            parts.append(delta)
+            yield _sse({"delta": delta})
+        yield _sse({"done": True, "value": "".join(parts).strip()})
+    except Exception as e:  # noqa: BLE001
+        yield _sse({"error": f"{type(e).__name__}: {e}"})
 
 
 # ---- イベント抽出(手動ビート用) -------------------------------------

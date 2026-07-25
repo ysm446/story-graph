@@ -148,6 +148,46 @@ export const api = {
     })
 }
 
+export interface ProofreadStreamEvent {
+  delta?: string
+  done?: boolean
+  value?: string
+  error?: string
+}
+
+export async function proofreadStream(
+  body: { text: string; preset_id: string; context_before: string; context_after: string },
+  onEvent: (data: ProofreadStreamEvent) => void,
+  signal?: AbortSignal
+): Promise<void> {
+  if (!baseUrl) throw new Error('backend not ready')
+  const res = await fetch(`${baseUrl}/proofread/stream`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal
+  })
+  if (!res.ok || !res.body) {
+    throw new Error(`${res.status} /proofread/stream: ${await res.text()}`)
+  }
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const parts = buffer.split('\n\n')
+    buffer = parts.pop() ?? ''
+    for (const part of parts) {
+      const line = part.trim()
+      if (line.startsWith('data: ')) {
+        onEvent(JSON.parse(line.slice(6)) as ProofreadStreamEvent)
+      }
+    }
+  }
+}
+
 export interface RenderStreamEvent {
   scene_start?: string
   title?: string | null
