@@ -350,7 +350,22 @@ function BeatTab({
 }): React.JSX.Element {
   const [draft, setDraft] = useState<Partial<StoryNode>>({})
   const [error, setError] = useState<string | null>(null)
+  const [suggesting, setSuggesting] = useState<'title' | 'emotional_core' | null>(null)
   const imageInputRef = useRef<HTMLInputElement | null>(null)
+
+  const suggestField = (field: 'title' | 'emotional_core'): void => {
+    const beat = (draft.beat ?? '').trim()
+    if (!beat || suggesting) return
+    setSuggesting(field)
+    setError(null)
+    api
+      .suggestSceneMeta(beat, field)
+      .then(({ value }) => {
+        if (value) setDraft((d) => ({ ...d, [field]: value }))
+      })
+      .catch((e) => setError(String(e)))
+      .finally(() => setSuggesting(null))
+  }
 
   useEffect(() => {
     setDraft({
@@ -424,8 +439,22 @@ function BeatTab({
         </div>
       )}
       <label className="block">
-        <span className={labelClass} style={{ color: 'var(--text-faint)' }}>
-          Title
+        <span className="mb-1 flex items-center justify-between">
+          <span className={labelClass.replace('mb-1 block ', '')} style={{ color: 'var(--text-faint)' }}>
+            Title
+          </span>
+          <button
+            onClick={(e) => {
+              e.preventDefault()
+              suggestField('title')
+            }}
+            disabled={suggesting !== null || !(draft.beat ?? '').trim()}
+            className="rounded-md border px-1.5 py-px text-[10px] disabled:opacity-40"
+            style={{ borderColor: 'var(--accent-border)', color: 'var(--accent)' }}
+            title="シーン本文からタイトルを自動生成"
+          >
+            {suggesting === 'title' ? '生成中…' : '✨ 自動生成'}
+          </button>
         </span>
         <input
           value={draft.title ?? ''}
@@ -447,8 +476,22 @@ function BeatTab({
         />
       </label>
       <label className="block">
-        <span className={labelClass} style={{ color: 'var(--text-faint)' }}>
-          Emotional core
+        <span className="mb-1 flex items-center justify-between">
+          <span className={labelClass.replace('mb-1 block ', '')} style={{ color: 'var(--text-faint)' }}>
+            Emotional core
+          </span>
+          <button
+            onClick={(e) => {
+              e.preventDefault()
+              suggestField('emotional_core')
+            }}
+            disabled={suggesting !== null || !(draft.beat ?? '').trim()}
+            className="rounded-md border px-1.5 py-px text-[10px] disabled:opacity-40"
+            style={{ borderColor: 'var(--accent-border)', color: 'var(--accent)' }}
+            title="シーン本文から感情の核を自動生成"
+          >
+            {suggesting === 'emotional_core' ? '生成中…' : '✨ 自動生成'}
+          </button>
         </span>
         <input
           value={draft.emotional_core ?? ''}

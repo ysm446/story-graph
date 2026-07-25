@@ -86,6 +86,11 @@ export const api = {
     request<SceneEntry[]>(
       `/renders?preset_id=${encodeURIComponent(presetId)}${povChar ? `&pov_char=${encodeURIComponent(povChar)}` : ''}`
     ),
+  suggestSceneMeta: (beat: string, field: 'title' | 'emotional_core') =>
+    request<{ value: string }>('/suggest/scene_meta', {
+      method: 'POST',
+      body: JSON.stringify({ beat, field })
+    }),
   promotePreview: (nodeId: string, selection: string) =>
     request<PromoteProposal>(`/nodes/${nodeId}/promote_preview`, {
       method: 'POST',

@@ -440,6 +440,25 @@ async def generate_beat(body: GenerateBeatIn) -> StreamingResponse:
     )
 
 
+class SuggestFieldIn(BaseModel):
+    beat: str
+    field: str  # title | emotional_core
+
+
+@app.post("/suggest/scene_meta")
+async def suggest_scene_meta(body: SuggestFieldIn) -> dict[str, str]:
+    if not body.beat.strip():
+        raise HTTPException(400, "シーン本文が空です")
+    try:
+        base_url = await llama.ensure_running(store.get_settings())
+        value = await generation.suggest_field(base_url, body.beat, body.field)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except RuntimeError as e:
+        raise HTTPException(500, str(e))
+    return {"value": value}
+
+
 @app.post("/nodes/{node_id}/extract_events")
 async def extract_events(node_id: str) -> dict[str, Any]:
     if store.get_node(node_id) is None:

@@ -383,6 +383,37 @@ async def _generate_beat_impl(
     yield _sse({"done": True, "node": node, "validation": errors})
 
 
+# ---- シーンメタ情報の提案(タイトル / 感情の核) ----------------------
+
+SUGGEST_FIELD_PROMPTS = {
+    "title": "このシーン(出来事の仕様書)にふさわしい短いタイトルを1つ生成してください。"
+             "6〜14文字程度。体言止めか短い句で、内容を説明しすぎず余韻を残すこと。",
+    "emotional_core": "このシーン(出来事の仕様書)の感情的な核を1行で表現してください。"
+                      "20字前後。出来事の説明ではなく、シーンを貫く感情の質を突く言葉で。"
+                      "例: 「怒りより深い、静かな失望」",
+}
+
+_SUGGEST_LABELS = {"title": "タイトル生成", "emotional_core": "感情の核生成"}
+
+
+async def suggest_field(base_url: str, beat: str, field: str) -> str:
+    prompt = SUGGEST_FIELD_PROMPTS.get(field)
+    if prompt is None:
+        raise ValueError(f"unknown field: {field}")
+    result = await llm.chat_json(
+        [
+            {"role": "system", "content": prompt + "\n出力は必ず指定の JSON 形式に従ってください。"},
+            {"role": "user", "content": beat},
+        ],
+        base_url=base_url,
+        schema={"type": "object", "properties": {"value": {"type": "string"}}, "required": ["value"]},
+        temperature=0.6,
+        max_tokens=256,
+        label=_SUGGEST_LABELS[field],
+    )
+    return str(result.get("value", "")).strip()
+
+
 # ---- イベント抽出(手動ビート用) -------------------------------------
 
 EXTRACTION_PROMPT = f"""あなたは物語のビート(出来事の仕様書)から状態変化イベントを抽出する解析器です。

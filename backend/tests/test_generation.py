@@ -100,6 +100,19 @@ def test_generate_beat_requires_characters(monkeypatch):
     assert "error" in events[-1]
 
 
+def test_suggest_field(monkeypatch):
+    async def fake_chat_json(messages, **kwargs):
+        assert "タイトル" in messages[0]["content"]
+        assert messages[1]["content"] == "アヤは橋でケンの裏切りを知る。"
+        return {"value": "石橋の告白"}
+
+    monkeypatch.setattr(llm_mod, "chat_json", fake_chat_json)
+    value = asyncio.run(generation.suggest_field("http://fake", "アヤは橋でケンの裏切りを知る。", "title"))
+    assert value == "石橋の告白"
+    with pytest.raises(ValueError):
+        asyncio.run(generation.suggest_field("http://fake", "x", "nonsense"))
+
+
 def test_extract_events_replaces(store, monkeypatch):
     node = store.append_node({"beat": "アヤが村を出る", "cast": ["aya"]}, [
         {"type": "char_introduce", "payload": {"char": "aya"}},
