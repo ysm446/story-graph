@@ -1,5 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
-import { api, chatApi, chatSendStream, isAbortError, type ChatStreamEvent, type ChatSummary } from './api'
+import {
+  api,
+  assetUrl,
+  chatApi,
+  chatSendStream,
+  isAbortError,
+  type ChatStreamEvent,
+  type ChatSummary
+} from './api'
 import { Markdown } from './Markdown'
 import type { Character, StoryNode } from './types'
 import { useElapsedSeconds } from './useElapsed'
@@ -41,6 +49,34 @@ const TEMPLATE_WINDOW = 3 // 同時に見せる件数
 const MAX_DYNAMIC = 2 // うち、内容から生成された質問に使う枠
 const RING_RADIUS = 10 // コンテキスト使用量リング(26px の SVG 内)
 const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS
+
+/** キャラのアイコン。画像が無いときは色付きの頭文字で代替する
+ *  (プロフィール画像は装飾専用なので、無くても成り立つのが前提) */
+function CharAvatar({ char, size }: { char: Character; size: number }): React.JSX.Element {
+  const src = assetUrl(char.portrait_path)
+  const color = char.color ?? '#8a8fa8'
+  const style = { width: size, height: size, border: `1.5px solid ${color}` }
+  if (src) {
+    return (
+      <img
+        src={src}
+        alt={char.name}
+        title={char.name}
+        className="shrink-0 rounded-full object-cover"
+        style={style}
+      />
+    )
+  }
+  return (
+    <span
+      title={char.name}
+      className="flex shrink-0 items-center justify-center rounded-full font-semibold"
+      style={{ ...style, background: `${color}33`, color, fontSize: Math.round(size * 0.45) }}
+    >
+      {char.name.slice(0, 1)}
+    </span>
+  )
+}
 
 export default function ChatDrawer({
   selectedId,
@@ -139,8 +175,19 @@ export default function ChatDrawer({
     }
   }
 
+  // 履歴一覧の取り直し。回答が終わるたびに呼ぶ(開いた時だけだと、いま話した
+  // チャットが「履歴…」に出てこない)
+  const refreshHistory = async (): Promise<void> => {
+    try {
+      setHistory(await chatApi.list())
+    } catch {
+      /* 一覧が取れなくても会話は続けられる */
+    }
+  }
+
   useEffect(() => {
-    if (open) void chatApi.list().then(setHistory).catch(() => setHistory([]))
+    if (open) void refreshHistory()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
   // 開いたタイミング(と設定変更時)に候補と使用量を取っておく
@@ -294,9 +341,11 @@ export default function ChatDrawer({
       abortRef.current = null
       setBusy(false)
       setLiveText('')
-      // 回答後に、会話を踏まえたフォローアップ質問へ差し替え、使用量も更新する
+      // 回答後に、会話を踏まえたフォローアップ質問へ差し替え、使用量も更新する。
+      // 履歴一覧も取り直して、いま話したチャットを選び直せるようにする
       void refreshSuggestions(latestChatId, effectiveAnchor)
       void refreshUsage(latestChatId, effectiveAnchor)
+      void refreshHistory()
     }
   }
 
@@ -348,6 +397,7 @@ export default function ChatDrawer({
           {/* ヘッダー: アンカー / スコープ / 履歴 */}
           <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px]" style={{ color: 'var(--text-faint)' }}>
             {/* 話す相手: 相談(編集者) or キャラ本人。切替は新規チャット扱い */}
+            {activeChar && <CharAvatar char={activeChar} size={20} />}
             <select
               value={charId ?? ''}
               onChange={(e) => switchTarget(e.target.value || null)}
@@ -478,6 +528,9 @@ export default function ChatDrawer({
               <div className="pt-6 text-center text-[12px]" style={{ color: 'var(--text-faint)' }}>
                 {activeChar ? (
                   <>
+                    <div className="mb-2 flex justify-center">
+                      <CharAvatar char={activeChar} size={56} />
+                    </div>
                     アンカー時点の {activeChar.name} 本人と話せます。
                     {roleplay ? '劇中の一場面として(本編には含まれません)。' : 'インタビュー形式で。'}
                     <br />
@@ -507,7 +560,9 @@ export default function ChatDrawer({
               }
               if (item.kind === 'assistant') {
                 return (
-                  <div key={i} className="mb-2 flex">
+                  <div key={i} className="mb-2 flex items-start gap-2">
+                    {/* キャラモードでは発言者のアイコンを添える */}
+                    {activeChar && <CharAvatar char={activeChar} size={56} />}
                     <div
                       className="max-w-[80%] rounded-2xl rounded-bl-md border px-3 py-1.5 text-[13px] leading-relaxed"
                       style={{
@@ -563,10 +618,15 @@ export default function ChatDrawer({
               )
             })}
             {liveText && (
-              <div className="mb-2 flex">
+              <div className="mb-2 flex items-start gap-2">
+                {activeChar && <CharAvatar char={activeChar} size={56} />}
                 <div
                   className="max-w-[80%] rounded-2xl rounded-bl-md border px-3 py-1.5 text-[13px] leading-relaxed"
-                  style={{ background: 'var(--bg-card)', borderColor: 'var(--border)', color: 'var(--text)' }}
+                  style={{
+                    background: 'var(--bg-card)',
+                    borderColor: activeChar?.color || 'var(--border)',
+                    color: 'var(--text)'
+                  }}
                 >
                   <Markdown text={liveText} />
                   <span
