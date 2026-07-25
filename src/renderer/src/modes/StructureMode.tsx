@@ -357,6 +357,7 @@ function BeatTab({
   )
   const [proofreading, setProofreading] = useState(false)
   const [beatBackup, setBeatBackup] = useState<string | null>(null)
+  const [correction, setCorrection] = useState<{ value: string; start: number; end: number } | null>(null)
   const imageInputRef = useRef<HTMLInputElement | null>(null)
   const beatTextareaRef = useRef<HTMLTextAreaElement | null>(null)
 
@@ -373,6 +374,7 @@ function BeatTab({
 
   useEffect(() => {
     setBeatBackup(null)
+    setCorrection(null)
   }, [node.id])
 
   const runProofread = (): void => {
@@ -380,25 +382,44 @@ function BeatTab({
     if (!full.trim() || proofreading) return
     // テキストエリアに選択範囲があればその部分だけを校正する
     const textarea = beatTextareaRef.current
-    const start = textarea?.selectionStart ?? 0
-    const end = textarea?.selectionEnd ?? 0
-    const hasSelection = textarea !== null && end > start && full.slice(start, end).trim() !== ''
-    const target = hasSelection ? full.slice(start, end) : full.trim()
+    const selStart = textarea?.selectionStart ?? 0
+    const selEnd = textarea?.selectionEnd ?? 0
+    const hasSelection = textarea !== null && selEnd > selStart && full.slice(selStart, selEnd).trim() !== ''
+    const start = hasSelection ? selStart : 0
+    const end = hasSelection ? selEnd : full.length
+    const target = full.slice(start, end)
     const context = hasSelection ? { before: full.slice(0, start), after: full.slice(end) } : undefined
     setProofreading(true)
     setError(null)
+    setCorrection(null)
     api
       .proofread(target, proofreadPreset, context)
       .then(({ value }) => {
-        if (!value) return
-        setBeatBackup(full)
-        setDraft((d) => ({
-          ...d,
-          beat: hasSelection ? full.slice(0, start) + value + full.slice(end) : value
-        }))
+        if (!value || value === target) return
+        // 即置換せず、プレビューを表示して「置換」で確定する(lm-chat 方式)
+        setCorrection({ value, start, end })
       })
       .catch((e) => setError(String(e)))
       .finally(() => setProofreading(false))
+  }
+
+  const applyCorrection = (): void => {
+    const c = correction
+    const textarea = beatTextareaRef.current
+    if (!c) return
+    setBeatBackup(draft.beat ?? '')
+    if (textarea) {
+      // execCommand なら textarea の undo 履歴(Ctrl+Z)が保持される
+      textarea.focus()
+      textarea.setSelectionRange(c.start, c.end)
+      const ok = document.execCommand('insertText', false, c.value)
+      if (!ok) {
+        setDraft((d) => ({ ...d, beat: (d.beat ?? '').slice(0, c.start) + c.value + (d.beat ?? '').slice(c.end) }))
+      }
+    } else {
+      setDraft((d) => ({ ...d, beat: (d.beat ?? '').slice(0, c.start) + c.value + (d.beat ?? '').slice(c.end) }))
+    }
+    setCorrection(null)
   }
 
   const suggestField = (field: 'title' | 'emotional_core'): void => {
@@ -560,14 +581,50 @@ function BeatTab({
             </button>
           </span>
         </span>
-        <textarea
-          ref={beatTextareaRef}
-          rows={6}
-          value={draft.beat ?? ''}
-          onChange={(e) => setDraft((d) => ({ ...d, beat: e.target.value }))}
-          className="w-full rounded-lg border px-3 py-2 text-[13px] leading-relaxed outline-none"
-          style={inputStyle}
-        />
+        <span className="relative block">
+          {correction && (
+            <div
+              className="absolute inset-x-0 bottom-full z-20 mb-1 rounded-xl border p-2.5 shadow-lg shadow-black/40"
+              style={{ background: 'var(--bg-card)', borderColor: 'var(--accent-border)' }}
+            >
+              <div className="mb-1 text-[10px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
+                校正プレビュー{correction.end - correction.start < (draft.beat ?? '').length ? '(選択範囲)' : '(全文)'}
+              </div>
+              <div
+                className="inspector-scrollbar mb-2 max-h-40 overflow-y-auto whitespace-pre-wrap text-[12px] leading-relaxed"
+                style={{ color: 'var(--text)' }}
+              >
+                {correction.value}
+              </div>
+              <div className="flex justify-end gap-1.5">
+                <button
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => setCorrection(null)}
+                  className="rounded-md px-2.5 py-1 text-[11px]"
+                  style={{ color: 'var(--text-dim)' }}
+                >
+                  キャンセル
+                </button>
+                <button
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={applyCorrection}
+                  className="rounded-md px-3 py-1 text-[11px] font-medium text-white"
+                  style={{ background: 'var(--accent)' }}
+                >
+                  置換
+                </button>
+              </div>
+            </div>
+          )}
+          <textarea
+            ref={beatTextareaRef}
+            rows={6}
+            value={draft.beat ?? ''}
+            onChange={(e) => setDraft((d) => ({ ...d, beat: e.target.value }))}
+            className="w-full rounded-lg border px-3 py-2 text-[13px] leading-relaxed outline-none"
+            style={inputStyle}
+          />
+        </span>
       </label>
       <label className="block">
         <span className="mb-1 flex items-center justify-between">
