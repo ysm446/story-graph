@@ -86,6 +86,14 @@ export default function CharactersMode(): React.JSX.Element {
     }
   }
 
+  // 下書きが保存値と異なるか(シーンエディタと同じ判定方式)。画像は
+  // 切り抜き確定時にその場で保存されるので、ここでは判定に含めない
+  const dirty =
+    selected !== null &&
+    (['name', 'color', 'profile', 'appearance', 'voice'] as const).some(
+      (key) => (draft[key] ?? '') !== (selected[key] ?? '')
+    )
+
   const handleDelete = async (): Promise<void> => {
     if (!selectedId) return
     if (!window.confirm(`「${selected?.name}」を削除しますか?`)) return
@@ -252,9 +260,10 @@ export default function CharactersMode(): React.JSX.Element {
             <div className="flex items-center gap-2">
               <button
                 onClick={() => void handleSave()}
-                disabled={saving}
-                className="rounded-lg px-4 py-1.5 text-[13px] font-medium text-white"
+                disabled={saving || !dirty}
+                className="rounded-lg px-4 py-1.5 text-[13px] font-medium text-white disabled:opacity-40"
                 style={{ background: saving ? 'var(--accent-hover)' : 'var(--accent)' }}
+                title={dirty ? undefined : '変更はありません'}
               >
                 {saving ? '保存中…' : '保存'}
               </button>
