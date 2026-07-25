@@ -365,6 +365,45 @@ class Store:
         path.mkdir(parents=True, exist_ok=True)
         return str(path)
 
+    def gc_assets(self) -> int:
+        """assets/images 内の未参照ファイルを削除し、削除数を返す。
+
+        挿絵・プロフィール画像の差し替え/取り外し/ノード・キャラ削除では
+        DB の参照が外れるだけでファイルが残る。ブランチ複製などで同じファイルを
+        複数レコードが参照し得るため、その場削除ではなくライブラリを開いた
+        タイミングの GC でまとめて回収する。アップロード直後の未参照ウィンドウを
+        守るため、直近1時間以内に作られたファイルは対象外にする。
+        """
+        import time
+        from pathlib import Path
+
+        assets = self.assets_dir()
+        if assets is None:
+            return 0
+        referenced: set[str] = set()
+        for sql in (
+            "SELECT image_path FROM nodes WHERE image_path IS NOT NULL",
+            "SELECT portrait_path FROM characters WHERE portrait_path IS NOT NULL",
+            "SELECT portrait_source_path FROM characters WHERE portrait_source_path IS NOT NULL",
+        ):
+            for row in self.conn.execute(sql).fetchall():
+                value = row[0]
+                if value:
+                    referenced.add(Path(value).name)
+        removed = 0
+        grace_limit = time.time() - 3600
+        for f in Path(assets).iterdir():
+            if not f.is_file() or f.name in referenced:
+                continue
+            try:
+                if f.stat().st_mtime > grace_limit:
+                    continue
+                f.unlink()
+                removed += 1
+            except OSError:
+                pass  # 使用中などで消せなくても致命的ではないので続行
+        return removed
+
     def set_node_position(self, node_id: str, x: float | None, y: float | None) -> None:
         """キャンバス上の手動配置を保存する(state には影響しないので dirty 化しない)。"""
         self.conn.execute(

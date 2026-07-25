@@ -54,6 +54,12 @@ async def _startup() -> None:
     import embed
 
     asyncio.get_event_loop().run_in_executor(None, embed.warmup)
+    try:
+        removed = store.gc_assets()
+        if removed:
+            print(f"[assets] 未参照ファイルを {removed} 件削除しました")
+    except Exception as e:  # GC の失敗で起動を止めない
+        print(f"[assets] GC に失敗: {e}")
 
 
 @app.on_event("shutdown")
@@ -153,6 +159,10 @@ async def switch_library(body: LibrarySwitchIn) -> dict[str, Any]:
         store.switch_library(body.root)
     except OSError as e:
         raise HTTPException(400, f"ライブラリを開けません: {e}")
+    try:
+        store.gc_assets()
+    except Exception as e:  # GC の失敗で切替を止めない
+        print(f"[assets] GC に失敗: {e}")
     return {"root": store.root}
 
 
