@@ -1,19 +1,37 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, initApi } from './api'
+import ModelBar from './ModelBar'
 import StatusBar from './StatusBar'
 import StructureMode from './modes/StructureMode'
 import ReaderMode from './modes/ReaderMode'
 import CharactersMode from './modes/CharactersMode'
 import SettingsMode from './modes/SettingsMode'
 
-type Mode = 'structure' | 'reader' | 'characters' | 'settings'
+type Mode = 'structure' | 'reader' | 'characters'
 
 const MODES: Array<{ id: Mode; label: string }> = [
   { id: 'structure', label: '構造' },
   { id: 'characters', label: 'キャラクター' },
-  { id: 'reader', label: '鑑賞' },
-  { id: 'settings', label: '設定' }
+  { id: 'reader', label: '鑑賞' }
 ]
+
+function GearIcon(): React.JSX.Element {
+  return (
+    <svg
+      width="17"
+      height="17"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+    </svg>
+  )
+}
 
 function normalizePath(path: string): string {
   return path.replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase()
@@ -70,7 +88,7 @@ function LibraryMenu(): React.JSX.Element {
       </button>
       {open && (
         <div
-          className="absolute right-0 top-8 z-50 w-72 rounded-xl border p-1.5 shadow-lg shadow-black/40"
+          className="absolute left-0 top-8 z-50 w-72 rounded-xl border p-1.5 shadow-lg shadow-black/40"
           style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)' }}
         >
           <div className="px-2 py-1 text-[10px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
@@ -114,10 +132,18 @@ function LibraryMenu(): React.JSX.Element {
 
 export default function App(): React.JSX.Element {
   const [mode, setMode] = useState<Mode>('structure')
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [modelRefreshKey, setModelRefreshKey] = useState(0)
   const [backendReady, setBackendReady] = useState<boolean | null>(null)
   const [backendError, setBackendError] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // 設定ポップアップを閉じるとき、上部バーのモデル選択を設定変更と同期させる
+  const closeSettings = (): void => {
+    setSettingsOpen(false)
+    setModelRefreshKey((k) => k + 1)
+  }
 
   useEffect(() => {
     // ドロップゾーン外への誤ドロップでウィンドウがファイル表示に遷移するのを防ぐ
@@ -175,16 +201,44 @@ export default function App(): React.JSX.Element {
 
   return (
     <div className="flex h-screen flex-col" style={{ background: 'var(--bg)' }}>
+      {/* 上部バー: 左=ライブラリ / 中央=モデル選択 / 右=backend状態 + 設定 */}
       <header
-        className="flex h-10 shrink-0 items-center gap-1 border-b px-3"
+        className="relative flex h-10 shrink-0 items-center border-b px-3"
         style={{ background: 'var(--bg-sidebar)', borderColor: 'var(--border)' }}
       >
-        <span
-          className="mr-4 text-[11px] font-semibold uppercase tracking-[0.18em]"
-          style={{ color: 'var(--text-dim)' }}
-        >
-          Story Graph
-        </span>
+        <div className="absolute left-3 top-1/2 -translate-y-1/2">
+          {backendReady === true && <LibraryMenu />}
+        </div>
+        <div className="mx-auto flex items-center">
+          {backendReady === true && <ModelBar refreshKey={modelRefreshKey} />}
+        </div>
+        <div className="absolute right-3 top-1/2 flex -translate-y-1/2 items-center gap-3 text-[12px]" style={{ color: 'var(--text-faint)' }}>
+          <span className="flex items-center gap-2">
+            <span
+              className="inline-block h-2 w-2 rounded-full"
+              style={{
+                background:
+                  backendReady === true ? '#3ecf8e' : backendReady === false ? 'var(--danger)' : '#8a8fa8'
+              }}
+            />
+            {backendReady === true ? 'backend' : backendReady === false ? 'backend 停止' : '起動中…'}
+          </span>
+          <button
+            onClick={() => setSettingsOpen(true)}
+            disabled={backendReady !== true}
+            className="rounded-lg p-1.5 transition-colors disabled:opacity-40"
+            style={{ color: 'var(--text-dim)' }}
+            title="設定"
+          >
+            <GearIcon />
+          </button>
+        </div>
+      </header>
+      {/* 下段メニューバー: モード切替 */}
+      <nav
+        className="flex h-9 shrink-0 items-center gap-1 border-b px-3"
+        style={{ background: 'var(--bg-sidebar)', borderColor: 'var(--border)' }}
+      >
         {MODES.map((m) => (
           <button
             key={m.id}
@@ -199,20 +253,7 @@ export default function App(): React.JSX.Element {
             {m.label}
           </button>
         ))}
-        <div className="ml-auto flex items-center gap-3 text-[12px]" style={{ color: 'var(--text-faint)' }}>
-          {backendReady === true && <LibraryMenu />}
-          <span className="flex items-center gap-2">
-            <span
-              className="inline-block h-2 w-2 rounded-full"
-              style={{
-                background:
-                  backendReady === true ? '#3ecf8e' : backendReady === false ? 'var(--danger)' : '#8a8fa8'
-              }}
-            />
-            {backendReady === true ? 'backend' : backendReady === false ? 'backend 停止' : '起動中…'}
-          </span>
-        </div>
-      </header>
+      </nav>
       <div className="min-h-0 flex-1">
         {backendReady === false ? (
           <div className="flex h-full items-center justify-center">
@@ -234,11 +275,44 @@ export default function App(): React.JSX.Element {
             {mode === 'structure' && <StructureMode />}
             {mode === 'reader' && <ReaderMode />}
             {mode === 'characters' && <CharactersMode />}
-            {mode === 'settings' && <SettingsMode />}
           </>
         )}
       </div>
       <StatusBar backendReady={backendReady === true} />
+      {/* 設定ポップアップ */}
+      {settingsOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center"
+          style={{ background: 'rgba(0,0,0,0.55)' }}
+          onClick={closeSettings}
+        >
+          <div
+            className="flex h-[85vh] w-[900px] max-w-[94vw] flex-col overflow-hidden rounded-2xl border"
+            style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div
+              className="flex shrink-0 items-center justify-between border-b px-4 py-2.5"
+              style={{ borderColor: 'var(--border)' }}
+            >
+              <span className="text-[13px] font-semibold" style={{ color: 'var(--text)' }}>
+                設定
+              </span>
+              <button
+                onClick={closeSettings}
+                className="rounded-md px-2 py-1 text-[15px] leading-none"
+                style={{ color: 'var(--text-dim)' }}
+                title="閉じる"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="min-h-0 flex-1">
+              <SettingsMode />
+            </div>
+          </div>
+        </div>
+      )}
       {toast && (
         <div
           className="fixed bottom-10 right-4 z-50 rounded-xl border px-4 py-2 text-[12px] shadow-lg shadow-black/40"
