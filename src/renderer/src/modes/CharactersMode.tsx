@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, assetUrl, uploadAsset } from '../api'
+import ImageCropModal, { type CropState } from '../ImageCropModal'
 import type { Character } from '../types'
 
 const FIELD_DEFS: Array<{ key: 'profile' | 'appearance' | 'voice'; label: string; rows: number }> = [
@@ -13,7 +14,45 @@ export default function CharactersMode(): React.JSX.Element {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [draft, setDraft] = useState<Partial<Character>>({})
   const [saving, setSaving] = useState(false)
+  const [cropTarget, setCropTarget] = useState<{
+    source: File | string
+    isNewFile: boolean
+    initial: CropState | null
+  } | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+
+  const openRecrop = (): void => {
+    // 保存済みの元画像から切り抜き直す(前回の位置・ズームを復元)
+    const sourcePath = draft.portrait_source_path
+    const url = assetUrl(sourcePath)
+    if (!url) return
+    let initial: CropState | null = null
+    try {
+      initial = draft.portrait_crop ? (JSON.parse(draft.portrait_crop) as CropState) : null
+    } catch {
+      initial = null
+    }
+    setCropTarget({ source: url, isNewFile: false, initial })
+  }
+
+  const handleCropped = async (blob: Blob, state: CropState): Promise<void> => {
+    const target = cropTarget
+    setCropTarget(null)
+    if (!target || !selectedId) return
+    const sourcePath = target.isNewFile
+      ? (await uploadAsset(target.source as File)).path
+      : draft.portrait_source_path
+    const cropped = new File([blob], 'portrait.png', { type: 'image/png' })
+    const { path } = await uploadAsset(cropped)
+    const patch = {
+      portrait_path: path,
+      portrait_source_path: sourcePath,
+      portrait_crop: JSON.stringify(state)
+    }
+    await api.updateCharacter(selectedId, patch)
+    setDraft((d) => ({ ...d, ...patch }))
+    await reload()
+  }
 
   const selected = characters.find((c) => c.id === selectedId) ?? null
 
@@ -57,6 +96,15 @@ export default function CharactersMode(): React.JSX.Element {
 
   return (
     <div className="flex h-full">
+      {cropTarget && (
+        <ImageCropModal
+          source={cropTarget.source}
+          initial={cropTarget.initial}
+          title="プロフィール画像の切り抜き"
+          onCancel={() => setCropTarget(null)}
+          onCropped={(blob, state) => void handleCropped(blob, state)}
+        />
+      )}
       <aside
         className="flex w-64 shrink-0 flex-col border-r"
         style={{ background: 'var(--bg-sidebar)', borderColor: 'var(--border)' }}
@@ -113,10 +161,13 @@ export default function CharactersMode(): React.JSX.Element {
             <div className="mb-4 flex items-center gap-3">
               {/* プロフィール画像(装飾専用。無くても成り立つ) */}
               <button
-                onClick={() => fileInputRef.current?.click()}
+                onClick={() => {
+                  if (draft.portrait_source_path) openRecrop()
+                  else fileInputRef.current?.click()
+                }}
                 className="group relative h-16 w-16 shrink-0 overflow-hidden rounded-full border-2"
                 style={{ borderColor: draft.color ?? '#8a8fa8', background: 'var(--bg-input)' }}
-                title="クリックで画像を設定"
+                title={draft.portrait_source_path ? 'クリックで切り抜き直し' : 'クリックで画像を設定'}
               >
                 {assetUrl(draft.portrait_path) ? (
                   <img src={assetUrl(draft.portrait_path)!} className="h-full w-full object-cover" />
@@ -128,7 +179,7 @@ export default function CharactersMode(): React.JSX.Element {
                 <span
                   className="absolute inset-0 hidden items-center justify-center bg-black/50 text-[10px] text-white group-hover:flex"
                 >
-                  変更
+                  {draft.portrait_source_path ? '調整' : '設定'}
                 </span>
               </button>
               <input
@@ -140,11 +191,8 @@ export default function CharactersMode(): React.JSX.Element {
                   const file = e.target.files?.[0]
                   e.target.value = ''
                   if (!file || !selectedId) return
-                  void uploadAsset(file).then(async ({ path }) => {
-                    await api.updateCharacter(selectedId, { portrait_path: path })
-                    setDraft((d) => ({ ...d, portrait_path: path }))
-                    await reload()
-                  })
+                  // 直接アップロードせず、切り抜きモーダルを挟む(元画像も保存される)
+                  setCropTarget({ source: file, isNewFile: true, initial: null })
                 }}
               />
               <input
@@ -160,20 +208,31 @@ export default function CharactersMode(): React.JSX.Element {
                 style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
               />
               {draft.portrait_path && (
-                <button
-                  onClick={() => {
-                    if (!selectedId) return
-                    void api.updateCharacter(selectedId, { portrait_path: null }).then(async () => {
-                      setDraft((d) => ({ ...d, portrait_path: null }))
-                      await reload()
-                    })
-                  }}
-                  className="shrink-0 text-[11px]"
-                  style={{ color: 'var(--text-faint)' }}
-                  title="画像を外す"
-                >
-                  画像を外す
-                </button>
+                <span className="flex shrink-0 flex-col gap-1">
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    className="text-[11px]"
+                    style={{ color: 'var(--text-faint)' }}
+                    title="別の画像に差し替える"
+                  >
+                    画像を差し替え
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (!selectedId) return
+                      const patch = { portrait_path: null, portrait_source_path: null, portrait_crop: null }
+                      void api.updateCharacter(selectedId, patch).then(async () => {
+                        setDraft((d) => ({ ...d, ...patch }))
+                        await reload()
+                      })
+                    }}
+                    className="text-[11px]"
+                    style={{ color: 'var(--text-faint)' }}
+                    title="画像を外す"
+                  >
+                    画像を外す
+                  </button>
+                </span>
               )}
             </div>
             {FIELD_DEFS.map((f) => (

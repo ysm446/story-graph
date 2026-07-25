@@ -78,7 +78,8 @@ class Store:
         return self.get_character(char_id)  # type: ignore[return-value]
 
     def update_character(self, char_id: str, data: dict[str, Any]) -> dict[str, Any] | None:
-        fields = ["name", "profile", "appearance", "voice", "color", "graph_x", "graph_y", "portrait_path"]
+        fields = ["name", "profile", "appearance", "voice", "color", "graph_x", "graph_y",
+                  "portrait_path", "portrait_source_path", "portrait_crop"]
         updates = {k: data[k] for k in fields if k in data}
         if updates:
             sets = ", ".join(f"{k} = ?" for k in updates)

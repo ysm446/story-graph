@@ -8,6 +8,8 @@ export interface Character {
   graph_x: number | null
   graph_y: number | null
   portrait_path: string | null
+  portrait_source_path: string | null
+  portrait_crop: string | null
   created_at: string
 }
 

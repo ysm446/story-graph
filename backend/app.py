@@ -80,6 +80,8 @@ class CharacterPatch(BaseModel):
     graph_x: float | None = None
     graph_y: float | None = None
     portrait_path: str | None = None
+    portrait_source_path: str | None = None
+    portrait_crop: str | None = None
 
 
 class FactionIn(BaseModel):
