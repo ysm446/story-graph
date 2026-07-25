@@ -377,6 +377,14 @@ function BeatTab({
     setCorrection(null)
   }, [node.id])
 
+  // シーン本文はスクロールさせず、内容に合わせて高さを自動調整する
+  useEffect(() => {
+    const textarea = beatTextareaRef.current
+    if (!textarea) return
+    textarea.style.height = 'auto'
+    textarea.style.height = `${textarea.scrollHeight + 2}px`
+  }, [draft.beat, node.id])
+
   const runProofread = (): void => {
     const full = draft.beat ?? ''
     if (!full.trim() || proofreading) return
@@ -618,10 +626,10 @@ function BeatTab({
           )}
           <textarea
             ref={beatTextareaRef}
-            rows={6}
+            rows={4}
             value={draft.beat ?? ''}
             onChange={(e) => setDraft((d) => ({ ...d, beat: e.target.value }))}
-            className="w-full rounded-lg border px-3 py-2 text-[13px] leading-relaxed outline-none"
+            className="w-full resize-none overflow-hidden rounded-lg border px-3 py-2 text-[13px] leading-relaxed outline-none"
             style={inputStyle}
           />
         </span>
