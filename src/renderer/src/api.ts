@@ -349,6 +349,7 @@ export interface ChatSummary {
   char_id: string | null
   char_name: string | null
   mode: string | null
+  title: string | null // null なら snippet を見出しに使う
   snippet: string
   updated_at: string
 }
@@ -383,6 +384,9 @@ export const chatApi = {
   list: () => request<ChatSummary[]>('/chats'),
   get: (chatId: string) => request<ChatRecord>(`/chats/${chatId}`),
   delete: (chatId: string) => request<unknown>(`/chats/${chatId}`, { method: 'DELETE' }),
+  // 会話名の変更(空文字で既定の見出しに戻る)
+  rename: (chatId: string, title: string) =>
+    request<ChatRecord>(`/chats/${chatId}`, { method: 'PATCH', body: JSON.stringify({ title }) }),
   // 内容ベースの質問候補。設定オフ・LLM 未起動・生成失敗はすべて空配列で返る
   suggestQuestions: (body: { chat_id: string | null; anchor_node: string | null; scope: string }) =>
     request<{ questions: string[] }>('/chat/suggest_questions', {

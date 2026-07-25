@@ -708,6 +708,19 @@ async def get_chat(chat_id: str) -> dict[str, Any]:
     return chat
 
 
+class ChatPatchIn(BaseModel):
+    title: str | None = None
+
+
+@app.patch("/chats/{chat_id}")
+async def patch_chat(chat_id: str, body: ChatPatchIn) -> dict[str, Any]:
+    """会話名の変更(空なら冒頭の発言を見出しに使う)。"""
+    chat = store.set_chat_title(chat_id, body.title)
+    if chat is None:
+        raise HTTPException(404, "chat not found")
+    return chat
+
+
 @app.delete("/chats/{chat_id}")
 async def delete_chat(chat_id: str) -> dict[str, str]:
     store.delete_chat(chat_id)

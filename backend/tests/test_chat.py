@@ -259,3 +259,16 @@ def test_token_usage_character_mode(store, monkeypatch):
         store, "http://fake", None, store.canon_path()[-1], "upto", char_id="aya"
     ))
     assert usage == {"token_count": 500, "estimated": False}
+
+
+def test_set_chat_title_and_list(store):
+    chat = store.create_chat(store.canon_path()[-1], "upto")
+    store.save_chat_messages(chat["id"], [{"role": "user", "content": "冒頭の質問"}])
+    assert store.get_chat(chat["id"])["title"] is None
+    store.set_chat_title(chat["id"], "  裏切りの相談  ")
+    assert store.get_chat(chat["id"])["title"] == "裏切りの相談"
+    row = next(h for h in store.list_chats() if h["id"] == chat["id"])
+    assert row["title"] == "裏切りの相談"
+    assert row["snippet"] == "冒頭の質問"  # 見出しが無いときのフォールバック用に残る
+    store.set_chat_title(chat["id"], "   ")  # 空にすると NULL に戻る
+    assert store.get_chat(chat["id"])["title"] is None

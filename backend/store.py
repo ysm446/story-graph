@@ -853,6 +853,7 @@ class Store:
                     "char_id": row["char_id"],
                     "char_name": char["name"] if char else None,
                     "mode": row["mode"],
+                    "title": row["title"],
                     "snippet": first_user[:60],
                     "updated_at": row["updated_at"],
                 }
@@ -865,6 +866,13 @@ class Store:
             (json.dumps(messages, ensure_ascii=False), _now(), chat_id),
         )
         self.conn.commit()
+
+    def set_chat_title(self, chat_id: str, title: str | None) -> dict[str, Any] | None:
+        """会話名を設定する(空文字は NULL = 冒頭の発言を見出しに使う)。"""
+        cleaned = (title or "").strip() or None
+        self.conn.execute("UPDATE chats SET title = ? WHERE id = ?", (cleaned, chat_id))
+        self.conn.commit()
+        return self.get_chat(chat_id)
 
     def delete_chat(self, chat_id: str) -> None:
         self.conn.execute("DELETE FROM chats WHERE id = ?", (chat_id,))
