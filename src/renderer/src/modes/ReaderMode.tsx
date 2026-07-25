@@ -260,15 +260,16 @@ export default function ReaderMode(): React.JSX.Element {
   }, [viewMode])
 
   // ページ分割の計算: 実測(隠し要素)で「高さに収まる最大文字数」を二分探索し、
-  // 句点・改行のきりの良い位置で区切る。本文幅はシーンごとに算出
-  // (挿絵あり = 右カラム幅 7/12、なし = 全幅)
+  // 句点・改行のきりの良い位置で区切る。挿絵ありシーンは上部 42% を挿絵に
+  // 使うため、本文の高さがその分小さくなる
   const scenesSig = scenes.map((s) => `${s.render?.id ?? 'x'}-${s.node.image_path ?? ''}`).join(',')
   useEffect(() => {
     if (viewMode !== 'page') return
     const measurer = measurerRef.current
     const areaWidth = pageBoxSize.width
-    const maxHeight = pageBoxSize.height
-    if (!measurer || maxHeight < 60 || areaWidth < 60) return
+    const areaHeight = pageBoxSize.height
+    if (!measurer || areaHeight < 60 || areaWidth < 60) return
+    measurer.style.width = `${Math.floor(areaWidth)}px`
     const result: PageChunk[] = []
     for (let si = 0; si < scenes.length; si += 1) {
       const prose = scenes[si].render?.prose
@@ -277,8 +278,7 @@ export default function ReaderMode(): React.JSX.Element {
         continue
       }
       const hasImage = !!scenes[si].node.image_path
-      const textWidth = hasImage ? Math.max(120, ((areaWidth - 32) * 7) / 12) : areaWidth
-      measurer.style.width = `${Math.floor(textWidth)}px`
+      const maxHeight = hasImage ? areaHeight - Math.floor(areaHeight * 0.42) - 16 : areaHeight
       let pos = 0
       while (pos < prose.length) {
         let lo = pos + 1
@@ -689,22 +689,19 @@ export default function ReaderMode(): React.JSX.Element {
                 <>
                   <div className="mx-auto flex min-h-0 w-full max-w-5xl flex-1 flex-col overflow-hidden px-8 pt-6">
                     {renderSceneHeader(scene)}
-                    <div
-                      ref={pageAreaRef}
-                      className={`grid min-h-0 flex-1 gap-8 ${img ? 'grid-cols-[minmax(0,5fr)_minmax(0,7fr)]' : 'grid-cols-1'}`}
-                    >
+                    <div ref={pageAreaRef} className="flex min-h-0 flex-1 flex-col overflow-hidden">
                       {img && (
-                        <div className="flex min-h-0 items-start justify-center">
+                        <div className="mb-4 flex min-h-0 shrink-0 justify-center" style={{ flexBasis: '42%' }}>
                           <img src={img} className="max-h-full max-w-full rounded-2xl object-contain" />
                         </div>
                       )}
                       <div
-                        className={`relative min-h-0 overflow-hidden ${isLive ? 'overflow-y-auto' : ''}`}
+                        className={`relative min-h-0 flex-1 overflow-hidden ${isLive ? 'overflow-y-auto' : ''}`}
                         onClick={() => typing && text && setTypedLen(text.length)}
                         title={typing ? 'クリックで全文表示' : undefined}
                         style={typing ? { cursor: 'pointer' } : undefined}
                       >
-                        {/* ページ分割の実測用(不可視。幅は分割計算時にシーンごとに設定) */}
+                        {/* ページ分割の実測用(不可視。本文と同じ幅・書式) */}
                         <div
                           ref={measurerRef}
                           aria-hidden
