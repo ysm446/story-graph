@@ -152,16 +152,17 @@ function LibraryMenu(): React.JSX.Element {
 export default function App(): React.JSX.Element {
   const [mode, setMode] = useState<Mode>('structure')
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [modelRefreshKey, setModelRefreshKey] = useState(0)
+  // 設定ポップアップを閉じるたびに増える。設定を読んでいる画面の再取得トリガー
+  const [settingsVersion, setSettingsVersion] = useState(0)
   const [backendReady, setBackendReady] = useState<boolean | null>(null)
   const [backendError, setBackendError] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // 設定ポップアップを閉じるとき、上部バーのモデル選択を設定変更と同期させる
+  // 設定ポップアップを閉じるとき、設定を読んでいる画面(モデルバー・構造モード)を同期させる
   const closeSettings = (): void => {
     setSettingsOpen(false)
-    setModelRefreshKey((k) => k + 1)
+    setSettingsVersion((v) => v + 1)
   }
 
   useEffect(() => {
@@ -229,7 +230,7 @@ export default function App(): React.JSX.Element {
           {backendReady === true && <LibraryMenu />}
         </div>
         <div className="mx-auto flex items-center">
-          {backendReady === true && <ModelBar refreshKey={modelRefreshKey} />}
+          {backendReady === true && <ModelBar refreshKey={settingsVersion} />}
         </div>
         <div className="absolute right-3 top-1/2 flex -translate-y-1/2 items-center gap-3">
           <button
@@ -281,7 +282,7 @@ export default function App(): React.JSX.Element {
           </div>
         ) : (
           <>
-            {mode === 'structure' && <StructureMode />}
+            {mode === 'structure' && <StructureMode settingsVersion={settingsVersion} />}
             {mode === 'reader' && <ReaderMode />}
             {mode === 'characters' && <CharactersMode />}
           </>

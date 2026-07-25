@@ -22,12 +22,13 @@ import RelationGraph from '../RelationGraph'
 import { useElapsedSeconds } from '../useElapsed'
 import type { Character, EventInput, GraphEdge, StateSnapshot, StoryEvent, StoryNode } from '../types'
 
-const LANE_GAP_X = 340
-const NODE_GAP_Y = 56 // カード間の余白
+const COLUMN_GAP_X = 344 // カード幅(w-72 = 288)+ 余白
+const LANE_GAP_Y = 56 // レーン間の余白
 const FALLBACK_NODE_HEIGHT = 160
 
-// ---- DAG レイアウト(正史は縦一直線、分岐は右のレーンへ) --------------
-// 各ノードの実測高さを使い、親の y + 親の高さ + 余白 で積み上げる
+// ---- DAG レイアウト(正史は左から右へ一直線、分岐は下のレーンへ) ------
+// カード幅は固定なので x は深さで決まる。y はレーンごとに、そのレーンの
+// 実測最大高さを積み上げて決める(カード高さは画像や本文量で変わるため)
 
 function layoutDag(
   nodes: StoryNode[],
@@ -41,17 +42,17 @@ function layoutDag(
     hasParent.add(e.to_node)
   }
   const order = new Map(nodes.map((n, i) => [n.id, i]))
-  const positions: Record<string, { x: number; y: number }> = {}
+  const placed: Record<string, { depth: number; lane: number }> = {}
   let laneCounter = 0
 
-  const assign = (id: string, lane: number, y: number): void => {
-    positions[id] = { x: lane * LANE_GAP_X, y }
-    const height = heights[id] ?? FALLBACK_NODE_HEIGHT
+  const assign = (id: string, lane: number, depth: number): void => {
+    if (placed[id]) return // 循環データでも無限再帰しないように
+    placed[id] = { depth, lane }
     const kids = (childrenMap[id] ?? [])
       .slice()
       .sort((a, b) => Number(b.canon) - Number(a.canon) || (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0))
     kids.forEach((kid, i) => {
-      assign(kid.id, i === 0 ? lane : ++laneCounter, y + height + NODE_GAP_Y)
+      assign(kid.id, i === 0 ? lane : ++laneCounter, depth + 1)
     })
   }
 
@@ -59,6 +60,24 @@ function layoutDag(
   roots.forEach((root, i) => {
     assign(root.id, i === 0 ? 0 : ++laneCounter, 0)
   })
+
+  // レーンごとの最大高さを求めてから、レーンの y を積み上げる
+  const laneHeights: number[] = []
+  for (const [id, p] of Object.entries(placed)) {
+    const height = heights[id] ?? FALLBACK_NODE_HEIGHT
+    laneHeights[p.lane] = Math.max(laneHeights[p.lane] ?? 0, height)
+  }
+  const laneY: number[] = []
+  let y = 0
+  for (let lane = 0; lane <= laneCounter; lane += 1) {
+    laneY[lane] = y
+    y += (laneHeights[lane] ?? FALLBACK_NODE_HEIGHT) + LANE_GAP_Y
+  }
+
+  const positions: Record<string, { x: number; y: number }> = {}
+  for (const [id, p] of Object.entries(placed)) {
+    positions[id] = { x: p.depth * COLUMN_GAP_X, y: laneY[p.lane] ?? 0 }
+  }
   return positions
 }
 
@@ -85,7 +104,7 @@ function BeatNodeCard({ data, selected }: NodeProps<BeatFlowNode>): React.JSX.El
         ['--tw-ring-color' as string]: 'var(--accent-border)'
       }}
     >
-      <Handle type="target" position={Position.Top} className="!bg-[#6a728f]" />
+      <Handle type="target" position={Position.Left} className="!bg-[#6a728f]" />
       {assetUrl(storyNode.image_path) &&
         (isVideoAsset(storyNode.image_path) ? (
           // グラフ上のカードでは負荷を抑えるため再生せず、先頭フレームをサムネイルとして表示
@@ -150,7 +169,7 @@ function BeatNodeCard({ data, selected }: NodeProps<BeatFlowNode>): React.JSX.El
           </span>
         )}
       </div>
-      <Handle type="source" position={Position.Bottom} className="!bg-[#6a728f]" />
+      <Handle type="source" position={Position.Right} className="!bg-[#6a728f]" />
     </div>
   )
 }
@@ -1219,7 +1238,8 @@ function CharTab({
 
 // ---- 構造モード本体 --------------------------------------------------
 
-function StructureModeInner(): React.JSX.Element {
+function StructureModeInner({ settingsVersion }: { settingsVersion: number }): React.JSX.Element {
+  const [minimapVisible, setMinimapVisible] = useState(true)
   const [graphNodes, setGraphNodes] = useState<StoryNode[]>([])
   const [graphEdges, setGraphEdges] = useState<GraphEdge[]>([])
   const [characters, setCharacters] = useState<Character[]>([])
@@ -1267,6 +1287,15 @@ function StructureModeInner(): React.JSX.Element {
   useEffect(() => {
     void reload()
   }, [reload])
+
+  // 設定(ミニマップ表示)を読み込む。settingsVersion は設定ポップアップを
+  // 閉じたときに変わるので、そこで変更が反映される
+  useEffect(() => {
+    void api
+      .getSettings()
+      .then((s) => setMinimapVisible(s.minimap_visible !== '0'))
+      .catch(() => undefined)
+  }, [settingsVersion])
 
   useEffect(() => {
     if (!selectedId) {
@@ -1573,7 +1602,7 @@ function StructureModeInner(): React.JSX.Element {
             proOptions={{ hideAttribution: true }}
           >
             <Background gap={20} size={1.4} color="#394154" />
-            <MiniMap pannable zoomable nodeColor={() => '#2e3140'} />
+            {minimapVisible && <MiniMap pannable zoomable nodeColor={() => '#2e3140'} />}
             <Panel position="top-left">
               <div className="flex w-72 flex-col gap-2">
                 <div className="flex gap-1.5">
@@ -1763,10 +1792,10 @@ function StructureModeInner(): React.JSX.Element {
   )
 }
 
-export default function StructureMode(): React.JSX.Element {
+export default function StructureMode({ settingsVersion = 0 }: { settingsVersion?: number }): React.JSX.Element {
   return (
     <ReactFlowProvider>
-      <StructureModeInner />
+      <StructureModeInner settingsVersion={settingsVersion} />
     </ReactFlowProvider>
   )
 }
