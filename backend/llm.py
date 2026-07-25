@@ -19,6 +19,11 @@ log = logging.getLogger(__name__)
 
 DEFAULT_BASE_URL = "http://127.0.0.1:8080"
 
+# 思考モード(reasoning)は常に無効化する。処理時間を抑えるため全呼び出しに付与。
+# enable_thinking は Qwen3 等の chat template が参照するキー。参照しない
+# テンプレートでは単に無視されるだけなので付けても害はない。
+NO_THINK_TEMPLATE_KWARGS = {"enable_thinking": False}
+
 # プロンプトデバッグログ(直近 N 件。docs/design/system-prompts.md)
 PROMPT_LOG: deque[dict[str, Any]] = deque(maxlen=30)
 _log_ids = itertools.count(1)
@@ -73,6 +78,7 @@ async def chat(
         "messages": messages,
         "max_tokens": max_tokens,
         "temperature": temperature,
+        "chat_template_kwargs": NO_THINK_TEMPLATE_KWARGS,
     }
     if response_json_schema is not None:
         payload["response_format"] = {
@@ -141,6 +147,7 @@ async def chat_stream(
         "max_tokens": max_tokens,
         "temperature": temperature,
         "stream": True,
+        "chat_template_kwargs": NO_THINK_TEMPLATE_KWARGS,
     }
     entry = _log_prompt(label, messages, temperature, max_tokens)
     collected: list[str] = []
@@ -200,6 +207,7 @@ async def chat_stream_tools(
         "max_tokens": max_tokens,
         "temperature": temperature,
         "stream": True,
+        "chat_template_kwargs": NO_THINK_TEMPLATE_KWARGS,
     }
     if tools is not None:
         payload["tools"] = tools
