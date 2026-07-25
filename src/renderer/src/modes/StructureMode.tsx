@@ -368,9 +368,21 @@ function BeatTab({
     end: number
     done: boolean
   } | null>(null)
+  const [imageDragOver, setImageDragOver] = useState(false)
   const imageInputRef = useRef<HTMLInputElement | null>(null)
   const beatTextareaRef = useRef<HTMLTextAreaElement | null>(null)
   const proofreadAbortRef = useRef<AbortController | null>(null)
+
+  const handleImageFile = (file: File): void => {
+    if (!file.type.startsWith('image/')) {
+      setError('画像ファイルをドロップしてください')
+      return
+    }
+    void uploadAsset(file)
+      .then(({ path }) => api.setNodeImage(node.id, path))
+      .then(onSaved)
+      .catch((err) => setError(String(err)))
+  }
 
   useEffect(() => {
     void api
@@ -786,16 +798,51 @@ function BeatTab({
           onChange={(e) => {
             const file = e.target.files?.[0]
             e.target.value = ''
-            if (!file) return
-            void uploadAsset(file)
-              .then(({ path }) => api.setNodeImage(node.id, path))
-              .then(onSaved)
-              .catch((err) => setError(String(err)))
+            if (file) handleImageFile(file)
           }}
         />
-        {assetUrl(node.image_path) && (
-          <img src={assetUrl(node.image_path)!} className="mx-auto max-h-60 max-w-full rounded-xl" />
-        )}
+        <div
+          onDragOver={(e) => {
+            e.preventDefault()
+            setImageDragOver(true)
+          }}
+          onDragLeave={() => setImageDragOver(false)}
+          onDrop={(e) => {
+            e.preventDefault()
+            setImageDragOver(false)
+            const file = e.dataTransfer.files?.[0]
+            if (file) handleImageFile(file)
+          }}
+          onClick={() => {
+            if (!node.image_path) imageInputRef.current?.click()
+          }}
+          className="relative rounded-xl transition-colors"
+          style={imageDragOver ? { outline: '2px dashed var(--accent)', outlineOffset: 2 } : undefined}
+        >
+          {assetUrl(node.image_path) ? (
+            <>
+              <img src={assetUrl(node.image_path)!} className="mx-auto max-h-60 max-w-full rounded-xl" />
+              {imageDragOver && (
+                <span
+                  className="absolute inset-0 flex items-center justify-center rounded-xl text-[12px] font-medium"
+                  style={{ background: 'rgba(13,15,20,0.7)', color: 'var(--accent)' }}
+                >
+                  ドロップで差し替え
+                </span>
+              )}
+            </>
+          ) : (
+            <div
+              className="cursor-pointer rounded-xl border border-dashed px-4 py-6 text-center text-[12px]"
+              style={{
+                borderColor: imageDragOver ? 'var(--accent)' : 'var(--border-strong)',
+                color: imageDragOver ? 'var(--accent)' : 'var(--text-faint)'
+              }}
+            >
+              ここに画像をドロップ(またはクリックで選択)
+            </div>
+          )}
+        </div>
       </div>
       <div className="flex items-center gap-2">
         <button
