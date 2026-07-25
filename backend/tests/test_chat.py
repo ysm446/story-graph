@@ -38,6 +38,25 @@ def _tool_call(name, args, call_id="tc1"):
     return {"id": call_id, "type": "function", "function": {"name": name, "arguments": json.dumps(args)}}
 
 
+def _fake_stream(results):
+    """chat_stream_tools のモック。呼び出しごとに results を順に消費し、
+    content をデルタとして流してから done を返す async generator を作る。"""
+    calls = {"n": 0}
+
+    def fake(messages, **kwargs):
+        result = results[min(calls["n"], len(results) - 1)]
+        calls["n"] += 1
+
+        async def gen():
+            if result.get("content"):
+                yield ("content", result["content"])
+            yield ("done", result)
+
+        return gen()
+
+    return fake
+
+
 def test_scope_upto_limits_beats(store):
     anchor = store.canon_path()[1]  # 第二話まで
     path = chat_agent._visible_path(store, anchor, "upto")
@@ -50,24 +69,25 @@ def test_scope_upto_limits_beats(store):
 
 
 def test_tool_loop_and_persistence(store, monkeypatch):
-    calls = {"n": 0}
-
-    async def fake_chat(messages, **kwargs):
-        calls["n"] += 1
-        if calls["n"] == 1:
-            return {
+    monkeypatch.setattr(
+        llm_mod,
+        "chat_stream_tools",
+        _fake_stream([
+            {
                 "content": "",
                 "tool_calls": [_tool_call("get_beats", {"from_index": 1, "to_index": 2})],
                 "message": {"role": "assistant", "content": None,
                             "tool_calls": [_tool_call("get_beats", {"from_index": 1, "to_index": 2})]},
-            }
-        return {"content": "第二話まで確認しました。", "tool_calls": None,
-                "message": {"role": "assistant", "content": "第二話まで確認しました。"}}
-
-    monkeypatch.setattr(llm_mod, "chat", fake_chat)
+            },
+            {"content": "第二話まで確認しました。", "tool_calls": None,
+             "message": {"role": "assistant", "content": "第二話まで確認しました。"}},
+        ]),
+    )
     anchor = store.canon_path()[1]
     events = collect_sse(chat_agent.chat_stream(store, "http://fake", None, anchor, "upto", "状況を教えて"))
     assert any("tool_call" in e for e in events)
+    # 回答はデルタとしてもストリームされる
+    assert "".join(e["delta"] for e in events if "delta" in e) == "第二話まで確認しました。"
     final = events[-1]
     assert final["answer"] == "第二話まで確認しました。"
     # 永続化: 履歴に user / assistant(tool_calls) / tool / assistant が残る
@@ -83,18 +103,17 @@ def test_proposals_are_emitted(store, monkeypatch):
         {"title": "決裂", "beat": "アヤはケンを追放する。", "cast": ["aya", "ken"]},
         {"title": "和解", "beat": "アヤはケンを赦す。", "cast": ["aya", "ken"]},
     ]
-    calls = {"n": 0}
-
-    async def fake_chat(messages, **kwargs):
-        calls["n"] += 1
-        if calls["n"] == 1:
-            tc = _tool_call("propose_beats", {"proposals": proposals})
-            return {"content": "", "tool_calls": [tc],
-                    "message": {"role": "assistant", "content": None, "tool_calls": [tc]}}
-        return {"content": "2案あります。", "tool_calls": None,
-                "message": {"role": "assistant", "content": "2案あります。"}}
-
-    monkeypatch.setattr(llm_mod, "chat", fake_chat)
+    tc = _tool_call("propose_beats", {"proposals": proposals})
+    monkeypatch.setattr(
+        llm_mod,
+        "chat_stream_tools",
+        _fake_stream([
+            {"content": "", "tool_calls": [tc],
+             "message": {"role": "assistant", "content": None, "tool_calls": [tc]}},
+            {"content": "2案あります。", "tool_calls": None,
+             "message": {"role": "assistant", "content": "2案あります。"}},
+        ]),
+    )
     events = collect_sse(chat_agent.chat_stream(store, "http://fake", None, None, "upto", "この先を提案して"))
     emitted = next(e["proposals"] for e in events if "proposals" in e)
     assert [p["title"] for p in emitted] == ["決裂", "和解"]

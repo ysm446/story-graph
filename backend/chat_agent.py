@@ -258,14 +258,19 @@ async def _chat_impl(
     final_answer: str | None = None
     for step in range(MAX_TOOL_STEPS):
         yield _sse({"stage": "thinking"})
-        result = await llm.chat(
+        result: dict[str, Any] = {}
+        async for kind, value in llm.chat_stream_tools(
             messages(),
             base_url=base_url,
             temperature=CHAT_TEMPERATURE,
             max_tokens=2048,
             tools=tools,
             label=f"相談チャット(step {step + 1})",
-        )
+        ):
+            if kind == "content":
+                yield _sse({"delta": value})
+            elif kind == "done":
+                result = value
         tool_calls = result.get("tool_calls")
         if not tool_calls:
             final_answer = result["content"]
@@ -302,14 +307,19 @@ async def _chat_impl(
             }
         )
         yield _sse({"stage": "thinking"})
-        result = await llm.chat(
+        result = {}
+        async for kind, value in llm.chat_stream_tools(
             messages(),
             base_url=base_url,
             temperature=CHAT_TEMPERATURE,
             max_tokens=2048,
             label="相談チャット(まとめ)",
-        )
-        final_answer = result["content"]
+        ):
+            if kind == "content":
+                yield _sse({"delta": value})
+            elif kind == "done":
+                result = value
+        final_answer = result.get("content") or ""
         history.append({"role": "assistant", "content": final_answer})
 
     store.save_chat_messages(chat_id, history)

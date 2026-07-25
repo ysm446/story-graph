@@ -277,6 +277,7 @@ export interface ChatRecord {
 export interface ChatStreamEvent {
   chat_id?: string
   stage?: string
+  delta?: string
   tool_call?: { name: string; args: Record<string, unknown> }
   tool_result?: { name: string; is_error: boolean }
   proposals?: Array<{

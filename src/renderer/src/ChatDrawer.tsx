@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, chatApi, chatSendStream, isAbortError, type ChatStreamEvent, type ChatSummary } from './api'
+import { Markdown } from './Markdown'
 import type { Character, StoryNode } from './types'
 import { useElapsedSeconds } from './useElapsed'
 
@@ -35,6 +36,7 @@ export default function ChatDrawer({
   const [anchorNode, setAnchorNode] = useState<string | null>(null)
   const [scope, setScope] = useState<'upto' | 'all'>('upto')
   const [items, setItems] = useState<DisplayItem[]>([])
+  const [liveText, setLiveText] = useState('') // ストリーミング中の回答(確定前)
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
@@ -50,7 +52,7 @@ export default function ChatDrawer({
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
-  }, [items, status])
+  }, [items, status, liveText])
 
   const nameOf = (id: string): string => characters.find((c) => c.id === id)?.name ?? id
   const anchorTitle = (id: string | null): string => {
@@ -112,14 +114,29 @@ export default function ChatDrawer({
     setStatus('考え中…')
     const effectiveAnchor = chatId ? anchorNode : anchorNode ?? selectedId ?? canonTailId
     if (!chatId) setAnchorNode(effectiveAnchor)
+    // ストリーミング中のテキストは closure 変数で持ち、確定時に items へ移す
+    let live = ''
+    const flushLive = (): void => {
+      if (!live) return
+      const text = live
+      live = ''
+      setLiveText('')
+      setItems((prev) => [...prev, { kind: 'assistant', text }])
+    }
     try {
       await chatSendStream(
         { chat_id: chatId, anchor_node: effectiveAnchor, scope, message },
         (e: ChatStreamEvent) => {
           if (e.chat_id) setChatId(e.chat_id)
           if (e.stage === 'thinking') setStatus('考え中…')
+          if (e.delta) {
+            live += e.delta
+            setLiveText(live)
+            setStatus(null)
+          }
           if (e.tool_call) {
             const name = e.tool_call.name
+            flushLive() // ツール実行前までの途中テキストを確定させる
             setStatus(`調査中: ${name}`)
             if (name !== 'propose_beats') setItems((prev) => [...prev, { kind: 'tool', name }])
           }
@@ -128,6 +145,8 @@ export default function ChatDrawer({
           }
           if (e.answer !== undefined) {
             setStatus(null)
+            live = ''
+            setLiveText('')
             if (e.answer) setItems((prev) => [...prev, { kind: 'assistant', text: e.answer! }])
           }
           if (e.error) setStatus(`エラー: ${e.error}`)
@@ -135,11 +154,34 @@ export default function ChatDrawer({
         controller.signal
       )
     } catch (err) {
-      setStatus(isAbortError(err) ? 'キャンセルしました' : String(err))
+      setStatus(isAbortError(err) ? 'キャンセルしました(途中の回答は保存されません)' : String(err))
     } finally {
       abortRef.current = null
       setBusy(false)
+      setLiveText('')
     }
+  }
+
+  const deleteCurrentChat = async (): Promise<void> => {
+    if (!chatId || busy) return
+    if (!window.confirm('このチャット履歴を削除しますか?')) return
+    try {
+      await chatApi.delete(chatId)
+    } catch {
+      // 未保存(空)のチャットなどは無視して画面だけリセット
+    }
+    setHistory((prev) => prev.filter((h) => h.id !== chatId))
+    startNewChat()
+  }
+
+  const clearAllChats = async (): Promise<void> => {
+    if (busy) return
+    const list = await chatApi.list().catch(() => history)
+    if (list.length === 0 && !chatId) return
+    if (!window.confirm(`保存済みのチャット履歴をすべて削除しますか?(${list.length}件)`)) return
+    await Promise.all(list.map((h) => chatApi.delete(h.id).catch(() => undefined)))
+    setHistory([])
+    startNewChat()
   }
 
   const insertProposal = async (proposal: Proposal): Promise<void> => {
@@ -222,6 +264,28 @@ export default function ChatDrawer({
                 </option>
               ))}
             </select>
+            {chatId && (
+              <button
+                onClick={() => void deleteCurrentChat()}
+                disabled={busy}
+                className="rounded-md border px-2 py-0.5 disabled:opacity-40"
+                style={{ borderColor: 'var(--border-strong)', color: 'var(--danger)' }}
+                title="表示中のチャット履歴を削除"
+              >
+                削除
+              </button>
+            )}
+            {(history.length > 0 || chatId) && (
+              <button
+                onClick={() => void clearAllChats()}
+                disabled={busy}
+                className="rounded-md border px-2 py-0.5 disabled:opacity-40"
+                style={{ borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }}
+                title="保存済みのチャット履歴をすべて削除"
+              >
+                全クリア
+              </button>
+            )}
           </div>
           {/* メッセージ */}
           <div ref={scrollRef} className="inspector-scrollbar min-h-0 flex-1 overflow-y-auto pr-1">
@@ -249,10 +313,10 @@ export default function ChatDrawer({
                 return (
                   <div key={i} className="mb-2 flex">
                     <div
-                      className="max-w-[80%] whitespace-pre-wrap rounded-2xl rounded-bl-md border px-3 py-1.5 text-[13px] leading-relaxed"
+                      className="max-w-[80%] rounded-2xl rounded-bl-md border px-3 py-1.5 text-[13px] leading-relaxed"
                       style={{ background: 'var(--bg-card)', borderColor: 'var(--border)', color: 'var(--text)' }}
                     >
-                      {item.text}
+                      <Markdown text={item.text} />
                     </div>
                   </div>
                 )
@@ -297,6 +361,20 @@ export default function ChatDrawer({
                 </div>
               )
             })}
+            {liveText && (
+              <div className="mb-2 flex">
+                <div
+                  className="max-w-[80%] rounded-2xl rounded-bl-md border px-3 py-1.5 text-[13px] leading-relaxed"
+                  style={{ background: 'var(--bg-card)', borderColor: 'var(--border)', color: 'var(--text)' }}
+                >
+                  <Markdown text={liveText} />
+                  <span
+                    className="ml-0.5 inline-block h-3.5 w-1.5 align-middle"
+                    style={{ background: 'var(--accent)' }}
+                  />
+                </div>
+              </div>
+            )}
             {status && (
               <div className="mb-1 text-[11px]" style={{ color: 'var(--text-dim)' }}>
                 {status}

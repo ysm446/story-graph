@@ -178,6 +178,98 @@ async def chat_stream(
         entry["response"] = "".join(collected)[:3000]
 
 
+async def chat_stream_tools(
+    messages: list[dict[str, Any]],
+    *,
+    base_url: str,
+    max_tokens: int = 2048,
+    temperature: float = 0.8,
+    timeout: float = 600.0,
+    tools: list[dict[str, Any]] | None = None,
+    label: str = "stream",
+):
+    """tools 対応のストリーミング chat completion(news-picker の方式を移植)。
+
+    yield するイベント:
+      ("content", str) — 本文のデルタ
+      ("done", dict)   — 最後に1回。chat() と同じ形の集約結果
+    tool_calls はデルタを index ごとに組み立てて done に含める。
+    """
+    payload: dict[str, Any] = {
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "stream": True,
+    }
+    if tools is not None:
+        payload["tools"] = tools
+
+    entry = _log_prompt(label, messages, temperature, max_tokens)
+    content_parts: list[str] = []
+    tool_calls: dict[int, dict[str, Any]] = {}
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            async with client.stream(
+                "POST", f"{base_url}/v1/chat/completions", json=payload
+            ) as res:
+                if res.status_code != 200:
+                    body = (await res.aread()).decode("utf-8", errors="replace")
+                    raise RuntimeError(f"llama-server {res.status_code}: {body[:500]}")
+                buffer = ""
+                async for chunk in res.aiter_text():
+                    buffer += chunk
+                    while "\n\n" in buffer:
+                        part, buffer = buffer.split("\n\n", 1)
+                        line = part.strip()
+                        if not line.startswith("data: "):
+                            continue
+                        data = line[len("data: "):]
+                        if data == "[DONE]":
+                            buffer = ""
+                            break
+                        obj = json.loads(data)
+                        choices = obj.get("choices") or []
+                        if not choices:
+                            continue
+                        delta = choices[0].get("delta") or {}
+                        if delta.get("content"):
+                            content_parts.append(delta["content"])
+                            yield ("content", delta["content"])
+                        for tc in delta.get("tool_calls") or []:
+                            index = tc.get("index", 0)
+                            slot = tool_calls.setdefault(
+                                index,
+                                {"id": None, "type": "function", "function": {"name": "", "arguments": ""}},
+                            )
+                            if tc.get("id"):
+                                slot["id"] = tc["id"]
+                            function = tc.get("function") or {}
+                            if function.get("name"):
+                                slot["function"]["name"] += function["name"]
+                            if function.get("arguments"):
+                                slot["function"]["arguments"] += function["arguments"]
+    except Exception as e:
+        entry["error"] = str(e)
+        raise
+
+    calls = [tool_calls[i] for i in sorted(tool_calls)] or None
+    content = "".join(content_parts)
+    message: dict[str, Any] = {"role": "assistant", "content": content or None}
+    if calls:
+        message["tool_calls"] = calls
+    entry["response"] = (
+        content[:3000] if content else json.dumps(calls, ensure_ascii=False)[:3000] if calls else ""
+    )
+    yield (
+        "done",
+        {
+            "content": content,
+            "tool_calls": calls,
+            "message": message,  # tool ループで履歴に積み直す用
+        },
+    )
+
+
 async def chat_json(
     messages: list[dict[str, Any]],
     *,

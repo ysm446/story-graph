@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { execSync } from 'node:child_process'
 import { join } from 'node:path'
@@ -216,6 +216,11 @@ function createWindow(): void {
     }
   })
   mainWindow.setMenuBarVisibility(false)
+  // window.open されたリンクは OS ブラウザで開く(チャットの Markdown リンク等)
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('http://') || url.startsWith('https://')) void shell.openExternal(url)
+    return { action: 'deny' }
+  })
   mainWindow.webContents.on('before-input-event', (_event, input) => {
     if (input.type === 'keyDown' && input.key === 'F12') {
       void captureScreenshot()
