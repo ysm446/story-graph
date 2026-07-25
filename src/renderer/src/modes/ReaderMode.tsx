@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, assetUrl, isAbortError, renderStream } from '../api'
+import { useElapsedSeconds } from '../useElapsed'
 import type { Character, PromoteProposal, SceneEntry, StylePreset } from '../types'
 
 interface PromoteState {
@@ -210,6 +211,8 @@ export default function ReaderMode(): React.JSX.Element {
   const measurerRef = useRef<HTMLDivElement | null>(null)
 
   const proseFont = FONT_OPTIONS.find((f) => f.id === fontId)?.stack ?? FONT_OPTIONS[0].stack
+  const renderElapsed = useElapsedSeconds(rendering)
+  const promoteElapsed = useElapsedSeconds(promote?.loading ?? false)
 
   const reloadPresets = useCallback(async (selectId?: string): Promise<void> => {
     const p = await api.listPresets()
@@ -665,6 +668,11 @@ export default function ReaderMode(): React.JSX.Element {
         {status && (
           <span className="text-[12px]" style={{ color: 'var(--text-dim)' }}>
             {status}
+            {rendering && (
+              <span className="ml-1 tabular-nums" style={{ color: 'var(--text-faint)' }}>
+                ({renderElapsed}s)
+              </span>
+            )}
           </span>
         )}
       </div>
@@ -867,7 +875,8 @@ export default function ReaderMode(): React.JSX.Element {
             ) : (
               <div className="flex items-center justify-between">
                 <span className="text-[12px]" style={{ color: promote.error ? 'var(--danger)' : 'var(--text-dim)' }}>
-                  {promote.error ?? (promote.loading ? 'LLM が提案を作成中…' : 'この一節をシーン記述+イベントに変換します')}
+                  {promote.error ??
+                    (promote.loading ? `LLM が提案を作成中… (${promoteElapsed}s)` : 'この一節をシーン記述+イベントに変換します')}
                 </span>
                 <div className="flex gap-2">
                   <button onClick={() => setPromote(null)} className="px-3 py-1.5 text-[13px]" style={{ color: 'var(--text-dim)' }}>

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
+import { useElapsedSeconds } from '../useElapsed'
 
 // lm-chat の SettingsPanel と同じ刻み
 const CTX_SIZE_PRESETS = [4096, 8192, 16384, 32768, 65536, 131072, 262144] as const
@@ -170,6 +171,7 @@ export default function SettingsMode(): React.JSX.Element {
   const [currentModel, setCurrentModel] = useState<string>('')
   const [genPromptDefault, setGenPromptDefault] = useState('')
   const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const busyElapsed = useElapsedSeconds(busy !== null)
 
   const ctxSize = Number(values.llm_ctx_size || DEFAULT_CTX_SIZE)
   const ctxIndex = getNearestCtxPresetIndex(ctxSize, CTX_SIZE_PRESETS)
@@ -272,6 +274,9 @@ export default function SettingsMode(): React.JSX.Element {
                 {busy && (
                   <span className="text-[12px]" style={{ color: 'var(--text-dim)' }}>
                     {busy}
+                    <span className="ml-1 tabular-nums" style={{ color: 'var(--text-faint)' }}>
+                      ({busyElapsed}s)
+                    </span>
                   </span>
                 )}
               </div>

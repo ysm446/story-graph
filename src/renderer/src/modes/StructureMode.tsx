@@ -19,6 +19,7 @@ import '@xyflow/react/dist/style.css'
 import { api, assetUrl, generateBeatStream, isAbortError, proofreadStream, uploadAsset } from '../api'
 import ChatDrawer from '../ChatDrawer'
 import RelationGraph from '../RelationGraph'
+import { useElapsedSeconds } from '../useElapsed'
 import type { Character, EventInput, GraphEdge, StateSnapshot, StoryEvent, StoryNode } from '../types'
 
 const LANE_GAP_X = 340
@@ -169,6 +170,7 @@ function EventsEditor({
   const [newType, setNewType] = useState('fact_set')
   const [payloadText, setPayloadText] = useState(EVENT_TEMPLATES['fact_set'])
   const [busy, setBusy] = useState(false)
+  const busyElapsed = useElapsedSeconds(busy)
   const [error, setError] = useState<string | null>(null)
   const [validation, setValidation] = useState<string[]>([])
 
@@ -240,7 +242,7 @@ function EventsEditor({
             className="rounded-md border px-2 py-0.5 text-[11px]"
             style={{ borderColor: 'var(--accent-border)', color: 'var(--accent)' }}
           >
-            {busy ? '処理中…' : 'イベント抽出(LLM)'}
+            {busy ? `処理中… (${busyElapsed}s)` : 'イベント抽出(LLM)'}
           </button>
         </div>
       </div>
@@ -369,6 +371,8 @@ function BeatTab({
     done: boolean
   } | null>(null)
   const [imageDragOver, setImageDragOver] = useState(false)
+  const proofreadElapsed = useElapsedSeconds(proofreading)
+  const suggestElapsed = useElapsedSeconds(suggesting !== null)
   const imageDragDepth = useRef(0) // 子要素との境界で dragleave が発火してもチラつかないよう深さを数える
   const imageInputRef = useRef<HTMLInputElement | null>(null)
   const beatTextareaRef = useRef<HTMLTextAreaElement | null>(null)
@@ -595,7 +599,7 @@ function BeatTab({
             style={{ borderColor: 'var(--accent-border)', color: 'var(--accent)' }}
             title="シーン本文からタイトルを自動生成"
           >
-            {suggesting === 'title' ? '生成中…' : '✨ 自動生成'}
+            {suggesting === 'title' ? `生成中… (${suggestElapsed}s)` : '✨ 自動生成'}
           </button>
         </span>
         <input
@@ -650,7 +654,7 @@ function BeatTab({
               style={{ borderColor: 'var(--accent-border)', color: 'var(--accent)' }}
               title="本文を校正。テキストを選択していればその範囲だけを校正します(結果は下書きに反映、保存までは確定しない)"
             >
-              {proofreading ? '校正中…' : '✎ 校正'}
+              {proofreading ? `校正中… (${proofreadElapsed}s)` : '✎ 校正'}
             </button>
           </span>
         </span>
@@ -727,7 +731,7 @@ function BeatTab({
             style={{ borderColor: 'var(--accent-border)', color: 'var(--accent)' }}
             title="シーン本文から感情の核を自動生成"
           >
-            {suggesting === 'emotional_core' ? '生成中…' : '✨ 自動生成'}
+            {suggesting === 'emotional_core' ? `生成中… (${suggestElapsed}s)` : '✨ 自動生成'}
           </button>
         </span>
         <input
@@ -1173,6 +1177,7 @@ function StructureModeInner(): React.JSX.Element {
   const [instruction, setInstruction] = useState('')
   const [generating, setGenerating] = useState(false)
   const [genStatus, setGenStatus] = useState<string | null>(null)
+  const genElapsed = useElapsedSeconds(generating)
   const genAbortRef = useRef<AbortController | null>(null)
   const [flowNodes, setFlowNodes] = useState<BeatFlowNode[]>([])
   const [inspectorWidth, setInspectorWidth] = useState(() => {
@@ -1546,6 +1551,11 @@ function StructureModeInner(): React.JSX.Element {
                   {genStatus && (
                     <div className="mt-2 text-[11px] leading-relaxed" style={{ color: 'var(--text-dim)' }}>
                       {genStatus}
+                      {generating && (
+                        <span className="ml-1 tabular-nums" style={{ color: 'var(--text-faint)' }}>
+                          ({genElapsed}s)
+                        </span>
+                      )}
                     </div>
                   )}
                 </div>

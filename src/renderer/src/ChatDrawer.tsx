@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, chatApi, chatSendStream, isAbortError, type ChatStreamEvent, type ChatSummary } from './api'
 import type { Character, StoryNode } from './types'
+import { useElapsedSeconds } from './useElapsed'
 
 interface Proposal {
   title: string
@@ -41,6 +42,7 @@ export default function ChatDrawer({
   const [insertedTitles, setInsertedTitles] = useState<Set<string>>(new Set())
   const abortRef = useRef<AbortController | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
+  const busyElapsed = useElapsedSeconds(busy)
 
   useEffect(() => {
     if (open) void chatApi.list().then(setHistory).catch(() => setHistory([]))
@@ -298,6 +300,11 @@ export default function ChatDrawer({
             {status && (
               <div className="mb-1 text-[11px]" style={{ color: 'var(--text-dim)' }}>
                 {status}
+                {busy && (
+                  <span className="ml-1 tabular-nums" style={{ color: 'var(--text-faint)' }}>
+                    ({busyElapsed}s)
+                  </span>
+                )}
               </div>
             )}
           </div>
