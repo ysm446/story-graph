@@ -40,15 +40,17 @@ function edgeColor(score: number): string {
 
 export default function RelationGraph({
   characters,
-  canonPath,
+  path,
   allNodes,
   onCharactersChanged
 }: {
   characters: Character[]
-  canonPath: StoryNode[]
+  /** 表示対象のパス(選択ノードまで。未選択時は正史パス)。末尾が基準時点 */
+  path: StoryNode[]
   allNodes: StoryNode[]
   onCharactersChanged: () => void
 }): React.JSX.Element {
+  const canonPath = path
   const [scrubIndex, setScrubIndex] = useState(canonPath.length - 1)
   const [state, setState] = useState<StateSnapshot | null>(null)
   const [threshold, setThreshold] = useState(0)
@@ -103,9 +105,11 @@ export default function RelationGraph({
   const clampedIndex = Math.min(Math.max(scrubIndex, 0), Math.max(canonPath.length - 1, 0))
   const scrubNode = canonPath[clampedIndex] ?? null
 
+  // パス(=選択ノード)が変わったら基準時点をその末尾に合わせる
+  const pathKey = canonPath.map((n) => n.id).join(',')
   useEffect(() => {
     setScrubIndex(canonPath.length - 1)
-  }, [canonPath.length])
+  }, [pathKey])
 
   useEffect(() => {
     if (!scrubNode) {

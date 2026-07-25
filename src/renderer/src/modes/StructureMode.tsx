@@ -987,7 +987,27 @@ function StructureModeInner(): React.JSX.Element {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [reactFlow, flowNodes, selectedId])
 
-  // 正史パス(canon エッジを根から辿る)。関係図の時間スクラブに使う
+  // 選択ノードまでのパス(親エッジを遡る)。関係図は選択中の時間軸を表示する
+  const pathToSelected = useMemo(() => {
+    if (!selectedId) return null
+    const parentMap = new Map(graphEdges.map((e) => [e.to_node, e.from_node]))
+    const nodeById = new Map(graphNodes.map((n) => [n.id, n]))
+    if (!nodeById.has(selectedId)) return null
+    const ids: string[] = [selectedId]
+    const seen = new Set([selectedId])
+    let current = selectedId
+    while (parentMap.has(current)) {
+      const parent = parentMap.get(current)!
+      if (seen.has(parent)) break
+      ids.push(parent)
+      seen.add(parent)
+      current = parent
+    }
+    ids.reverse()
+    return ids.map((id) => nodeById.get(id)!).filter(Boolean)
+  }, [selectedId, graphNodes, graphEdges])
+
+  // 正史パス(canon エッジを根から辿る)
   const canonPath = useMemo(() => {
     const canonChildren = new Map(graphEdges.filter((e) => e.is_canon).map((e) => [e.from_node, e.to_node]))
     const hasParent = new Set(graphEdges.map((e) => e.to_node))
@@ -1233,7 +1253,7 @@ function StructureModeInner(): React.JSX.Element {
             {inspectorTab === 'graph' ? (
               <RelationGraph
                 characters={characters}
-                canonPath={canonPath}
+                path={pathToSelected ?? canonPath}
                 allNodes={graphNodes}
                 onCharactersChanged={() => void reload()}
               />
