@@ -414,6 +414,57 @@ async def suggest_field(base_url: str, beat: str, field: str) -> str:
     return str(result.get("value", "")).strip()
 
 
+# ---- 校正(シーン本文。lm-graph の 3 段階プリセットを踏襲) -----------
+
+PROOFREAD_PRESETS = [
+    {
+        "id": "light",
+        "name": "軽く(誤字脱字のみ)",
+        "prompt": "あなたは日本語の校正者です。元の意味と文体をできるだけ保ちながら、誤字脱字、表記ゆれ、"
+                  "不自然な言い回しだけを最小限に修正してください。説明は付けず、修正後の文章だけを返してください。",
+    },
+    {
+        "id": "standard",
+        "name": "標準(自然に整える)",
+        "prompt": "あなたは優秀な日本語エディタです。文章の意味と筆者の意図を保ったまま、より自然で読みやすい"
+                  "日本語に整えてください。必要に応じて語順や表現を調整し、不自然な言い回し、冗長さ、重複を"
+                  "改善してください。説明は付けず、修正後の文章だけを返してください。Markdown は使わないでください。",
+    },
+    {
+        "id": "aggressive",
+        "name": "積極的(書き直し)",
+        "prompt": "あなたはプロの編集者です。元の意図を保ちながら、文章をより明快で洗練された日本語に書き直して"
+                  "ください。冗長な表現は簡潔にし、曖昧な箇所は自然な範囲で補い、全体の流れが良くなるように整えて"
+                  "ください。説明は不要です。完成した文章だけを返してください。Markdown は使わないでください。",
+    },
+]
+
+
+def proofread_presets(store: Store) -> list[dict[str, str]]:
+    presets = [dict(p) for p in PROOFREAD_PRESETS]
+    custom = (store.get_settings().get("proofread_custom_prompt") or "").strip()
+    if custom:
+        presets.append({"id": "custom", "name": "カスタム", "prompt": custom})
+    return presets
+
+
+async def proofread(store: Store, base_url: str, text: str, preset_id: str) -> str:
+    preset = next((p for p in proofread_presets(store) if p["id"] == preset_id), None)
+    if preset is None:
+        raise ValueError(f"unknown proofread preset: {preset_id}")
+    result = await llm.chat(
+        [
+            {"role": "system", "content": preset["prompt"]},
+            {"role": "user", "content": text},
+        ],
+        base_url=base_url,
+        temperature=0.3,
+        max_tokens=2048,
+        label=f"校正({preset['name']})",
+    )
+    return result["content"].strip()
+
+
 # ---- イベント抽出(手動ビート用) -------------------------------------
 
 EXTRACTION_PROMPT = f"""あなたは物語のビート(出来事の仕様書)から状態変化イベントを抽出する解析器です。

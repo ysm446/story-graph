@@ -446,6 +446,30 @@ export default function SettingsMode(): React.JSX.Element {
           </div>
         </div>
 
+        {/* 校正 */}
+        <div className="flex flex-col gap-2.5">
+          <div className="settings-group-title">校正</div>
+          <div className="settings-card">
+            <div className="settings-field">
+              <div className="settings-field-header">
+                <span className="settings-field-label">カスタム校正プロンプト</span>
+              </div>
+              <textarea
+                rows={4}
+                value={values.proofread_custom_prompt ?? ''}
+                placeholder={'例: あなたはハードボイルド小説の編集者です。感傷的な表現を削り、\n短く乾いた文に整えてください。修正後の文章だけを返してください。'}
+                onChange={(e) => setValues((v) => ({ ...v, proofread_custom_prompt: e.target.value }))}
+                onBlur={() => void save({})}
+                className="w-full rounded-lg border px-3 py-2 text-[13px] leading-relaxed outline-none"
+                style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
+              />
+              <p className="settings-field-hint">
+                入力すると、シーンタブの校正プリセットに「カスタム」が追加されます(組み込み: 軽く / 標準 / 積極的)。
+              </p>
+            </div>
+          </div>
+        </div>
+
         {/* プロンプトログ */}
         <div className="flex flex-col gap-2.5">
           <div className="settings-group-title">プロンプトログ</div>

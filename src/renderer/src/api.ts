@@ -86,6 +86,12 @@ export const api = {
     request<SceneEntry[]>(
       `/renders?preset_id=${encodeURIComponent(presetId)}${povChar ? `&pov_char=${encodeURIComponent(povChar)}` : ''}`
     ),
+  listProofreadPresets: () => request<Array<{ id: string; name: string; prompt: string }>>('/proofread/presets'),
+  proofread: (text: string, presetId: string) =>
+    request<{ value: string }>('/proofread', {
+      method: 'POST',
+      body: JSON.stringify({ text, preset_id: presetId })
+    }),
   suggestSceneMeta: (beat: string, field: 'title' | 'emotional_core') =>
     request<{ value: string }>('/suggest/scene_meta', {
       method: 'POST',

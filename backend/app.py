@@ -445,6 +445,30 @@ class SuggestFieldIn(BaseModel):
     field: str  # title | emotional_core
 
 
+class ProofreadIn(BaseModel):
+    text: str
+    preset_id: str
+
+
+@app.get("/proofread/presets")
+async def list_proofread_presets() -> list[dict[str, str]]:
+    return generation.proofread_presets(store)
+
+
+@app.post("/proofread")
+async def proofread(body: ProofreadIn) -> dict[str, str]:
+    if not body.text.strip():
+        raise HTTPException(400, "文章が空です")
+    try:
+        base_url = await llama.ensure_running(store.get_settings())
+        value = await generation.proofread(store, base_url, body.text, body.preset_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except RuntimeError as e:
+        raise HTTPException(500, str(e))
+    return {"value": value}
+
+
 @app.post("/suggest/scene_meta")
 async def suggest_scene_meta(body: SuggestFieldIn) -> dict[str, str]:
     if not body.beat.strip():

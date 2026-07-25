@@ -351,7 +351,45 @@ function BeatTab({
   const [draft, setDraft] = useState<Partial<StoryNode>>({})
   const [error, setError] = useState<string | null>(null)
   const [suggesting, setSuggesting] = useState<'title' | 'emotional_core' | null>(null)
+  const [proofreadPresets, setProofreadPresets] = useState<Array<{ id: string; name: string }>>([])
+  const [proofreadPreset, setProofreadPreset] = useState(
+    () => localStorage.getItem('proofreadPreset') ?? 'standard'
+  )
+  const [proofreading, setProofreading] = useState(false)
+  const [beatBackup, setBeatBackup] = useState<string | null>(null)
   const imageInputRef = useRef<HTMLInputElement | null>(null)
+
+  useEffect(() => {
+    void api
+      .listProofreadPresets()
+      .then((presets) => {
+        setProofreadPresets(presets)
+        if (!presets.some((p) => p.id === proofreadPreset)) setProofreadPreset(presets[0]?.id ?? 'standard')
+      })
+      .catch(() => setProofreadPresets([]))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    setBeatBackup(null)
+  }, [node.id])
+
+  const runProofread = (): void => {
+    const text = (draft.beat ?? '').trim()
+    if (!text || proofreading) return
+    setProofreading(true)
+    setError(null)
+    api
+      .proofread(text, proofreadPreset)
+      .then(({ value }) => {
+        if (value) {
+          setBeatBackup(draft.beat ?? '')
+          setDraft((d) => ({ ...d, beat: value }))
+        }
+      })
+      .catch((e) => setError(String(e)))
+      .finally(() => setProofreading(false))
+  }
 
   const suggestField = (field: 'title' | 'emotional_core'): void => {
     const beat = (draft.beat ?? '').trim()
@@ -464,8 +502,53 @@ function BeatTab({
         />
       </label>
       <label className="block">
-        <span className={labelClass} style={{ color: 'var(--text-faint)' }}>
-          シーン(出来事の仕様書)
+        <span className="mb-1 flex items-center justify-between gap-1">
+          <span className={labelClass.replace('mb-1 block ', '')} style={{ color: 'var(--text-faint)' }}>
+            シーン(出来事の仕様書)
+          </span>
+          <span className="flex items-center gap-1">
+            {beatBackup !== null && (
+              <button
+                onClick={(e) => {
+                  e.preventDefault()
+                  setDraft((d) => ({ ...d, beat: beatBackup }))
+                  setBeatBackup(null)
+                }}
+                className="rounded-md border px-1.5 py-px text-[10px]"
+                style={{ borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }}
+                title="校正前の文章に戻す"
+              >
+                ↩ 元に戻す
+              </button>
+            )}
+            <select
+              value={proofreadPreset}
+              onChange={(e) => {
+                setProofreadPreset(e.target.value)
+                localStorage.setItem('proofreadPreset', e.target.value)
+              }}
+              className="rounded-md border px-1 py-px text-[10px]"
+              style={{ background: 'var(--bg-input)', borderColor: 'var(--border)', color: 'var(--text-dim)' }}
+            >
+              {proofreadPresets.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={(e) => {
+                e.preventDefault()
+                runProofread()
+              }}
+              disabled={proofreading || suggesting !== null || !(draft.beat ?? '').trim()}
+              className="rounded-md border px-1.5 py-px text-[10px] disabled:opacity-40"
+              style={{ borderColor: 'var(--accent-border)', color: 'var(--accent)' }}
+              title="選択中のプリセットで本文を校正(結果は下書きに反映、保存までは確定しない)"
+            >
+              {proofreading ? '校正中…' : '✎ 校正'}
+            </button>
+          </span>
         </span>
         <textarea
           rows={6}

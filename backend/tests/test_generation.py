@@ -113,6 +113,24 @@ def test_suggest_field(monkeypatch):
         asyncio.run(generation.suggest_field("http://fake", "x", "nonsense"))
 
 
+def test_proofread_presets_and_custom(store, monkeypatch):
+    presets = generation.proofread_presets(store)
+    assert [p["id"] for p in presets] == ["light", "standard", "aggressive"]
+    store.set_settings({"proofread_custom_prompt": "乾いた文体に整えてください。"})
+    presets = generation.proofread_presets(store)
+    assert presets[-1]["id"] == "custom"
+
+    async def fake_chat(messages, **kwargs):
+        assert "乾いた文体" in messages[0]["content"]
+        return {"content": "校正済みの文章。", "tool_calls": None, "message": {}, "finish_reason": "stop", "usage": {}}
+
+    monkeypatch.setattr(llm_mod, "chat", fake_chat)
+    value = asyncio.run(generation.proofread(store, "http://fake", "もとの文章。", "custom"))
+    assert value == "校正済みの文章。"
+    with pytest.raises(ValueError):
+        asyncio.run(generation.proofread(store, "http://fake", "x", "nonsense"))
+
+
 def test_extract_events_replaces(store, monkeypatch):
     node = store.append_node({"beat": "アヤが村を出る", "cast": ["aya"]}, [
         {"type": "char_introduce", "payload": {"char": "aya"}},
