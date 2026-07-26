@@ -451,6 +451,27 @@ textarea {
   box-shadow: 0 0 14px 2px rgba(124, 90, 247, 0.25);
 }
 
+/* カラーピッカー。既定の見た目だと角が丸まらないので、
+   swatch 自体に border-radius を効かせる(Chromium 前提) */
+.color-swatch {
+  -webkit-appearance: none;
+  appearance: none;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: transparent;
+}
+
+.color-swatch::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.color-swatch::-webkit-color-swatch {
+  border: none;
+  border-radius: 9px;
+}
+
 /* ノードのピン(ハンドル)。掴みやすいように当たり判定を広く取り、
    見た目の点は ::after で小さく描く(接続点の位置は変わらない) */
 .react-flow .react-flow__handle {

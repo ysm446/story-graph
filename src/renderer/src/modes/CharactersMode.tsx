@@ -211,26 +211,27 @@ export default function CharactersMode(): React.JSX.Element {
       <main className="inspector-scrollbar min-w-0 flex-1 overflow-y-auto p-6">
         {selected ? (
           <div className="mx-auto max-w-2xl">
-            <div className="mb-4 flex items-center gap-3">
+            {/* 画像 → 画像操作 → 名前 の順に縦に積む(色は名前の隣に項目として置く) */}
+            <div className="mb-4 flex flex-col items-start gap-1.5">
               {/* プロフィール画像(装飾専用。無くても成り立つ) */}
               <button
                 onClick={() => {
                   if (draft.portrait_source_path) openRecrop()
                   else fileInputRef.current?.click()
                 }}
-                className="group relative h-16 w-16 shrink-0 overflow-hidden rounded-full border-2"
+                className="group relative h-28 w-28 shrink-0 overflow-hidden rounded-full border-2"
                 style={{ borderColor: draft.color ?? '#8a8fa8', background: 'var(--bg-input)' }}
                 title={draft.portrait_source_path ? 'クリックで切り抜き直し' : 'クリックで画像を設定'}
               >
                 {assetUrl(draft.portrait_path) ? (
                   <img src={assetUrl(draft.portrait_path)!} className="h-full w-full object-cover" />
                 ) : (
-                  <span className="flex h-full w-full items-center justify-center text-[20px]" style={{ color: 'var(--text-faint)' }}>
+                  <span className="flex h-full w-full items-center justify-center text-[36px]" style={{ color: 'var(--text-faint)' }}>
                     {(draft.name ?? '?').slice(0, 1)}
                   </span>
                 )}
                 <span
-                  className="absolute inset-0 hidden items-center justify-center bg-black/50 text-[10px] text-white group-hover:flex"
+                  className="absolute inset-0 hidden items-center justify-center bg-black/50 text-[11px] text-white group-hover:flex"
                 >
                   {draft.portrait_source_path ? '調整' : '設定'}
                 </span>
@@ -248,28 +249,13 @@ export default function CharactersMode(): React.JSX.Element {
                   setCropTarget({ source: file, isNewFile: true, initial: null })
                 }}
               />
-              <input
-                type="color"
-                value={draft.color ?? '#7c5af7'}
-                onChange={(e) => setDraft((d) => ({ ...d, color: e.target.value }))}
-                className="h-9 w-9 cursor-pointer rounded-lg border-0 bg-transparent p-0"
-              />
-              <input
-                value={draft.name ?? ''}
-                onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
-                className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[16px] font-semibold outline-none"
-                style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
-              />
+              {/* 画像のすぐ下に画像操作(画像があるときだけ) */}
               {draft.portrait_path && (
-                <span className="flex shrink-0 flex-col gap-1">
-                  <button
-                    onClick={() => fileInputRef.current?.click()}
-                    className="text-[11px]"
-                    style={{ color: 'var(--text-faint)' }}
-                    title="別の画像に差し替える"
-                  >
+                <div className="flex items-center gap-2 text-[11px]" style={{ color: 'var(--text-faint)' }}>
+                  <button onClick={() => fileInputRef.current?.click()} title="別の画像に差し替える">
                     画像を差し替え
                   </button>
+                  <span>・</span>
                   <button
                     onClick={() => {
                       if (!selectedId) return
@@ -279,14 +265,39 @@ export default function CharactersMode(): React.JSX.Element {
                         await reload()
                       })
                     }}
-                    className="text-[11px]"
-                    style={{ color: 'var(--text-faint)' }}
                     title="画像を外す"
                   >
                     画像を外す
                   </button>
-                </span>
+                </div>
               )}
+              {/* 名前と色。色はキャラの識別に使うので名前の隣に項目として並べる */}
+              <div className="mt-1.5 flex w-full items-end gap-2">
+                <label className="min-w-0 flex-1 block">
+                  <span className="mb-1 block text-[12px]" style={{ color: 'var(--text-dim)' }}>
+                    名前
+                  </span>
+                  {/* 色のスウォッチと高さを揃えるため、padding ではなく高さで指定する */}
+                  <input
+                    value={draft.name ?? ''}
+                    onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
+                    className="block h-11 w-full rounded-lg border px-3 text-[18px] font-semibold outline-none"
+                    style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
+                  />
+                </label>
+                <label className="block shrink-0">
+                  <span className="mb-1 block text-[12px]" style={{ color: 'var(--text-dim)' }}>
+                    色
+                  </span>
+                  <input
+                    type="color"
+                    value={draft.color ?? '#7c5af7'}
+                    onChange={(e) => setDraft((d) => ({ ...d, color: e.target.value }))}
+                    className="color-swatch block h-11 w-12 cursor-pointer"
+                    title="ノード・関係図・チャットで使われるキャラの色"
+                  />
+                </label>
+              </div>
             </div>
             {FIELD_DEFS.map((f) => (
               <label key={f.key} className="mb-4 block">
