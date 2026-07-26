@@ -274,6 +274,8 @@ async function reextractStream(
 }
 
 export interface RenderStreamEvent {
+  stage?: 'start'
+  total?: number // 清書するシーン数(最初に一度だけ来る)
   scene_start?: string
   title?: string | null
   delta?: string

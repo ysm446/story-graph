@@ -148,6 +148,8 @@ async def render_stream(
             yield _sse({"error": f"プリセットが見つかりません: {preset_id}"})
             return
         canon = store.canon_path()
+        # 何シーン書くのかを最初に伝える(UI の進捗表示 N/M 用)
+        yield _sse({"stage": "start", "total": len(node_ids)})
         for node_id in node_ids:
             node = store.get_node(node_id)
             if node is None:

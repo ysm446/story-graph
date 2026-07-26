@@ -1676,6 +1676,8 @@ function StructureModeInner({
             await renderStream(
               { preset_id: presetId, pov_char: pov, node_ids: nodeIds, skip_existing: skipExisting },
               (e) => {
+                // 実際に書くシーン数(未清書のみの絞り込み後)はサーバーが返す
+                if (e.stage === 'start') update({ total: e.total })
                 if (e.scene_start) {
                   markNodeBusy(current, false)
                   current = e.scene_start

@@ -407,7 +407,10 @@ export default function ReaderMode({
           await renderStream(
             { preset_id: preset, pov_char: pov, from_node: fromNode, mode },
             (e) => {
-              if (e.scene_start) {
+              if (e.stage === 'start') {
+                // 何シーン書くかはサーバー側で決まる(未清書のみ等の絞り込み後)
+                update({ total: e.total })
+              } else if (e.scene_start) {
                 setLiveNodeId(e.scene_start)
                 setLiveText('')
                 setStatus(`清書中: ${e.title || '(無題)'}`)
