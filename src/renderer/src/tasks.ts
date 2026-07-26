@@ -1,10 +1,12 @@
 import { useSyncExternalStore } from 'react'
 
-/** アプリ全体で走っている長い処理(生成・抽出・清書など)の一覧。
+/** LLM を使う長い処理のキュー(アプリ全体で 1 本)。
  *
- * モードを切り替えるとページのコンポーネントは破棄されるが、処理そのものは
- * 続いている。進捗をここに集約してステータスバーに出すことで、どのページに
- * いても「何が動いているか」と「中止」に手が届くようにする。
+ * - llama-server は 1 リクエストずつしか処理しないので、**同時に走らせない**。
+ *   積んだ順に 1 件ずつ実行する
+ * - モードを切り替えるとページのコンポーネントは破棄されるが、キューは残るので
+ *   進捗と中止はステータスバーから常に手が届く
+ * - 待機中の処理は取り消せる(実行中は AbortSignal で中止)
  */
 export interface Task {
   id: string
@@ -12,35 +14,96 @@ export interface Task {
   detail?: string // いま処理しているシーン名など
   done?: number // 進捗(件数)。total と併せて N/M 表示に使う
   total?: number
-  abort?: () => void // 中止できる処理だけ渡す
-  startedAt: number
+  status: 'pending' | 'running'
+  enqueuedAt: number
+  startedAt?: number
 }
 
-let tasks: Task[] = []
+export type TaskPatch = Partial<Pick<Task, 'detail' | 'done' | 'total'>>
+
+/** 実処理。update で進捗を伝え、signal で中止を受ける */
+export type TaskRunner = (ctx: { update: (patch: TaskPatch) => void; signal: AbortSignal }) => Promise<void>
+
+interface Entry {
+  task: Task
+  runner: TaskRunner
+  controller: AbortController
+}
+
+let entries: Entry[] = []
 const listeners = new Set<() => void>()
+let snapshot: Task[] = []
 let seq = 0
 
-function emit(): void {
+function publish(): void {
+  snapshot = entries.map((e) => e.task)
   for (const listener of listeners) listener()
 }
 
-export function startTask(task: Omit<Task, 'id' | 'startedAt'> & { id?: string }): string {
-  const id = task.id ?? `task-${++seq}`
-  tasks = [...tasks.filter((t) => t.id !== id), { ...task, id, startedAt: Date.now() }]
-  emit()
+function patchTask(id: string, patch: Partial<Task>): void {
+  entries = entries.map((e) => (e.task.id === id ? { ...e, task: { ...e.task, ...patch } } : e))
+  publish()
+}
+
+async function pump(): Promise<void> {
+  if (entries.some((e) => e.task.status === 'running')) return
+  const next = entries.find((e) => e.task.status === 'pending')
+  if (!next) return
+  patchTask(next.task.id, { status: 'running', startedAt: Date.now() })
+  try {
+    await next.runner({
+      update: (patch) => patchTask(next.task.id, patch),
+      signal: next.controller.signal
+    })
+  } catch {
+    // 個々の失敗は呼び出し側で扱う(キューは止めない)
+  } finally {
+    entries = entries.filter((e) => e.task.id !== next.task.id)
+    publish()
+    void pump()
+  }
+}
+
+/** 処理をキューに積む。戻り値はタスク ID */
+export function enqueueTask(spec: {
+  label: string
+  detail?: string
+  total?: number
+  runner: TaskRunner
+}): string {
+  const id = `task-${++seq}`
+  entries = [
+    ...entries,
+    {
+      task: {
+        id,
+        label: spec.label,
+        detail: spec.detail,
+        total: spec.total,
+        status: 'pending',
+        enqueuedAt: Date.now()
+      },
+      runner: spec.runner,
+      controller: new AbortController()
+    }
+  ]
+  publish()
+  // 実行は必ず次のマイクロタスクから。同期で走らせると、呼び出し側が
+  // enqueueTask の戻り値(タスク ID)を受け取る前に runner が動いてしまう
+  queueMicrotask(() => void pump())
   return id
 }
 
-export function updateTask(id: string, patch: Partial<Omit<Task, 'id' | 'startedAt'>>): void {
-  tasks = tasks.map((t) => (t.id === id ? { ...t, ...patch } : t))
-  emit()
-}
-
-export function endTask(id: string): void {
-  const next = tasks.filter((t) => t.id !== id)
-  if (next.length === tasks.length) return
-  tasks = next
-  emit()
+/** 実行中なら中止、待機中ならキューから取り除く */
+export function cancelTask(id: string): void {
+  const entry = entries.find((e) => e.task.id === id)
+  if (!entry) return
+  if (entry.task.status === 'running') {
+    entry.controller.abort()
+    return
+  }
+  entries = entries.filter((e) => e.task.id !== id)
+  publish()
 }
 
 function subscribe(listener: () => void): () => void {
@@ -51,7 +114,7 @@ function subscribe(listener: () => void): () => void {
 export function useTasks(): Task[] {
   return useSyncExternalStore(
     subscribe,
-    () => tasks,
-    () => tasks
+    () => snapshot,
+    () => snapshot
   )
 }

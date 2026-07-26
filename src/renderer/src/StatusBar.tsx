@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from './api'
-import { useTasks } from './tasks'
+import { cancelTask, useTasks } from './tasks'
 
 interface SystemResources {
   cpu_usage: number
@@ -43,6 +43,9 @@ export default function StatusBar({ backendReady }: { backendReady: boolean }): 
   const [res, setRes] = useState<SystemResources | null>(null)
   const tasks = useTasks()
   const [now, setNow] = useState(() => Date.now())
+  const [queueOpen, setQueueOpen] = useState(false)
+  const running = tasks.find((t) => t.status === 'running') ?? null
+  const pending = tasks.filter((t) => t.status === 'pending')
 
   // 経過時間の表示用。処理が無いときは動かさない
   useEffect(() => {
@@ -50,6 +53,11 @@ export default function StatusBar({ backendReady }: { backendReady: boolean }): 
     const timer = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(timer)
   }, [tasks.length])
+
+  // 待機がなくなったら一覧は閉じる
+  useEffect(() => {
+    if (pending.length === 0) setQueueOpen(false)
+  }, [pending.length])
 
   useEffect(() => {
     if (!backendReady) return
@@ -75,38 +83,76 @@ export default function StatusBar({ backendReady }: { backendReady: boolean }): 
       className="flex h-7 shrink-0 items-center gap-3 border-t px-3"
       style={{ background: 'var(--bg-sidebar)', borderColor: 'var(--border)', color: 'var(--text)' }}
     >
-      {/* 走っている処理(ページを移動しても消えない) */}
-      <div className="flex min-w-0 items-center gap-3">
-        {tasks.map((t) => (
-          <span key={t.id} className="flex min-w-0 items-center gap-1.5 text-[11px]">
+      {/* 処理キュー(ページを移動しても消えない。実行は 1 件ずつ) */}
+      <div className="relative flex min-w-0 items-center gap-2">
+        {running && (
+          <span className="flex min-w-0 items-center gap-1.5 text-[11px]">
             <span
               className="inline-block h-1.5 w-1.5 shrink-0 animate-pulse rounded-full"
               style={{ background: 'var(--accent)' }}
             />
             <span className="shrink-0" style={{ color: 'var(--text-dim)' }}>
-              {t.label}
-              {t.total ? ` ${t.done ?? 0}/${t.total}` : ''}
+              {running.label}
+              {running.total ? ` ${running.done ?? 0}/${running.total}` : ''}
             </span>
-            {t.detail && (
+            {running.detail && (
               <span className="min-w-0 truncate" style={{ color: 'var(--text-faint)' }}>
-                {t.detail}
+                {running.detail}
               </span>
             )}
             <span className="shrink-0 tabular-nums" style={{ color: 'var(--text-faint)' }}>
-              {elapsedLabel(now, t.startedAt)}
+              {elapsedLabel(now, running.startedAt ?? running.enqueuedAt)}
             </span>
-            {t.abort && (
-              <button
-                onClick={t.abort}
-                className="shrink-0 rounded border px-1"
-                style={{ borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }}
-                title="この処理を中止する"
-              >
-                ■
-              </button>
-            )}
+            <button
+              onClick={() => cancelTask(running.id)}
+              className="shrink-0 rounded border px-1"
+              style={{ borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }}
+              title="この処理を中止する"
+            >
+              ■
+            </button>
           </span>
-        ))}
+        )}
+        {pending.length > 0 && (
+          <>
+            <button
+              onClick={() => setQueueOpen((v) => !v)}
+              className="shrink-0 rounded border px-1.5 text-[11px]"
+              style={{ borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }}
+              title="待機中の処理(クリックで一覧)"
+            >
+              待機 {pending.length} {queueOpen ? '▾' : '▴'}
+            </button>
+            {queueOpen && (
+              <div
+                className="absolute bottom-full left-0 z-30 mb-1 w-72 overflow-hidden rounded-lg border py-1 shadow-xl shadow-black/50"
+                style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)' }}
+              >
+                {pending.map((t, i) => (
+                  <div key={t.id} className="flex items-center gap-2 px-2 py-1 text-[11px]">
+                    <span className="shrink-0" style={{ color: 'var(--text-faint)' }}>
+                      {i + 1}.
+                    </span>
+                    <span className="shrink-0" style={{ color: 'var(--text-dim)' }}>
+                      {t.label}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate" style={{ color: 'var(--text-faint)' }}>
+                      {t.detail ?? (t.total ? `${t.total} 件` : '')}
+                    </span>
+                    <button
+                      onClick={() => cancelTask(t.id)}
+                      className="shrink-0 rounded border px-1"
+                      style={{ borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }}
+                      title="キューから取り消す"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
       </div>
       <div className="ml-auto flex items-center gap-3">
         {res && (

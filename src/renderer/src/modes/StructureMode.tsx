@@ -32,7 +32,7 @@ import FactTimeline from '../FactTimeline'
 import { Icon } from '../icons'
 import ProofreadTextarea from '../ProofreadTextarea'
 import RelationGraph from '../RelationGraph'
-import { endTask, startTask, updateTask } from '../tasks'
+import { cancelTask, enqueueTask } from '../tasks'
 import { useElapsedSeconds } from '../useElapsed'
 import type { Character, EventInput, GraphEdge, StateSnapshot, StoryEvent, StoryNode } from '../types'
 
@@ -705,7 +705,10 @@ function BeatTab({
             return (
               <span
                 key={c.id}
-                className="inline-flex items-center gap-1.5 rounded-full border py-1 pl-2.5 pr-1 text-[12px]"
+                // ⊗ が出る(cast 入り)ときだけ右の余白を詰める。出ないときは左右対称に
+                className={`inline-flex items-center gap-1.5 rounded-full border py-1 pl-2.5 text-[12px] ${
+                  active ? 'pr-1' : 'pr-2.5'
+                }`}
                 style={
                   active
                     ? { background: 'var(--accent-soft)', borderColor: 'var(--accent-border)', color: 'var(--text)' }
@@ -1217,7 +1220,7 @@ function StructureModeInner({
   const [generating, setGenerating] = useState(false)
   const [genStatus, setGenStatus] = useState<string | null>(null)
   const genElapsed = useElapsedSeconds(generating)
-  const genAbortRef = useRef<AbortController | null>(null)
+  const genTaskIdRef = useRef<string | null>(null) // 生成タスクの ID(中止ボタン用)
   const [flowNodes, setFlowNodes] = useState<BeatFlowNode[]>([])
   // エッジ選択(Delete で切断)と、チェーン再抽出の進捗
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null)
@@ -1241,9 +1244,6 @@ function StructureModeInner({
     })
   }, [])
   const [reextracting, setReextracting] = useState<{ index: number; total: number; title: string } | null>(null)
-  const reextractAbortRef = useRef<AbortController | null>(null)
-  const [renderingNodes, setRenderingNodes] = useState<{ done: number; total: number; title: string } | null>(null)
-  const renderAbortRef = useRef<AbortController | null>(null)
   const [inspectorWidth, setInspectorWidth] = useState(() => {
     const saved = Number(localStorage.getItem('inspectorWidth'))
     return saved >= 320 && saved <= 900 ? saved : 480
@@ -1541,103 +1541,99 @@ function StructureModeInner({
 
   // このシーン以下のイベントを、親から順に作り直す(上流の状態が変わったとき)
   const runReextractChain = useCallback(
-    async (nodeId: string): Promise<void> => {
-      if (reextracting) return
-      const controller = new AbortController()
-      reextractAbortRef.current = controller
-      setReextracting({ index: 0, total: countSubtree(nodeId), title: '' })
-      const taskId = startTask({
+    (nodeId: string): void => {
+      const total = countSubtree(nodeId)
+      enqueueTask({
         label: 'イベント作り直し',
-        total: countSubtree(nodeId),
-        abort: () => controller.abort()
+        total,
+        detail: `${total} シーン`,
+        runner: async ({ update, signal }) => {
+          setReextracting({ index: 0, total, title: "" })
+          let current: string | null = null
+          try {
+            await reextractChainStream(
+              nodeId,
+              (e) => {
+                if (e.stage === 'node') {
+                  setReextracting({ index: e.index ?? 0, total: e.total ?? 0, title: e.title ?? '' })
+                  update({ done: e.index, total: e.total, detail: e.title })
+                  // 処理中のノードだけを光らせる(逐次実行なので常に 1 つ)
+                  markNodeBusy(current, false)
+                  current = e.node_id ?? null
+                  markNodeBusy(current, true)
+                }
+                if (e.stage === 'done') {
+                  const failed = e.failed ?? []
+                  setGenStatus(
+                    failed.length === 0
+                      ? `${e.total} シーンのイベントを作り直しました`
+                      : `${(e.total ?? 0) - failed.length} シーン成功 / ${failed.length} シーン失敗: ` +
+                        failed.map((f) => f.title).join(', ')
+                  )
+                }
+              },
+              signal
+            )
+          } catch (err) {
+            setGenStatus(isAbortError(err) ? '作り直しを中止しました' : `作り直せません: ${String(err)}`)
+          } finally {
+            markNodeBusy(current, false)
+            setReextracting(null)
+            await reload()
+          }
+        }
       })
-      let current: string | null = null
-      try {
-        await reextractChainStream(
-          nodeId,
-          (e) => {
-            if (e.stage === 'node') {
-              setReextracting({ index: e.index ?? 0, total: e.total ?? 0, title: e.title ?? '' })
-              updateTask(taskId, { done: (e.index ?? 1) - 1, total: e.total, detail: e.title })
-              // 処理中のノードだけを光らせる(逐次実行なので常に 1 つ)
-              markNodeBusy(current, false)
-              current = e.node_id ?? null
-              markNodeBusy(current, true)
-            }
-            if (e.stage === 'done') {
-              const failed = e.failed ?? []
-              setGenStatus(
-                failed.length === 0
-                  ? `${e.total} シーンのイベントを作り直しました`
-                  : `${(e.total ?? 0) - failed.length} シーン成功 / ${failed.length} シーン失敗: ` +
-                    failed.map((f) => f.title).join(', ')
-              )
-            }
-          },
-          controller.signal
-        )
-      } catch (err) {
-        setGenStatus(isAbortError(err) ? '作り直しを中止しました' : `作り直せません: ${String(err)}`)
-      } finally {
-        endTask(taskId)
-        markNodeBusy(current, false)
-        reextractAbortRef.current = null
-        setReextracting(null)
-        await reload()
-      }
     },
-    [countSubtree, markNodeBusy, reextracting, reload]
+    [countSubtree, markNodeBusy, reload]
   )
 
   // ---- 一括操作(右クリックメニュー) ------------------------------
 
   // 選択した複数シーンのイベントを抽出し直す(親から順に逐次)
   const runReextractNodes = useCallback(
-    async (nodeIds: string[], includeDownstream: boolean): Promise<void> => {
-      if (reextracting || nodeIds.length === 0) return
-      const controller = new AbortController()
-      reextractAbortRef.current = controller
-      setReextracting({ index: 0, total: nodeIds.length, title: '' })
-      const taskId = startTask({
+    (nodeIds: string[], includeDownstream: boolean): void => {
+      if (nodeIds.length === 0) return
+      enqueueTask({
         label: 'イベント作り直し',
         total: nodeIds.length,
-        abort: () => controller.abort()
+        detail: `${nodeIds.length} シーン${includeDownstream ? '(下流も)' : ''}`,
+        runner: async ({ update, signal }) => {
+          setReextracting({ index: 0, total: nodeIds.length, title: "" })
+          let current: string | null = null
+          try {
+            await reextractNodesStream(
+              { node_ids: nodeIds, include_downstream: includeDownstream },
+              (e) => {
+                if (e.stage === 'node') {
+                  setReextracting({ index: e.index ?? 0, total: e.total ?? 0, title: e.title ?? '' })
+                  update({ done: e.index, total: e.total, detail: e.title })
+                  markNodeBusy(current, false)
+                  current = e.node_id ?? null
+                  markNodeBusy(current, true)
+                }
+                if (e.stage === 'done') {
+                  const failed = e.failed ?? []
+                  setGenStatus(
+                    failed.length === 0
+                      ? `${e.total} シーンのイベントを作り直しました`
+                      : `${(e.total ?? 0) - failed.length} シーン成功 / ${failed.length} シーン失敗: ` +
+                        failed.map((f) => f.title).join(', ')
+                  )
+                }
+              },
+              signal
+            )
+          } catch (err) {
+            setGenStatus(isAbortError(err) ? '作り直しを中止しました' : `作り直せません: ${String(err)}`)
+          } finally {
+            markNodeBusy(current, false)
+            setReextracting(null)
+            await reload()
+          }
+        }
       })
-      let current: string | null = null
-      try {
-        await reextractNodesStream(
-          { node_ids: nodeIds, include_downstream: includeDownstream },
-          (e) => {
-            if (e.stage === 'node') {
-              setReextracting({ index: e.index ?? 0, total: e.total ?? 0, title: e.title ?? '' })
-              updateTask(taskId, { done: (e.index ?? 1) - 1, total: e.total, detail: e.title })
-              markNodeBusy(current, false)
-              current = e.node_id ?? null
-              markNodeBusy(current, true)
-            }
-            if (e.stage === 'done') {
-              const failed = e.failed ?? []
-              setGenStatus(
-                failed.length === 0
-                  ? `${e.total} シーンのイベントを作り直しました`
-                  : `${(e.total ?? 0) - failed.length} シーン成功 / ${failed.length} シーン失敗: ` +
-                    failed.map((f) => f.title).join(', ')
-              )
-            }
-          },
-          controller.signal
-        )
-      } catch (err) {
-        setGenStatus(isAbortError(err) ? '作り直しを中止しました' : `作り直せません: ${String(err)}`)
-      } finally {
-        endTask(taskId)
-        markNodeBusy(current, false)
-        reextractAbortRef.current = null
-        setReextracting(null)
-        await reload()
-      }
     },
-    [markNodeBusy, reextracting, reload]
+    [markNodeBusy, reload]
   )
 
   // 整合取り(LLM なし)。重複した登場イベントの掃除 + 検証
@@ -1665,54 +1661,47 @@ function StructureModeInner({
 
   // 選択したシーンを一括清書(条件は鑑賞モードの選択をそのまま使う)
   const runRenderNodes = useCallback(
-    async (nodeIds: string[], skipExisting: boolean): Promise<void> => {
-      if (!readerSetting.presetId || renderingNodes || nodeIds.length === 0) return
-      const controller = new AbortController()
-      renderAbortRef.current = controller
-      setRenderingNodes({ done: 0, total: nodeIds.length, title: '' })
-      const taskId = startTask({
+    (nodeIds: string[], skipExisting: boolean): void => {
+      const presetId = readerSetting.presetId
+      if (!presetId || nodeIds.length === 0) return
+      const pov = readerSetting.povChar
+      enqueueTask({
         label: '清書',
         total: nodeIds.length,
-        abort: () => controller.abort()
+        detail: `${nodeIds.length} シーン${skipExisting ? '(未清書のみ)' : ''}`,
+        runner: async ({ update, signal }) => {
+          let current: string | null = null
+          let done = 0
+          try {
+            await renderStream(
+              { preset_id: presetId, pov_char: pov, node_ids: nodeIds, skip_existing: skipExisting },
+              (e) => {
+                if (e.scene_start) {
+                  markNodeBusy(current, false)
+                  current = e.scene_start
+                  markNodeBusy(current, true)
+                  // 進捗は「いま何件目か」で数える(0/N から始まらないように)
+                  update({ done: done + 1, detail: e.title ?? '' })
+                }
+                if (e.scene_done) {
+                  done += 1
+                }
+                if (e.error) setGenStatus(`清書エラー: ${e.error}`)
+                if (e.done) {
+                  setGenStatus(done > 0 ? `${done} シーンを清書しました` : '清書済みのため何もしませんでした')
+                }
+              },
+              signal
+            )
+          } catch (err) {
+            setGenStatus(isAbortError(err) ? '清書を中止しました' : `清書できません: ${String(err)}`)
+          } finally {
+            markNodeBusy(current, false)
+          }
+        }
       })
-      let current: string | null = null
-      let done = 0
-      try {
-        await renderStream(
-          {
-            preset_id: readerSetting.presetId,
-            pov_char: readerSetting.povChar,
-            node_ids: nodeIds,
-            skip_existing: skipExisting
-          },
-          (e) => {
-            if (e.scene_start) {
-              markNodeBusy(current, false)
-              current = e.scene_start
-              markNodeBusy(current, true)
-              setRenderingNodes({ done, total: nodeIds.length, title: e.title ?? '' })
-              updateTask(taskId, { done, detail: e.title ?? '' })
-            }
-            if (e.scene_done) {
-              done += 1
-              setRenderingNodes({ done, total: nodeIds.length, title: '' })
-              updateTask(taskId, { done })
-            }
-            if (e.error) setGenStatus(`清書エラー: ${e.error}`)
-            if (e.done) setGenStatus(done > 0 ? `${done} シーンを清書しました` : '清書済みのため何もしませんでした')
-          },
-          controller.signal
-        )
-      } catch (err) {
-        setGenStatus(isAbortError(err) ? '清書を中止しました' : `清書できません: ${String(err)}`)
-      } finally {
-        endTask(taskId)
-        markNodeBusy(current, false)
-        renderAbortRef.current = null
-        setRenderingNodes(null)
-      }
     },
-    [markNodeBusy, readerSetting, renderingNodes]
+    [markNodeBusy, readerSetting]
   )
 
   // 選択したシーンをまとめて切り離す / 削除する
@@ -1964,54 +1953,55 @@ function StructureModeInner({
     setInspectorTab('beat')
   }
 
-  const handleGenerate = async (parentId: string | null): Promise<void> => {
-    const controller = new AbortController()
-    genAbortRef.current = controller
-    setGenerating(true)
-    setGenStatus('LLM 準備中…(初回はモデルロードに時間がかかります)')
-    // 生成中のノードはまだ存在しないので、続きを書く元のノードを光らせる
+  // 生成もキューに積む(連続して指示を出しても取りこぼさない)。
+  // 指示文は積んだ時点のものを使うので、入力欄はすぐ空にする
+  const handleGenerate = (parentId: string | null): void => {
+    const promptText = instruction.trim() || null
+    // 生成されるノードはまだ存在しないので、続きを書く元のノードを光らせる
     const originId = parentId ?? (canonPath.length > 0 ? canonPath[canonPath.length - 1].id : null)
-    markNodeBusy(originId, true)
-    const taskId = startTask({
-      label: 'シーン生成',
-      detail: 'LLM 準備中…',
-      abort: () => controller.abort()
+    setInstruction('')
+    const taskId = enqueueTask({
+      label: parentId ? '分岐生成' : 'シーン生成',
+      detail: promptText ?? '(指示なし)',
+      runner: async ({ update, signal }) => {
+        setGenerating(true)
+        setGenStatus('LLM 準備中…(初回はモデルロードに時間がかかります)')
+        markNodeBusy(originId, true)
+        try {
+          await generateBeatStream(
+            promptText,
+            (e) => {
+              if (e.stage === 'generating') {
+                setGenStatus(`シーン生成中…(${e.attempt} 回目)`)
+                update({ detail: `生成中(${e.attempt} 回目)` })
+              } else if (e.stage === 'validating') {
+                setGenStatus('検証中…')
+                update({ detail: '検証中…' })
+              } else if (e.stage === 'retry') setGenStatus(`検証 NG、リトライ中…(${(e.errors ?? []).join(' / ')})`)
+              else if (e.error) setGenStatus(`エラー: ${e.error}`)
+              else if (e.done && e.node) {
+                setGenStatus(
+                  e.validation && e.validation.length > 0 ? `警告付きで採用: ${e.validation.join(' / ')}` : null
+                )
+                const newId = e.node.id
+                void reload().then(() => {
+                  setSelectedId(newId)
+                  setInspectorTab('beat')
+                })
+              }
+            },
+            parentId,
+            signal
+          )
+        } catch (err) {
+          setGenStatus(isAbortError(err) ? 'キャンセルしました' : String(err))
+        } finally {
+          markNodeBusy(originId, false)
+          setGenerating(false)
+        }
+      }
     })
-    try {
-      await generateBeatStream(
-        instruction.trim() || null,
-        (e) => {
-          if (e.stage === 'generating') {
-            setGenStatus(`シーン生成中…(${e.attempt} 回目)`)
-            updateTask(taskId, { detail: `生成中(${e.attempt} 回目)` })
-          } else if (e.stage === 'validating') {
-            setGenStatus('検証中…')
-            updateTask(taskId, { detail: '検証中…' })
-          } else if (e.stage === 'retry') setGenStatus(`検証 NG、リトライ中…(${(e.errors ?? []).join(' / ')})`)
-          else if (e.error) setGenStatus(`エラー: ${e.error}`)
-          else if (e.done && e.node) {
-            setGenStatus(
-              e.validation && e.validation.length > 0 ? `警告付きで採用: ${e.validation.join(' / ')}` : null
-            )
-            setInstruction('')
-            const newId = e.node.id
-            void reload().then(() => {
-              setSelectedId(newId)
-              setInspectorTab('beat')
-            })
-          }
-        },
-        parentId,
-        controller.signal
-      )
-    } catch (err) {
-      setGenStatus(isAbortError(err) ? 'キャンセルしました' : String(err))
-    } finally {
-      endTask(taskId)
-      markNodeBusy(originId, false)
-      genAbortRef.current = null
-      setGenerating(false)
-    }
+    genTaskIdRef.current = taskId // 生成パネルの「■ 実行中の生成を中止」用
   }
 
   return (
@@ -2146,44 +2136,41 @@ function StructureModeInner({
                       value={instruction}
                       onChange={(e) => setInstruction(e.target.value)}
                       placeholder="生成の指示(任意)"
-                      disabled={generating}
                       className="mb-2 w-full rounded-lg border px-2.5 py-1.5 text-[12px] outline-none"
                       style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
                     />
+                    {/* 実行中でも押せる(キューに積まれる) */}
                     <div className="flex flex-col gap-1.5">
-                      {generating ? (
+                      <button
+                        onClick={() => {
+                          setGenPanelOpen(false) // 生成中はキャンバスを広く使えるよう畳む
+                          handleGenerate(null)
+                        }}
+                        className="w-full rounded-lg px-3 py-1.5 text-[13px] font-medium text-white"
+                        style={{ background: 'var(--accent)' }}
+                      >
+                        ▶ 次のシーンを生成
+                      </button>
+                      <button
+                        onClick={() => {
+                          setGenPanelOpen(false)
+                          handleGenerate(selectedId)
+                        }}
+                        disabled={!selectedId}
+                        className="w-full rounded-lg border px-3 py-1.5 text-[13px] font-medium disabled:opacity-40"
+                        style={{ borderColor: 'var(--accent-border)', color: 'var(--accent)' }}
+                        title="選択ノードから what-if 分岐を draft として生成"
+                      >
+                        ⑂ 選択ノードから分岐を生成
+                      </button>
+                      {generating && (
                         <button
-                          onClick={() => genAbortRef.current?.abort()}
+                          onClick={() => genTaskIdRef.current && cancelTask(genTaskIdRef.current)}
                           className="w-full rounded-lg border px-3 py-1.5 text-[13px] font-medium"
                           style={{ borderColor: 'rgba(239,68,68,0.5)', color: 'var(--danger)' }}
                         >
-                          ■ 生成を中止
+                          ■ 実行中の生成を中止
                         </button>
-                      ) : (
-                        <>
-                          <button
-                            onClick={() => {
-                              setGenPanelOpen(false) // 生成中はキャンバスを広く使えるよう畳む
-                              void handleGenerate(null)
-                            }}
-                            className="w-full rounded-lg px-3 py-1.5 text-[13px] font-medium text-white"
-                            style={{ background: 'var(--accent)' }}
-                          >
-                            ▶ 次のシーンを生成
-                          </button>
-                          <button
-                            onClick={() => {
-                              setGenPanelOpen(false)
-                              void handleGenerate(selectedId)
-                            }}
-                            disabled={!selectedId}
-                            className="w-full rounded-lg border px-3 py-1.5 text-[13px] font-medium disabled:opacity-40"
-                            style={{ borderColor: 'var(--accent-border)', color: 'var(--accent)' }}
-                            title="選択ノードから what-if 分岐を draft として生成"
-                          >
-                            ⑂ 選択ノードから分岐を生成
-                          </button>
-                        </>
                       )}
                     </div>
                     {genStatus && (
@@ -2198,46 +2185,7 @@ function StructureModeInner({
                     )}
                   </div>
                 )}
-                {/* チェーン再抽出の進捗(逐次実行なので何番目かを出す) */}
-                {reextracting && (
-                  <div
-                    className="node-generating-border flex items-center gap-2 rounded-xl border px-2.5 py-1.5 text-[11px] shadow-lg shadow-black/30"
-                    style={{ background: 'var(--bg-card)', borderColor: 'var(--border)', color: 'var(--text-dim)' }}
-                  >
-                    <span className="min-w-0 flex-1 truncate">
-                      イベント作り直し {reextracting.index}/{reextracting.total}
-                      {reextracting.title && `: ${reextracting.title}`}
-                    </span>
-                    <button
-                      onClick={() => reextractAbortRef.current?.abort()}
-                      className="shrink-0 rounded-md border px-1.5"
-                      style={{ borderColor: 'rgba(239,68,68,0.5)', color: 'var(--danger)' }}
-                      title="中止(処理済みのシーンはそのまま)"
-                    >
-                      ■
-                    </button>
-                  </div>
-                )}
-                {/* 一括清書の進捗 */}
-                {renderingNodes && (
-                  <div
-                    className="node-generating-border flex items-center gap-2 rounded-xl border px-2.5 py-1.5 text-[11px] shadow-lg shadow-black/30"
-                    style={{ background: 'var(--bg-card)', borderColor: 'var(--border)', color: 'var(--text-dim)' }}
-                  >
-                    <span className="min-w-0 flex-1 truncate">
-                      清書 {renderingNodes.done}/{renderingNodes.total}
-                      {renderingNodes.title && `: ${renderingNodes.title}`}
-                    </span>
-                    <button
-                      onClick={() => renderAbortRef.current?.abort()}
-                      className="shrink-0 rounded-md border px-1.5"
-                      style={{ borderColor: 'rgba(239,68,68,0.5)', color: 'var(--danger)' }}
-                      title="中止(処理済みのシーンはそのまま)"
-                    >
-                      ■
-                    </button>
-                  </div>
-                )}
+                {/* 再抽出・清書の進捗はステータスバーに集約したので、ここには出さない */}
                 {/* パネルを畳んでいる間の進捗表示。中止もここから行える */}
                 {!genPanelOpen && genStatus && (
                   <div
@@ -2256,7 +2204,7 @@ function StructureModeInner({
                     </span>
                     {generating ? (
                       <button
-                        onClick={() => genAbortRef.current?.abort()}
+                        onClick={() => genTaskIdRef.current && cancelTask(genTaskIdRef.current)}
                         className="shrink-0 rounded-md border px-1.5"
                         style={{ borderColor: 'rgba(239,68,68,0.5)', color: 'var(--danger)' }}
                         title="生成を中止"

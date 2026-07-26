@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { api, assetUrl, isAbortError, isVideoAsset, renderStream } from '../api'
 import { CrossfadeLoopVideo, DEFAULT_VIDEO_CROSSFADE_SECONDS } from '../CrossfadeLoopVideo'
-import { endTask, startTask, updateTask } from '../tasks'
+import { cancelTask, enqueueTask } from '../tasks'
 import { useElapsedSeconds } from '../useElapsed'
 import type { Character, PromoteProposal, SceneEntry, StylePreset } from '../types'
 
@@ -214,7 +214,7 @@ export default function ReaderMode({
   const [pages, setPages] = useState<PageChunk[]>([])
   const [pageBoxSize, setPageBoxSize] = useState({ width: 0, height: 0 })
   const containerRef = useRef<HTMLDivElement | null>(null)
-  const renderAbortRef = useRef<AbortController | null>(null)
+  const renderTaskIdRef = useRef<string | null>(null) // 清書タスクの ID(中止ボタン用)
   const pageAreaRef = useRef<HTMLDivElement | null>(null) // 本文エリア全体(挿絵の有無に依らず全高・全幅)
   const measurerRef = useRef<HTMLDivElement | null>(null)
 
@@ -390,53 +390,54 @@ export default function ReaderMode({
     })
   }, [focusNodeId, scenes, viewMode, pages])
 
-  const runRender = async (fromNode: string | null, mode: 'single' | 'to_end'): Promise<void> => {
-    if (!presetId || rendering) return
-    const controller = new AbortController()
-    renderAbortRef.current = controller
-    setRendering(true)
-    setStatus('LLM 準備中…')
-    // ページを離れても進捗が分かるよう、ステータスバーにも出す
-    const taskId = startTask({
+  // 清書はキューに積む(llama-server は 1 件ずつしか処理できない)。
+  // 実行はステータスバーから見えて中止もできるので、ページを離れても平気
+  const runRender = (fromNode: string | null, mode: 'single' | 'to_end'): void => {
+    if (!presetId) return
+    const preset = presetId
+    const pov = povChar
+    const taskId = enqueueTask({
       label: '清書',
-      detail: 'LLM 準備中…',
-      abort: () => controller.abort()
+      detail: mode === 'single' ? 'このシーンのみ' : 'ここから最後まで',
+      runner: async ({ update, signal }) => {
+        setRendering(true)
+        setStatus('LLM 準備中…')
+        let doneCount = 0
+        try {
+          await renderStream(
+            { preset_id: preset, pov_char: pov, from_node: fromNode, mode },
+            (e) => {
+              if (e.scene_start) {
+                setLiveNodeId(e.scene_start)
+                setLiveText('')
+                setStatus(`清書中: ${e.title || '(無題)'}`)
+                // 進捗は「いま何件目か」で数える(0/N から始まらないように)
+                update({ detail: e.title || '(無題)', done: doneCount + 1 })
+              } else if (e.delta) {
+                setLiveText((t) => t + e.delta)
+              } else if (e.scene_done) {
+                setLiveNodeId(null)
+                setLiveText('')
+                doneCount += 1
+                void reloadScenes()
+              } else if (e.error) {
+                setStatus(`エラー: ${e.error}`)
+              } else if (e.done) {
+                setStatus(null)
+              }
+            },
+            signal
+          )
+        } catch (err) {
+          setStatus(isAbortError(err) ? 'キャンセルしました(書きかけのシーンは保存されません)' : String(err))
+        } finally {
+          setRendering(false)
+          setLiveNodeId(null)
+          void reloadScenes()
+        }
+      }
     })
-    let doneCount = 0
-    try {
-      await renderStream(
-        { preset_id: presetId, pov_char: povChar, from_node: fromNode, mode },
-        (e) => {
-          if (e.scene_start) {
-            setLiveNodeId(e.scene_start)
-            setLiveText('')
-            setStatus(`清書中: ${e.title || '(無題)'}`)
-            updateTask(taskId, { detail: e.title || '(無題)', done: doneCount })
-          } else if (e.delta) {
-            setLiveText((t) => t + e.delta)
-          } else if (e.scene_done) {
-            setLiveNodeId(null)
-            setLiveText('')
-            doneCount += 1
-            updateTask(taskId, { done: doneCount })
-            void reloadScenes()
-          } else if (e.error) {
-            setStatus(`エラー: ${e.error}`)
-          } else if (e.done) {
-            setStatus(null)
-          }
-        },
-        controller.signal
-      )
-    } catch (err) {
-      setStatus(isAbortError(err) ? 'キャンセルしました(書きかけのシーンは保存されません)' : String(err))
-    } finally {
-      endTask(taskId)
-      renderAbortRef.current = null
-      setRendering(false)
-      setLiveNodeId(null)
-      void reloadScenes()
-    }
+    renderTaskIdRef.current = taskId // ページ内の「■ 清書を中止」用
   }
 
   // 散文の選択 → ビート昇格
@@ -559,7 +560,7 @@ export default function ReaderMode({
         <div className="ml-auto flex gap-1.5">
           <button
             onClick={() => void runRender(scene.node.id, 'single')}
-            disabled={rendering}
+            disabled={!presetId}
             className="rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-40"
             style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
           >
@@ -567,7 +568,7 @@ export default function ReaderMode({
           </button>
           <button
             onClick={() => void runRender(scene.node.id, 'to_end')}
-            disabled={rendering}
+            disabled={!presetId}
             className="rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-40"
             style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
           >
@@ -715,7 +716,7 @@ export default function ReaderMode({
         </select>
         {rendering ? (
           <button
-            onClick={() => renderAbortRef.current?.abort()}
+            onClick={() => renderTaskIdRef.current && cancelTask(renderTaskIdRef.current)}
             className="rounded-lg border px-3 py-1 text-[12px] font-medium"
             style={{ borderColor: 'rgba(239,68,68,0.5)', color: 'var(--danger)' }}
           >
