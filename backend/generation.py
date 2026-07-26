@@ -672,12 +672,43 @@ async def extract_events(
 async def reextract_chain(
     store: Store, base_url: str, node_id: str, keep_user_events: bool = True
 ) -> AsyncIterator[str]:
-    """node_id 以下の部分木を、親から順にイベント抽出し直す(SSE)。
+    """node_id 以下の部分木を、親から順にイベント抽出し直す(SSE)。"""
+    async for chunk in _reextract(store, base_url, store.subtree_order(node_id), keep_user_events):
+        yield chunk
+
+
+async def reextract_nodes(
+    store: Store,
+    base_url: str,
+    node_ids: list[str],
+    include_downstream: bool = False,
+    keep_user_events: bool = True,
+) -> AsyncIterator[str]:
+    """選択した複数ノードのイベントを抽出し直す(SSE)。
+
+    抽出は親の状態を前提にするので、ルートからの深さが浅い順に並べ替えて
+    逐次実行する(選択がチェーンをまたいでいても親が先に処理される)。
+    """
+    targets: list[str] = []
+    seen: set[str] = set()
+    for nid in node_ids:
+        for target in store.subtree_order(nid) if include_downstream else [nid]:
+            if target not in seen:
+                seen.add(target)
+                targets.append(target)
+    targets.sort(key=lambda nid: len(store.path_to(nid)))
+    async for chunk in _reextract(store, base_url, targets, keep_user_events):
+        yield chunk
+
+
+async def _reextract(
+    store: Store, base_url: str, order: list[str], keep_user_events: bool
+) -> AsyncIterator[str]:
+    """順序が確定したノード列を逐次抽出する。
 
     各ノードは親の新しい状態を前提に抽出するので、必ず逐次で実行する。
     途中で失敗したノードは飛ばして続行し、最後にまとめて報告する。
     """
-    order = store.subtree_order(node_id)
     failed: list[dict[str, str]] = []
     yield _sse({"stage": "start", "total": len(order)})
     for index, nid in enumerate(order):

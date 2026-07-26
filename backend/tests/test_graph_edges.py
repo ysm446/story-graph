@@ -87,3 +87,46 @@ def test_detached_node_has_no_parent(store):
     child = store.append_node({"beat": "続き", "cast": ["aya"]}, parent_id=node["id"])
     assert store.subtree_order(node["id"]) == [node["id"], child["id"]]
     assert store.canon_path() == before
+
+
+def test_reextract_nodes_orders_parents_first(store, monkeypatch):
+    """選択順がばらばらでも、親から順に抽出される(状態の前提が壊れないように)。"""
+    import asyncio
+    import generation
+
+    path = store.canon_path()
+    called: list[str] = []
+
+    async def fake_extract(store_, base_url, node_id, keep_user_events=True):
+        called.append(node_id)
+        return []
+
+    monkeypatch.setattr(generation, "extract_events", fake_extract)
+
+    async def run():
+        async for _ in generation.reextract_nodes(store, "http://fake", [path[2], path[0], path[1]]):
+            pass
+
+    asyncio.run(run())
+    assert called == path
+
+
+def test_reextract_nodes_include_downstream(store, monkeypatch):
+    import asyncio
+    import generation
+
+    path = store.canon_path()
+    called: list[str] = []
+
+    async def fake_extract(store_, base_url, node_id, keep_user_events=True):
+        called.append(node_id)
+        return []
+
+    monkeypatch.setattr(generation, "extract_events", fake_extract)
+
+    async def run():
+        async for _ in generation.reextract_nodes(store, "http://fake", [path[1]], include_downstream=True):
+            pass
+
+    asyncio.run(run())
+    assert called == [path[1], path[2]]  # 選択したノードとその下流だけ

@@ -221,10 +221,33 @@ export async function reextractChainStream(
   onEvent: (data: ReextractStreamEvent) => void,
   signal?: AbortSignal
 ): Promise<void> {
+  return reextractStream(`/nodes/${nodeId}/reextract_chain`, undefined, onEvent, signal)
+}
+
+/** 選択した複数シーンのイベントを抽出し直す(親から順に逐次、SSE) */
+export async function reextractNodesStream(
+  body: { node_ids: string[]; include_downstream?: boolean },
+  onEvent: (data: ReextractStreamEvent) => void,
+  signal?: AbortSignal
+): Promise<void> {
+  return reextractStream('/nodes/reextract', body, onEvent, signal)
+}
+
+async function reextractStream(
+  path: string,
+  body: unknown,
+  onEvent: (data: ReextractStreamEvent) => void,
+  signal?: AbortSignal
+): Promise<void> {
   if (!baseUrl) throw new Error('backend not ready')
-  const res = await fetch(`${baseUrl}/nodes/${nodeId}/reextract_chain`, { method: 'POST', signal })
+  const res = await fetch(`${baseUrl}${path}`, {
+    method: 'POST',
+    headers: body ? { 'Content-Type': 'application/json' } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+    signal
+  })
   if (!res.ok || !res.body) {
-    throw new Error(`${res.status} /nodes/${nodeId}/reextract_chain: ${await res.text()}`)
+    throw new Error(`${res.status} ${path}: ${await res.text()}`)
   }
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
@@ -357,7 +380,14 @@ export async function uploadAsset(file: File): Promise<{ path: string }> {
 }
 
 export async function renderStream(
-  body: { preset_id: string; pov_char: string | null; from_node: string | null; mode: 'single' | 'to_end' },
+  body: {
+    preset_id: string
+    pov_char: string | null
+    from_node?: string | null
+    mode?: 'single' | 'to_end'
+    node_ids?: string[] // 構造モードの一括清書(指定するとこのシーンだけが対象)
+    skip_existing?: boolean // 清書済み(stale でない)シーンを飛ばす
+  },
   onEvent: (data: RenderStreamEvent) => void,
   signal?: AbortSignal
 ): Promise<void> {

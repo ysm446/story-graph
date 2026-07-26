@@ -632,6 +632,29 @@ async def extract_events(node_id: str) -> dict[str, Any]:
     return {"events": events, "validation": store.validate(node_id)}
 
 
+class ReextractIn(BaseModel):
+    node_ids: list[str]
+    include_downstream: bool = False  # 選択したノードの下流も対象にする
+    keep_user_events: bool = True
+
+
+@app.post("/nodes/reextract")
+async def reextract_nodes(body: ReextractIn) -> StreamingResponse:
+    """選択した複数シーンのイベントを抽出し直す(親から順に逐次、SSE)。"""
+    if not body.node_ids:
+        raise HTTPException(400, "node_ids が空です")
+    try:
+        base_url = await llama.ensure_running(store.get_settings())
+    except RuntimeError as e:
+        raise HTTPException(500, str(e))
+    return StreamingResponse(
+        generation.reextract_nodes(
+            store, base_url, body.node_ids, body.include_downstream, body.keep_user_events
+        ),
+        media_type="text/event-stream",
+    )
+
+
 @app.post("/nodes/{node_id}/reextract_chain")
 async def reextract_chain(node_id: str, keep_user_events: bool = True) -> StreamingResponse:
     """このシーン以下の部分木を、親から順にイベント抽出し直す(SSE)。
@@ -663,6 +686,10 @@ class RenderIn(BaseModel):
     pov_char: str | None = None
     from_node: str | None = None
     mode: str = "to_end"  # single | to_end
+    # 構造モードの一括清書用。指定するとこのシーンだけを対象にする
+    # (順序は正史・深さ順に並べ替える。前のシーンの散文に接続するため)
+    node_ids: list[str] | None = None
+    skip_existing: bool = False  # 既に清書済み(stale でない)シーンを飛ばす
 
 
 class PromoteIn(BaseModel):
@@ -699,15 +726,29 @@ async def list_renders(preset_id: str, pov_char: str | None = None) -> list[dict
 @app.post("/render")
 async def render(body: RenderIn) -> StreamingResponse:
     canon = store.canon_path()
-    if not canon:
-        raise HTTPException(409, "正史パスにシーンがありません")
-    start = body.from_node or canon[0]
-    if start not in canon:
-        raise HTTPException(404, "from_node が正史パス上にありません")
-    if body.mode == "single":
-        node_ids = [start]
+    if body.node_ids is not None:
+        # 一括清書: 前のシーンの散文に接続するので、必ず時系列順に並べ替える
+        node_ids = sorted(
+            dict.fromkeys(body.node_ids),
+            key=lambda nid: (canon.index(nid) if nid in canon else len(canon) + len(store.path_to(nid))),
+        )
+        if body.skip_existing:
+            node_ids = [
+                nid
+                for nid in node_ids
+                if (r := store.latest_render(nid, body.preset_id, body.pov_char)) is None or r["stale"]
+            ]
+        if not node_ids:
+            async def empty_stream():
+                yield rendering._sse({"done": True, "skipped": True})
+            return StreamingResponse(empty_stream(), media_type="text/event-stream")
     else:
-        node_ids = canon[canon.index(start):]
+        if not canon:
+            raise HTTPException(409, "正史パスにシーンがありません")
+        start = body.from_node or canon[0]
+        if start not in canon:
+            raise HTTPException(404, "from_node が正史パス上にありません")
+        node_ids = [start] if body.mode == "single" else canon[canon.index(start):]
     try:
         base_url = await llama.ensure_running(store.get_settings())
     except RuntimeError as e:

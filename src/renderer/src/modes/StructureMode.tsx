@@ -24,6 +24,8 @@ import {
   isVideoAsset,
   proofreadStream,
   reextractChainStream,
+  reextractNodesStream,
+  renderStream,
   uploadAsset
 } from '../api'
 import ChatDrawer from '../ChatDrawer'
@@ -1306,6 +1308,14 @@ function StructureModeInner({ settingsVersion }: { settingsVersion: number }): R
   const [flowNodes, setFlowNodes] = useState<BeatFlowNode[]>([])
   // エッジ選択(Delete で切断)と、チェーン再抽出の進捗
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null)
+  // 右クリックメニュー(範囲選択した複数ノードへの一括操作)
+  const [menu, setMenu] = useState<{ x: number; y: number; targets: string[] } | null>(null)
+  // 一括清書に使う条件(鑑賞モードで選んだプリセットと POV。settings に保存済み)
+  const [readerSetting, setReaderSetting] = useState<{
+    presetId: string | null
+    presetName: string
+    povChar: string | null
+  }>({ presetId: null, presetName: '未設定', povChar: null })
   // LLM 処理中のノード(枠が時計まわりに光る)。生成・抽出・再抽出で共用
   const [busyNodeIds, setBusyNodeIds] = useState<Set<string>>(new Set())
   const markNodeBusy = useCallback((nodeId: string | null, busy: boolean): void => {
@@ -1319,6 +1329,8 @@ function StructureModeInner({ settingsVersion }: { settingsVersion: number }): R
   }, [])
   const [reextracting, setReextracting] = useState<{ index: number; total: number; title: string } | null>(null)
   const reextractAbortRef = useRef<AbortController | null>(null)
+  const [renderingNodes, setRenderingNodes] = useState<{ done: number; total: number; title: string } | null>(null)
+  const renderAbortRef = useRef<AbortController | null>(null)
   const [inspectorWidth, setInspectorWidth] = useState(() => {
     const saved = Number(localStorage.getItem('inspectorWidth'))
     return saved >= 320 && saved <= 900 ? saved : 480
@@ -1396,6 +1408,20 @@ function StructureModeInner({ settingsVersion }: { settingsVersion: number }): R
       .then((s) => {
         setMinimapVisible(s.minimap_visible !== '0')
         setChatDynamicSuggestions(s.chat_dynamic_suggestions !== '0')
+        // 一括清書は鑑賞モードで選んだ条件をそのまま使う
+        const presetId = s.reader_preset_id || null
+        const povChar = s.reader_pov_char || null
+        void api
+          .listPresets()
+          .then((presets) => {
+            const preset = presets.find((p) => p.id === presetId) ?? presets[0] ?? null
+            setReaderSetting({
+              presetId: preset?.id ?? null,
+              presetName: preset?.name ?? '未設定',
+              povChar
+            })
+          })
+          .catch(() => setReaderSetting({ presetId, presetName: '未設定', povChar }))
       })
       .catch(() => undefined)
   }, [settingsVersion])
@@ -1571,6 +1597,11 @@ function StructureModeInner({ settingsVersion }: { settingsVersion: number }): R
     [isValidConnection, reload, graphEdges, graphNodes]
   )
 
+  const nameOfChar = useCallback(
+    (charId: string): string => characters.find((c) => c.id === charId)?.name ?? charId,
+    [characters]
+  )
+
   // 部分木(そのノード以下)のシーン数
   const countSubtree = useCallback(
     (nodeId: string): number => {
@@ -1632,6 +1663,139 @@ function StructureModeInner({ settingsVersion }: { settingsVersion: number }): R
     },
     [countSubtree, markNodeBusy, reextracting, reload]
   )
+
+  // ---- 一括操作(右クリックメニュー) ------------------------------
+
+  // 選択した複数シーンのイベントを抽出し直す(親から順に逐次)
+  const runReextractNodes = useCallback(
+    async (nodeIds: string[], includeDownstream: boolean): Promise<void> => {
+      if (reextracting || nodeIds.length === 0) return
+      const controller = new AbortController()
+      reextractAbortRef.current = controller
+      setReextracting({ index: 0, total: nodeIds.length, title: '' })
+      let current: string | null = null
+      try {
+        await reextractNodesStream(
+          { node_ids: nodeIds, include_downstream: includeDownstream },
+          (e) => {
+            if (e.stage === 'node') {
+              setReextracting({ index: e.index ?? 0, total: e.total ?? 0, title: e.title ?? '' })
+              markNodeBusy(current, false)
+              current = e.node_id ?? null
+              markNodeBusy(current, true)
+            }
+            if (e.stage === 'done') {
+              const failed = e.failed ?? []
+              setGenStatus(
+                failed.length === 0
+                  ? `${e.total} シーンのイベントを作り直しました`
+                  : `${(e.total ?? 0) - failed.length} シーン成功 / ${failed.length} シーン失敗: ` +
+                    failed.map((f) => f.title).join(', ')
+              )
+            }
+          },
+          controller.signal
+        )
+      } catch (err) {
+        setGenStatus(isAbortError(err) ? '作り直しを中止しました' : `作り直せません: ${String(err)}`)
+      } finally {
+        markNodeBusy(current, false)
+        reextractAbortRef.current = null
+        setReextracting(null)
+        await reload()
+      }
+    },
+    [markNodeBusy, reextracting, reload]
+  )
+
+  // 選択したシーンを一括清書(条件は鑑賞モードの選択をそのまま使う)
+  const runRenderNodes = useCallback(
+    async (nodeIds: string[], skipExisting: boolean): Promise<void> => {
+      if (!readerSetting.presetId || renderingNodes || nodeIds.length === 0) return
+      const controller = new AbortController()
+      renderAbortRef.current = controller
+      setRenderingNodes({ done: 0, total: nodeIds.length, title: '' })
+      let current: string | null = null
+      let done = 0
+      try {
+        await renderStream(
+          {
+            preset_id: readerSetting.presetId,
+            pov_char: readerSetting.povChar,
+            node_ids: nodeIds,
+            skip_existing: skipExisting
+          },
+          (e) => {
+            if (e.scene_start) {
+              markNodeBusy(current, false)
+              current = e.scene_start
+              markNodeBusy(current, true)
+              setRenderingNodes({ done, total: nodeIds.length, title: e.title ?? '' })
+            }
+            if (e.scene_done) {
+              done += 1
+              setRenderingNodes({ done, total: nodeIds.length, title: '' })
+            }
+            if (e.error) setGenStatus(`清書エラー: ${e.error}`)
+            if (e.done) setGenStatus(done > 0 ? `${done} シーンを清書しました` : '清書済みのため何もしませんでした')
+          },
+          controller.signal
+        )
+      } catch (err) {
+        setGenStatus(isAbortError(err) ? '清書を中止しました' : `清書できません: ${String(err)}`)
+      } finally {
+        markNodeBusy(current, false)
+        renderAbortRef.current = null
+        setRenderingNodes(null)
+      }
+    },
+    [markNodeBusy, readerSetting, renderingNodes]
+  )
+
+  // 選択したシーンをまとめて切り離す / 削除する
+  const detachNodes = useCallback(
+    async (nodeIds: string[]): Promise<void> => {
+      const targets = nodeIds.filter((id) => graphEdges.some((e) => e.to_node === id))
+      if (targets.length === 0) {
+        setGenStatus('切り離せるシーンがありません(すでに島の根です)')
+        return
+      }
+      if (!window.confirm(`${targets.length} シーンを親から切り離しますか?(シーンは残ります)`)) return
+      for (const id of targets) {
+        await api.detachNode(id).catch(() => undefined)
+      }
+      await reload()
+    },
+    [graphEdges, reload]
+  )
+
+  const deleteNodes = useCallback(
+    async (nodeIds: string[]): Promise<void> => {
+      if (!window.confirm(`${nodeIds.length} シーンを削除しますか?(後続シーンは前のシーンに繋がります)`)) return
+      for (const id of nodeIds) {
+        await api.deleteNode(id).catch(() => undefined)
+        beatDraftCache.delete(id)
+      }
+      setSelectedId((current) => (current && nodeIds.includes(current) ? null : current))
+      await reload()
+    },
+    [reload]
+  )
+
+  // 右クリックメニューは外側クリックと Escape で閉じる
+  useEffect(() => {
+    if (!menu) return
+    const close = (): void => setMenu(null)
+    const onKey = (ev: KeyboardEvent): void => {
+      if (ev.key === 'Escape') close()
+    }
+    window.addEventListener('click', close)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('click', close)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [menu])
 
   // キーボードショートカット(lm-graph と同じ): A = 全体表示 / F = 選択にフォーカス
   // Delete = 選択ノードを削除(エッジ選択中は切断)
@@ -1903,7 +2067,25 @@ function StructureModeInner({ settingsVersion }: { settingsVersion: number }): R
             // エッジ選択は自前で持つ(onEdgesChange を渡していないため)
             onEdgeClick={(_, edge) => setSelectedEdgeId(edge.id)}
             onEdgeDoubleClick={(_, edge) => void detachEdge(edge.id)}
-            onPaneClick={() => setSelectedEdgeId(null)}
+            onPaneClick={() => {
+              setSelectedEdgeId(null)
+              setMenu(null)
+            }}
+            // 右クリック: 選択中のノード群(右クリックしたノードを含む)に対する一括操作
+            onNodeContextMenu={(event, node) => {
+              event.preventDefault()
+              const selected = flowNodes.filter((n) => n.selected).map((n) => n.id)
+              const targets = selected.includes(node.id) ? selected : [node.id]
+              setMenu({ x: event.clientX, y: event.clientY, targets })
+            }}
+            onSelectionContextMenu={(event, nodes) => {
+              event.preventDefault()
+              setMenu({ x: event.clientX, y: event.clientY, targets: nodes.map((n) => n.id) })
+            }}
+            onPaneContextMenu={(event) => {
+              event.preventDefault()
+              setMenu(null)
+            }}
             onNodeDragStop={(_, __, draggedNodes) => {
               for (const dragged of draggedNodes) {
                 void api.setNodePosition(dragged.id, dragged.position.x, dragged.position.y)
@@ -2063,6 +2245,26 @@ function StructureModeInner({ settingsVersion }: { settingsVersion: number }): R
                     </button>
                   </div>
                 )}
+                {/* 一括清書の進捗 */}
+                {renderingNodes && (
+                  <div
+                    className="node-generating-border flex items-center gap-2 rounded-xl border px-2.5 py-1.5 text-[11px] shadow-lg shadow-black/30"
+                    style={{ background: 'var(--bg-card)', borderColor: 'var(--border)', color: 'var(--text-dim)' }}
+                  >
+                    <span className="min-w-0 flex-1 truncate">
+                      清書 {renderingNodes.done}/{renderingNodes.total}
+                      {renderingNodes.title && `: ${renderingNodes.title}`}
+                    </span>
+                    <button
+                      onClick={() => renderAbortRef.current?.abort()}
+                      className="shrink-0 rounded-md border px-1.5"
+                      style={{ borderColor: 'rgba(239,68,68,0.5)', color: 'var(--danger)' }}
+                      title="中止(処理済みのシーンはそのまま)"
+                    >
+                      ■
+                    </button>
+                  </div>
+                )}
                 {/* パネルを畳んでいる間の進捗表示。中止もここから行える */}
                 {!genPanelOpen && genStatus && (
                   <div
@@ -2128,6 +2330,77 @@ function StructureModeInner({ settingsVersion }: { settingsVersion: number }): R
               </Panel>
             )}
           </ReactFlow>
+          {/* 右クリックメニュー: 選択したシーンへの一括操作 */}
+          {menu && (
+            <div
+              className="fixed z-50 w-60 overflow-hidden rounded-xl border py-1 text-[12px] shadow-xl shadow-black/50"
+              style={{
+                left: menu.x,
+                top: menu.y,
+                background: 'var(--bg-card)',
+                borderColor: 'var(--border-strong)'
+              }}
+            >
+              <div className="px-3 py-1 text-[10px]" style={{ color: 'var(--text-faint)' }}>
+                {menu.targets.length} シーンを選択中
+              </div>
+              {(
+                [
+                  {
+                    label: 'イベントを作り直す',
+                    hint: '選択したシーンだけ(親から順に逐次)',
+                    run: () => void runReextractNodes(menu.targets, false)
+                  },
+                  {
+                    label: 'イベントを作り直す(この先も)',
+                    hint: '選択したシーンと、その下流すべて',
+                    run: () => void runReextractNodes(menu.targets, true)
+                  },
+                  {
+                    label: `清書(未清書のみ)`,
+                    hint: `${readerSetting.presetName}${
+                      readerSetting.povChar ? ` / POV: ${nameOfChar(readerSetting.povChar)}` : ''
+                    }`,
+                    disabled: !readerSetting.presetId,
+                    run: () => void runRenderNodes(menu.targets, true)
+                  },
+                  {
+                    label: '清書し直す(上書き)',
+                    hint: '清書済みのシーンも作り直す',
+                    disabled: !readerSetting.presetId,
+                    run: () => void runRenderNodes(menu.targets, false)
+                  },
+                  {
+                    label: 'まとめて切り離す',
+                    hint: '親エッジを切って島にする',
+                    run: () => void detachNodes(menu.targets)
+                  },
+                  {
+                    label: 'まとめて削除',
+                    hint: '後続シーンは前のシーンに繋がる',
+                    run: () => void deleteNodes(menu.targets)
+                  }
+                ] as const
+              ).map((item) => (
+                <button
+                  key={item.label}
+                  onClick={() => {
+                    setMenu(null)
+                    item.run()
+                  }}
+                  disabled={'disabled' in item ? item.disabled : false}
+                  className="block w-full px-3 py-1.5 text-left hover:bg-[var(--accent-soft)] disabled:opacity-40"
+                  style={{ color: 'var(--text-dim)' }}
+                >
+                  <span style={{ color: 'var(--text)' }}>{item.label}</span>
+                  <br />
+                  <span className="text-[10px]" style={{ color: 'var(--text-faint)' }}>
+                    {item.hint}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
         </main>
         {chatOpen && (
           <>
