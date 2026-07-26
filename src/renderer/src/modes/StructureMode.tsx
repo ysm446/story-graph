@@ -221,6 +221,7 @@ function EventsEditor({
   const [newType, setNewType] = useState('fact_set')
   const [payloadText, setPayloadText] = useState(EVENT_TEMPLATES['fact_set'])
   const [busy, setBusy] = useState(false)
+  const [queued, setQueued] = useState(false) // キュー待ち(実行前)
   const busyElapsed = useElapsedSeconds(busy)
   const [error, setError] = useState<string | null>(null)
   const [validation, setValidation] = useState<string[]>([])
@@ -276,28 +277,36 @@ function EventsEditor({
           >
             {adding ? 'キャンセル' : '+ 手動イベント'}
           </button>
+          {/* 1 件でもキューに積む(他の処理と取り合いにならないように) */}
           <button
             onClick={() => {
-              setBusy(true)
-              onBusyChange(true)
               setError(null)
-              api
-                .extractEvents(node.id)
-                .then((r) => {
-                  setValidation(r.validation)
-                  onChanged()
-                })
-                .catch((e) => setError(String(e)))
-                .finally(() => {
-                  setBusy(false)
-                  onBusyChange(false)
-                })
+              setQueued(true)
+              enqueueTask({
+                label: 'イベント抽出',
+                detail: node.title || '(無題)',
+                runner: async ({ signal }) => {
+                  setBusy(true)
+                  onBusyChange(true)
+                  try {
+                    const r = await api.extractEvents(node.id, signal)
+                    setValidation(r.validation)
+                    onChanged()
+                  } catch (e) {
+                    if (!isAbortError(e)) setError(String(e))
+                  } finally {
+                    setBusy(false)
+                    setQueued(false)
+                    onBusyChange(false)
+                  }
+                }
+              })
             }}
-            disabled={busy}
-            className="rounded-md border px-2 py-0.5 text-[11px]"
+            disabled={busy || queued}
+            className="rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-50"
             style={{ borderColor: 'var(--accent-border)', color: 'var(--accent)' }}
           >
-            {busy ? `処理中… (${busyElapsed}s)` : 'イベント抽出(LLM)'}
+            {busy ? `処理中… (${busyElapsed}s)` : queued ? '待機中…' : 'イベント抽出(LLM)'}
           </button>
         </div>
       </div>
