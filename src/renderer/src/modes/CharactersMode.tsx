@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api, assetUrl, uploadAsset } from '../api'
 import ImageCropModal, { type CropState } from '../ImageCropModal'
+import ProofreadTextarea from '../ProofreadTextarea'
 import type { Character } from '../types'
 
 const FIELD_DEFS: Array<{ key: 'profile' | 'appearance' | 'voice'; label: string; rows: number }> = [
@@ -20,17 +21,6 @@ export default function CharactersMode(): React.JSX.Element {
     initial: CropState | null
   } | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
-  // プロフィール等のテキストエリアは内容に合わせて高さを自動調整する
-  const fieldRefs = useRef<Record<string, HTMLTextAreaElement | null>>({})
-
-  const autosizeFields = useCallback((): void => {
-    for (const f of FIELD_DEFS) {
-      const el = fieldRefs.current[f.key]
-      if (!el) continue
-      el.style.height = 'auto'
-      el.style.height = `${el.scrollHeight + 2}px`
-    }
-  }, [])
 
   const openRecrop = (): void => {
     // 保存済みの元画像から切り抜き直す(前回の位置・ズームを復元)
@@ -80,25 +70,6 @@ export default function CharactersMode(): React.JSX.Element {
     setDraft(selected ?? {})
   }, [selectedId, selected?.id])
 
-  // 入力・キャラ切替のたびに高さを合わせ直す
-  useEffect(() => {
-    autosizeFields()
-  }, [draft.profile, draft.appearance, draft.voice, selectedId, autosizeFields])
-
-  // ウインドウ幅が変わると折り返しが変わるので、幅の変化でも再計算する
-  useEffect(() => {
-    const el = fieldRefs.current[FIELD_DEFS[0].key]
-    if (!el) return
-    let lastWidth = el.clientWidth
-    const observer = new ResizeObserver(() => {
-      if (el.clientWidth !== lastWidth) {
-        lastWidth = el.clientWidth
-        autosizeFields()
-      }
-    })
-    observer.observe(el)
-    return () => observer.disconnect()
-  }, [selectedId, autosizeFields])
 
   const handleCreate = async (): Promise<void> => {
     const created = await api.createCharacter({ name: '新しいキャラクター', color: '#7c5af7' })
@@ -279,15 +250,11 @@ export default function CharactersMode(): React.JSX.Element {
                 <span className="mb-1 block text-[12px]" style={{ color: 'var(--text-dim)' }}>
                   {f.label}
                 </span>
-                {/* 内容に合わせて高さが伸びる(rows は最小の高さとして効く) */}
-                <textarea
-                  ref={(el) => {
-                    fieldRefs.current[f.key] = el
-                  }}
+                {/* 高さの自動調整と「選択して校正」は共通コンポーネントに任せる */}
+                <ProofreadTextarea
                   rows={f.rows}
                   value={(draft[f.key] as string | null) ?? ''}
-                  onChange={(e) => setDraft((d) => ({ ...d, [f.key]: e.target.value }))}
-                  className="w-full resize-none overflow-hidden rounded-lg border px-3 py-2 text-[13px] leading-relaxed outline-none"
+                  onChange={(next) => setDraft((d) => ({ ...d, [f.key]: next }))}
                   style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
                 />
               </label>
