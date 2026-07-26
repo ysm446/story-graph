@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, assetUrl, uploadAsset } from '../api'
 import ImageCropModal, { type CropState } from '../ImageCropModal'
+import PlaceEditor from './PlaceEditor'
 import ProofreadTextarea from '../ProofreadTextarea'
-import type { Character } from '../types'
+import type { Character, Place } from '../types'
 
 const FIELD_DEFS: Array<{ key: 'profile' | 'appearance' | 'voice'; label: string; rows: number }> = [
   { key: 'profile', label: 'プロフィール(性格の基調・背景)', rows: 5 },
@@ -10,8 +11,15 @@ const FIELD_DEFS: Array<{ key: 'profile' | 'appearance' | 'voice'; label: string
   { key: 'voice', label: '口調・一人称', rows: 3 }
 ]
 
+type Tab = 'characters' | 'places'
+
+/** 資料庫。キャラクターと場所を同じシェル(リサイズ可能なサイドバー + 編集ペイン)で扱う。
+ *  場所も登録制のエンティティなので、庫としては同じ性格のもの(docs/design/places.md)。 */
 export default function CharactersMode(): React.JSX.Element {
+  const [tab, setTab] = useState<Tab>('characters')
   const [characters, setCharacters] = useState<Character[]>([])
+  const [places, setPlaces] = useState<Place[]>([])
+  const [selectedPlaceId, setSelectedPlaceId] = useState<string | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [draft, setDraft] = useState<Partial<Character>>({})
   const [saving, setSaving] = useState(false)
@@ -81,10 +89,12 @@ export default function CharactersMode(): React.JSX.Element {
   }
 
   const selected = characters.find((c) => c.id === selectedId) ?? null
+  const selectedPlace = places.find((p) => p.id === selectedPlaceId) ?? null
 
   const reload = async (): Promise<void> => {
-    const list = await api.listCharacters()
-    setCharacters(list)
+    const [chars, placeList] = await Promise.all([api.listCharacters(), api.listPlaces()])
+    setCharacters(chars)
+    setPlaces(placeList)
   }
 
   useEffect(() => {
@@ -97,6 +107,12 @@ export default function CharactersMode(): React.JSX.Element {
 
 
   const handleCreate = async (): Promise<void> => {
+    if (tab === 'places') {
+      const created = await api.createPlace({ name: '新しい場所', color: '#5a8fa7' })
+      await reload()
+      setSelectedPlaceId(created.id)
+      return
+    }
     const created = await api.createCharacter({ name: '新しいキャラクター', color: '#7c5af7' })
     await reload()
     setSelectedId(created.id)
@@ -145,9 +161,27 @@ export default function CharactersMode(): React.JSX.Element {
         style={{ background: 'var(--bg-sidebar)', width: sidebarWidth }}
       >
         <div className="flex items-center justify-between px-3 py-2">
-          <span className="text-[11px] uppercase tracking-[0.18em]" style={{ color: 'var(--text-faint)' }}>
-            Characters
-          </span>
+          <div className="flex items-center gap-1">
+            {(
+              [
+                ['characters', 'キャラクター'],
+                ['places', '場所']
+              ] as Array<[Tab, string]>
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                onClick={() => setTab(id)}
+                className="rounded-md px-2 py-0.5 text-[12px] transition-colors"
+                style={
+                  tab === id
+                    ? { background: 'var(--accent-soft)', color: 'var(--text)' }
+                    : { color: 'var(--text-faint)' }
+                }
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           <button
             onClick={() => void handleCreate()}
             className="rounded-md px-2 py-0.5 text-[12px]"
@@ -157,7 +191,35 @@ export default function CharactersMode(): React.JSX.Element {
           </button>
         </div>
         <div className="inspector-scrollbar min-h-0 flex-1 overflow-y-auto px-2 pb-2">
-          {characters.map((c) => (
+          {tab === 'places' &&
+            places.map((p) => (
+              <button
+                key={p.id}
+                onClick={() => setSelectedPlaceId(p.id)}
+                className="mb-1 flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-[15px]"
+                style={
+                  p.id === selectedPlaceId
+                    ? { background: 'rgba(124, 90, 247, 0.18)', color: 'var(--text)' }
+                    : { color: 'var(--text-dim)' }
+                }
+              >
+                {/* 場所は丸ではなく角丸の札で表す(キャラの丸アイコンと見分けるため) */}
+                <span
+                  className="h-6 w-1.5 shrink-0 rounded-full"
+                  style={{ background: p.color ?? '#8a8fa8' }}
+                />
+                <span className="truncate">{p.name}</span>
+              </button>
+            ))}
+          {tab === 'places' && places.length === 0 && (
+            <div className="px-2 py-4 text-[12px] leading-relaxed" style={{ color: 'var(--text-faint)' }}>
+              まだ場所がありません。
+              <br />
+              シーンは登録した場所から 1 つ選びます。
+            </div>
+          )}
+          {tab === 'characters' &&
+            characters.map((c) => (
             <button
               key={c.id}
               onClick={() => setSelectedId(c.id)}
@@ -190,7 +252,7 @@ export default function CharactersMode(): React.JSX.Element {
               <span className="truncate">{c.name}</span>
             </button>
           ))}
-          {characters.length === 0 && (
+          {tab === 'characters' && characters.length === 0 && (
             <div className="px-2 py-4 text-[12px]" style={{ color: 'var(--text-faint)' }}>
               まだキャラクターがいません
             </div>
@@ -209,7 +271,19 @@ export default function CharactersMode(): React.JSX.Element {
         />
       </div>
       <main className="inspector-scrollbar min-w-0 flex-1 overflow-y-auto p-6">
-        {selected ? (
+        {tab === 'places' ? (
+          selectedPlace ? (
+            <PlaceEditor
+              place={selectedPlace}
+              onChanged={reload}
+              onDeleted={() => setSelectedPlaceId(null)}
+            />
+          ) : (
+            <div className="flex h-full items-center justify-center text-[13px]" style={{ color: 'var(--text-faint)' }}>
+              左のリストから場所を選択、または追加してください
+            </div>
+          )
+        ) : selected ? (
           <div className="mx-auto max-w-2xl">
             {/* 画像 → 画像操作 → 名前 の順に縦に積む(色は名前の隣に項目として置く) */}
             <div className="mb-4 flex flex-col items-start gap-1.5">

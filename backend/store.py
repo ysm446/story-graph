@@ -109,6 +109,107 @@ class Store:
     def known_char_ids(self) -> set[str]:
         return {r["id"] for r in self.conn.execute("SELECT id FROM characters")}
 
+    # ---- places -----------------------------------------------------
+    # 場所は characters と同型の登録制エンティティ(docs/design/places.md)。
+    # ノードは 1 つだけ参照し、空欄なら親から引き継ぐ(effective_location)。
+
+    def list_places(self) -> list[dict[str, Any]]:
+        rows = self.conn.execute("SELECT * FROM places ORDER BY created_at").fetchall()
+        return [dict(r) for r in rows]
+
+    def get_place(self, place_id: str) -> dict[str, Any] | None:
+        row = self.conn.execute("SELECT * FROM places WHERE id = ?", (place_id,)).fetchone()
+        return dict(row) if row else None
+
+    def create_place(self, data: dict[str, Any]) -> dict[str, Any]:
+        place_id = data.get("id") or _new_id()
+        self.conn.execute(
+            """INSERT INTO places(id, name, description, atmosphere, color, created_at)
+               VALUES(?,?,?,?,?,?)""",
+            (
+                place_id,
+                data["name"],
+                data.get("description"),
+                data.get("atmosphere"),
+                data.get("color"),
+                _now(),
+            ),
+        )
+        self.conn.commit()
+        return self.get_place(place_id)  # type: ignore[return-value]
+
+    def update_place(self, place_id: str, data: dict[str, Any]) -> dict[str, Any] | None:
+        fields = ["name", "description", "atmosphere", "color", "image_path"]
+        updates = {k: data[k] for k in fields if k in data}
+        if updates:
+            sets = ", ".join(f"{k} = ?" for k in updates)
+            self.conn.execute(
+                f"UPDATE places SET {sets} WHERE id = ?", (*updates.values(), place_id)
+            )
+            self.conn.commit()
+        return self.get_place(place_id)
+
+    def delete_place(self, place_id: str) -> None:
+        """場所を削除する。参照していたノードは「引き継ぐ」状態(空欄)に戻る。
+
+        location は state に影響しない(Step 0 時点)ので dirty 化はしないが、
+        清書プロンプトには載るので renders は stale にする。
+        """
+        node_ids = [
+            r["id"] for r in self.conn.execute("SELECT id FROM nodes WHERE location = ?", (place_id,))
+        ]
+        self.conn.execute("UPDATE nodes SET location = NULL WHERE location = ?", (place_id,))
+        self.conn.execute("DELETE FROM places WHERE id = ?", (place_id,))
+        self.conn.executemany(
+            "UPDATE renders SET stale = 1 WHERE node_id = ?", [(n,) for n in node_ids]
+        )
+        self.conn.commit()
+
+    def known_place_ids(self) -> set[str]:
+        return {r["id"] for r in self.conn.execute("SELECT id FROM places")}
+
+    def place_name(self, place_id: str | None) -> str | None:
+        """表示・プロンプト用の名前。未登録 ID はそのまま返す(移行漏れの保険)。"""
+        if not place_id:
+            return None
+        row = self.conn.execute("SELECT name FROM places WHERE id = ?", (place_id,)).fetchone()
+        return row["name"] if row else place_id
+
+    def effective_location(self, node_id: str) -> tuple[str | None, bool]:
+        """(place_id, 継承かどうか)を返す。
+
+        自ノードに値があれば (それ, False)。空欄なら親を遡り、最初に見つかった
+        値を (それ, True) で返す。島の根まで遡って無ければ (None, False)。
+        「場所が変わらない限り書かない」という書き方を許すための実効ロケーション。
+        """
+        row = self.conn.execute("SELECT location FROM nodes WHERE id = ?", (node_id,)).fetchone()
+        if row is None:
+            return (None, False)
+        if row["location"]:
+            return (row["location"], False)
+        current = node_id
+        seen = {node_id}
+        while True:
+            parent = self.parent_of(current)
+            if parent is None or parent in seen:
+                return (None, False)
+            seen.add(parent)
+            prow = self.conn.execute(
+                "SELECT location FROM nodes WHERE id = ?", (parent,)
+            ).fetchone()
+            if prow is not None and prow["location"]:
+                return (prow["location"], True)
+            current = parent
+
+    def location_context(self, node_id: str) -> dict[str, Any] | None:
+        """プロンプト用: 実効ロケーションの場所レコード + 継承フラグ。"""
+        place_id, inherited = self.effective_location(node_id)
+        if not place_id:
+            return None
+        place = self.get_place(place_id) or {"id": place_id, "name": place_id,
+                                             "description": None, "atmosphere": None}
+        return {**place, "inherited": inherited}
+
     # ---- factions ---------------------------------------------------
 
     def list_factions(self) -> list[dict[str, Any]]:
@@ -525,6 +626,7 @@ class Store:
             "SELECT image_path FROM nodes WHERE image_path IS NOT NULL",
             "SELECT portrait_path FROM characters WHERE portrait_path IS NOT NULL",
             "SELECT portrait_source_path FROM characters WHERE portrait_source_path IS NOT NULL",
+            "SELECT image_path FROM places WHERE image_path IS NOT NULL",
         ):
             for row in self.conn.execute(sql).fetchall():
                 value = row[0]

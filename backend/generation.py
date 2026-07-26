@@ -97,20 +97,26 @@ def _event_schemas(char_ids: list[str]) -> list[dict[str, Any]]:
     ]
 
 
-def beat_schema(char_ids: list[str]) -> dict[str, Any]:
-    return {
-        "type": "object",
-        "properties": {
-            "title": {"type": "string"},
-            "beat": {"type": "string"},
-            "emotional_core": {"type": "string"},
-            "cast": {"type": "array", "items": {"type": "string", "enum": char_ids}},
-            "location": {"type": "string"},
-            "story_time": {"type": "string"},
-            "events": {"type": "array", "items": {"anyOf": _event_schemas(char_ids)}},
-        },
-        "required": ["title", "beat", "emotional_core", "cast", "location", "events"],
+def beat_schema(char_ids: list[str], place_ids: list[str] | None = None) -> dict[str, Any]:
+    """place_ids を渡すと location は登録済み場所の enum になる(表記ゆれ防止)。
+
+    場所が 1 つも登録されていないときは location をスキーマから外す。
+    自由テキストを許すと ID 参照との混在データが生まれるため(docs/design/places.md §6)。
+    """
+    properties: dict[str, Any] = {
+        "title": {"type": "string"},
+        "beat": {"type": "string"},
+        "emotional_core": {"type": "string"},
+        "cast": {"type": "array", "items": {"type": "string", "enum": char_ids}},
     }
+    required = ["title", "beat", "emotional_core", "cast"]
+    if place_ids:
+        properties["location"] = {"type": "string", "enum": place_ids}
+        required.append("location")
+    properties["story_time"] = {"type": "string"}
+    properties["events"] = {"type": "array", "items": {"anyOf": _event_schemas(char_ids)}}
+    required.append("events")
+    return {"type": "object", "properties": properties, "required": required}
 
 
 def events_schema(char_ids: list[str]) -> dict[str, Any]:
@@ -166,8 +172,33 @@ def _format_recent_beats(store: Store, path: list[str]) -> str:
         if node is None:
             continue
         cast = ", ".join(node["cast"])
-        lines.append(f"[{node['title'] or '無題'}] ({cast} @ {node['location'] or '?'})\n{node['beat']}")
+        place = store.place_name(store.effective_location(nid)[0])
+        lines.append(f"[{node['title'] or '無題'}] ({cast} @ {place or '?'})\n{node['beat']}")
     return "\n\n".join(lines) or "(まだビートがない)"
+
+
+def _format_places(store: Store) -> str:
+    """登録済みの場所一覧(location の enum に対応する ID → 名前の対応表)。"""
+    lines = []
+    for p in store.list_places():
+        parts = [f"- {p['id']}: {p['name']}"]
+        if p.get("description"):
+            parts.append(f"  {p['description']}")
+        lines.append("\n".join(parts))
+    return "\n".join(lines)
+
+
+def _format_current_place(store: Store, path: list[str]) -> str:
+    """直近シーンの実効ロケーション(場所が変わらない限り、次もここが舞台)。"""
+    if not path:
+        return ""
+    place = store.location_context(path[-1])
+    if place is None:
+        return ""
+    parts = [place["name"]]
+    if place.get("atmosphere"):
+        parts.append(f"({place['atmosphere']})")
+    return " ".join(parts)
 
 
 def _format_retrieved_memories(store: Store, path: list[str], instruction: str | None) -> str:
@@ -211,8 +242,9 @@ EVENT_RULES = """イベント発行のルール:
     目撃・伝聞 0.3〜0.5 / 些細なこと 0.1〜0.2
 - 関係が動いたら relationship_update(delta は -0.3〜+0.3 程度の小さな変化。±1.0 は人生を変える出来事のみ。reason 必須)
   - label にはその時点の関係を一言で(例: 幼なじみ、ライバル視、想いを寄せる、犯人と疑う)。相関図の矢印に表示される
-- 事実の変化は fact_set。キャラ個人の事実(location, goal, items 等)は scope="char" + char にキャラ ID。
-  scope="world" は天気・日付・世界情勢など、特定キャラに属さない事実のみ"""
+- 事実の変化は fact_set。キャラ個人の事実(goal, items, 怪我 等)は scope="char" + char にキャラ ID。
+  scope="world" は天気・日付・世界情勢など、特定キャラに属さない事実のみ
+  - 誰がどこにいるかはシーンの location と cast で決まる。fact_set で場所を書かないこと"""
 
 GENERATION_RULES = f"""出力は必ず指定の JSON 形式に従ってください。
 
@@ -221,6 +253,7 @@ GENERATION_RULES = f"""出力は必ず指定の JSON 形式に従ってくださ
 - events はビートで起きた出来事による状態変化を漏れなく列挙する
 - cast はそのシーンに登場するキャラ ID のみ
 - 退場済みキャラは登場させない
+- location は「場所一覧」にある ID から選ぶ(場所が変わらないなら直前と同じ ID)
 
 {EVENT_RULES}"""
 
@@ -239,10 +272,14 @@ def _build_messages(store: Store, instruction: str | None, path: list[str],
         else "物語の流れに沿って、次のビートを 1 つ設計してください。"
     )
     memories_text = _format_retrieved_memories(store, path, instruction)
+    places_text = _format_places(store)
+    current_place = _format_current_place(store, path)
     user_parts = [
         "## キャラクター一覧",
         _format_characters(store),
         "",
+        *(["## 場所一覧(location にはこの ID を使う)", places_text, ""] if places_text else []),
+        *(["## 現在の場所", current_place, ""] if current_place else []),
         "## 現在の状態(直近ビート適用後)",
         _format_state(store, tail),
         "",
@@ -319,7 +356,7 @@ async def _generate_beat_impl(
         return
 
     path = store.path_to(parent_id) if parent_id else store.canon_path()
-    schema = beat_schema(char_ids)
+    schema = beat_schema(char_ids, sorted(store.known_place_ids()))
     messages = _build_messages(store, instruction, path, branching=parent_id is not None)
     state_before = store.get_state(path[-1]) if path else None
 
@@ -607,7 +644,7 @@ async def extract_events(
                     "",
                     "## 対象ビート",
                     f"cast: {', '.join(node['cast'])}",
-                    f"location: {node['location'] or '?'}",
+                    f"location: {store.place_name(store.effective_location(node_id)[0]) or '?'}",
                     node["beat"],
                 ]
             ),

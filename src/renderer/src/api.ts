@@ -1,6 +1,7 @@
 import type {
   Character,
   EventInput,
+  Place,
   PromoteProposal,
   SceneEntry,
   StateSnapshot,
@@ -42,6 +43,13 @@ export const api = {
   updateCharacter: (id: string, data: Partial<Character>) =>
     request<Character>(`/characters/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteCharacter: (id: string) => request<unknown>(`/characters/${id}`, { method: 'DELETE' }),
+
+  listPlaces: () => request<Place[]>('/places'),
+  createPlace: (data: Partial<Place> & { name: string }) =>
+    request<Place>('/places', { method: 'POST', body: JSON.stringify(data) }),
+  updatePlace: (id: string, data: Partial<Place>) =>
+    request<Place>(`/places/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deletePlace: (id: string) => request<unknown>(`/places/${id}`, { method: 'DELETE' }),
 
   timeline: () => request<StoryNode[]>('/timeline'),
   getGraph: () => request<StoryGraph>('/graph'),

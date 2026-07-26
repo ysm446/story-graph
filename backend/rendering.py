@@ -76,6 +76,22 @@ def _cast_profiles(store: Store, cast: list[str]) -> str:
     return "\n".join(lines)
 
 
+def _place_block(store: Store, node_id: str) -> list[str]:
+    """実効ロケーションの固定設定(docs/design/places.md §6)。
+
+    POV ではフィルタしない: その場にいる以上、場所の様子は見えている。
+    """
+    place = store.location_context(node_id)
+    if place is None:
+        return []
+    lines = [f"- {place['name']}"]
+    if place.get("description"):
+        lines.append(f"  {place['description']}")
+    if place.get("atmosphere"):
+        lines.append(f"  雰囲気: {place['atmosphere']}")
+    return ["## 場所", "\n".join(lines), ""]
+
+
 def build_render_messages(
     store: Store,
     node: dict[str, Any],
@@ -112,16 +128,18 @@ def build_render_messages(
             "- 見出し・注釈・メタ情報は書かず、本文のみを出力する",
         ]
     )
+    place_name = store.place_name(store.effective_location(node["id"])[0])
     user_parts = [
         "## 登場人物",
         _cast_profiles(store, node["cast"]),
         "",
+        *_place_block(store, node["id"]),
         "## 状態(このシーン適用後)",
         _state_summary(store, node["id"], node["cast"], pov_char),
         "",
         "## このシーンのビート",
         f"タイトル: {node['title'] or '(無題)'}",
-        f"場所: {node['location'] or '不明'}" + (f" / 時間: {node['story_time']}" if node["story_time"] else ""),
+        f"場所: {place_name or '不明'}" + (f" / 時間: {node['story_time']}" if node["story_time"] else ""),
         f"感情の核: {node['emotional_core'] or '-'}",
         node["beat"],
     ]

@@ -8,12 +8,15 @@ FTS5 / sqlite-vec の索引テーブル(memories_fts / memories_vec)は
 from __future__ import annotations
 
 import sqlite3
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DB_PATH = REPO_ROOT / "data" / "story-graph.db"
 
-SCHEMA_VERSION = 1
+# 2: nodes.location を自由テキストから places.id 参照に変える(docs/design/places.md)
+SCHEMA_VERSION = 2
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS characters(
@@ -24,6 +27,18 @@ CREATE TABLE IF NOT EXISTS characters(
   voice TEXT,
   color TEXT,
   graph_x REAL, graph_y REAL,
+  created_at TEXT
+);
+
+-- 場所(docs/design/places.md)。characters と同型。ノードは 1 つだけ参照する。
+-- 記憶も関係も持たず、状態(facts)だけが変化する予定(Step 1)
+CREATE TABLE IF NOT EXISTS places(
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT,   -- 固定設定(地形・規模・成り立ち)。清書に毎回渡す
+  atmosphere TEXT,    -- 雰囲気・空気感。描写のトーン用
+  color TEXT,
+  image_path TEXT,    -- 参考画像(装飾専用。LLM には渡さない)
   created_at TEXT
 );
 
@@ -183,6 +198,41 @@ def init_schema(conn: sqlite3.Connection) -> None:
             pass  # 既に存在する
     version = conn.execute("PRAGMA user_version").fetchone()[0]
     if version < SCHEMA_VERSION:
-        # 一回限りのデータ変換が必要になったらここに登録する(lm-chat の作法)
+        # 一回限りのデータ変換(lm-chat の作法)
+        if version < 2:
+            _migrate_locations_to_places(conn)
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
     conn.commit()
+
+
+def _migrate_locations_to_places(conn: sqlite3.Connection) -> None:
+    """nodes.location の自由テキストを places に登録し、ID 参照に置き換える。
+
+    同じ文字列は 1 つの場所にまとめる(表記ゆれは統合できないので、
+    「港」と「港町」は別の場所として登録される。作者が庫で統合する)。
+    """
+    rows = conn.execute(
+        "SELECT DISTINCT location FROM nodes WHERE location IS NOT NULL AND location != ''"
+    ).fetchall()
+    if not rows:
+        return
+    place_ids = {r["id"] for r in conn.execute("SELECT id FROM places")}
+    by_name = {r["name"]: r["id"] for r in conn.execute("SELECT id, name FROM places")}
+    now = datetime.now(timezone.utc).isoformat()
+    migrated = 0
+    for row in rows:
+        raw = row["location"]
+        if raw in place_ids:
+            continue  # 既に ID 参照(移行済み or 手で入れた)
+        place_id = by_name.get(raw)
+        if place_id is None:
+            place_id = uuid.uuid4().hex[:12]
+            conn.execute(
+                "INSERT INTO places(id, name, created_at) VALUES(?,?,?)", (place_id, raw, now)
+            )
+            by_name[raw] = place_id
+            place_ids.add(place_id)
+        conn.execute("UPDATE nodes SET location = ? WHERE location = ?", (place_id, raw))
+        migrated += 1
+    if migrated:
+        print(f"[migrate] location を places に移行しました({migrated} 件)")

@@ -73,7 +73,9 @@ def build_tools() -> list[dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "propose_beats",
-                "description": "この先の展開の提案をシーン下書きとして提出する(最大3案)。展開の提案を求められたときに使う。",
+                # location は出させない: 場所は登録制の ID 参照なので LLM に文字列を
+                # 作らせない(docs/design/places.md)。空欄で挿入すれば親から引き継ぐ
+                "description": "この先の展開の提案をシーン下書きとして提出する(最大3案)。展開の提案を求められたときに使う。場所は指定しない(直前のシーンから引き継がれる)。",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -86,7 +88,6 @@ def build_tools() -> list[dict[str, Any]]:
                                     "beat": {"type": "string", "description": "出来事の仕様書(数文)"},
                                     "emotional_core": {"type": "string"},
                                     "cast": {"type": "array", "items": {"type": "string"}, "description": "キャラ ID の配列"},
-                                    "location": {"type": "string"},
                                 },
                                 "required": ["title", "beat"],
                             },
@@ -121,7 +122,7 @@ def _tool_get_beats(store: Store, path: list[str], args: dict[str, Any]) -> dict
                 "title": node["title"],
                 "beat": node["beat"],
                 "cast": node["cast"],
-                "location": node["location"],
+                "location": store.place_name(store.effective_location(path[i])[0]),
                 "story_time": node["story_time"],
             }
         )
@@ -138,7 +139,10 @@ def _tool_get_state(store: Store, path: list[str], args: dict[str, Any]) -> dict
         if char_state is None:
             return {"error": f"キャラ {char_id} はまだ登場していません"}
         return {"char": char_id, "state": char_state}
-    return state
+    place = store.location_context(path[-1])
+    if place is None:
+        return state
+    return {**state, "place": {"name": place["name"], "description": place.get("description")}}
 
 
 def _tool_search_memories(store: Store, path: list[str], scope: str, args: dict[str, Any]) -> dict[str, Any]:

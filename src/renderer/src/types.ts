@@ -13,6 +13,18 @@ export interface Character {
   created_at: string
 }
 
+/** 場所。キャラクターと同型の登録制エンティティ(docs/design/places.md)。
+ *  シーンは 1 つだけ参照し、空欄なら親から引き継ぐ。 */
+export interface Place {
+  id: string
+  name: string
+  description: string | null
+  atmosphere: string | null
+  color: string | null
+  image_path: string | null
+  created_at: string
+}
+
 export interface StoryEvent {
   id: string
   node_id: string

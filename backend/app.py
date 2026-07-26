@@ -91,6 +91,21 @@ class CharacterPatch(BaseModel):
     portrait_crop: str | None = None
 
 
+class PlaceIn(BaseModel):
+    name: str
+    description: str | None = None
+    atmosphere: str | None = None
+    color: str | None = None
+
+
+class PlacePatch(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    atmosphere: str | None = None
+    color: str | None = None
+    image_path: str | None = None
+
+
 class FactionIn(BaseModel):
     name: str
     description: str | None = None
@@ -199,6 +214,40 @@ async def update_character(char_id: str, body: CharacterPatch) -> dict[str, Any]
 @app.delete("/characters/{char_id}")
 async def delete_character(char_id: str) -> dict[str, str]:
     store.delete_character(char_id)
+    return {"status": "deleted"}
+
+
+# ---- places ---------------------------------------------------------
+
+@app.get("/places")
+async def list_places() -> list[dict[str, Any]]:
+    return store.list_places()
+
+
+@app.post("/places")
+async def create_place(body: PlaceIn) -> dict[str, Any]:
+    return store.create_place(body.model_dump())
+
+
+@app.get("/places/{place_id}")
+async def get_place(place_id: str) -> dict[str, Any]:
+    place = store.get_place(place_id)
+    if place is None:
+        raise HTTPException(404, "place not found")
+    return place
+
+
+@app.patch("/places/{place_id}")
+async def update_place(place_id: str, body: PlacePatch) -> dict[str, Any]:
+    place = store.update_place(place_id, body.model_dump(exclude_unset=True))
+    if place is None:
+        raise HTTPException(404, "place not found")
+    return place
+
+
+@app.delete("/places/{place_id}")
+async def delete_place(place_id: str) -> dict[str, str]:
+    store.delete_place(place_id)
     return {"status": "deleted"}
 
 

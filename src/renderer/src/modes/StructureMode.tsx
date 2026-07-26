@@ -35,7 +35,7 @@ import ProofreadTextarea from '../ProofreadTextarea'
 import RelationGraph from '../RelationGraph'
 import { cancelTask, enqueueTask } from '../tasks'
 import { useElapsedSeconds } from '../useElapsed'
-import type { Character, GraphEdge, StateSnapshot, StoryEvent, StoryNode } from '../types'
+import type { Character, GraphEdge, Place, StateSnapshot, StoryEvent, StoryNode } from '../types'
 
 const COLUMN_GAP_X = 344 // カード幅(w-72 = 288)+ 余白
 const LANE_GAP_Y = 56 // レーン間の余白
@@ -101,13 +101,15 @@ function layoutDag(
 type BeatNodeData = {
   storyNode: StoryNode
   characters: Record<string, Character>
+  // 実効ロケーション。inherited = このシーンでは指定せず、親から引き継いだもの
+  place?: { name: string; inherited: boolean }
   busy?: boolean // LLM 処理中(枠が時計まわりに光る)
 }
 
 type BeatFlowNode = Node<BeatNodeData, 'beatNode'>
 
 function BeatNodeCard({ data, selected }: NodeProps<BeatFlowNode>): React.JSX.Element {
-  const { storyNode, characters, busy } = data
+  const { storyNode, characters, place, busy } = data
   const isDraft = storyNode.status === 'draft'
   return (
     <div
@@ -182,9 +184,14 @@ function BeatNodeCard({ data, selected }: NodeProps<BeatFlowNode>): React.JSX.El
             </span>
           )
         })}
-        {storyNode.location && (
-          <span className="text-[11px]" style={{ color: 'var(--text-faint)' }}>
-            @{storyNode.location}
+        {place && (
+          // 引き継ぎ(このシーンでは未指定)は淡く出して、自分で指定した場所と区別する
+          <span
+            className="text-[11px]"
+            style={{ color: 'var(--text-faint)', opacity: place.inherited ? 0.55 : 1 }}
+            title={place.inherited ? '前のシーンから引き継いだ場所' : undefined}
+          >
+            @{place.name}
           </span>
         )}
       </div>
@@ -205,6 +212,8 @@ const beatDraftCache = new Map<string, Partial<StoryNode>>()
 function BeatTab({
   node,
   characters,
+  places,
+  inheritedPlaceName,
   validation,
   onSaved,
   onDeleted,
@@ -214,6 +223,9 @@ function BeatTab({
 }: {
   node: StoryNode
   characters: Character[]
+  places: Place[]
+  /** location が空欄のとき親から引き継がれる場所の名前(無ければ null) */
+  inheritedPlaceName: string | null
   validation: string[]
   onSaved: () => void
   onDeleted: () => void
@@ -589,12 +601,30 @@ function BeatTab({
           <span className={labelClass} style={{ color: 'var(--text-faint)' }}>
             Location
           </span>
-          <input
+          {/* 場所は登録制。未指定なら親から引き継ぐ(docs/design/places.md) */}
+          <select
             value={draft.location ?? ''}
-            onChange={(e) => setDraft((d) => ({ ...d, location: e.target.value }))}
+            onChange={(e) => setDraft((d) => ({ ...d, location: e.target.value || null }))}
             className="w-full rounded-lg border px-3 py-1.5 text-[13px] outline-none"
-            style={inputStyle}
-          />
+            style={{
+              ...inputStyle,
+              color: draft.location ? 'var(--text)' : 'var(--text-faint)'
+            }}
+          >
+            <option value="">
+              {inheritedPlaceName ? `引き継ぎ(${inheritedPlaceName})` : '指定しない'}
+            </option>
+            {places.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+          {places.length === 0 && (
+            <span className="mt-1 block text-[10px]" style={{ color: 'var(--text-faint)' }}>
+              資料庫の「場所」タブで登録できます
+            </span>
+          )}
         </label>
         <label className="block">
           <span className={labelClass} style={{ color: 'var(--text-faint)' }}>
@@ -1033,6 +1063,7 @@ function StructureModeInner({
   const [graphNodes, setGraphNodes] = useState<StoryNode[]>([])
   const [graphEdges, setGraphEdges] = useState<GraphEdge[]>([])
   const [characters, setCharacters] = useState<Character[]>([])
+  const [places, setPlaces] = useState<Place[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [inspectorTab, setInspectorTab] = useState<'beat' | 'char' | 'graph' | 'facts'>('beat')
   const [validation, setValidation] = useState<string[]>([])
@@ -1123,10 +1154,15 @@ function StructureModeInner({
   )
 
   const reload = useCallback(async (): Promise<void> => {
-    const [graph, chars] = await Promise.all([api.getGraph(), api.listCharacters()])
+    const [graph, chars, placeList] = await Promise.all([
+      api.getGraph(),
+      api.listCharacters(),
+      api.listPlaces()
+    ])
     setGraphNodes(graph.nodes)
     setGraphEdges(graph.edges)
     setCharacters(chars)
+    setPlaces(placeList)
   }, [])
 
   // 選択シーンを親に伝える(鑑賞モードを開いたときにそのシーンへ飛ばすため)
@@ -1176,6 +1212,46 @@ function StructureModeInner({
   }, [selectedId, graphNodes])
 
   const charMap = useMemo(() => Object.fromEntries(characters.map((c) => [c.id, c])), [characters])
+  const placeMap = useMemo(() => Object.fromEntries(places.map((p) => [p.id, p])), [places])
+
+  // 実効ロケーション: location が空欄なら親を遡って直近の場所を使う
+  // (backend の Store.effective_location と同じ規則。グラフは手元にあるので
+  //  ここで解決して、ノード 1 つずつ問い合わせない)
+  const effectiveLocations = useMemo(() => {
+    const parentOf: Record<string, string> = {}
+    for (const e of graphEdges) parentOf[e.to_node] = e.from_node
+    const own: Record<string, string | null> = {}
+    for (const n of graphNodes) own[n.id] = n.location || null
+    const resolved: Record<string, { placeId: string; inherited: boolean } | null> = {}
+    for (const n of graphNodes) {
+      if (own[n.id]) {
+        resolved[n.id] = { placeId: own[n.id]!, inherited: false }
+        continue
+      }
+      let current: string | undefined = parentOf[n.id]
+      const seen = new Set<string>([n.id])
+      let found: string | null = null
+      while (current && !seen.has(current)) {
+        seen.add(current)
+        if (own[current]) {
+          found = own[current]
+          break
+        }
+        current = parentOf[current]
+      }
+      resolved[n.id] = found ? { placeId: found, inherited: true } : null
+    }
+    return resolved
+  }, [graphNodes, graphEdges])
+
+  // 選択シーンで location を空欄にしたときに引き継がれる場所(= 親の実効ロケーション)
+  const inheritedPlaceName = useMemo(() => {
+    if (!selectedId) return null
+    const parentId = graphEdges.find((e) => e.to_node === selectedId)?.from_node
+    const eff = parentId ? effectiveLocations[parentId] : null
+    if (!eff) return null
+    return placeMap[eff.placeId]?.name ?? eff.placeId
+  }, [selectedId, graphEdges, effectiveLocations, placeMap])
 
   // 記憶(イベント ID)→ 本文とどのシーンの記憶か。キャラタブの一覧で使う
   const memoryContents = useMemo(() => {
@@ -1216,11 +1292,21 @@ function StructureModeInner({
           position: existing?.dragging ? existing.position : position,
           selected: existing?.selected ?? false,
           dragging: existing?.dragging,
-          data: { storyNode: n, characters: charMap, busy: busyNodeIds.has(n.id) }
+          data: {
+            storyNode: n,
+            characters: charMap,
+            place: (() => {
+              const eff = effectiveLocations[n.id]
+              if (!eff) return undefined
+              const place = placeMap[eff.placeId]
+              return { name: place?.name ?? eff.placeId, inherited: eff.inherited }
+            })(),
+            busy: busyNodeIds.has(n.id)
+          }
         }
       })
     })
-  }, [graphNodes, graphEdges, charMap, busyNodeIds])
+  }, [graphNodes, graphEdges, charMap, placeMap, effectiveLocations, busyNodeIds])
 
   // 実測高さが揃ったら、自動レイアウトのノードだけ位置を組み直す
   // (初回マウント直後は高さ未測定のため、測定後に一度リフローする)
@@ -2241,6 +2327,8 @@ function StructureModeInner({
                 <BeatTab
                   node={selectedNode}
                   characters={characters}
+                  places={places}
+                  inheritedPlaceName={inheritedPlaceName}
                   validation={validation}
                   onSaved={() => void reload()}
                   onDeleted={() => {

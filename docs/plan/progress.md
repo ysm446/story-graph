@@ -1,7 +1,7 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-07-24 22:38
-更新日時: 2026-07-27 01:05
+更新日時: 2026-07-27 01:40
 
 ## 現在の状態
 
@@ -9,7 +9,7 @@
 - **ライブラリ方式を導入**(lm-graph 踏襲): ストーリーごとのフォルダに `story-graph.db` を置く。現在のライブラリと最近使ったライブラリは `%APPDATA%/story-graph/app.json`(Electron userData)に保存。ヘッダー右のドロップダウンで切替(切替時はレンダラをリロード)。デフォルトはリポジトリ内 `data/`。
 - `npm run dev` で Electron が起動し、FastAPI sidecar(ポート 8765〜自動探索)が自動 spawn される。
 - バックエンドは単体でも起動可能: `cd backend && ../.venv/Scripts/python.exe -m uvicorn app:app --port 8765`
-- テスト: `cd backend && ../.venv/Scripts/python.exe -m pytest tests/ -q`(94件、全て成功)
+- テスト: `cd backend && ../.venv/Scripts/python.exe -m pytest tests/ -q`(107件、全て成功)
 
 ## 完了済み
 
@@ -65,6 +65,14 @@
     選択中のシーンで得た記憶はアクセント色 +「(このシーン)」。API 追加なし)
   - アプリ終了時に llama-server を確実に停止(VRAM 解放)、UI の細かい調整多数
 
+- [x] **場所(places)の登録 — Step 0**(2026-07-27。設計: [places.md](../design/places.md)):
+  場所をキャラクターと同型の登録制エンティティにし、シーンは登録済みの場所を 1 つだけ選ぶ。
+  `places` テーブル + CRUD API + 資料庫の「場所」タブ、`nodes.location` の ID 化と
+  一回限りの移行(`user_version` 1 → 2)、**実効ロケーション**(空欄なら親を遡る。
+  旧「location の引き継ぎ」タスク)、清書への `## 場所` 注入、生成の `location` を
+  登録済み ID の enum 化、相談チャットの場所名表示。キャラクター庫 → **資料庫**に改称。
+  pytest 107 件
+
 ## 未完了
 
 - [ ] **Phase 6 — スケール対応**: memory_compress(記憶の自動要約圧縮)、LLM 検証パス(感情の一貫性、温度0.1)、faction フォールバック + factions UI、2ノード間差分表示、エクスポート強化
@@ -92,18 +100,15 @@
   - 波及範囲: 生成スキーマ・抽出スキーマ・fold・memories テーブル(列追加)・記憶の手動編集 UI・
     キャラチャットのシステムプロンプト。`told` の場合は情報源(誰から)も持たせるか要検討
   - 判断: しばらく本文だけの運用で使ってみて、「見た/聞いたの区別が弱い」と感じたら着手する
-- [ ] **場所(places)の登録と時系列変化**(2026-07-27 ユーザー発案。設計メモ:
-  [places.md](../design/places.md)): 場所をキャラクターと同型の登録制エンティティにし、
-  ノードは登録済みの場所を 1 つだけ選ぶ。場所は**記憶も関係も持たず、facts だけがたまに変化する**。
-  動機は「現在のロケーションが曖昧」(`nodes.location` の自由テキスト / `chars.facts.location` /
-  `world.facts` の 3 系統に散っている)。イベントは新型を作らず `fact_set` に `scope="place"` を足す。
-  - Step 0(LLM を触らない): places テーブル + 場所庫 UI + `nodes.location` の ID 化と移行 +
-    **実効ロケーション**(空欄なら親から遡る。旧「location の引き継ぎ」タスク)+ 清書への固定設定注入
-  - Step 1: state に `places` を追加、fold と `input_hash`(location を含める)、
-    手動イベント UI、インスペクタの場所タブ
+- [ ] **場所(places)の時系列変化 — Step 1 / 2**(2026-07-27 ユーザー発案。設計メモ:
+  [places.md](../design/places.md))。**Step 0 は実装済み**(下記「完了済み」)。
+  - Step 1: state に `places[id].facts` を追加、fold と `input_hash`(location を含める)、
+    `fact_set(scope="place")` を**手動イベント UI からのみ**、インスペクタの場所タブ
   - Step 2(効果を見てから): LLM の抽出スキーマに `scope="place"` を開放
-  - 場所庫は `CharactersMode` を「キャラクター / 場所 / 勢力」の 3 タブに拡張して作る
-    (未実装だった factions UI がここで片付く)
+  - **着手の判断**: 場所が実際に変化するシーン(橋が落ちる等)を書きたくなったときに始める。
+    それまでは Step 0 の「登録された場所の固定設定が清書に渡る」だけで足りる(2026-07-27 の判断)
+- [ ] **資料庫の勢力(factions)タブ**: API は実装済みで UI だけ無い。資料庫がタブ構造になったので、
+  キャラクター / 場所と同じ形で 3 つめのタブとして足せる
 - [ ] **facts 可視化の続き**(2026-07-26 発案。状態帯タイムラインは実装済み):
   - 各 fact に「いつから」を表示(インスペクタのキャラタブ。値を立てたイベントのノードを遡って
     「第3話から」と出し、クリックでそのシーンへ)。実装は軽く、情報価値が高い。
