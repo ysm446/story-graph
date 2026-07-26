@@ -28,13 +28,14 @@ import {
   uploadAsset
 } from '../api'
 import ChatDrawer from '../ChatDrawer'
+import EventsEditor from '../EventsEditor'
 import FactTimeline from '../FactTimeline'
 import { Icon } from '../icons'
 import ProofreadTextarea from '../ProofreadTextarea'
 import RelationGraph from '../RelationGraph'
 import { cancelTask, enqueueTask } from '../tasks'
 import { useElapsedSeconds } from '../useElapsed'
-import type { Character, EventInput, GraphEdge, StateSnapshot, StoryEvent, StoryNode } from '../types'
+import type { Character, GraphEdge, StateSnapshot, StoryEvent, StoryNode } from '../types'
 
 const COLUMN_GAP_X = 344 // カード幅(w-72 = 288)+ 余白
 const LANE_GAP_Y = 56 // レーン間の余白
@@ -193,215 +194,6 @@ function BeatNodeCard({ data, selected }: NodeProps<BeatFlowNode>): React.JSX.El
 }
 
 const nodeTypes = { beatNode: BeatNodeCard }
-
-// ---- イベントエディタ(手動イベントの追加・削除) ----------------------
-
-const EVENT_TEMPLATES: Record<string, string> = {
-  memory_add: '{"char": "", "content": "", "emotion": 0, "importance": 0.5, "refs": []}',
-  memory_compress: '{"char": "", "replaces": [], "summary": "", "importance": 0.5}',
-  relationship_update: '{"char": "", "target_type": "char", "target": "", "delta": 0.1, "reason": ""}',
-  relationship_set: '{"char": "", "target_type": "char", "target": "", "value": 0, "reason": ""}',
-  fact_set: '{"scope": "char", "char": "", "key": "location", "value": ""}',
-  // char_introduce は不要(登場は cast から導出される)。退場は Cast の ⊗ が楽だが、
-  // 理由を細かく書きたいときのために手動追加も残す
-  char_retire: '{"char": "", "reason": "death"}',
-  manual_override: '{"path": "", "value": "", "note": ""}'
-}
-
-function EventsEditor({
-  node,
-  onChanged,
-  onBusyChange
-}: {
-  node: StoryNode
-  onChanged: () => void
-  onBusyChange: (busy: boolean) => void // キャンバス側のノードを光らせる
-}): React.JSX.Element {
-  const [adding, setAdding] = useState(false)
-  const [newType, setNewType] = useState('fact_set')
-  const [payloadText, setPayloadText] = useState(EVENT_TEMPLATES['fact_set'])
-  const [busy, setBusy] = useState(false)
-  const [queued, setQueued] = useState(false) // キュー待ち(実行前)
-  const busyElapsed = useElapsedSeconds(busy)
-  const [error, setError] = useState<string | null>(null)
-  const [validation, setValidation] = useState<string[]>([])
-
-  const currentEvents = (): EventInput[] =>
-    node.events.map((e) => ({ type: e.type, payload: e.payload, source: e.source }))
-
-  const save = async (events: EventInput[]): Promise<void> => {
-    setBusy(true)
-    setError(null)
-    try {
-      const result = await api.putEvents(node.id, events)
-      setValidation(result.validation)
-      onChanged()
-    } catch (e) {
-      setError(String(e))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const handleDelete = (index: number): void => {
-    const events = currentEvents()
-    events.splice(index, 1)
-    void save(events)
-  }
-
-  const handleAdd = (): void => {
-    let payload: Record<string, unknown>
-    try {
-      payload = JSON.parse(payloadText) as Record<string, unknown>
-    } catch {
-      setError('payload が JSON として不正です')
-      return
-    }
-    void save([...currentEvents(), { type: newType, payload, source: 'user' }]).then(() => {
-      setAdding(false)
-      setPayloadText(EVENT_TEMPLATES[newType])
-    })
-  }
-
-  return (
-    <div className="mt-2">
-      <div className="mb-1 flex items-center justify-between">
-        <span className="text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
-          Events({node.events.length})
-        </span>
-        <div className="flex gap-1.5">
-          <button
-            onClick={() => setAdding((v) => !v)}
-            className="rounded-md border px-2 py-0.5 text-[11px]"
-            style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-          >
-            {adding ? 'キャンセル' : '+ 手動イベント'}
-          </button>
-          {/* 1 件でもキューに積む(他の処理と取り合いにならないように) */}
-          <button
-            onClick={() => {
-              setError(null)
-              setQueued(true)
-              enqueueTask({
-                label: 'イベント抽出',
-                detail: node.title || '(無題)',
-                runner: async ({ signal }) => {
-                  setBusy(true)
-                  onBusyChange(true)
-                  try {
-                    const r = await api.extractEvents(node.id, signal)
-                    setValidation(r.validation)
-                    onChanged()
-                  } catch (e) {
-                    if (!isAbortError(e)) setError(String(e))
-                  } finally {
-                    setBusy(false)
-                    setQueued(false)
-                    onBusyChange(false)
-                  }
-                }
-              })
-            }}
-            disabled={busy || queued}
-            className="rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-50"
-            style={{ borderColor: 'var(--accent-border)', color: 'var(--accent)' }}
-          >
-            {busy ? `処理中… (${busyElapsed}s)` : queued ? '待機中…' : 'イベント抽出(LLM)'}
-          </button>
-        </div>
-      </div>
-      {adding && (
-        <div
-          className="mb-2 rounded-lg border p-2"
-          style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border)' }}
-        >
-          <select
-            value={newType}
-            onChange={(e) => {
-              setNewType(e.target.value)
-              setPayloadText(EVENT_TEMPLATES[e.target.value])
-            }}
-            className="mb-1.5 w-full rounded-md border px-2 py-1 text-[12px]"
-            style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
-          >
-            {Object.keys(EVENT_TEMPLATES).map((t) => (
-              <option key={t} value={t}>
-                {t}
-              </option>
-            ))}
-          </select>
-          <textarea
-            rows={3}
-            value={payloadText}
-            onChange={(e) => setPayloadText(e.target.value)}
-            className="mb-1.5 w-full rounded-md border px-2 py-1 font-mono text-[11px]"
-            style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
-          />
-          <button
-            onClick={handleAdd}
-            disabled={busy}
-            className="rounded-md px-3 py-1 text-[12px] font-medium text-white"
-            style={{ background: 'var(--accent)' }}
-          >
-            追加
-          </button>
-        </div>
-      )}
-      {error && (
-        <div className="mb-1 text-[12px]" style={{ color: 'var(--danger)' }}>
-          {error}
-        </div>
-      )}
-      {validation.length > 0 && (
-        <div className="mb-1 text-[12px]" style={{ color: '#f2a3a3' }}>
-          {validation.map((v, i) => (
-            <div key={i}>⚠ {v}</div>
-          ))}
-        </div>
-      )}
-      {node.events.length === 0 && (
-        <div className="text-[12px]" style={{ color: 'var(--text-faint)' }}>
-          イベントなし。手動追加か「イベント抽出(LLM)」で状態差分を作成できます
-        </div>
-      )}
-      {node.events.map((e, index) => (
-        <div
-          key={e.id}
-          className="mb-1.5 rounded-lg border px-3 py-2 text-[12px]"
-          style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border)' }}
-        >
-          <div className="mb-0.5 flex items-center gap-2">
-            <span className="font-medium" style={{ color: 'var(--text)' }}>
-              {e.type}
-            </span>
-            <span
-              className="rounded px-1.5 py-px text-[10px] uppercase"
-              style={
-                e.source === 'user'
-                  ? { background: 'var(--accent-soft)', color: 'var(--accent)' }
-                  : { background: 'var(--bg-input)', color: 'var(--text-faint)' }
-              }
-            >
-              {e.source}
-            </span>
-            <button
-              onClick={() => handleDelete(index)}
-              disabled={busy}
-              className="ml-auto text-[11px]"
-              style={{ color: 'var(--text-faint)' }}
-              title="このイベントを削除"
-            >
-              ✕
-            </button>
-          </div>
-          <div className="break-all font-mono text-[11px]" style={{ color: 'var(--text-dim)' }}>
-            {JSON.stringify(e.payload)}
-          </div>
-        </div>
-      ))}
-    </div>
-  )
-}
 
 // ---- ビートタブ ------------------------------------------------------
 
@@ -940,8 +732,9 @@ function BeatTab({
       )}
       <EventsEditor
         node={node}
+        characters={characters}
         onChanged={onSaved}
-        onBusyChange={(busy) => onNodeBusyChange(node.id, busy)}
+        onBusyChange={(busy: boolean) => onNodeBusyChange(node.id, busy)}
       />
     </div>
   )
