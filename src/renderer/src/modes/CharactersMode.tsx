@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, assetUrl, uploadAsset } from '../api'
 import ImageCropModal, { type CropState } from '../ImageCropModal'
 import ProofreadTextarea from '../ProofreadTextarea'
@@ -21,6 +21,31 @@ export default function CharactersMode(): React.JSX.Element {
     initial: CropState | null
   } | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const rowRef = useRef<HTMLDivElement | null>(null)
+  // 左サイドバーの幅(ドラッグで変更。localStorage に保存)
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    const saved = Number(localStorage.getItem('charactersSidebarWidth'))
+    return saved >= 180 && saved <= 520 ? saved : 256
+  })
+
+  const beginSidebarResize = useCallback((event: React.PointerEvent): void => {
+    event.preventDefault()
+    const onMove = (ev: PointerEvent): void => {
+      const rect = rowRef.current?.getBoundingClientRect()
+      if (!rect) return
+      setSidebarWidth(Math.min(520, Math.max(180, ev.clientX - rect.left)))
+    }
+    const onUp = (): void => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      setSidebarWidth((w) => {
+        localStorage.setItem('charactersSidebarWidth', String(Math.round(w)))
+        return w
+      })
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }, [])
 
   const openRecrop = (): void => {
     // 保存済みの元画像から切り抜き直す(前回の位置・ズームを復元)
@@ -105,7 +130,7 @@ export default function CharactersMode(): React.JSX.Element {
   }
 
   return (
-    <div className="flex h-full">
+    <div ref={rowRef} className="flex h-full">
       {cropTarget && (
         <ImageCropModal
           source={cropTarget.source}
@@ -116,8 +141,8 @@ export default function CharactersMode(): React.JSX.Element {
         />
       )}
       <aside
-        className="flex w-64 shrink-0 flex-col border-r"
-        style={{ background: 'var(--bg-sidebar)', borderColor: 'var(--border)' }}
+        className="flex shrink-0 flex-col"
+        style={{ background: 'var(--bg-sidebar)', width: sidebarWidth }}
       >
         <div className="flex items-center justify-between px-3 py-2">
           <span className="text-[11px] uppercase tracking-[0.18em]" style={{ color: 'var(--text-faint)' }}>
@@ -136,7 +161,7 @@ export default function CharactersMode(): React.JSX.Element {
             <button
               key={c.id}
               onClick={() => setSelectedId(c.id)}
-              className="mb-1 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[13px]"
+              className="mb-1 flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-[15px]"
               style={
                 c.id === selectedId
                   ? { background: 'rgba(124, 90, 247, 0.18)', color: 'var(--text)' }
@@ -146,14 +171,21 @@ export default function CharactersMode(): React.JSX.Element {
               {assetUrl(c.portrait_path) ? (
                 <img
                   src={assetUrl(c.portrait_path)!}
-                  className="h-6 w-6 shrink-0 rounded-full object-cover"
+                  className="h-10 w-10 shrink-0 rounded-full object-cover"
                   style={{ border: `1.5px solid ${c.color ?? '#8a8fa8'}` }}
                 />
               ) : (
+                // 画像が無いキャラも同じ大きさの丸で並べる(頭文字入り)
                 <span
-                  className="inline-block h-3 w-3 shrink-0 rounded-full"
-                  style={{ background: c.color ?? '#8a8fa8' }}
-                />
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[15px] font-semibold"
+                  style={{
+                    background: `${c.color ?? '#8a8fa8'}33`,
+                    border: `1.5px solid ${c.color ?? '#8a8fa8'}`,
+                    color: c.color ?? '#8a8fa8'
+                  }}
+                >
+                  {c.name.slice(0, 1)}
+                </span>
               )}
               <span className="truncate">{c.name}</span>
             </button>
@@ -165,6 +197,17 @@ export default function CharactersMode(): React.JSX.Element {
           )}
         </div>
       </aside>
+      {/* サイドバー幅のリサイズハンドル(構造モードのインスペクタと同じ作り) */}
+      <div
+        onPointerDown={beginSidebarResize}
+        className="group relative w-1 shrink-0 cursor-col-resize"
+        title="ドラッグで幅を変更"
+      >
+        <div
+          className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 transition-colors group-hover:bg-[var(--accent-border)]"
+          style={{ background: 'var(--border)' }}
+        />
+      </div>
       <main className="inspector-scrollbar min-w-0 flex-1 overflow-y-auto p-6">
         {selected ? (
           <div className="mx-auto max-w-2xl">
