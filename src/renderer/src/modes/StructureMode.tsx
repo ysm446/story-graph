@@ -96,19 +96,22 @@ function layoutDag(
 type BeatNodeData = {
   storyNode: StoryNode
   characters: Record<string, Character>
+  busy?: boolean // LLM 処理中(枠が時計まわりに光る)
 }
 
 type BeatFlowNode = Node<BeatNodeData, 'beatNode'>
 
 function BeatNodeCard({ data, selected }: NodeProps<BeatFlowNode>): React.JSX.Element {
-  const { storyNode, characters } = data
+  const { storyNode, characters, busy } = data
   const isDraft = storyNode.status === 'draft'
   return (
     <div
-      className={`w-72 rounded-3xl border-2 px-5 py-4 shadow-lg shadow-black/30 ${selected ? 'ring-4' : ''}`}
+      className={`relative w-72 rounded-3xl border-2 px-5 py-4 shadow-lg shadow-black/30 ${
+        selected ? 'ring-4' : ''
+      } ${busy ? 'node-busy-ring' : ''}`}
       style={{
         background: 'var(--bg-card)',
-        borderColor: selected ? 'var(--accent-border)' : 'var(--border-strong)',
+        borderColor: busy ? 'var(--accent-border)' : selected ? 'var(--accent-border)' : 'var(--border-strong)',
         borderStyle: isDraft ? 'dashed' : 'solid',
         opacity: isDraft ? 0.85 : 1,
         ['--tw-ring-color' as string]: 'var(--accent-border)'
@@ -202,10 +205,12 @@ const EVENT_TEMPLATES: Record<string, string> = {
 
 function EventsEditor({
   node,
-  onChanged
+  onChanged,
+  onBusyChange
 }: {
   node: StoryNode
   onChanged: () => void
+  onBusyChange: (busy: boolean) => void // キャンバス側のノードを光らせる
 }): React.JSX.Element {
   const [adding, setAdding] = useState(false)
   const [newType, setNewType] = useState('fact_set')
@@ -269,6 +274,7 @@ function EventsEditor({
           <button
             onClick={() => {
               setBusy(true)
+              onBusyChange(true)
               setError(null)
               api
                 .extractEvents(node.id)
@@ -277,7 +283,10 @@ function EventsEditor({
                   onChanged()
                 })
                 .catch((e) => setError(String(e)))
-                .finally(() => setBusy(false))
+                .finally(() => {
+                  setBusy(false)
+                  onBusyChange(false)
+                })
             }}
             disabled={busy}
             className="rounded-md border px-2 py-0.5 text-[11px]"
@@ -394,7 +403,8 @@ function BeatTab({
   onSaved,
   onDeleted,
   onReextractChain,
-  reextracting
+  reextracting,
+  onNodeBusyChange
 }: {
   node: StoryNode
   characters: Character[]
@@ -403,6 +413,7 @@ function BeatTab({
   onDeleted: () => void
   onReextractChain: (nodeId: string) => void
   reextracting: boolean
+  onNodeBusyChange: (nodeId: string, busy: boolean) => void
 }): React.JSX.Element {
   const [draft, setDraft] = useState<Partial<StoryNode>>({})
   const [error, setError] = useState<string | null>(null)
@@ -1006,7 +1017,11 @@ function BeatTab({
           {error}
         </div>
       )}
-      <EventsEditor node={node} onChanged={onSaved} />
+      <EventsEditor
+        node={node}
+        onChanged={onSaved}
+        onBusyChange={(busy) => onNodeBusyChange(node.id, busy)}
+      />
     </div>
   )
 }
@@ -1291,6 +1306,17 @@ function StructureModeInner({ settingsVersion }: { settingsVersion: number }): R
   const [flowNodes, setFlowNodes] = useState<BeatFlowNode[]>([])
   // エッジ選択(Delete で切断)と、チェーン再抽出の進捗
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null)
+  // LLM 処理中のノード(枠が時計まわりに光る)。生成・抽出・再抽出で共用
+  const [busyNodeIds, setBusyNodeIds] = useState<Set<string>>(new Set())
+  const markNodeBusy = useCallback((nodeId: string | null, busy: boolean): void => {
+    if (!nodeId) return
+    setBusyNodeIds((prev) => {
+      const next = new Set(prev)
+      if (busy) next.add(nodeId)
+      else next.delete(nodeId)
+      return next
+    })
+  }, [])
   const [reextracting, setReextracting] = useState<{ index: number; total: number; title: string } | null>(null)
   const reextractAbortRef = useRef<AbortController | null>(null)
   const [inspectorWidth, setInspectorWidth] = useState(() => {
@@ -1421,11 +1447,11 @@ function StructureModeInner({ settingsVersion }: { settingsVersion: number }): R
           position: existing?.dragging ? existing.position : position,
           selected: existing?.selected ?? false,
           dragging: existing?.dragging,
-          data: { storyNode: n, characters: charMap }
+          data: { storyNode: n, characters: charMap, busy: busyNodeIds.has(n.id) }
         }
       })
     })
-  }, [graphNodes, graphEdges, charMap])
+  }, [graphNodes, graphEdges, charMap, busyNodeIds])
 
   // 実測高さが揃ったら、自動レイアウトのノードだけ位置を組み直す
   // (初回マウント直後は高さ未測定のため、測定後に一度リフローする)
@@ -1571,12 +1597,17 @@ function StructureModeInner({ settingsVersion }: { settingsVersion: number }): R
       const controller = new AbortController()
       reextractAbortRef.current = controller
       setReextracting({ index: 0, total: countSubtree(nodeId), title: '' })
+      let current: string | null = null
       try {
         await reextractChainStream(
           nodeId,
           (e) => {
             if (e.stage === 'node') {
               setReextracting({ index: e.index ?? 0, total: e.total ?? 0, title: e.title ?? '' })
+              // 処理中のノードだけを光らせる(逐次実行なので常に 1 つ)
+              markNodeBusy(current, false)
+              current = e.node_id ?? null
+              markNodeBusy(current, true)
             }
             if (e.stage === 'done') {
               const failed = e.failed ?? []
@@ -1593,12 +1624,13 @@ function StructureModeInner({ settingsVersion }: { settingsVersion: number }): R
       } catch (err) {
         setGenStatus(isAbortError(err) ? '作り直しを中止しました' : `作り直せません: ${String(err)}`)
       } finally {
+        markNodeBusy(current, false)
         reextractAbortRef.current = null
         setReextracting(null)
         await reload()
       }
     },
-    [countSubtree, reextracting, reload]
+    [countSubtree, markNodeBusy, reextracting, reload]
   )
 
   // キーボードショートカット(lm-graph と同じ): A = 全体表示 / F = 選択にフォーカス
@@ -1810,6 +1842,9 @@ function StructureModeInner({ settingsVersion }: { settingsVersion: number }): R
     genAbortRef.current = controller
     setGenerating(true)
     setGenStatus('LLM 準備中…(初回はモデルロードに時間がかかります)')
+    // 生成中のノードはまだ存在しないので、続きを書く元のノードを光らせる
+    const originId = parentId ?? (canonPath.length > 0 ? canonPath[canonPath.length - 1].id : null)
+    markNodeBusy(originId, true)
     try {
       await generateBeatStream(
         instruction.trim() || null,
@@ -1836,6 +1871,7 @@ function StructureModeInner({ settingsVersion }: { settingsVersion: number }): R
     } catch (err) {
       setGenStatus(isAbortError(err) ? 'キャンセルしました' : String(err))
     } finally {
+      markNodeBusy(originId, false)
       genAbortRef.current = null
       setGenerating(false)
     }
@@ -2178,6 +2214,7 @@ function StructureModeInner({ settingsVersion }: { settingsVersion: number }): R
                     void reload()
                   }}
                   reextracting={reextracting !== null}
+                  onNodeBusyChange={markNodeBusy}
                   onReextractChain={(nodeId) => {
                     const count = countSubtree(nodeId)
                     if (

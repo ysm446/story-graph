@@ -398,6 +398,59 @@ textarea {
   animation: node-glow 1.6s ease-in-out infinite;
 }
 
+/* LLM 処理中のノード: 枠が時計まわりに光る。
+   conic-gradient の角度をアニメーションさせるため、@property で --sg-angle を
+   補間可能な <angle> として宣言する(Chromium なので利用できる)。
+   リングはカード枠の外側 3px に描き、z-index -1 でカード背景の後ろに置く。 */
+@property --sg-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+@keyframes node-busy-spin {
+  to {
+    --sg-angle: 360deg;
+  }
+}
+
+@keyframes node-busy-pulse {
+  0%, 100% { opacity: 0.75; }
+  50% { opacity: 1; }
+}
+
+.node-busy-ring::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: calc(1.5rem + 4px); /* rounded-3xl + はみ出し分 */
+  padding: 3px; /* リングの太さ */
+  background: conic-gradient(
+    from var(--sg-angle),
+    rgba(124, 90, 247, 0) 0turn,
+    rgba(124, 90, 247, 0.15) 0.08turn,
+    #a98bff 0.2turn,
+    rgba(124, 90, 247, 0.15) 0.32turn,
+    rgba(124, 90, 247, 0) 0.42turn
+  );
+  /* padding 分だけを残して中身をくり抜く(枠線だけを光らせる定番の手法) */
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+  animation: node-busy-spin 1.4s linear infinite, node-busy-pulse 1.4s ease-in-out infinite;
+}
+
+/* 処理中のカード自体もほのかに光らせて、遠目でも分かるようにする */
+.node-busy-ring {
+  box-shadow: 0 0 14px 2px rgba(124, 90, 247, 0.25);
+}
+
 /* ノードのピン(ハンドル)。掴みやすいように当たり判定を広く取り、
    見た目の点は ::after で小さく描く(接続点の位置は変わらない) */
 .react-flow .react-flow__handle {
