@@ -906,13 +906,22 @@ function CharTab({
                 <span className="w-20 truncate" style={{ color: 'var(--text-dim)' }}>
                   {nameOf(target)}
                 </span>
-                <div className="h-1.5 flex-1 overflow-hidden rounded-full" style={{ background: 'var(--bg-input)' }}>
+                {/* 0 を中心に、好意は右へ・反感は左へ伸ばす(-1.0〜+1.0) */}
+                <div
+                  className="relative h-1.5 flex-1 overflow-hidden rounded-full"
+                  style={{ background: 'var(--bg-input)' }}
+                  title={`${nameOf(target)} への好感度 ${rel.score.toFixed(2)}`}
+                >
                   <div
-                    className="h-full rounded-full"
+                    className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2"
+                    style={{ background: 'var(--border-strong)' }}
+                  />
+                  <div
+                    className="absolute inset-y-0 rounded-full"
                     style={{
-                      width: `${Math.abs(rel.score) * 100}%`,
-                      background: rel.score >= 0 ? '#3ecf8e' : 'var(--danger)',
-                      marginLeft: rel.score < 0 ? 'auto' : undefined
+                      width: `${Math.abs(rel.score) * 50}%`,
+                      [rel.score >= 0 ? 'left' : 'right']: '50%',
+                      background: rel.score >= 0 ? '#3ecf8e' : 'var(--danger)'
                     }}
                   />
                 </div>
