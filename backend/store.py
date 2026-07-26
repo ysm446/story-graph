@@ -393,6 +393,41 @@ class Store:
                     queue.append(child)
         return order
 
+    def normalize_chain(self, node_id: str) -> dict[str, Any]:
+        """node_id 以下の char_introduce の重複を掃除し、検証結果を返す(LLM 不要)。
+
+        島を繋いだ直後の整合取り。状態そのものは fold が親から積み直すので
+        直す必要はないが、上流で既に登場済みのキャラへの char_introduce だけは
+        残ると害がある(退場済みキャラに当たると「蘇生」してしまう)。
+        親から順に処理するので、上流を掃除した結果が下流の判定に反映される。
+        """
+        if self.get_node(node_id) is None:
+            raise KeyError(f"node not found: {node_id}")
+        removed = 0
+        changed: list[str] = []
+        warnings: list[dict[str, Any]] = []
+        for nid in self.subtree_order(node_id):
+            node = self.get_node(nid)
+            if node is None:
+                continue
+            introduced = set(self.state_before(nid)["chars"])
+            kept = [
+                e
+                for e in node["events"]
+                if not (e["type"] == "char_introduce" and e["payload"].get("char") in introduced)
+            ]
+            if len(kept) != len(node["events"]):
+                removed += len(node["events"]) - len(kept)
+                changed.append(nid)
+                self.replace_events(
+                    nid,
+                    [{"type": e["type"], "payload": e["payload"], "source": e["source"]} for e in kept],
+                )
+            errors = self.validate(nid)
+            if errors:
+                warnings.append({"node_id": nid, "title": node["title"] or "(無題)", "errors": errors})
+        return {"removed": removed, "changed_nodes": changed, "warnings": warnings}
+
     def detach_node(self, node_id: str) -> bool:
         """親エッジを切り、node_id 以下を独立した島にする(構造はそのまま)。
 

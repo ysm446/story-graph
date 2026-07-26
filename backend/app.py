@@ -290,6 +290,15 @@ async def detach_node(node_id: str) -> dict[str, Any]:
     return {"detached": detached, "canon_path": store.canon_path()}
 
 
+@app.post("/nodes/{node_id}/normalize_chain")
+async def normalize_chain(node_id: str) -> dict[str, Any]:
+    """このシーン以下の char_introduce の重複を掃除し、検証結果を返す(LLM 不要)。"""
+    try:
+        return store.normalize_chain(node_id)
+    except KeyError:
+        raise HTTPException(404, "node not found")
+
+
 @app.post("/edges")
 async def create_edge(body: AttachIn) -> dict[str, Any]:
     """島の根を他のシーンの子として繋ぐ。"""

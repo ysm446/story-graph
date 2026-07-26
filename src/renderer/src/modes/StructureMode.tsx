@@ -676,7 +676,7 @@ function BeatTab({
         style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
         title="このシーンから先(下流すべて)のイベントを、親の状態を前提に作り直す"
       >
-        ⟳ ここから先のイベントを作り直す
+        ⟳ ここから先のイベントを作り直す(LLM)
       </button>
       {validation.length > 0 && (
         <div
@@ -1576,18 +1576,18 @@ function StructureModeInner({ settingsVersion }: { settingsVersion: number }): R
       if (!source || !target || !isValidConnection(connection)) return
       try {
         await api.connectNodes(source, target)
+        // 状態は fold が親から積み直すので LLM は不要。ここでは重複した
+        // char_introduce の掃除と検証だけを行う(即時・非破壊的)
+        const normalized = await api.normalizeChain(target)
         await reload()
-        // 上流が変わるとイベントの前提が変わるので、その場で作り直しを勧める
-        const count = countSubtree(target)
-        if (
-          window.confirm(
-            `繋ぎました(下書きとして接続)。\n` +
-              `上流の状態が変わったので、この先 ${count} シーンのイベントを作り直しますか?\n` +
-              `(手動で足したイベントは残します)`
-          )
-        ) {
-          void runReextractChain(target)
+        const parts = [
+          '繋ぎました(下書きとして接続)',
+          normalized.removed > 0 ? `重複した登場イベントを ${normalized.removed} 件整理` : '整理は不要でした'
+        ]
+        if (normalized.warnings.length > 0) {
+          parts.push(`要確認 ${normalized.warnings.length} 件: ${normalized.warnings[0].errors[0]}`)
         }
+        setGenStatus(parts.join(' / '))
       } catch (e) {
         setGenStatus(`繋げません: ${String(e)}`)
       }
@@ -1706,6 +1706,29 @@ function StructureModeInner({ settingsVersion }: { settingsVersion: number }): R
       }
     },
     [markNodeBusy, reextracting, reload]
+  )
+
+  // 整合取り(LLM なし)。重複した登場イベントの掃除 + 検証
+  const normalizeNodes = useCallback(
+    async (nodeIds: string[]): Promise<void> => {
+      let removed = 0
+      const warnings: Array<{ title: string; errors: string[] }> = []
+      for (const id of nodeIds) {
+        try {
+          const r = await api.normalizeChain(id)
+          removed += r.removed
+          warnings.push(...r.warnings)
+        } catch {
+          /* 個々の失敗は無視して続ける */
+        }
+      }
+      await reload()
+      setGenStatus(
+        `整合を取りました(登場イベント ${removed} 件を整理)` +
+          (warnings.length > 0 ? ` / 要確認 ${warnings.length} 件: ${warnings[0].errors[0]}` : '')
+      )
+    },
+    [reload]
   )
 
   // 選択したシーンを一括清書(条件は鑑賞モードの選択をそのまま使う)
@@ -2347,12 +2370,17 @@ function StructureModeInner({ settingsVersion }: { settingsVersion: number }): R
               {(
                 [
                   {
-                    label: 'イベントを作り直す',
+                    label: '整合を取る(LLM なし)',
+                    hint: '重複した登場イベントを掃除して検証',
+                    run: () => void normalizeNodes(menu.targets)
+                  },
+                  {
+                    label: 'イベントを作り直す(LLM)',
                     hint: '選択したシーンだけ(親から順に逐次)',
                     run: () => void runReextractNodes(menu.targets, false)
                   },
                   {
-                    label: 'イベントを作り直す(この先も)',
+                    label: 'イベントを作り直す(この先も / LLM)',
                     hint: '選択したシーンと、その下流すべて',
                     run: () => void runReextractNodes(menu.targets, true)
                   },

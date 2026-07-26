@@ -52,6 +52,14 @@ export const api = {
     request<{ detached: boolean; canon_path: string[] }>(`/nodes/${nodeId}/detach`, {
       method: 'POST'
     }),
+  // 繋いだ後の整合取り(LLM 不要): 上流で登場済みのキャラへの char_introduce を消し、
+  // 残る矛盾は警告として返す
+  normalizeChain: (nodeId: string) =>
+    request<{
+      removed: number
+      changed_nodes: string[]
+      warnings: Array<{ node_id: string; title: string; errors: string[] }>
+    }>(`/nodes/${nodeId}/normalize_chain`, { method: 'POST' }),
   // 島の根を他のシーンの子として繋ぐ(既定は draft)
   connectNodes: (parentId: string, childId: string, canon = false) =>
     request<{ canon_path: string[] }>('/edges', {
