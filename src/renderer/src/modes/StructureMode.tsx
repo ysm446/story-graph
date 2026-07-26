@@ -1831,12 +1831,41 @@ function StructureModeInner({
 
   const selectedNode = graphNodes.find((n) => n.id === selectedId) ?? null
 
+  /** 新しいシーンを親の右隣に手動配置する(**親が手動配置のときだけ**)。
+   *
+   * 自動レイアウトの座標は「原点からの深さ」で決まるので、ドラッグで動かした
+   * ノードや画面中央に置いた島の子は、そのままだと親から遠く離れた場所
+   * (たいてい左)に出てしまう。親が自動配置なら何もしない — 自動レイアウトに
+   * 任せたほうが全体が揃うため。
+   */
+  const placeNextToParent = useCallback(
+    async (newNodeId: string, parentId: string | null, extraLanes = 0): Promise<void> => {
+      if (!parentId) return
+      const parent = reactFlow.getNode(parentId) as BeatFlowNode | undefined
+      if (!parent || parent.data.storyNode.pos_x == null || parent.data.storyNode.pos_y == null) return
+      const height = parent.measured?.height ?? FALLBACK_NODE_HEIGHT
+      // 既にいる子の数だけ下のレーンへ(自動レイアウトと同じ考え方。重ならないように)
+      const siblings = reactFlow
+        .getEdges()
+        .filter((e) => e.source === parentId && e.target !== newNodeId).length
+      await api.setNodePosition(
+        newNodeId,
+        Math.round(parent.position.x + COLUMN_GAP_X),
+        Math.round(parent.position.y + (siblings + extraLanes) * (height + LANE_GAP_Y))
+      )
+    },
+    [reactFlow]
+  )
+
   const handleAddBeat = async (): Promise<void> => {
+    // 実際に親になるノード(未選択なら正史の末尾に付く)
+    const parentId = selectedId ?? canonPath[canonPath.length - 1]?.id ?? null
     const node = await api.createNode({
       beat: '(ここに出来事の仕様を書く)',
       cast: [],
       parent_id: selectedId ?? undefined
     })
+    await placeNextToParent(node.id, parentId)
     await reload()
     setSelectedId(node.id)
     setInspectorTab('beat')
@@ -1870,6 +1899,9 @@ function StructureModeInner({
       beat: '(ここに出来事の仕様を書く)',
       cast: []
     })
+    // 割り込みなので、元の後続シーンが居る右隣とは重ならないよう 1 レーン下に置く
+    // (手動配置の領域では下流を自動で押し出せないため、位置の調整は作者に任せる)
+    await placeNextToParent(node.id, selectedId, 1)
     await reload()
     setSelectedId(node.id)
     setInspectorTab('beat')
@@ -1906,10 +1938,12 @@ function StructureModeInner({
                   e.validation && e.validation.length > 0 ? `警告付きで採用: ${e.validation.join(' / ')}` : null
                 )
                 const newId = e.node.id
-                void reload().then(() => {
-                  setSelectedId(newId)
-                  setInspectorTab('beat')
-                })
+                void placeNextToParent(newId, originId)
+                  .then(() => reload())
+                  .then(() => {
+                    setSelectedId(newId)
+                    setInspectorTab('beat')
+                  })
               }
             },
             parentId,
