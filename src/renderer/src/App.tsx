@@ -151,6 +151,8 @@ function LibraryMenu(): React.JSX.Element {
 
 export default function App(): React.JSX.Element {
   const [mode, setMode] = useState<Mode>('structure')
+  // 構造モードで選んでいたシーン。鑑賞モードを開いたときにそこへ飛ぶ
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   // 設定ポップアップを閉じるたびに増える。設定を読んでいる画面の再取得トリガー
   const [settingsVersion, setSettingsVersion] = useState(0)
@@ -282,8 +284,10 @@ export default function App(): React.JSX.Element {
           </div>
         ) : (
           <>
-            {mode === 'structure' && <StructureMode settingsVersion={settingsVersion} />}
-            {mode === 'reader' && <ReaderMode />}
+            {mode === 'structure' && (
+              <StructureMode settingsVersion={settingsVersion} onSelectedNodeChange={setSelectedNodeId} />
+            )}
+            {mode === 'reader' && <ReaderMode focusNodeId={selectedNodeId} />}
             {mode === 'characters' && <CharactersMode />}
           </>
         )}

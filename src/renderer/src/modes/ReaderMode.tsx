@@ -188,7 +188,12 @@ function PresetEditorModal({
   )
 }
 
-export default function ReaderMode(): React.JSX.Element {
+export default function ReaderMode({
+  focusNodeId
+}: {
+  /** 構造モードで選んでいたシーン。開いたときにここへ飛ぶ */
+  focusNodeId?: string | null
+} = {}): React.JSX.Element {
   const [presets, setPresets] = useState<StylePreset[]>([])
   const [presetId, setPresetId] = useState<string | null>(null)
   const [characters, setCharacters] = useState<Character[]>([])
@@ -360,6 +365,30 @@ export default function ReaderMode(): React.JSX.Element {
   useEffect(() => {
     void reloadScenes()
   }, [reloadScenes])
+
+  // 構造モードで選んでいたシーンへ移動する(開いた直後の一度だけ)。
+  // ページモードはそのシーンを含む最初のページへ、それ以外はスクロール
+  const focusedOnceRef = useRef(false)
+  useEffect(() => {
+    if (focusedOnceRef.current || !focusNodeId || scenes.length === 0) return
+    const index = scenes.findIndex((s) => s.node.id === focusNodeId)
+    if (index < 0) return // 正史外(分岐や島)のシーンは清書一覧に出ない
+    focusedOnceRef.current = true
+    if (viewMode === 'page') {
+      // ページ分割の計算が終わるまで待ってから該当ページへ
+      if (pages.length === 0) {
+        focusedOnceRef.current = false
+        return
+      }
+      const page = pages.findIndex((p) => p.sceneIndex === index)
+      if (page >= 0) setPageIndex(page)
+      return
+    }
+    // レイアウトが落ち着いてからスクロールする
+    requestAnimationFrame(() => {
+      document.getElementById(`reader-scene-${focusNodeId}`)?.scrollIntoView({ block: 'start' })
+    })
+  }, [focusNodeId, scenes, viewMode, pages])
 
   const runRender = async (fromNode: string | null, mode: 'single' | 'to_end'): Promise<void> => {
     if (!presetId || rendering) return
@@ -876,7 +905,7 @@ export default function ReaderMode(): React.JSX.Element {
                 const img = assetUrl(scene.node.image_path)
                 const split = viewMode === 'split' && img
                 return (
-                  <section key={scene.node.id} className="mb-12">
+                  <section key={scene.node.id} id={`reader-scene-${scene.node.id}`} className="mb-12">
                     {renderSceneHeader(scene)}
                     {split ? (
                       <div className="gap-8 md:grid md:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">

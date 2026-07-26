@@ -1197,7 +1197,13 @@ function CharTab({
 
 // ---- 構造モード本体 --------------------------------------------------
 
-function StructureModeInner({ settingsVersion }: { settingsVersion: number }): React.JSX.Element {
+function StructureModeInner({
+  settingsVersion,
+  onSelectedNodeChange
+}: {
+  settingsVersion: number
+  onSelectedNodeChange?: (nodeId: string | null) => void
+}): React.JSX.Element {
   const [minimapVisible, setMinimapVisible] = useState(true)
   const [chatDynamicSuggestions, setChatDynamicSuggestions] = useState(true)
   const [graphNodes, setGraphNodes] = useState<StoryNode[]>([])
@@ -1301,6 +1307,11 @@ function StructureModeInner({ settingsVersion }: { settingsVersion: number }): R
     setGraphEdges(graph.edges)
     setCharacters(chars)
   }, [])
+
+  // 選択シーンを親に伝える(鑑賞モードを開いたときにそのシーンへ飛ばすため)
+  useEffect(() => {
+    onSelectedNodeChange?.(selectedId)
+  }, [selectedId, onSelectedNodeChange])
 
   useEffect(() => {
     void reload()
@@ -2486,10 +2497,17 @@ function StructureModeInner({ settingsVersion }: { settingsVersion: number }): R
   )
 }
 
-export default function StructureMode({ settingsVersion = 0 }: { settingsVersion?: number }): React.JSX.Element {
+export default function StructureMode({
+  settingsVersion = 0,
+  onSelectedNodeChange
+}: {
+  settingsVersion?: number
+  /** 選択シーンを親に伝える(鑑賞モードを開いたときにそこへ飛ぶため) */
+  onSelectedNodeChange?: (nodeId: string | null) => void
+}): React.JSX.Element {
   return (
     <ReactFlowProvider>
-      <StructureModeInner settingsVersion={settingsVersion} />
+      <StructureModeInner settingsVersion={settingsVersion} onSelectedNodeChange={onSelectedNodeChange} />
     </ReactFlowProvider>
   )
 }
