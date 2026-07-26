@@ -28,6 +28,7 @@ import {
   uploadAsset
 } from '../api'
 import ChatDrawer from '../ChatDrawer'
+import FactTimeline from '../FactTimeline'
 import { Icon } from '../icons'
 import ProofreadTextarea from '../ProofreadTextarea'
 import RelationGraph from '../RelationGraph'
@@ -1210,7 +1211,7 @@ function StructureModeInner({
   const [graphEdges, setGraphEdges] = useState<GraphEdge[]>([])
   const [characters, setCharacters] = useState<Character[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [inspectorTab, setInspectorTab] = useState<'beat' | 'char' | 'graph'>('beat')
+  const [inspectorTab, setInspectorTab] = useState<'beat' | 'char' | 'graph' | 'facts'>('beat')
   const [validation, setValidation] = useState<string[]>([])
   const [instruction, setInstruction] = useState('')
   const [generating, setGenerating] = useState(false)
@@ -2427,7 +2428,8 @@ function StructureModeInner({
               [
                 { id: 'beat', label: 'シーン' },
                 { id: 'char', label: 'キャラ' },
-                { id: 'graph', label: '関係図' }
+                { id: 'graph', label: '関係図' },
+                { id: 'facts', label: '事実' }
               ] as const
             ).map((t) => (
               <button
@@ -2451,6 +2453,13 @@ function StructureModeInner({
                 path={pathToSelected ?? canonPath}
                 allNodes={graphNodes}
                 onCharactersChanged={() => void reload()}
+              />
+            ) : inspectorTab === 'facts' ? (
+              <FactTimeline
+                path={pathToSelected ?? canonPath}
+                characters={characters}
+                selectedNodeId={selectedId}
+                onSelectNode={(nodeId) => setSelectedId(nodeId)}
               />
             ) : selectedNode ? (
               inspectorTab === 'beat' ? (
