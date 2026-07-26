@@ -40,6 +40,10 @@ export default function ProofreadTextarea({
   const elapsed = useElapsedSeconds(busy)
   const [error, setError] = useState<string | null>(null)
   const [backup, setBackup] = useState<string | null>(null)
+  // 選択範囲の上端・下端(px)。ポップアップをこれに重ねないように置く
+  const [anchor, setAnchor] = useState<{ top: number; bottom: number } | null>(null)
+  const popupRef = useRef<HTMLSpanElement | null>(null)
+  const [popupHeight, setPopupHeight] = useState(0)
   // 校正結果。base はリクエスト時点の全文(座標ズレを防ぐため)
   const [result, setResult] = useState<{
     value: string
@@ -89,11 +93,61 @@ export default function ProofreadTextarea({
     setSelection(end > start && value.slice(start, end).trim() !== '' ? { start, end } : null)
   }
 
+  /** 選択範囲が何 px 目の行にあるかを測る(ポップアップを重ねないため)。
+   *
+   * textarea は中の座標を教えてくれないので、同じ幅・フォント・行間の隠し要素に
+   * 同じテキストを流し込んで、目印の位置を読む(定番のミラー方式)。
+   */
+  const measureSelection = (range: { start: number; end: number }): { top: number; bottom: number } | null => {
+    const el = areaRef.current
+    if (!el) return null
+    const style = window.getComputedStyle(el)
+    const mirror = document.createElement('div')
+    for (const prop of [
+      'fontFamily',
+      'fontSize',
+      'fontWeight',
+      'lineHeight',
+      'letterSpacing',
+      'paddingTop',
+      'paddingRight',
+      'paddingBottom',
+      'paddingLeft',
+      'borderTopWidth',
+      'borderLeftWidth',
+      'textIndent',
+      'whiteSpace',
+      'wordBreak',
+      'overflowWrap'
+    ] as const) {
+      mirror.style[prop] = style[prop]
+    }
+    mirror.style.position = 'absolute'
+    mirror.style.visibility = 'hidden'
+    mirror.style.whiteSpace = 'pre-wrap'
+    mirror.style.wordBreak = 'break-word'
+    mirror.style.width = `${el.clientWidth}px`
+    document.body.appendChild(mirror)
+    const markerAt = (index: number): number => {
+      mirror.textContent = value.slice(0, index)
+      const marker = document.createElement('span')
+      marker.textContent = '​'
+      mirror.appendChild(marker)
+      return marker.offsetTop
+    }
+    const top = markerAt(range.start)
+    const endTop = markerAt(range.end)
+    const lineHeight = parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.5
+    document.body.removeChild(mirror)
+    return { top, bottom: endTop + lineHeight }
+  }
+
   const run = (): void => {
     if (!value.trim() || busy) return
     const range = selection ?? { start: 0, end: value.length }
     const target = value.slice(range.start, range.end)
     if (!target.trim()) return
+    setAnchor(selection ? measureSelection(range) : null)
     const controller = new AbortController()
     abortRef.current = controller
     setBusy(true)
@@ -141,14 +195,36 @@ export default function ProofreadTextarea({
     onChange(result.base.slice(0, result.start) + result.value + result.base.slice(result.end))
     setResult(null)
     setSelection(null)
+    setAnchor(null)
   }
 
   const close = (): void => {
     abortRef.current?.abort()
     setResult(null)
+    setAnchor(null)
   }
 
   const partialLabel = result && result.end - result.start < result.base.length ? '選択範囲' : '全文'
+
+  // ポップアップの位置。選択範囲の下に置き、テキストエリアの下端を超えるなら
+  // 選択範囲の上へ回す(選択中のテキストには重ねない)
+  const areaHeight = areaRef.current?.offsetHeight ?? 0
+  const popupTop = ((): number => {
+    if (!anchor) return 0 // 全文校正のときは上端(隠すテキストが特にない)
+    const below = anchor.bottom + 6
+    if (popupHeight === 0 || below + popupHeight <= areaHeight) return below
+    const above = anchor.top - popupHeight - 6
+    return above >= 0 ? above : below // 上にも入らなければ下へ(はみ出しは許容)
+  })()
+
+  useEffect(() => {
+    if (!result) {
+      setPopupHeight(0)
+      return
+    }
+    const height = popupRef.current?.offsetHeight ?? 0
+    if (height !== popupHeight) setPopupHeight(height)
+  }, [result, popupHeight])
 
   return (
     <span className="relative block">
@@ -200,8 +276,9 @@ export default function ProofreadTextarea({
       {/* 校正結果のポップアップ */}
       {result && (
         <span
-          className="absolute inset-x-0 top-0 z-20 block rounded-lg border p-2 shadow-xl shadow-black/50"
-          style={{ background: 'var(--bg-card)', borderColor: 'var(--accent-border)' }}
+          ref={popupRef}
+          className="absolute inset-x-0 z-20 block rounded-lg border p-2 shadow-xl shadow-black/50"
+          style={{ top: popupTop, background: 'var(--bg-card)', borderColor: 'var(--accent-border)' }}
         >
           <span className="mb-1 flex items-center justify-between text-[10px]" style={{ color: 'var(--text-faint)' }}>
             <span>校正結果({partialLabel})</span>

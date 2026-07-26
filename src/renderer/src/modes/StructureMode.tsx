@@ -746,12 +746,15 @@ function CharTab({
   node,
   characters,
   memoryContents,
-  onChanged
+  onChanged,
+  onSelectNode
 }: {
   node: StoryNode
   characters: Character[]
-  memoryContents: Record<string, string>
+  /** 記憶イベント ID → 本文とどのシーンの記憶か */
+  memoryContents: Record<string, { content: string; nodeId: string; title: string }>
   onChanged: () => void
+  onSelectNode: (nodeId: string) => void
 }): React.JSX.Element {
   const [state, setState] = useState<StateSnapshot | null>(null)
   const [charId, setCharId] = useState<string | null>(node.cast[0] ?? null)
@@ -956,15 +959,30 @@ function CharTab({
             <h4 className="mb-1 text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
               Memories({charState.memories.length})
             </h4>
-            {charState.memories.map((eventId) => (
-              <div
-                key={eventId}
-                className="mb-1 rounded-lg border px-3 py-1.5 text-[12px] leading-relaxed"
-                style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-dim)' }}
-              >
-                {memoryContents[eventId] ?? eventId}
-              </div>
-            ))}
+            {charState.memories.map((eventId) => {
+              const memory = memoryContents[eventId]
+              return (
+                <div
+                  key={eventId}
+                  className="mb-1 rounded-lg border px-3 py-1.5 text-[12px] leading-relaxed"
+                  style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-dim)' }}
+                >
+                  {memory?.content ?? eventId}
+                  {/* どのシーンで得た記憶か(クリックでそのシーンへ) */}
+                  {memory && (
+                    <button
+                      onClick={() => onSelectNode(memory.nodeId)}
+                      className="mt-0.5 block max-w-full truncate text-left text-[10px] hover:underline"
+                      style={{ color: memory.nodeId === node.id ? 'var(--accent)' : 'var(--text-faint)' }}
+                      title={`「${memory.title}」で得た記憶(クリックでそのシーンへ)`}
+                    >
+                      ← {memory.title}
+                      {memory.nodeId === node.id ? '(このシーン)' : ''}
+                    </button>
+                  )}
+                </div>
+              )
+            })}
             <div className="mt-1 flex gap-1">
               <input
                 placeholder="記憶を追加(このキャラ視点で)"
@@ -1159,12 +1177,17 @@ function StructureModeInner({
 
   const charMap = useMemo(() => Object.fromEntries(characters.map((c) => [c.id, c])), [characters])
 
+  // 記憶(イベント ID)→ 本文とどのシーンの記憶か。キャラタブの一覧で使う
   const memoryContents = useMemo(() => {
-    const map: Record<string, string> = {}
+    const map: Record<string, { content: string; nodeId: string; title: string }> = {}
     for (const node of graphNodes) {
       for (const e of node.events) {
         if (e.type === 'memory_add' || e.type === 'memory_compress') {
-          map[e.id] = String(e.payload.content ?? e.payload.summary ?? '')
+          map[e.id] = {
+            content: String(e.payload.content ?? e.payload.summary ?? ''),
+            nodeId: node.id,
+            title: node.title || '(無題)'
+          }
         }
       }
     }
@@ -2244,6 +2267,7 @@ function StructureModeInner({
                   characters={characters}
                   memoryContents={memoryContents}
                   onChanged={() => void reload()}
+                  onSelectNode={(nodeId) => setSelectedId(nodeId)}
                 />
               )
             ) : (
