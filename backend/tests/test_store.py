@@ -119,19 +119,19 @@ def test_validation_rejects_retired_and_unintroduced(store):
     assert any("未登録" in e for e in errors)
 
 
-def test_cast_auto_introduces_new_chars(store):
+def test_cast_derives_introduction(store):
+    """登場は cast から導出する(char_introduce イベントは作らない)。"""
     _setup_chars(store)
-    # イベントなしで cast だけ指定 → char_introduce が自動追加され警告なし
     n1 = store.append_node({"beat": "初登場", "cast": ["aya", "ken"]})
-    types = [e["type"] for e in n1["events"]]
-    assert types == ["char_introduce", "char_introduce"]
+    assert n1["events"] == []  # 余計なイベントは作らない
+    assert set(store.get_state(n1["id"])["chars"]) == {"aya", "ken"}
     assert store.validate(n1["id"]) == []
-    # cast 追加の編集でも自動付与される
+    # cast を編集すれば、そのシーン以降の状態にも即座に現れる
     store.create_character({"name": "ミオ", "id": "mio"})
     n2 = store.append_node({"beat": "続き", "cast": ["aya"]})
-    updated = store.update_node(n2["id"], {"cast": ["aya", "mio"]})
-    intro_chars = [e["payload"]["char"] for e in updated["events"] if e["type"] == "char_introduce"]
-    assert intro_chars == ["mio"]  # aya は登場済みなので追加されない
+    assert "mio" not in store.get_state(n2["id"])["chars"]
+    store.update_node(n2["id"], {"cast": ["aya", "mio"]})
+    assert "mio" in store.get_state(n2["id"])["chars"]
     assert store.validate(n2["id"]) == []
 
 

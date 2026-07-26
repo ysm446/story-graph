@@ -90,12 +90,10 @@ def _event_schemas(char_ids: list[str]) -> list[dict[str, Any]]:
             },
             ["scope", "key", "value"],
         ),
-        event("char_introduce", {"char": char_ref}, ["char"]),
-        event(
-            "char_retire",
-            {"char": char_ref, "reason": {"type": "string"}},
-            ["char"],
-        ),
+        # char_introduce / char_retire は LLM に出させない(2026-07-26):
+        # 登場は cast から導出でき、退場は「死亡か、その場を去っただけか」の
+        # 意味判断なので作者が UI で決める。スキーマの枝が減るぶん、文法制約付き
+        # 生成も安定する。手動イベントとしては引き続き有効。
     ]
 
 
@@ -205,8 +203,6 @@ DEFAULT_GENERATION_PROMPT = """あなたは物語のビート(出来事の仕様
 起伏と因果を意識し、キャラクターの感情が動く出来事を設計してください。"""
 
 EVENT_RULES = """イベント発行のルール:
-- キャラの初登場シーンでは char_introduce を必ず発行する
-- char_retire は死亡・物語からの永久退場のみ。シーンから立ち去る・別れる程度では発行しない
 - 心に残る出来事は memory_add(そのキャラ視点の一人称的内容で)
   - 行動した本人だけでなく、その場に居合わせて心が動いたキャラにも出す。
     見た・聞いた・気づいた、も記憶になる(「〜するのを見た」「〜と聞かされた」のように書く)
@@ -636,18 +632,11 @@ async def extract_events(
     else:
         raise last_error  # type: ignore[misc]
     normalize_events(result["events"])
-    # 既に登場済みのキャラへの char_introduce は捨てる(島を繋いだ直後など、
-    # 上流で登場済みなのにモデルが毎回発行してくることがある。退場済みキャラに
-    # 効くと「蘇生」になってしまうので、ここで落とす)
-    state_before = store.state_before(node_id)
-    extracted = [
-        e
-        for e in result["events"]
-        if not (e["type"] == "char_introduce" and e["payload"].get("char") in state_before["chars"])
-    ]
-    # 手動イベントは残すが、char_introduce だけは対象外(cast からの自動補完で
-    # 決まるものなので、残すと重複したり順序が崩れる)。抽出結果と完全に同じ
-    # 内容のものも二重にならないよう落とす
+    # char_introduce / char_retire はスキーマから外してあるが、古いモデル出力や
+    # 想定外の出力が混ざっても取り込まない(登場は cast から導出、退場は作者の判断)
+    extracted = [e for e in result["events"] if e["type"] not in ("char_introduce", "char_retire")]
+    # 手動イベントは残す。ただし char_introduce は冗長なので拾わない。抽出結果と
+    # 完全に同じ内容のものも二重にならないよう落とす
     extracted_keys = {(e["type"], json.dumps(e["payload"], sort_keys=True)) for e in extracted}
     kept = (
         [
@@ -664,8 +653,6 @@ async def extract_events(
         node_id,
         [{"type": e["type"], "payload": e["payload"], "source": "llm"} for e in extracted] + kept,
     )
-    # 抽出結果に char_introduce が欠けていた場合の自動補完(cast 整合)
-    store._ensure_cast_introduced(node_id)
     return store.list_events(node_id)
 
 

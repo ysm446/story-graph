@@ -279,7 +279,6 @@ class Store:
             )
         if events:
             self.replace_events(node_id, events, source=source, commit=False)
-        self._ensure_cast_introduced(node_id, commit=False)
         self.conn.commit()
         return self.get_node(node_id)  # type: ignore[return-value]
 
@@ -330,41 +329,10 @@ class Store:
         )
         if events:
             self.replace_events(node_id, events, source=source, commit=False)
-        self._ensure_cast_introduced(node_id, commit=False)
         self.mark_dirty_downstream(node_id, commit=False)
         self._resync_memory_orders(commit=False)
         self.conn.commit()
         return self.get_node(node_id)  # type: ignore[return-value]
-
-    def _ensure_cast_introduced(self, node_id: str, commit: bool = True) -> None:
-        """cast のキャラがパス上で未登場なら char_introduce を自動追加する。
-
-        物語に一度も現れていないキャラのみが対象。退場済み(char_retire 済み)の
-        キャラには追加しない(意図しない「蘇生」を防ぎ、検証警告に任せる)。
-        """
-        node = self.get_node(node_id)
-        if node is None or not node["cast"]:
-            return
-        state_before = self.state_before(node_id)
-        known = self.known_char_ids()
-        introduced_here = {
-            e["payload"].get("char") for e in node["events"] if e["type"] == "char_introduce"
-        }
-        missing = [
-            c
-            for c in node["cast"]
-            if c in known and c not in state_before["chars"] and c not in introduced_here
-        ]
-        if not missing:
-            return
-        current = [
-            {"type": e["type"], "payload": e["payload"], "source": e["source"]}
-            for e in node["events"]
-        ]
-        intros = [
-            {"type": "char_introduce", "payload": {"char": c}, "source": "user"} for c in missing
-        ]
-        self.replace_events(node_id, intros + current, commit=commit)
 
     def _resync_status(self) -> None:
         """status は「正史パス上か」の導出値。現在の canon エッジから貼り直す。"""
@@ -394,12 +362,12 @@ class Store:
         return order
 
     def normalize_chain(self, node_id: str) -> dict[str, Any]:
-        """node_id 以下の char_introduce の重複を掃除し、検証結果を返す(LLM 不要)。
+        """node_id 以下を整える(LLM 不要): 不要になった char_introduce を掃除し、
+        検証結果を返す。
 
-        島を繋いだ直後の整合取り。状態そのものは fold が親から積み直すので
-        直す必要はないが、上流で既に登場済みのキャラへの char_introduce だけは
-        残ると害がある(退場済みキャラに当たると「蘇生」してしまう)。
-        親から順に処理するので、上流を掃除した結果が下流の判定に反映される。
+        登場は cast から導出するようになったので(fold 参照)char_introduce は
+        すべて冗長。古いデータや手動追加分が残っていると一覧のノイズになるため、
+        ここで落とす。退場(char_retire)は作者の判断なので触らない。
         """
         if self.get_node(node_id) is None:
             raise KeyError(f"node not found: {node_id}")
@@ -410,12 +378,7 @@ class Store:
             node = self.get_node(nid)
             if node is None:
                 continue
-            introduced = set(self.state_before(nid)["chars"])
-            kept = [
-                e
-                for e in node["events"]
-                if not (e["type"] == "char_introduce" and e["payload"].get("char") in introduced)
-            ]
+            kept = [e for e in node["events"] if e["type"] != "char_introduce"]
             if len(kept) != len(node["events"]):
                 removed += len(node["events"]) - len(kept)
                 changed.append(nid)
@@ -521,8 +484,6 @@ class Store:
                 node_id,
             ),
         )
-        if cast is not None:
-            self._ensure_cast_introduced(node_id, commit=False)
         self.mark_dirty_downstream(node_id, commit=False)
         self.conn.commit()
         return self.get_node(node_id)
@@ -799,14 +760,16 @@ class Store:
         parent_hash = fold_mod.state_hash(state)
         for nid in path:
             events = self.list_events(nid)
-            ihash = fold_mod.input_hash(parent_hash, fold_mod.events_hash(events))
+            node = self.get_node(nid)
+            cast = node["cast"] if node else []
+            ihash = fold_mod.input_hash(parent_hash, fold_mod.events_hash(events), cast)
             cached = self.conn.execute(
                 "SELECT state, input_hash, dirty FROM state_cache WHERE node_id = ?", (nid,)
             ).fetchone()
             if cached and not cached["dirty"] and cached["input_hash"] == ihash:
                 state = json.loads(cached["state"])
             else:
-                state = fold_mod.fold(state, events)
+                state = fold_mod.fold(state, events, cast)
                 self.conn.execute(
                     "INSERT OR REPLACE INTO state_cache(node_id, state, input_hash, dirty) VALUES(?,?,?,0)",
                     (nid, fold_mod.canonical_json(state), ihash),

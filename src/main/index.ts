@@ -167,6 +167,25 @@ async function startSidecar(): Promise<string> {
   return baseUrl
 }
 
+/** llama-server を止める(VRAM を解放する)。
+ *
+ * バックエンドを自前で起動している場合は stopSidecar のプロセスツリー kill でも
+ * 一緒に落ちるが、既存のバックエンドを再利用していた場合は誰も落とさないため、
+ * 終了時に必ず明示的に止める。外部起動の llama-server はバックエンド側の
+ * マネージャが管理外として扱うので、この呼び出しでは止まらない(意図的)。
+ */
+async function stopLlamaServer(): Promise<void> {
+  if (!apiBaseUrl) return
+  try {
+    await fetch(`${apiBaseUrl}/llm/stop`, {
+      method: 'POST',
+      signal: AbortSignal.timeout(4000)
+    })
+  } catch {
+    // 既に落ちている / バックエンドが応答しない場合は諦める
+  }
+}
+
 function stopSidecar(): void {
   const proc = sidecarProcess
   if (!proc || proc.pid === undefined) return
@@ -270,10 +289,23 @@ app.whenReady().then(async () => {
 })
 
 app.on('window-all-closed', () => {
-  stopSidecar()
-  app.quit()
+  app.quit() // 実際の片付けは before-quit で行う
+})
+
+// 終了時は llama-server を止めてから sidecar を落とす。fetch を待つ必要があるので
+// 一度 quit を止め、片付けが終わってから再度 quit する
+let cleanedUp = false
+app.on('before-quit', (event) => {
+  if (cleanedUp) return
+  event.preventDefault()
+  void (async () => {
+    await stopLlamaServer()
+    stopSidecar()
+    cleanedUp = true
+    app.quit()
+  })()
 })
 
 app.on('quit', () => {
-  stopSidecar()
+  stopSidecar() // 保険(before-quit を通らない経路でも sidecar は落とす)
 })

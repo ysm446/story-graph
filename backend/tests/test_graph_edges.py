@@ -132,23 +132,19 @@ def test_reextract_nodes_include_downstream(store, monkeypatch):
     assert called == [path[1], path[2]]  # 選択したノードとその下流だけ
 
 
-def test_normalize_chain_drops_redundant_introduce(store):
-    """島を繋いだ後の整合取り: 上流で登場済みのキャラの introduce だけを消す。"""
+def test_normalize_chain_drops_legacy_introduce(store):
+    """登場は cast から導出するので、残っている char_introduce は掃除する。"""
     path = store.canon_path()
-    # 島(第二話以降)を切り離し、その根に重複した char_introduce を持たせる
-    store.detach_node(path[1])
     store.replace_events(path[1], [
-        {"type": "char_introduce", "payload": {"char": "aya"}},
+        {"type": "char_introduce", "payload": {"char": "aya"}},  # 古いデータ相当
         {"type": "fact_set", "payload": {"scope": "char", "char": "aya", "key": "location", "value": "港"}},
     ])
-    # 切り離されている間は「初登場」なので消してはいけない
-    assert store.normalize_chain(path[1])["removed"] == 0
-    # 繋ぐと上流で登場済みになるので、introduce だけが落ちる
-    store.attach_node(path[0], path[1], as_canon=True)
     result = store.normalize_chain(path[1])
     assert result["removed"] == 1
     assert [e["type"] for e in store.get_node(path[1])["events"]] == ["fact_set"]
     assert result["warnings"] == []
+    # 掃除しても登場状態は cast から導出されるので変わらない
+    assert "aya" in store.get_state(path[1])["chars"]
 
 
 def test_normalize_chain_reports_validation_warnings(store):

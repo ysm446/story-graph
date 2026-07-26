@@ -21,10 +21,8 @@ def validate_node(
     """違反メッセージのリストを返す。空なら OK。"""
     errors: list[str] = []
 
-    introduced_here = {
-        e["payload"]["char"] for e in events if e["type"] == "char_introduce"
-    }
-
+    # 登場は cast から導出するので「未登場なのに cast にいる」は起こらない
+    # (fold が cast のキャラを初登場として作る)。残る不整合は退場済みの再登場だけ。
     for char_id in cast:
         if char_id not in known_char_ids:
             errors.append(f"cast に未登録のキャラ ID があります: {char_id}")
@@ -34,10 +32,6 @@ def validate_node(
             errors.append(
                 f"退場済みキャラが cast に含まれています: {char_id}"
                 f" (理由: {char_state.get('retire_reason')})"
-            )
-        if char_state is None and char_id not in introduced_here:
-            errors.append(
-                f"char_introduce 前のキャラが cast に含まれています: {char_id}"
             )
 
     for event in events:

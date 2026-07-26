@@ -200,7 +200,8 @@ const EVENT_TEMPLATES: Record<string, string> = {
   relationship_update: '{"char": "", "target_type": "char", "target": "", "delta": 0.1, "reason": ""}',
   relationship_set: '{"char": "", "target_type": "char", "target": "", "value": 0, "reason": ""}',
   fact_set: '{"scope": "char", "char": "", "key": "location", "value": ""}',
-  char_introduce: '{"char": ""}',
+  // char_introduce は不要(登場は cast から導出される)。退場は Cast の ⊗ が楽だが、
+  // 理由を細かく書きたいときのために手動追加も残す
   char_retire: '{"char": "", "reason": "death"}',
   manual_override: '{"path": "", "value": "", "note": ""}'
 }
@@ -425,6 +426,9 @@ function BeatTab({
     () => localStorage.getItem('proofreadPreset') ?? 'standard'
   )
   const [proofreading, setProofreading] = useState(false)
+  // 退場の入力中(理由をインラインで入力する。Electron は window.prompt が使えない)
+  const [retireTarget, setRetireTarget] = useState<string | null>(null)
+  const [retireReason, setRetireReason] = useState('death')
   const [beatBackup, setBeatBackup] = useState<string | null>(null)
   const [correction, setCorrection] = useState<{
     value: string
@@ -605,6 +609,39 @@ function BeatTab({
       const cast = d.cast ?? []
       return { ...d, cast: cast.includes(charId) ? cast.filter((c) => c !== charId) : [...cast, charId] }
     })
+  }
+
+  // このシーンで退場するキャラ(char_retire イベントを持っているキャラ)
+  const retiredHere = node.events
+    .filter((e) => e.type === 'char_retire')
+    .map((e) => String((e.payload as { char?: string }).char ?? ''))
+
+  // 退場は作者が決める。char_retire イベントの付け外しで表現する。
+  // Electron では window.prompt が使えないので、理由の入力はインラインで行う
+  const saveRetire = async (charId: string, reason: string): Promise<void> => {
+    const events = node.events.map((e) => ({ type: e.type, payload: e.payload, source: e.source }))
+    try {
+      await api.putEvents(node.id, [
+        ...events,
+        { type: 'char_retire', payload: { char: charId, reason: reason.trim() || 'death' }, source: 'user' }
+      ])
+      setRetireTarget(null)
+      onSaved()
+    } catch (e) {
+      setError(String(e))
+    }
+  }
+
+  const cancelRetire = async (charId: string): Promise<void> => {
+    const events = node.events
+      .filter((e) => !(e.type === 'char_retire' && (e.payload as { char?: string }).char === charId))
+      .map((e) => ({ type: e.type, payload: e.payload, source: e.source }))
+    try {
+      await api.putEvents(node.id, events)
+      onSaved()
+    } catch (e) {
+      setError(String(e))
+    }
   }
 
   const handleSave = async (): Promise<void> => {
@@ -855,23 +892,84 @@ function BeatTab({
         <div className="flex flex-wrap gap-1.5">
           {characters.map((c) => {
             const active = (draft.cast ?? []).includes(c.id)
+            const retired = retiredHere.includes(c.id)
             return (
-              <button
+              <span
                 key={c.id}
-                onClick={() => toggleCast(c.id)}
-                className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[12px]"
+                className="inline-flex items-center gap-1.5 rounded-full border py-1 pl-2.5 pr-1 text-[12px]"
                 style={
                   active
                     ? { background: 'var(--accent-soft)', borderColor: 'var(--accent-border)', color: 'var(--text)' }
                     : { background: 'transparent', borderColor: 'var(--border)', color: 'var(--text-faint)' }
                 }
               >
-                <span className="inline-block h-2 w-2 rounded-full" style={{ background: c.color ?? '#8a8fa8' }} />
-                {c.name}
-              </button>
+                <button onClick={() => toggleCast(c.id)} className="inline-flex items-center gap-1.5">
+                  <span className="inline-block h-2 w-2 rounded-full" style={{ background: c.color ?? '#8a8fa8' }} />
+                  <span className={retired ? 'line-through' : undefined}>{c.name}</span>
+                </button>
+                {/* 退場は作者が決める(LLM には出させない)。このシーンで退場させる */}
+                {active && (
+                  <button
+                    onClick={() => {
+                      if (retired) void cancelRetire(c.id)
+                      else {
+                        setRetireReason('death')
+                        setRetireTarget(c.id)
+                      }
+                    }}
+                    className="rounded-full px-1 text-[11px]"
+                    style={{ color: retired ? 'var(--accent)' : 'var(--text-faint)' }}
+                    title={
+                      retired
+                        ? 'このシーンでの退場を取り消す'
+                        : 'このシーンで退場させる(以降 cast に入れると警告)'
+                    }
+                  >
+                    {retired ? '⏎' : '⊗'}
+                  </button>
+                )}
+              </span>
             )
           })}
         </div>
+        {/* 退場の理由を入力(Electron では prompt が使えないためインラインで) */}
+        {retireTarget && (
+          <div className="mt-1.5 flex items-center gap-1.5 text-[11px]">
+            <span style={{ color: 'var(--text-dim)' }}>
+              {characters.find((c) => c.id === retireTarget)?.name} を退場させる理由:
+            </span>
+            <input
+              autoFocus
+              value={retireReason}
+              onChange={(e) => setRetireReason(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+                  e.preventDefault()
+                  void saveRetire(retireTarget, retireReason)
+                }
+                if (e.key === 'Escape') setRetireTarget(null)
+              }}
+              placeholder="death / departure など"
+              className="w-40 rounded-md border px-1.5 py-0.5 outline-none"
+              style={{ background: 'var(--bg-input)', borderColor: 'var(--accent-border)' }}
+            />
+            <button
+              onClick={() => void saveRetire(retireTarget, retireReason)}
+              className="rounded-md px-2 py-0.5 font-medium text-white"
+              style={{ background: 'var(--accent)' }}
+            >
+              退場させる
+            </button>
+            <button onClick={() => setRetireTarget(null)} style={{ color: 'var(--text-faint)' }}>
+              取消
+            </button>
+          </div>
+        )}
+        {retiredHere.length > 0 && (
+          <p className="mt-1 text-[11px]" style={{ color: 'var(--text-faint)' }}>
+            このシーンで退場: {retiredHere.map((id) => characters.find((c) => c.id === id)?.name ?? id).join(', ')}
+          </p>
+        )}
       </div>
       <div className="grid grid-cols-2 gap-2">
         <label className="block">

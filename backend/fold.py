@@ -136,12 +136,24 @@ def _set_path(state: dict[str, Any], path: str, value: Any) -> None:
     target[keys[-1]] = value
 
 
-def fold(parent_state: dict[str, Any], events: list[dict[str, Any]]) -> dict[str, Any]:
+def fold(
+    parent_state: dict[str, Any],
+    events: list[dict[str, Any]],
+    cast: list[str] | None = None,
+) -> dict[str, Any]:
     """state(node) = apply(state(canon_parent), events(node))。純粋・決定的。
 
     events は seq 順にソート済みであること。
+
+    登場(introduced)は cast から導出する: cast にいて state にまだ現れていない
+    キャラは、そのシーンで初登場したものとして作る。cast はノードが持っている
+    情報なので char_introduce イベントは不要(既存データのイベントは無害な
+    冗長情報として残る)。既に退場済みのキャラは _ensure_char が作り直さない
+    ため、cast に入れても蘇生しない(矛盾は validation が警告する)。
     """
     state = copy.deepcopy(parent_state)
+    for char_id in cast or []:
+        _ensure_char(state, char_id)
     for event in events:
         apply_event(state, event)
     return state
@@ -163,5 +175,9 @@ def events_hash(events: list[dict[str, Any]]) -> str:
     return hashlib.sha256(canonical_json(stripped).encode("utf-8")).hexdigest()
 
 
-def input_hash(parent_state_hash: str, node_events_hash: str) -> str:
-    return hashlib.sha256(f"{parent_state_hash}:{node_events_hash}".encode("utf-8")).hexdigest()
+def input_hash(parent_state_hash: str, node_events_hash: str, cast: list[str] | None = None) -> str:
+    """state_cache の妥当性キー。登場を cast から導出するので cast も入力に含める。"""
+    cast_part = canonical_json(sorted(cast or []))
+    return hashlib.sha256(
+        f"{parent_state_hash}:{node_events_hash}:{cast_part}".encode("utf-8")
+    ).hexdigest()

@@ -46,10 +46,9 @@ def test_beat_schema_embeds_char_enum():
         s["properties"]["type"]["const"]
         for s in schema["properties"]["events"]["items"]["anyOf"]
     ]
-    # LLM が発行できるのは 5 種のみ(manual_override 等は含まない)
-    assert set(event_types) == {
-        "memory_add", "relationship_update", "fact_set", "char_introduce", "char_retire"
-    }
+    # LLM が発行できるのは 3 種のみ。登場は cast から導出し、退場は作者が UI で
+    # 決めるので char_introduce / char_retire はスキーマに含めない
+    assert set(event_types) == {"memory_add", "relationship_update", "fact_set"}
 
 
 def test_generate_beat_appends_node(store, monkeypatch):
@@ -67,8 +66,8 @@ def test_generate_beat_appends_node(store, monkeypatch):
 
 def test_generate_beat_retries_on_validation_error(store, monkeypatch):
     bad = _valid_result()
-    bad["cast"] = ["aya", "ken"]
-    bad["events"] = [{"type": "char_introduce", "payload": {"char": "aya"}}]  # ken 未登場のまま cast 入り
+    bad["cast"] = ["aya", "nobody"]  # 未登録のキャラ ID が混ざっている
+    bad["events"] = []
 
     calls = {"n": 0}
 
@@ -170,41 +169,43 @@ def test_proofread_selection_with_context(store, monkeypatch):
 
 
 def test_extract_events_replaces(store, monkeypatch):
-    node = store.append_node({"beat": "アヤが村を出る", "cast": ["aya"]}, [
-        {"type": "char_introduce", "payload": {"char": "aya"}},
-    ])
+    node = store.append_node({"beat": "アヤが村を出る", "cast": ["aya"]})
 
     async def fake_chat_json(messages, **kwargs):
         return {
             "events": [
-                {"type": "char_introduce", "payload": {"char": "aya"}},
                 {"type": "fact_set", "payload": {"scope": "char", "char": "aya", "key": "location", "value": "街道"}},
             ]
         }
 
     monkeypatch.setattr(llm_mod, "chat_json", fake_chat_json)
     events = asyncio.run(generation.extract_events(store, "http://fake", node["id"]))
-    assert len(events) == 2
-    assert events[1]["payload"]["key"] == "location"
+    assert [e["type"] for e in events] == ["fact_set"]
     state = store.get_state(node["id"])
     assert state["chars"]["aya"]["facts"]["location"] == "街道"
 
 
-def test_extract_events_restores_missing_introduce(store, monkeypatch):
-    node = store.append_node({"beat": "初登場シーン", "cast": ["aya"]})  # 自動付与で intro あり
+def test_extract_events_ignores_introduce_and_retire(store, monkeypatch):
+    """スキーマ外の char_introduce / char_retire が出てきても取り込まない。
+
+    登場は cast から導出、退場は作者が UI で決める(誤って死んだ扱いにされない)。
+    """
+    node = store.append_node({"beat": "アヤが立ち去る", "cast": ["aya"]})
 
     async def fake_chat_json(messages, **kwargs):
-        # LLM が char_introduce を出し忘れたケース
         return {
             "events": [
+                {"type": "char_introduce", "payload": {"char": "aya"}},
+                {"type": "char_retire", "payload": {"char": "aya", "reason": "departure"}},
                 {"type": "fact_set", "payload": {"scope": "char", "char": "aya", "key": "goal", "value": "旅立ち"}},
             ]
         }
 
     monkeypatch.setattr(llm_mod, "chat_json", fake_chat_json)
     events = asyncio.run(generation.extract_events(store, "http://fake", node["id"]))
-    types = [e["type"] for e in events]
-    assert types[0] == "char_introduce"  # 自動補完される
+    assert [e["type"] for e in events] == ["fact_set"]
+    state = store.get_state(node["id"])
+    assert state["chars"]["aya"]["status"] == "introduced"  # 退場させられていない
     assert store.validate(node["id"]) == []
 
 
@@ -212,14 +213,12 @@ def test_extract_events_keeps_user_events(store, monkeypatch):
     """再抽出は破壊的なので、手で足したイベントは既定で残す。"""
     node = store.append_node({"beat": "手動編集したシーン", "cast": ["aya"]})
     store.replace_events(node["id"], [
-        {"type": "char_introduce", "payload": {"char": "aya"}, "source": "llm"},
         {"type": "memory_add", "payload": {"char": "aya", "content": "手で足した記憶",
                                            "emotion": 0.0, "importance": 0.5}, "source": "user"},
     ])
 
     async def fake_chat_json(messages, **kwargs):
         return {"events": [
-            {"type": "char_introduce", "payload": {"char": "aya"}},
             {"type": "fact_set", "payload": {"scope": "char", "char": "aya", "key": "goal", "value": "帰郷"}},
         ]}
 
@@ -227,26 +226,28 @@ def test_extract_events_keeps_user_events(store, monkeypatch):
     events = asyncio.run(generation.extract_events(store, "http://fake", node["id"]))
     contents = [e["payload"].get("content") for e in events if e["type"] == "memory_add"]
     assert contents == ["手で足した記憶"]  # 残っている
-    assert [e["type"] for e in events].count("char_introduce") == 1  # 重複しない
 
     # keep_user_events=False なら消える
     events = asyncio.run(generation.extract_events(store, "http://fake", node["id"], keep_user_events=False))
     assert not [e for e in events if e["type"] == "memory_add"]
 
 
-def test_extract_events_drops_redundant_introduce(store, monkeypatch):
-    """上流で登場済みのキャラへの char_introduce は捨てる(蘇生と重複の防止)。"""
-    first = store.append_node({"beat": "初登場", "cast": ["aya"]}, [
-        {"type": "char_introduce", "payload": {"char": "aya"}},
+def test_retire_is_authored_not_extracted(store, monkeypatch):
+    """退場は作者が手動イベントで設定する。設定すれば以降の cast 入りが警告になる。"""
+    first = store.append_node({"beat": "最期の戦い", "cast": ["aya", "ken"]})
+    store.replace_events(first["id"], [
+        {"type": "char_retire", "payload": {"char": "ken", "reason": "death"}, "source": "user"},
     ])
-    second = store.append_node({"beat": "再登場", "cast": ["aya"]}, parent_id=first["id"])
+    assert store.get_state(first["id"])["chars"]["ken"]["status"] == "retired"
+    second = store.append_node({"beat": "その後", "cast": ["aya", "ken"]}, parent_id=first["id"])
+    assert any("退場済み" in e for e in store.validate(second["id"]))
 
+    # 再抽出しても作者の退場設定(手動イベント)は残る
     async def fake_chat_json(messages, **kwargs):
         return {"events": [
-            {"type": "char_introduce", "payload": {"char": "aya"}},  # 冗長
-            {"type": "fact_set", "payload": {"scope": "char", "char": "aya", "key": "location", "value": "港"}},
+            {"type": "fact_set", "payload": {"scope": "char", "char": "aya", "key": "location", "value": "墓地"}},
         ]}
 
     monkeypatch.setattr(llm_mod, "chat_json", fake_chat_json)
-    events = asyncio.run(generation.extract_events(store, "http://fake", second["id"]))
-    assert [e["type"] for e in events] == ["fact_set"]
+    events = asyncio.run(generation.extract_events(store, "http://fake", first["id"]))
+    assert [e["type"] for e in events] == ["fact_set", "char_retire"]
