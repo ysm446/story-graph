@@ -17,6 +17,9 @@ export interface Task {
   status: 'pending' | 'running'
   enqueuedAt: number
   startedAt?: number
+  // ボタンの状態表示用の目印(useTaskFor)。単一シーンを対象にする処理だけが持つ
+  kind?: string // 'extract' など処理の種類
+  nodeId?: string // 対象シーン
 }
 
 export type TaskPatch = Partial<Pick<Task, 'detail' | 'done' | 'total'>>
@@ -69,6 +72,8 @@ export function enqueueTask(spec: {
   label: string
   detail?: string
   total?: number
+  kind?: string
+  nodeId?: string
   runner: TaskRunner
 }): string {
   const id = `task-${++seq}`
@@ -80,6 +85,8 @@ export function enqueueTask(spec: {
         label: spec.label,
         detail: spec.detail,
         total: spec.total,
+        kind: spec.kind,
+        nodeId: spec.nodeId,
         status: 'pending',
         enqueuedAt: Date.now()
       },
@@ -117,4 +124,16 @@ export function useTasks(): Task[] {
     () => snapshot,
     () => snapshot
   )
+}
+
+/** 指定シーンに積まれている指定種類のタスク(無ければ null)。
+ *
+ * ボタンの「待機中…/処理中…」はローカル state ではなく**キューから引く**。
+ * ローカルに持つと、シーンを切り替えたときに別のシーンのボタンが待機中になり、
+ * ステータスバーから取り消しても表示が戻らない。
+ */
+export function useTaskFor(kind: string, nodeId: string | null | undefined): Task | null {
+  const tasks = useTasks()
+  if (!nodeId) return null
+  return tasks.find((t) => t.kind === kind && t.nodeId === nodeId) ?? null
 }

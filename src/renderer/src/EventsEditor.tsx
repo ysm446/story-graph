@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api, isAbortError } from './api'
-import { enqueueTask } from './tasks'
+import { enqueueTask, useTaskFor } from './tasks'
 import type { Character, EventInput, StoryNode } from './types'
 import { useElapsedSeconds } from './useElapsed'
 
@@ -374,11 +374,25 @@ export default function EventsEditor({
 }): React.JSX.Element {
   const [adding, setAdding] = useState<{ type: string; payload: Payload } | null>(null)
   const [editing, setEditing] = useState<{ index: number; payload: Payload } | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [queued, setQueued] = useState(false) // キュー待ち(実行前)
-  const busyElapsed = useElapsedSeconds(busy)
+  const [saving, setSaving] = useState(false) // 手動編集の保存中(このシーンだけの状態)
   const [error, setError] = useState<string | null>(null)
   const [validation, setValidation] = useState<string[]>([])
+  // 抽出の状態はキューから引く(このコンポーネントはシーンを切り替えても
+  // 作り直されないので、ローカル state に持つと別のシーンに引きずられる)
+  const extractTask = useTaskFor('extract', node.id)
+  const extracting = extractTask?.status === 'running'
+  const extractElapsed = useElapsedSeconds(extracting)
+  // 抽出が終わったとき、インスペクタがまだそのシーンを映しているかの判定に使う
+  const shownNodeId = useRef(node.id)
+  shownNodeId.current = node.id
+
+  // 検証結果とエラーは直前に見ていたシーンのものなので、切り替えたら捨てる
+  useEffect(() => {
+    setValidation([])
+    setError(null)
+    setAdding(null)
+    setEditing(null)
+  }, [node.id])
 
   const nameOf = (id: string): string =>
     characters.find((c) => c.id === id)?.name ?? (id || '(未選択)')
@@ -396,7 +410,7 @@ export default function EventsEditor({
     node.events.map((e) => ({ type: e.type, payload: e.payload, source: e.source }))
 
   const save = async (events: EventInput[]): Promise<void> => {
-    setBusy(true)
+    setSaving(true)
     setError(null)
     try {
       const result = await api.putEvents(node.id, events)
@@ -405,7 +419,7 @@ export default function EventsEditor({
     } catch (e) {
       setError(String(e))
     } finally {
-      setBusy(false)
+      setSaving(false)
     }
   }
 
@@ -432,22 +446,22 @@ export default function EventsEditor({
 
   const runExtract = (): void => {
     setError(null)
-    setQueued(true)
+    const targetId = node.id // 実行までにインスペクタが別のシーンを映していても対象は変えない
     enqueueTask({
       label: 'イベント抽出',
       detail: node.title || '(無題)',
+      kind: 'extract',
+      nodeId: targetId,
       runner: async ({ signal }) => {
-        setBusy(true)
         onBusyChange(true)
         try {
-          const r = await api.extractEvents(node.id, signal)
-          setValidation(r.validation)
+          const r = await api.extractEvents(targetId, signal)
+          // 別のシーンに移っていたら、そのシーンの検証結果として出さない
+          if (shownNodeId.current === targetId) setValidation(r.validation)
           onChanged()
         } catch (e) {
-          if (!isAbortError(e)) setError(String(e))
+          if (!isAbortError(e) && shownNodeId.current === targetId) setError(String(e))
         } finally {
-          setBusy(false)
-          setQueued(false)
           onBusyChange(false)
         }
       }
@@ -475,11 +489,15 @@ export default function EventsEditor({
           {/* 1 件でもキューに積む(他の処理と取り合いにならないように) */}
           <button
             onClick={runExtract}
-            disabled={busy || queued}
+            disabled={saving || extractTask !== null}
             className="rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-50"
             style={{ borderColor: 'var(--accent-border)', color: 'var(--accent)' }}
           >
-            {busy ? `処理中… (${busyElapsed}s)` : queued ? '待機中…' : 'イベント抽出(LLM)'}
+            {extracting
+              ? `処理中… (${extractElapsed}s)`
+              : extractTask
+                ? '待機中…'
+                : 'イベント抽出(LLM)'}
           </button>
         </div>
       </div>
@@ -514,7 +532,7 @@ export default function EventsEditor({
           />
           <button
             onClick={handleAdd}
-            disabled={busy}
+            disabled={saving || extracting}
             className="rounded-md px-3 py-1 text-[12px] font-medium text-white disabled:opacity-50"
             style={{ background: 'var(--accent)' }}
           >
@@ -573,7 +591,7 @@ export default function EventsEditor({
               </button>
               <button
                 onClick={() => handleDelete(index)}
-                disabled={busy}
+                disabled={saving || extracting}
                 className="text-[11px]"
                 style={{ color: 'var(--text-faint)' }}
                 title="このイベントを削除"
@@ -593,7 +611,7 @@ export default function EventsEditor({
                 <div className="flex gap-2">
                   <button
                     onClick={handleUpdate}
-                    disabled={busy}
+                    disabled={saving || extracting}
                     className="rounded-md px-3 py-1 text-[12px] font-medium text-white disabled:opacity-50"
                     style={{ background: 'var(--accent)' }}
                   >
