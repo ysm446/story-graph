@@ -74,3 +74,16 @@ def test_subtree_order_is_parent_first(store):
     order = store.subtree_order(path[1])
     assert order[0] == path[1]
     assert set(order) == {path[1], path[2], branch["id"]}
+
+
+def test_detached_node_has_no_parent(store):
+    """独立シーンはどこにも繋がらず、正史も伸びない。"""
+    before = store.canon_path()
+    node = store.append_node({"beat": "作り置きのエピソード", "cast": ["aya"]}, detached=True)
+    assert store.parent_of(node["id"]) is None
+    assert store.canon_path() == before  # 正史は変わらない
+    assert node["status"] == "draft"
+    # 独立ノードの子として足すと、そのまま島が育つ
+    child = store.append_node({"beat": "続き", "cast": ["aya"]}, parent_id=node["id"])
+    assert store.subtree_order(node["id"]) == [node["id"], child["id"]]
+    assert store.canon_path() == before

@@ -117,6 +117,7 @@ class NodeIn(BaseModel):
     story_time: str | None = None
     parent_id: str | None = None
     draft: bool = False  # True で常に draft ブランチとして挿入(提案カード用)
+    detached: bool = False  # True でどこにも繋がない独立シーン(島の起点)
     events: list[EventIn] = Field(default_factory=list)
 
 
@@ -239,10 +240,12 @@ async def graph() -> dict[str, Any]:
 
 @app.post("/nodes")
 async def create_node(body: NodeIn) -> dict[str, Any]:
-    data = body.model_dump(exclude={"events", "parent_id", "draft"})
+    data = body.model_dump(exclude={"events", "parent_id", "draft", "detached"})
     events = [e.model_dump() for e in body.events]
     try:
-        node = store.append_node(data, events, parent_id=body.parent_id, force_draft=body.draft)
+        node = store.append_node(
+            data, events, parent_id=body.parent_id, force_draft=body.draft, detached=body.detached
+        )
     except KeyError as e:
         raise HTTPException(404, str(e))
     node["validation"] = store.validate(node["id"])

@@ -67,6 +67,7 @@ export const api = {
     story_time?: string
     parent_id?: string
     draft?: boolean
+    detached?: boolean // どこにも繋がない独立シーン(島の起点)
     events?: EventInput[]
   }) => request<StoryNode>('/nodes', { method: 'POST', body: JSON.stringify(data) }),
   insertNodeAfter: (nodeId: string, data: { title?: string; beat: string; cast?: string[] }) =>

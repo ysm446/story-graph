@@ -1305,6 +1305,7 @@ function StructureModeInner({ settingsVersion }: { settingsVersion: number }): R
     return saved >= 220 && saved <= 1200 ? saved : 440
   })
   const canvasColumnRef = useRef<HTMLDivElement | null>(null)
+  const canvasRef = useRef<HTMLElement | null>(null) // React Flow の描画領域(中央配置の基準)
   // 生成 UI はキャンバスの面積を食うので、既定は畳んでツールバーのボタンから開く
   const [genPanelOpen, setGenPanelOpen] = useState(false)
   const reactFlow = useReactFlow()
@@ -1771,6 +1772,28 @@ function StructureModeInner({ settingsVersion }: { settingsVersion: number }): R
     setInspectorTab('beat')
   }
 
+  // どこにも繋がない独立シーン。自動レイアウトの対象外にしたいので、
+  // 画面の中央に手動配置として置く(島を作り置きするための入り口)
+  const handleAddDetached = async (): Promise<void> => {
+    const node = await api.createNode({
+      beat: '(ここに出来事の仕様を書く)',
+      cast: [],
+      detached: true
+    })
+    const rect = canvasRef.current?.getBoundingClientRect()
+    if (rect) {
+      const center = reactFlow.screenToFlowPosition({
+        x: rect.left + rect.width / 2,
+        y: rect.top + rect.height / 2
+      })
+      // カード幅 288 / 高さの目安 160 の分だけ左上にずらして中央に見せる
+      await api.setNodePosition(node.id, Math.round(center.x - 144), Math.round(center.y - 80))
+    }
+    await reload()
+    setSelectedId(node.id)
+    setInspectorTab('beat')
+  }
+
   const handleInsertAfter = async (): Promise<void> => {
     if (!selectedId) return
     const node = await api.insertNodeAfter(selectedId, {
@@ -1823,7 +1846,7 @@ function StructureModeInner({ settingsVersion }: { settingsVersion: number }): R
       <div ref={rowRef} className="flex min-h-0 flex-1">
         {/* ノードエリア + 相談チャット(インスペクタに被らないよう左カラム内に収める) */}
         <div ref={canvasColumnRef} className="flex min-w-0 flex-1 flex-col">
-        <main className="relative min-h-0 flex-1" style={{ background: 'var(--bg-canvas)' }}>
+        <main ref={canvasRef} className="relative min-h-0 flex-1" style={{ background: 'var(--bg-canvas)' }}>
           <ReactFlow
             nodes={flowNodes}
             edges={flowEdges}
@@ -1874,6 +1897,14 @@ function StructureModeInner({ settingsVersion }: { settingsVersion: number }): R
                     title={selectedId ? '選択ノードの子としてシーンを追加' : '正史の末尾にシーンを追加'}
                   >
                     + シーン
+                  </button>
+                  <button
+                    onClick={() => void handleAddDetached()}
+                    className="rounded-lg border px-2.5 py-1.5 text-[13px] shadow-lg shadow-black/30"
+                    style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+                    title="どこにも繋がらないシーンを画面の中央に追加(あとでハンドルのドラッグで繋げます)"
+                  >
+                    ⊕
                   </button>
                   {selectedId && (
                     <button

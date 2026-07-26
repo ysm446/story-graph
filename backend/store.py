@@ -224,16 +224,21 @@ class Store:
 
     def append_node(self, data: dict[str, Any], events: list[dict[str, Any]] | None = None,
                     source: str = "user", parent_id: str | None = None,
-                    force_draft: bool = False) -> dict[str, Any]:
+                    force_draft: bool = False, detached: bool = False) -> dict[str, Any]:
         """ノードを追加する。
 
         - parent_id なし: 正史タイムラインの末尾に canon として追加
         - parent_id あり: その子として追加。親に canon の子が居なければ延長(canon)、
           居れば分岐(draft)
         - force_draft: 常に draft ブランチとして追加(チャットの提案カード用)
+        - detached: どこにも繋がない独立ノード(島の起点。エピソードの作り置き用)
         """
         canon = self.canon_path()
-        if parent_id is None and not force_draft:
+        if detached:
+            parent_id = None
+            as_canon = False
+            on_canon_path = False
+        elif parent_id is None and not force_draft:
             parent_id = canon[-1] if canon else None
             as_canon = True
             on_canon_path = True
