@@ -31,6 +31,7 @@ import ChatDrawer from '../ChatDrawer'
 import { Icon } from '../icons'
 import ProofreadTextarea from '../ProofreadTextarea'
 import RelationGraph from '../RelationGraph'
+import { endTask, startTask, updateTask } from '../tasks'
 import { useElapsedSeconds } from '../useElapsed'
 import type { Character, EventInput, GraphEdge, StateSnapshot, StoryEvent, StoryNode } from '../types'
 
@@ -1533,6 +1534,11 @@ function StructureModeInner({ settingsVersion }: { settingsVersion: number }): R
       const controller = new AbortController()
       reextractAbortRef.current = controller
       setReextracting({ index: 0, total: countSubtree(nodeId), title: '' })
+      const taskId = startTask({
+        label: 'イベント作り直し',
+        total: countSubtree(nodeId),
+        abort: () => controller.abort()
+      })
       let current: string | null = null
       try {
         await reextractChainStream(
@@ -1540,6 +1546,7 @@ function StructureModeInner({ settingsVersion }: { settingsVersion: number }): R
           (e) => {
             if (e.stage === 'node') {
               setReextracting({ index: e.index ?? 0, total: e.total ?? 0, title: e.title ?? '' })
+              updateTask(taskId, { done: (e.index ?? 1) - 1, total: e.total, detail: e.title })
               // 処理中のノードだけを光らせる(逐次実行なので常に 1 つ)
               markNodeBusy(current, false)
               current = e.node_id ?? null
@@ -1560,6 +1567,7 @@ function StructureModeInner({ settingsVersion }: { settingsVersion: number }): R
       } catch (err) {
         setGenStatus(isAbortError(err) ? '作り直しを中止しました' : `作り直せません: ${String(err)}`)
       } finally {
+        endTask(taskId)
         markNodeBusy(current, false)
         reextractAbortRef.current = null
         setReextracting(null)
@@ -1578,6 +1586,11 @@ function StructureModeInner({ settingsVersion }: { settingsVersion: number }): R
       const controller = new AbortController()
       reextractAbortRef.current = controller
       setReextracting({ index: 0, total: nodeIds.length, title: '' })
+      const taskId = startTask({
+        label: 'イベント作り直し',
+        total: nodeIds.length,
+        abort: () => controller.abort()
+      })
       let current: string | null = null
       try {
         await reextractNodesStream(
@@ -1585,6 +1598,7 @@ function StructureModeInner({ settingsVersion }: { settingsVersion: number }): R
           (e) => {
             if (e.stage === 'node') {
               setReextracting({ index: e.index ?? 0, total: e.total ?? 0, title: e.title ?? '' })
+              updateTask(taskId, { done: (e.index ?? 1) - 1, total: e.total, detail: e.title })
               markNodeBusy(current, false)
               current = e.node_id ?? null
               markNodeBusy(current, true)
@@ -1604,6 +1618,7 @@ function StructureModeInner({ settingsVersion }: { settingsVersion: number }): R
       } catch (err) {
         setGenStatus(isAbortError(err) ? '作り直しを中止しました' : `作り直せません: ${String(err)}`)
       } finally {
+        endTask(taskId)
         markNodeBusy(current, false)
         reextractAbortRef.current = null
         setReextracting(null)
@@ -1643,6 +1658,11 @@ function StructureModeInner({ settingsVersion }: { settingsVersion: number }): R
       const controller = new AbortController()
       renderAbortRef.current = controller
       setRenderingNodes({ done: 0, total: nodeIds.length, title: '' })
+      const taskId = startTask({
+        label: '清書',
+        total: nodeIds.length,
+        abort: () => controller.abort()
+      })
       let current: string | null = null
       let done = 0
       try {
@@ -1659,10 +1679,12 @@ function StructureModeInner({ settingsVersion }: { settingsVersion: number }): R
               current = e.scene_start
               markNodeBusy(current, true)
               setRenderingNodes({ done, total: nodeIds.length, title: e.title ?? '' })
+              updateTask(taskId, { done, detail: e.title ?? '' })
             }
             if (e.scene_done) {
               done += 1
               setRenderingNodes({ done, total: nodeIds.length, title: '' })
+              updateTask(taskId, { done })
             }
             if (e.error) setGenStatus(`清書エラー: ${e.error}`)
             if (e.done) setGenStatus(done > 0 ? `${done} シーンを清書しました` : '清書済みのため何もしませんでした')
@@ -1672,6 +1694,7 @@ function StructureModeInner({ settingsVersion }: { settingsVersion: number }): R
       } catch (err) {
         setGenStatus(isAbortError(err) ? '清書を中止しました' : `清書できません: ${String(err)}`)
       } finally {
+        endTask(taskId)
         markNodeBusy(current, false)
         renderAbortRef.current = null
         setRenderingNodes(null)
@@ -1937,13 +1960,22 @@ function StructureModeInner({ settingsVersion }: { settingsVersion: number }): R
     // 生成中のノードはまだ存在しないので、続きを書く元のノードを光らせる
     const originId = parentId ?? (canonPath.length > 0 ? canonPath[canonPath.length - 1].id : null)
     markNodeBusy(originId, true)
+    const taskId = startTask({
+      label: 'シーン生成',
+      detail: 'LLM 準備中…',
+      abort: () => controller.abort()
+    })
     try {
       await generateBeatStream(
         instruction.trim() || null,
         (e) => {
-          if (e.stage === 'generating') setGenStatus(`シーン生成中…(${e.attempt} 回目)`)
-          else if (e.stage === 'validating') setGenStatus('検証中…')
-          else if (e.stage === 'retry') setGenStatus(`検証 NG、リトライ中…(${(e.errors ?? []).join(' / ')})`)
+          if (e.stage === 'generating') {
+            setGenStatus(`シーン生成中…(${e.attempt} 回目)`)
+            updateTask(taskId, { detail: `生成中(${e.attempt} 回目)` })
+          } else if (e.stage === 'validating') {
+            setGenStatus('検証中…')
+            updateTask(taskId, { detail: '検証中…' })
+          } else if (e.stage === 'retry') setGenStatus(`検証 NG、リトライ中…(${(e.errors ?? []).join(' / ')})`)
           else if (e.error) setGenStatus(`エラー: ${e.error}`)
           else if (e.done && e.node) {
             setGenStatus(
@@ -1963,6 +1995,7 @@ function StructureModeInner({ settingsVersion }: { settingsVersion: number }): R
     } catch (err) {
       setGenStatus(isAbortError(err) ? 'キャンセルしました' : String(err))
     } finally {
+      endTask(taskId)
       markNodeBusy(originId, false)
       genAbortRef.current = null
       setGenerating(false)

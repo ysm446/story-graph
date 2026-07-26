@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { api, assetUrl, isAbortError, isVideoAsset, renderStream } from '../api'
 import { CrossfadeLoopVideo, DEFAULT_VIDEO_CROSSFADE_SECONDS } from '../CrossfadeLoopVideo'
+import { endTask, startTask, updateTask } from '../tasks'
 import { useElapsedSeconds } from '../useElapsed'
 import type { Character, PromoteProposal, SceneEntry, StylePreset } from '../types'
 
@@ -366,6 +367,13 @@ export default function ReaderMode(): React.JSX.Element {
     renderAbortRef.current = controller
     setRendering(true)
     setStatus('LLM 準備中…')
+    // ページを離れても進捗が分かるよう、ステータスバーにも出す
+    const taskId = startTask({
+      label: '清書',
+      detail: 'LLM 準備中…',
+      abort: () => controller.abort()
+    })
+    let doneCount = 0
     try {
       await renderStream(
         { preset_id: presetId, pov_char: povChar, from_node: fromNode, mode },
@@ -374,11 +382,14 @@ export default function ReaderMode(): React.JSX.Element {
             setLiveNodeId(e.scene_start)
             setLiveText('')
             setStatus(`清書中: ${e.title || '(無題)'}`)
+            updateTask(taskId, { detail: e.title || '(無題)', done: doneCount })
           } else if (e.delta) {
             setLiveText((t) => t + e.delta)
           } else if (e.scene_done) {
             setLiveNodeId(null)
             setLiveText('')
+            doneCount += 1
+            updateTask(taskId, { done: doneCount })
             void reloadScenes()
           } else if (e.error) {
             setStatus(`エラー: ${e.error}`)
@@ -391,6 +402,7 @@ export default function ReaderMode(): React.JSX.Element {
     } catch (err) {
       setStatus(isAbortError(err) ? 'キャンセルしました(書きかけのシーンは保存されません)' : String(err))
     } finally {
+      endTask(taskId)
       renderAbortRef.current = null
       setRendering(false)
       setLiveNodeId(null)
