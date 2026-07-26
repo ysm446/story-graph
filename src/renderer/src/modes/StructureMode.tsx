@@ -16,7 +16,16 @@ import {
   type NodeProps
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { api, assetUrl, generateBeatStream, isAbortError, isVideoAsset, proofreadStream, uploadAsset } from '../api'
+import {
+  api,
+  assetUrl,
+  generateBeatStream,
+  isAbortError,
+  isVideoAsset,
+  proofreadStream,
+  reextractChainStream,
+  uploadAsset
+} from '../api'
 import ChatDrawer from '../ChatDrawer'
 import { Icon } from '../icons'
 import RelationGraph from '../RelationGraph'
@@ -105,7 +114,8 @@ function BeatNodeCard({ data, selected }: NodeProps<BeatFlowNode>): React.JSX.El
         ['--tw-ring-color' as string]: 'var(--accent-border)'
       }}
     >
-      <Handle type="target" position={Position.Left} className="!bg-[#6a728f]" />
+      {/* 当たり判定と見た目は index.css の .react-flow__handle で調整している */}
+      <Handle type="target" position={Position.Left} />
       {assetUrl(storyNode.image_path) &&
         (isVideoAsset(storyNode.image_path) ? (
           // グラフ上のカードでは負荷を抑えるため再生せず、先頭フレームをサムネイルとして表示
@@ -170,7 +180,7 @@ function BeatNodeCard({ data, selected }: NodeProps<BeatFlowNode>): React.JSX.El
           </span>
         )}
       </div>
-      <Handle type="source" position={Position.Right} className="!bg-[#6a728f]" />
+      <Handle type="source" position={Position.Right} />
     </div>
   )
 }
@@ -382,13 +392,17 @@ function BeatTab({
   characters,
   validation,
   onSaved,
-  onDeleted
+  onDeleted,
+  onReextractChain,
+  reextracting
 }: {
   node: StoryNode
   characters: Character[]
   validation: string[]
   onSaved: () => void
   onDeleted: () => void
+  onReextractChain: (nodeId: string) => void
+  reextracting: boolean
 }): React.JSX.Element {
   const [draft, setDraft] = useState<Partial<StoryNode>>({})
   const [error, setError] = useState<string | null>(null)
@@ -641,6 +655,16 @@ function BeatTab({
           ★ このブランチを正史にする
         </button>
       )}
+      {/* 上流を繋ぎ替えた後など、ここから先の前提が変わったときに使う */}
+      <button
+        onClick={() => onReextractChain(node.id)}
+        disabled={reextracting}
+        className="rounded-lg border px-3 py-1.5 text-[12px] disabled:opacity-40"
+        style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+        title="このシーンから先(下流すべて)のイベントを、親の状態を前提に作り直す"
+      >
+        ⟳ ここから先のイベントを作り直す
+      </button>
       {validation.length > 0 && (
         <div
           className="rounded-lg border px-3 py-2 text-[12px] leading-relaxed"
@@ -1265,6 +1289,10 @@ function StructureModeInner({ settingsVersion }: { settingsVersion: number }): R
   const genElapsed = useElapsedSeconds(generating)
   const genAbortRef = useRef<AbortController | null>(null)
   const [flowNodes, setFlowNodes] = useState<BeatFlowNode[]>([])
+  // エッジ選択(Delete で切断)と、チェーン再抽出の進捗
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null)
+  const [reextracting, setReextracting] = useState<{ index: number; total: number; title: string } | null>(null)
+  const reextractAbortRef = useRef<AbortController | null>(null)
   const [inspectorWidth, setInspectorWidth] = useState(() => {
     const saved = Number(localStorage.getItem('inspectorWidth'))
     return saved >= 320 && saved <= 900 ? saved : 480
@@ -1445,8 +1473,135 @@ function StructureModeInner({ settingsVersion }: { settingsVersion: number }): R
     [graphNodes, reload]
   )
 
+  // ---- エッジの切断 / 接続(島の切り出しと繋ぎ直し) -----------------
+
+  // エッジを切る = 子ノード以下を独立した島にする(ノードは消さない)
+  const detachEdge = useCallback(
+    async (edgeId: string): Promise<void> => {
+      const edge = graphEdges.find((e) => e.id === edgeId)
+      if (!edge) return
+      const child = graphNodes.find((n) => n.id === edge.to_node)
+      const label = child?.title || '(無題)'
+      if (!window.confirm(`「${label}」から先を切り離しますか?(シーンは残り、独立した島になります)`)) return
+      try {
+        await api.detachNode(edge.to_node)
+        setSelectedEdgeId(null)
+        await reload()
+      } catch (e) {
+        setGenStatus(`切り離せません: ${String(e)}`)
+      }
+    },
+    [graphEdges, graphNodes, reload]
+  )
+
+  // 繋げるのは「島の根(親がいないノード)」だけ。循環と多重親を防ぐ
+  const isValidConnection = useCallback(
+    (connection: { source?: string | null; target?: string | null }): boolean => {
+      const { source, target } = connection
+      if (!source || !target || source === target) return false
+      if (graphEdges.some((e) => e.to_node === target)) return false // 既に親がいる
+      // 自分の下流には繋げない(循環)
+      const descendants = new Set([target])
+      let added = true
+      while (added) {
+        added = false
+        for (const e of graphEdges) {
+          if (descendants.has(e.from_node) && !descendants.has(e.to_node)) {
+            descendants.add(e.to_node)
+            added = true
+          }
+        }
+      }
+      return !descendants.has(source)
+    },
+    [graphEdges]
+  )
+
+  const handleConnect = useCallback(
+    async (connection: { source?: string | null; target?: string | null }): Promise<void> => {
+      const { source, target } = connection
+      if (!source || !target || !isValidConnection(connection)) return
+      try {
+        await api.connectNodes(source, target)
+        await reload()
+        // 上流が変わるとイベントの前提が変わるので、その場で作り直しを勧める
+        const count = countSubtree(target)
+        if (
+          window.confirm(
+            `繋ぎました(下書きとして接続)。\n` +
+              `上流の状態が変わったので、この先 ${count} シーンのイベントを作り直しますか?\n` +
+              `(手動で足したイベントは残します)`
+          )
+        ) {
+          void runReextractChain(target)
+        }
+      } catch (e) {
+        setGenStatus(`繋げません: ${String(e)}`)
+      }
+    },
+    // countSubtree / runReextractChain は下で定義(同じレンダーで安定)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [isValidConnection, reload, graphEdges, graphNodes]
+  )
+
+  // 部分木(そのノード以下)のシーン数
+  const countSubtree = useCallback(
+    (nodeId: string): number => {
+      const subtree = new Set([nodeId])
+      let added = true
+      while (added) {
+        added = false
+        for (const e of graphEdges) {
+          if (subtree.has(e.from_node) && !subtree.has(e.to_node)) {
+            subtree.add(e.to_node)
+            added = true
+          }
+        }
+      }
+      return subtree.size
+    },
+    [graphEdges]
+  )
+
+  // このシーン以下のイベントを、親から順に作り直す(上流の状態が変わったとき)
+  const runReextractChain = useCallback(
+    async (nodeId: string): Promise<void> => {
+      if (reextracting) return
+      const controller = new AbortController()
+      reextractAbortRef.current = controller
+      setReextracting({ index: 0, total: countSubtree(nodeId), title: '' })
+      try {
+        await reextractChainStream(
+          nodeId,
+          (e) => {
+            if (e.stage === 'node') {
+              setReextracting({ index: e.index ?? 0, total: e.total ?? 0, title: e.title ?? '' })
+            }
+            if (e.stage === 'done') {
+              const failed = e.failed ?? []
+              setGenStatus(
+                failed.length === 0
+                  ? `${e.total} シーンのイベントを作り直しました`
+                  : `${(e.total ?? 0) - failed.length} シーン成功 / ${failed.length} シーン失敗: ` +
+                    failed.map((f) => f.title).join(', ')
+              )
+            }
+          },
+          controller.signal
+        )
+      } catch (err) {
+        setGenStatus(isAbortError(err) ? '作り直しを中止しました' : `作り直せません: ${String(err)}`)
+      } finally {
+        reextractAbortRef.current = null
+        setReextracting(null)
+        await reload()
+      }
+    },
+    [countSubtree, reextracting, reload]
+  )
+
   // キーボードショートカット(lm-graph と同じ): A = 全体表示 / F = 選択にフォーカス
-  // Delete = 選択ノードを削除
+  // Delete = 選択ノードを削除(エッジ選択中は切断)
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent): void => {
       const target = event.target as HTMLElement | null
@@ -1457,6 +1612,12 @@ function StructureModeInner({ settingsVersion }: { settingsVersion: number }): R
         return
       }
       if (event.key === 'Delete') {
+        // エッジを選択中なら「削除」ではなく「切断」(ノードは残す)
+        if (selectedEdgeId) {
+          event.preventDefault()
+          void detachEdge(selectedEdgeId)
+          return
+        }
         // キャンバス上で選択中のノードを優先し、無ければインスペクタの選択ノード
         const targetId = flowNodes.find((n) => n.selected)?.id ?? selectedId
         if (!targetId) return
@@ -1578,15 +1739,23 @@ function StructureModeInner({ settingsVersion }: { settingsVersion: number }): R
 
   const flowEdges: Edge[] = useMemo(
     () =>
-      graphEdges.map((e) => ({
-        id: e.id,
-        source: e.from_node,
-        target: e.to_node,
-        style: e.is_canon
-          ? { stroke: '#8a8fb8', strokeWidth: 2.5 }
-          : { stroke: '#4a4f66', strokeWidth: 1.5, strokeDasharray: '7 5' }
-      })),
-    [graphEdges]
+      graphEdges.map((e) => {
+        const selected = e.id === selectedEdgeId
+        return {
+          id: e.id,
+          source: e.from_node,
+          target: e.to_node,
+          // クリックしやすいように当たり判定を広めに(見た目の線は細いまま)
+          interactionWidth: 18,
+          selected,
+          style: selected
+            ? { stroke: 'var(--accent)', strokeWidth: 3 }
+            : e.is_canon
+              ? { stroke: '#8a8fb8', strokeWidth: 2.5 }
+              : { stroke: '#4a4f66', strokeWidth: 1.5, strokeDasharray: '7 5' }
+        }
+      }),
+    [graphEdges, selectedEdgeId]
   )
 
   const selectedNode = graphNodes.find((n) => n.id === selectedId) ?? null
@@ -1670,6 +1839,12 @@ function StructureModeInner({ settingsVersion }: { settingsVersion: number }): R
                 return nodes.some((n) => n.id === prev) ? prev : nodes[0].id
               })
             }}
+            onConnect={(connection) => void handleConnect(connection)}
+            isValidConnection={(connection) => isValidConnection(connection)}
+            // エッジ選択は自前で持つ(onEdgesChange を渡していないため)
+            onEdgeClick={(_, edge) => setSelectedEdgeId(edge.id)}
+            onEdgeDoubleClick={(_, edge) => void detachEdge(edge.id)}
+            onPaneClick={() => setSelectedEdgeId(null)}
             onNodeDragStop={(_, __, draggedNodes) => {
               for (const dragged of draggedNodes) {
                 void api.setNodePosition(dragged.id, dragged.position.x, dragged.position.y)
@@ -1681,7 +1856,8 @@ function StructureModeInner({ settingsVersion }: { settingsVersion: number }): R
             panOnDrag={[1]}
             selectionOnDrag
             selectionMode={SelectionMode.Partial}
-            nodesConnectable={false}
+            // ハンドルのドラッグで親子を繋げる(妥当性は isValidConnection で判定)
+            nodesConnectable
             proOptions={{ hideAttribution: true }}
           >
             <Background gap={20} size={1.4} color="#394154" />
@@ -1798,6 +1974,26 @@ function StructureModeInner({ settingsVersion }: { settingsVersion: number }): R
                         )}
                       </div>
                     )}
+                  </div>
+                )}
+                {/* チェーン再抽出の進捗(逐次実行なので何番目かを出す) */}
+                {reextracting && (
+                  <div
+                    className="node-generating-border flex items-center gap-2 rounded-xl border px-2.5 py-1.5 text-[11px] shadow-lg shadow-black/30"
+                    style={{ background: 'var(--bg-card)', borderColor: 'var(--border)', color: 'var(--text-dim)' }}
+                  >
+                    <span className="min-w-0 flex-1 truncate">
+                      イベント作り直し {reextracting.index}/{reextracting.total}
+                      {reextracting.title && `: ${reextracting.title}`}
+                    </span>
+                    <button
+                      onClick={() => reextractAbortRef.current?.abort()}
+                      className="shrink-0 rounded-md border px-1.5"
+                      style={{ borderColor: 'rgba(239,68,68,0.5)', color: 'var(--danger)' }}
+                      title="中止(処理済みのシーンはそのまま)"
+                    >
+                      ■
+                    </button>
                   </div>
                 )}
                 {/* パネルを畳んでいる間の進捗表示。中止もここから行える */}
@@ -1949,6 +2145,18 @@ function StructureModeInner({ settingsVersion }: { settingsVersion: number }): R
                   onDeleted={() => {
                     setSelectedId(null)
                     void reload()
+                  }}
+                  reextracting={reextracting !== null}
+                  onReextractChain={(nodeId) => {
+                    const count = countSubtree(nodeId)
+                    if (
+                      window.confirm(
+                        `このシーンから先 ${count} シーンのイベントを作り直しますか?\n` +
+                          `(親から順に LLM で抽出し直します。手動で足したイベントは残します)`
+                      )
+                    ) {
+                      void runReextractChain(nodeId)
+                    }
                   }}
                 />
               ) : (

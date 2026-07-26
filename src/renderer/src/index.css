@@ -398,6 +398,39 @@ textarea {
   animation: node-glow 1.6s ease-in-out infinite;
 }
 
+/* ノードのピン(ハンドル)。掴みやすいように当たり判定を広く取り、
+   見た目の点は ::after で小さく描く(接続点の位置は変わらない) */
+.react-flow .react-flow__handle {
+  width: 22px;
+  height: 22px;
+  min-width: 22px;
+  min-height: 22px;
+  background: transparent;
+  border: none;
+  border-radius: 50%;
+}
+
+.react-flow .react-flow__handle::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 10px;
+  height: 10px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: #6a728f;
+  transition: background 0.15s, width 0.15s, height 0.15s;
+}
+
+.react-flow .react-flow__handle:hover::after,
+.react-flow .react-flow__handle.connectingfrom::after,
+.react-flow .react-flow__handle.connectingto::after {
+  background: var(--accent);
+  width: 14px;
+  height: 14px;
+}
+
 /* 相談チャットの候補チップ(video-content-analyzer の qa-suggest-chip を参考) */
 @keyframes chip-in {
   from { opacity: 0; transform: translateY(3px); }

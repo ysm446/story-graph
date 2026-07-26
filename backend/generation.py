@@ -583,7 +583,14 @@ EXTRACTION_PROMPT = f"""あなたは物語のビート(出来事の仕様書)か
 {EVENT_RULES}"""
 
 
-async def extract_events(store: Store, base_url: str, node_id: str) -> list[dict[str, Any]]:
+async def extract_events(
+    store: Store, base_url: str, node_id: str, keep_user_events: bool = True
+) -> list[dict[str, Any]]:
+    """ビート本文と直前の状態からイベントを抽出し直す。
+
+    keep_user_events=True のとき、手で足したイベント(source="user")は残す。
+    再抽出は破壊的なので、既定で手動編集を守る。
+    """
     node = store.get_node(node_id)
     if node is None:
         raise KeyError(f"node not found: {node_id}")
@@ -629,10 +636,56 @@ async def extract_events(store: Store, base_url: str, node_id: str) -> list[dict
     else:
         raise last_error  # type: ignore[misc]
     normalize_events(result["events"])
+    # 既に登場済みのキャラへの char_introduce は捨てる(島を繋いだ直後など、
+    # 上流で登場済みなのにモデルが毎回発行してくることがある。退場済みキャラに
+    # 効くと「蘇生」になってしまうので、ここで落とす)
+    state_before = store.state_before(node_id)
+    extracted = [
+        e
+        for e in result["events"]
+        if not (e["type"] == "char_introduce" and e["payload"].get("char") in state_before["chars"])
+    ]
+    # 手動イベントは残すが、char_introduce だけは対象外(cast からの自動補完で
+    # 決まるものなので、残すと重複したり順序が崩れる)。抽出結果と完全に同じ
+    # 内容のものも二重にならないよう落とす
+    extracted_keys = {(e["type"], json.dumps(e["payload"], sort_keys=True)) for e in extracted}
+    kept = (
+        [
+            {"type": e["type"], "payload": e["payload"], "source": "user"}
+            for e in node["events"]
+            if e["source"] == "user"
+            and e["type"] != "char_introduce"
+            and (e["type"], json.dumps(e["payload"], sort_keys=True)) not in extracted_keys
+        ]
+        if keep_user_events
+        else []
+    )
     store.replace_events(
         node_id,
-        [{"type": e["type"], "payload": e["payload"], "source": "llm"} for e in result["events"]],
+        [{"type": e["type"], "payload": e["payload"], "source": "llm"} for e in extracted] + kept,
     )
     # 抽出結果に char_introduce が欠けていた場合の自動補完(cast 整合)
     store._ensure_cast_introduced(node_id)
     return store.list_events(node_id)
+
+
+async def reextract_chain(
+    store: Store, base_url: str, node_id: str, keep_user_events: bool = True
+) -> AsyncIterator[str]:
+    """node_id 以下の部分木を、親から順にイベント抽出し直す(SSE)。
+
+    各ノードは親の新しい状態を前提に抽出するので、必ず逐次で実行する。
+    途中で失敗したノードは飛ばして続行し、最後にまとめて報告する。
+    """
+    order = store.subtree_order(node_id)
+    failed: list[dict[str, str]] = []
+    yield _sse({"stage": "start", "total": len(order)})
+    for index, nid in enumerate(order):
+        node = store.get_node(nid)
+        title = (node["title"] if node else None) or "(無題)"
+        yield _sse({"stage": "node", "index": index + 1, "total": len(order), "title": title, "node_id": nid})
+        try:
+            await extract_events(store, base_url, nid, keep_user_events)
+        except Exception as e:  # noqa: BLE001
+            failed.append({"node_id": nid, "title": title, "error": f"{type(e).__name__}: {e}"})
+    yield _sse({"stage": "done", "total": len(order), "failed": failed})

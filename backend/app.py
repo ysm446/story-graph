@@ -271,6 +271,34 @@ async def make_canon(node_id: str) -> dict[str, Any]:
     return {"canon_path": store.canon_path()}
 
 
+class AttachIn(BaseModel):
+    parent_id: str
+    child_id: str
+    canon: bool = False  # 既定は draft で繋ぐ(正史にするのは make_canon)
+
+
+@app.post("/nodes/{node_id}/detach")
+async def detach_node(node_id: str) -> dict[str, Any]:
+    """親エッジを切って、このシーン以下を独立した島にする。"""
+    try:
+        detached = store.detach_node(node_id)
+    except KeyError:
+        raise HTTPException(404, "node not found")
+    return {"detached": detached, "canon_path": store.canon_path()}
+
+
+@app.post("/edges")
+async def create_edge(body: AttachIn) -> dict[str, Any]:
+    """島の根を他のシーンの子として繋ぐ。"""
+    try:
+        store.attach_node(body.parent_id, body.child_id, body.canon)
+    except KeyError:
+        raise HTTPException(404, "node not found")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"canon_path": store.canon_path()}
+
+
 @app.get("/nodes/{node_id}")
 async def get_node(node_id: str) -> dict[str, Any]:
     node = store.get_node(node_id)
@@ -599,6 +627,22 @@ async def extract_events(node_id: str) -> dict[str, Any]:
     except RuntimeError as e:
         raise HTTPException(500, str(e))
     return {"events": events, "validation": store.validate(node_id)}
+
+
+@app.post("/nodes/{node_id}/reextract_chain")
+async def reextract_chain(node_id: str, keep_user_events: bool = True) -> StreamingResponse:
+    """このシーン以下の部分木を、親から順にイベント抽出し直す(SSE)。
+    島を繋いだ直後など、上流の状態が変わったときに使う。"""
+    if store.get_node(node_id) is None:
+        raise HTTPException(404, "node not found")
+    try:
+        base_url = await llama.ensure_running(store.get_settings())
+    except RuntimeError as e:
+        raise HTTPException(500, str(e))
+    return StreamingResponse(
+        generation.reextract_chain(store, base_url, node_id, keep_user_events),
+        media_type="text/event-stream",
+    )
 
 
 # ---- レンダリング(鑑賞モード) --------------------------------------

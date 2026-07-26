@@ -47,6 +47,17 @@ export const api = {
   getGraph: () => request<StoryGraph>('/graph'),
   makeCanon: (nodeId: string) =>
     request<{ canon_path: string[] }>(`/nodes/${nodeId}/make_canon`, { method: 'POST' }),
+  // 親エッジを切って、このシーン以下を独立した島にする
+  detachNode: (nodeId: string) =>
+    request<{ detached: boolean; canon_path: string[] }>(`/nodes/${nodeId}/detach`, {
+      method: 'POST'
+    }),
+  // 島の根を他のシーンの子として繋ぐ(既定は draft)
+  connectNodes: (parentId: string, childId: string, canon = false) =>
+    request<{ canon_path: string[] }>('/edges', {
+      method: 'POST',
+      body: JSON.stringify({ parent_id: parentId, child_id: childId, canon })
+    }),
   createNode: (data: {
     title?: string
     beat: string
@@ -190,6 +201,42 @@ export async function proofreadStream(
       if (line.startsWith('data: ')) {
         onEvent(JSON.parse(line.slice(6)) as ProofreadStreamEvent)
       }
+    }
+  }
+}
+
+export interface ReextractStreamEvent {
+  stage?: 'start' | 'node' | 'done'
+  index?: number
+  total?: number
+  title?: string
+  node_id?: string
+  failed?: Array<{ node_id: string; title: string; error: string }>
+}
+
+/** このシーン以下の部分木を、親から順にイベント抽出し直す(SSE) */
+export async function reextractChainStream(
+  nodeId: string,
+  onEvent: (data: ReextractStreamEvent) => void,
+  signal?: AbortSignal
+): Promise<void> {
+  if (!baseUrl) throw new Error('backend not ready')
+  const res = await fetch(`${baseUrl}/nodes/${nodeId}/reextract_chain`, { method: 'POST', signal })
+  if (!res.ok || !res.body) {
+    throw new Error(`${res.status} /nodes/${nodeId}/reextract_chain: ${await res.text()}`)
+  }
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const parts = buffer.split('\n\n')
+    buffer = parts.pop() ?? ''
+    for (const part of parts) {
+      const line = part.trim()
+      if (line.startsWith('data: ')) onEvent(JSON.parse(line.slice(6)) as ReextractStreamEvent)
     }
   }
 }

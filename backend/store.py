@@ -361,6 +361,80 @@ class Store:
         ]
         self.replace_events(node_id, intros + current, commit=commit)
 
+    def _resync_status(self) -> None:
+        """status は「正史パス上か」の導出値。現在の canon エッジから貼り直す。"""
+        canon = set(self.canon_path())
+        for row in self.conn.execute("SELECT id FROM nodes"):
+            self.conn.execute(
+                "UPDATE nodes SET status = ? WHERE id = ?",
+                ("canon" if row["id"] in canon else "draft", row["id"]),
+            )
+
+    def subtree_order(self, node_id: str) -> list[str]:
+        """node_id を根とする部分木を、親が先に来る順で返す(再抽出の実行順)。"""
+        rows = self.conn.execute("SELECT from_node, to_node FROM edges").fetchall()
+        children: dict[str, list[str]] = {}
+        for r in rows:
+            children.setdefault(r["from_node"], []).append(r["to_node"])
+        order: list[str] = []
+        seen = {node_id}
+        queue = [node_id]
+        while queue:
+            current = queue.pop(0)
+            order.append(current)
+            for child in children.get(current, []):
+                if child not in seen:  # 壊れたデータでも無限ループしない
+                    seen.add(child)
+                    queue.append(child)
+        return order
+
+    def detach_node(self, node_id: str) -> bool:
+        """親エッジを切り、node_id 以下を独立した島にする(構造はそのまま)。
+
+        繋ぎ直すまで、この島は自分の根から fold される(= 上流の状態を引き継が
+        ない)。正史から外れるので status / story_order も貼り直す。
+        """
+        if self.get_node(node_id) is None:
+            raise KeyError(f"node not found: {node_id}")
+        cur = self.conn.execute("DELETE FROM edges WHERE to_node = ?", (node_id,))
+        if cur.rowcount == 0:
+            return False  # 既に根
+        self.mark_dirty_downstream(node_id, commit=False)
+        self._resync_status()
+        self._resync_memory_orders(commit=False)
+        self.conn.commit()
+        return True
+
+    def attach_node(self, parent_id: str, child_id: str, as_canon: bool = False) -> None:
+        """島の根 child_id を parent_id の子として繋ぐ。
+
+        多重親と循環を作らないように、child_id は根であること、parent_id が
+        child_id の子孫でないことを確認する。既定は draft(正史にするのは
+        make_canon の役目)。
+        """
+        if self.get_node(parent_id) is None:
+            raise KeyError(f"node not found: {parent_id}")
+        if self.get_node(child_id) is None:
+            raise KeyError(f"node not found: {child_id}")
+        if parent_id == child_id:
+            raise ValueError("自分自身には繋げません")
+        if self.parent_of(child_id) is not None:
+            raise ValueError("繋ぎ先のシーンには既に親がいます(先に切り離してください)")
+        if parent_id in self.subtree_order(child_id):
+            raise ValueError("自分の下流には繋げません(循環になります)")
+        if as_canon:
+            self.conn.execute(
+                "UPDATE edges SET is_canon = 0 WHERE from_node = ?", (parent_id,)
+            )
+        self.conn.execute(
+            "INSERT INTO edges(id, from_node, to_node, is_canon) VALUES(?,?,?,?)",
+            (_new_id(), parent_id, child_id, 1 if as_canon else 0),
+        )
+        self.mark_dirty_downstream(child_id, commit=False)
+        self._resync_status()
+        self._resync_memory_orders(commit=False)
+        self.conn.commit()
+
     def make_canon(self, node_id: str) -> None:
         """node_id までのパスを正史にする(各分岐点で canon エッジを付け替え)。
 
