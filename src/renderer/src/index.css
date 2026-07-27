@@ -401,7 +401,9 @@ textarea {
 /* LLM 処理中のノード: 枠が時計まわりに光る。
    conic-gradient の角度をアニメーションさせるため、@property で --sg-angle を
    補間可能な <angle> として宣言する(Chromium なので利用できる)。
-   リングはカード枠の外側 3px に描き、z-index -1 でカード背景の後ろに置く。 */
+   リングはカード枠の外側 3px に描き、z-index -1 でカード背景の後ろに置く。
+   ノード以外(モデル選択バー等)にも付けられるよう、はみ出し量・角丸・太さ・
+   グローの強さは変数にしてある(既定値はノードカード = rounded-3xl 用)。 */
 @property --sg-angle {
   syntax: '<angle>';
   initial-value: 0deg;
@@ -422,9 +424,10 @@ textarea {
 .node-busy-ring::after {
   content: '';
   position: absolute;
-  inset: -4px;
-  border-radius: calc(1.5rem + 4px); /* rounded-3xl + はみ出し分 */
-  padding: 3px; /* リングの太さ */
+  inset: calc(-1 * var(--sg-ring-inset, 4px));
+  /* 要素の角丸 + はみ出し分。既定は rounded-3xl のカード */
+  border-radius: calc(var(--sg-ring-corner, 1.5rem) + var(--sg-ring-inset, 4px));
+  padding: var(--sg-ring-width, 3px); /* リングの太さ */
   background: conic-gradient(
     from var(--sg-angle),
     rgba(124, 90, 247, 0) 0turn,
@@ -448,7 +451,8 @@ textarea {
 
 /* 処理中のカード自体もほのかに光らせて、遠目でも分かるようにする */
 .node-busy-ring {
-  box-shadow: 0 0 14px 2px rgba(124, 90, 247, 0.25);
+  position: relative;
+  box-shadow: 0 0 var(--sg-ring-glow, 14px) 2px rgba(124, 90, 247, 0.25);
 }
 
 /* カラーピッカー。既定の見た目だと角が丸まらないので、

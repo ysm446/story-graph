@@ -262,11 +262,20 @@ export default function ModelBar({ refreshKey }: { refreshKey: number }): React.
             void load()
             setOpen(true)
           }}
-          className={`flex min-w-[220px] max-w-[420px] items-center gap-2 rounded-lg border px-3 py-1 transition-colors ${switching ? 'animate-pulse' : ''}`}
+          className={`flex min-w-[220px] max-w-[420px] items-center gap-2 rounded-lg border px-3 py-1 transition-colors ${switching ? 'node-busy-ring' : ''}`}
           style={{
             background: active ? 'var(--accent-soft)' : 'var(--bg-elevated)',
             borderColor: hasError ? 'var(--danger)' : active ? 'var(--accent-border)' : 'var(--border-strong)',
-            color: 'var(--text)'
+            color: 'var(--text)',
+            // 読み込み中のリング(ノードと同じ時計まわりの光)。バーは小さいので細めにする
+            ...(switching
+              ? ({
+                  '--sg-ring-inset': '3px',
+                  '--sg-ring-corner': '0.5rem', // rounded-lg
+                  '--sg-ring-width': '2px',
+                  '--sg-ring-glow': '10px'
+                } as React.CSSProperties)
+              : null)
           }}
           title={hasError ? error! : 'モデルを選択'}
         >
