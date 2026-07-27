@@ -245,6 +245,9 @@ function BeatTab({
   onNodeBusyChange: (nodeId: string, busy: boolean) => void
 }): React.JSX.Element {
   const [draft, setDraft] = useState<Partial<StoryNode>>({})
+  // draft がどのシーンのものか。node が切り替わった直後の 1 レンダーでは draft が
+  // まだ前のシーンの値なので、取り違えて退避しないよう突き合わせに使う
+  const [draftNodeId, setDraftNodeId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [suggesting, setSuggesting] = useState<'title' | 'emotional_core' | null>(null)
   // 退場の入力中(理由をインラインで入力する。Electron は window.prompt が使えない)
@@ -322,6 +325,7 @@ function BeatTab({
         story_time: node.story_time
       }
     )
+    setDraftNodeId(node.id)
     setError(null)
     setRetireTarget(null) // 前のシーンで開いた退場理由の入力を残さない
   }, [node.id, node.updated_at])
@@ -399,8 +403,9 @@ function BeatTab({
   const inputStyle = { background: 'var(--bg-input)', borderColor: 'var(--border)' }
   const labelClass = 'mb-1 block text-[11px] uppercase tracking-[0.14em]'
 
-  // 下書きがノードの保存値と異なるか(未初期化の間は false)
+  // 下書きがノードの保存値と異なるか(未初期化 / 前のシーンの下書きのままの間は false)
   const dirty =
+    draftNodeId === node.id &&
     draft.beat !== undefined &&
     ((draft.title ?? '') !== (node.title ?? '') ||
       (draft.beat ?? '') !== (node.beat ?? '') ||
@@ -409,12 +414,16 @@ function BeatTab({
       (draft.story_time ?? '') !== (node.story_time ?? '') ||
       JSON.stringify(draft.cast ?? []) !== JSON.stringify(node.cast ?? []))
 
-  // 未保存の変更があればノード ID ごとに退避、変更が無ければ退避を掃除する
+  // 未保存の変更があればノード ID ごとに退避、変更が無ければ退避を掃除する。
+  // シーンを切り替えた直後の 1 レンダーでは draft がまだ前のシーンのものなので、
+  // 初期化(setDraft)が届くまで何もしない。ここで書いてしまうと、矢印キーで
+  // 続けて移動したときに前のシーンの内容が移動先の下書きとして残ってしまう
   useEffect(() => {
-    if (draft.beat === undefined) return // 初期化前
+    if (draftNodeId !== node.id) return // 初期化前(draft はまだ前のシーンのもの)
+    if (draft.beat === undefined) return
     if (dirty) beatDraftCache.set(node.id, draft)
     else beatDraftCache.delete(node.id)
-  }, [draft, dirty, node.id])
+  }, [draft, dirty, node.id, draftNodeId])
 
   return (
     <div className="flex flex-col gap-3">
