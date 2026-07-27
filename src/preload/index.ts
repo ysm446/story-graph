@@ -6,6 +6,7 @@ const api: StoryGraphApi = {
   getLibraryInfo: () => ipcRenderer.invoke('library:info'),
   chooseLibrary: () => ipcRenderer.invoke('library:choose'),
   switchLibrary: (root) => ipcRenderer.invoke('library:switch', root),
+  revealInFolder: (path) => ipcRenderer.invoke('shell:reveal', path),
   onScreenshotSaved: (callback) => {
     const listener = (_event: IpcRendererEvent, path: string): void => callback(path)
     ipcRenderer.on('screenshot:saved', listener)

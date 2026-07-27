@@ -160,7 +160,8 @@ export default function App(): React.JSX.Element {
   const [settingsVersion, setSettingsVersion] = useState(0)
   const [backendReady, setBackendReady] = useState<boolean | null>(null)
   const [backendError, setBackendError] = useState<string | null>(null)
-  const [toast, setToast] = useState<string | null>(null)
+  // 右下の通知。path があるとクリックで保存先を開ける
+  const [toast, setToast] = useState<{ title: string; detail?: string; path?: string } | null>(null)
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // 設定ポップアップを閉じるとき、設定を読んでいる画面(モデルバー・構造モード)を同期させる
@@ -181,14 +182,32 @@ export default function App(): React.JSX.Element {
   }, [])
 
   useEffect(() => {
-    // F12 スクリーンショット保存の通知
+    // F12 スクリーンショット保存の通知。クリックする余裕を持たせるため長めに出す
     const off = window.storyGraph.onScreenshotSaved((path) => {
-      setToast(`📷 スクリーンショットを保存: ${baseName(path)}`)
+      setToast({ title: '📷 スクリーンショットを保存', detail: baseName(path), path })
       if (toastTimer.current) clearTimeout(toastTimer.current)
-      toastTimer.current = setTimeout(() => setToast(null), 2500)
+      toastTimer.current = setTimeout(() => setToast(null), 6000)
     })
     return off
   }, [])
+
+  useEffect(() => {
+    return () => {
+      if (toastTimer.current) clearTimeout(toastTimer.current)
+    }
+  }, [])
+
+  const dismissToast = (): void => {
+    if (toastTimer.current) clearTimeout(toastTimer.current)
+    setToast(null)
+  }
+
+  // 通知クリック: 保存先フォルダをエクスプローラーで開き、通知を閉じる
+  const openToastPath = (): void => {
+    if (!toast?.path) return
+    void window.storyGraph.revealInFolder(toast.path)
+    dismissToast()
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -335,10 +354,35 @@ export default function App(): React.JSX.Element {
       )}
       {toast && (
         <div
-          className="fixed bottom-10 right-4 z-50 rounded-xl border px-4 py-2 text-[12px] shadow-lg shadow-black/40"
+          className="fixed bottom-10 right-4 z-50 flex w-[300px] items-start gap-2 rounded-xl border px-3.5 py-2.5 text-[12px] shadow-lg shadow-black/40"
           style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)', color: 'var(--text)' }}
         >
-          {toast}
+          <button
+            onClick={openToastPath}
+            disabled={!toast.path}
+            className="min-w-0 flex-1 text-left"
+            title={toast.path ?? undefined}
+          >
+            <div className="truncate font-medium">{toast.title}</div>
+            {toast.detail && (
+              <div className="truncate text-[11px]" style={{ color: 'var(--text-dim)' }}>
+                {toast.detail}
+              </div>
+            )}
+            {toast.path && (
+              <div className="mt-1 text-[11px]" style={{ color: 'var(--accent)' }}>
+                クリックで保存先を開く
+              </div>
+            )}
+          </button>
+          <button
+            onClick={dismissToast}
+            className="shrink-0 rounded-md px-1 leading-none"
+            style={{ color: 'var(--text-faint)' }}
+            title="閉じる"
+          >
+            ✕
+          </button>
         </div>
       )}
     </div>

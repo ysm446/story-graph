@@ -284,6 +284,12 @@ app.whenReady().then(async () => {
     rememberLibraryRoot(root)
     return root
   })
+  // スクリーンショット通知のクリックから、保存先をエクスプローラーで開く
+  ipcMain.handle('shell:reveal', (_event, filePath: string) => {
+    if (!existsSync(filePath)) return false
+    shell.showItemInFolder(filePath)
+    return true
+  })
   createWindow()
   void ensureSidecar().catch((error) => console.error('[sidecar] 起動失敗:', error))
 })
