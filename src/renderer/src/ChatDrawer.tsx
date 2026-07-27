@@ -316,6 +316,7 @@ export default function ChatDrawer({
     ),
     ...dynamicShown.map((text) => ({ text, dynamic: true }))
   ]
+  const chipsKey = chips.map((c) => c.text).join('\n')
 
   // 内容ベースの質問候補を取り直す。失敗・未起動・設定オフはすべて無視して
   // 固定の候補のまま(バックエンドが空配列を返す)。キャラモードでは使わない
@@ -390,9 +391,10 @@ export default function ChatDrawer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, dynamicSuggestions])
 
+  // 候補チップも会話の中(末尾)にあるので、チップが差し替わったときも下端へ寄せる
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
-  }, [items, status, liveText])
+  }, [items, status, liveText, chipsKey])
 
   // サイドバーの見出し。会話名が無ければ冒頭の発言、それも無ければアンカー名
   const chatLabel = (h: ChatSummary | undefined): string => {
@@ -1023,26 +1025,27 @@ export default function ChatDrawer({
                 )}
               </div>
             )}
-          </div>
-          {/* 候補チップ(常時表示。右下に縦積み。クリックで即送信) */}
-          <div className="mt-2 flex flex-col items-end gap-1.5">
-            {chips.map((c) => (
-              <button
-                key={c.text}
-                onClick={() => void send(c.text)}
-                disabled={busy}
-                className="chat-suggest-chip flex max-w-full items-center gap-1 rounded-full border px-3 py-1 text-[11px] disabled:opacity-40"
-                style={{
-                  background: 'var(--bg-card)',
-                  borderColor: c.dynamic ? 'var(--accent-border)' : 'var(--border-strong)',
-                  color: c.dynamic ? 'var(--text)' : 'var(--text-dim)'
-                }}
-                title={c.dynamic ? `${c.text}(物語の内容から作られた質問)` : c.text}
-              >
-                {c.dynamic && <Icon name="sparkle" size={11} className="shrink-0" />}
-                <span className="truncate">{c.text}</span>
-              </button>
-            ))}
+            {/* 候補チップ(会話の一番下に置いて一緒にスクロールする。クリックで即送信)。
+                固定枠にすると、その高さぶん会話エリアが常に狭くなるため中に入れている */}
+            <div className="mt-2 flex flex-col items-end gap-1.5">
+              {chips.map((c) => (
+                <button
+                  key={c.text}
+                  onClick={() => void send(c.text)}
+                  disabled={busy}
+                  className="chat-suggest-chip flex max-w-full items-center gap-1 rounded-full border px-3 py-1 text-[11px] disabled:opacity-40"
+                  style={{
+                    background: 'var(--bg-card)',
+                    borderColor: c.dynamic ? 'var(--accent-border)' : 'var(--border-strong)',
+                    color: c.dynamic ? 'var(--text)' : 'var(--text-dim)'
+                  }}
+                  title={c.dynamic ? `${c.text}(物語の内容から作られた質問)` : c.text}
+                >
+                  {c.dynamic && <Icon name="sparkle" size={11} className="shrink-0" />}
+                  <span className="truncate">{c.text}</span>
+                </button>
+              ))}
+            </div>
           </div>
           {/* 入力 */}
           <div className="mt-1.5 flex items-end gap-2">
