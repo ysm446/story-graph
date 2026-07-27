@@ -22,7 +22,6 @@ import {
   generateBeatStream,
   isAbortError,
   isVideoAsset,
-  reextractChainStream,
   reextractNodesStream,
   renderStream,
   uploadAsset
@@ -228,8 +227,6 @@ function BeatTab({
   validation,
   onSaved,
   onDeleted,
-  onReextractChain,
-  reextracting,
   onNodeBusyChange
 }: {
   node: StoryNode
@@ -240,8 +237,6 @@ function BeatTab({
   validation: string[]
   onSaved: () => void
   onDeleted: () => void
-  onReextractChain: (nodeId: string) => void
-  reextracting: boolean
   onNodeBusyChange: (nodeId: string, busy: boolean) => void
 }): React.JSX.Element {
   const [draft, setDraft] = useState<Partial<StoryNode>>({})
@@ -436,16 +431,8 @@ function BeatTab({
           ★ このブランチを正史にする
         </button>
       )}
-      {/* 上流を繋ぎ替えた後など、ここから先の前提が変わったときに使う */}
-      <button
-        onClick={() => onReextractChain(node.id)}
-        disabled={reextracting}
-        className="rounded-lg border px-3 py-1.5 text-[12px] disabled:opacity-40"
-        style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-        title="このシーンから先(下流すべて)のイベントを、親の状態を前提に作り直す"
-      >
-        ⟳ ここから先のイベントを作り直す(LLM)
-      </button>
+      {/* 「ここから先のイベントを作り直す」はノードエリアの右クリック
+          (イベントを作り直す(この先も / LLM))と同じ操作なので、こちらは置かない */}
       {validation.length > 0 && (
         <div
           className="rounded-lg border px-3 py-2 text-[12px] leading-relaxed"
@@ -467,11 +454,18 @@ function BeatTab({
               suggestField('title')
             }}
             disabled={suggesting !== null || !(draft.beat ?? '').trim()}
-            className="rounded-md border px-1.5 py-px text-[10px] disabled:opacity-40"
+            className="inline-flex items-center gap-1 rounded-md border px-1.5 py-px text-[10px] disabled:opacity-40"
             style={{ borderColor: 'var(--accent-border)', color: 'var(--accent)' }}
             title="シーン本文からタイトルを自動生成"
           >
-            {suggesting === 'title' ? `生成中… (${suggestElapsed}s)` : '✨ 自動生成'}
+            {suggesting === 'title' ? (
+              `生成中… (${suggestElapsed}s)`
+            ) : (
+              <>
+                <Icon name="sparkle" size={11} />
+                自動生成
+              </>
+            )}
           </button>
         </span>
         <input
@@ -511,11 +505,18 @@ function BeatTab({
               suggestField('emotional_core')
             }}
             disabled={suggesting !== null || !(draft.beat ?? '').trim()}
-            className="rounded-md border px-1.5 py-px text-[10px] disabled:opacity-40"
+            className="inline-flex items-center gap-1 rounded-md border px-1.5 py-px text-[10px] disabled:opacity-40"
             style={{ borderColor: 'var(--accent-border)', color: 'var(--accent)' }}
             title="シーン本文から感情の核を自動生成"
           >
-            {suggesting === 'emotional_core' ? `生成中… (${suggestElapsed}s)` : '✨ 自動生成'}
+            {suggesting === 'emotional_core' ? (
+              `生成中… (${suggestElapsed}s)`
+            ) : (
+              <>
+                <Icon name="sparkle" size={11} />
+                自動生成
+              </>
+            )}
           </button>
         </span>
         {/* 長い一文になることがあるので、input ではなく自動で高さが伸びる textarea */}
@@ -1174,7 +1175,6 @@ function StructureModeInner({
       return next
     })
   }, [])
-  const [reextracting, setReextracting] = useState<{ index: number; total: number; title: string } | null>(null)
   const [inspectorWidth, setInspectorWidth] = useState(() => {
     const saved = Number(localStorage.getItem('inspectorWidth'))
     return saved >= 320 && saved <= 900 ? saved : 480
@@ -1532,7 +1532,7 @@ function StructureModeInner({
         setGenStatus(`繋げません: ${String(e)}`)
       }
     },
-    // countSubtree / runReextractChain は下で定義(同じレンダーで安定)
+    // graphEdges / graphNodes は本体では使わないが、繋いだ結果の再評価に合わせて更新する
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [isValidConnection, reload, graphEdges, graphNodes]
   )
@@ -1540,73 +1540,6 @@ function StructureModeInner({
   const nameOfChar = useCallback(
     (charId: string): string => characters.find((c) => c.id === charId)?.name ?? charId,
     [characters]
-  )
-
-  // 部分木(そのノード以下)のシーン数
-  const countSubtree = useCallback(
-    (nodeId: string): number => {
-      const subtree = new Set([nodeId])
-      let added = true
-      while (added) {
-        added = false
-        for (const e of graphEdges) {
-          if (subtree.has(e.from_node) && !subtree.has(e.to_node)) {
-            subtree.add(e.to_node)
-            added = true
-          }
-        }
-      }
-      return subtree.size
-    },
-    [graphEdges]
-  )
-
-  // このシーン以下のイベントを、親から順に作り直す(上流の状態が変わったとき)
-  const runReextractChain = useCallback(
-    (nodeId: string): void => {
-      const total = countSubtree(nodeId)
-      enqueueTask({
-        label: 'イベント作り直し',
-        total,
-        detail: `${total} シーン`,
-        runner: async ({ update, signal }) => {
-          setReextracting({ index: 0, total, title: "" })
-          let current: string | null = null
-          try {
-            await reextractChainStream(
-              nodeId,
-              (e) => {
-                if (e.stage === 'node') {
-                  setReextracting({ index: e.index ?? 0, total: e.total ?? 0, title: e.title ?? '' })
-                  update({ done: e.index, total: e.total, detail: e.title })
-                  // 処理中のノードだけを光らせる(逐次実行なので常に 1 つ)
-                  markNodeBusy(current, false)
-                  current = e.node_id ?? null
-                  markNodeBusy(current, true)
-                }
-                if (e.stage === 'done') {
-                  const failed = e.failed ?? []
-                  setGenStatus(
-                    failed.length === 0
-                      ? `${e.total} シーンのイベントを作り直しました`
-                      : `${(e.total ?? 0) - failed.length} シーン成功 / ${failed.length} シーン失敗: ` +
-                        failed.map((f) => f.title).join(', ')
-                  )
-                }
-              },
-              signal
-            )
-          } catch (err) {
-            setGenStatus(isAbortError(err) ? '作り直しを中止しました' : `作り直せません: ${String(err)}`)
-          } finally {
-            markNodeBusy(current, false)
-            setReextracting(null)
-            await reload()
-          }
-        }
-      })
-    },
-    [countSubtree, markNodeBusy, reload]
   )
 
   // ---- 一括操作(右クリックメニュー) ------------------------------
@@ -1620,14 +1553,12 @@ function StructureModeInner({
         total: nodeIds.length,
         detail: `${nodeIds.length} シーン${includeDownstream ? '(下流も)' : ''}`,
         runner: async ({ update, signal }) => {
-          setReextracting({ index: 0, total: nodeIds.length, title: "" })
           let current: string | null = null
           try {
             await reextractNodesStream(
               { node_ids: nodeIds, include_downstream: includeDownstream },
               (e) => {
                 if (e.stage === 'node') {
-                  setReextracting({ index: e.index ?? 0, total: e.total ?? 0, title: e.title ?? '' })
                   update({ done: e.index, total: e.total, detail: e.title })
                   markNodeBusy(current, false)
                   current = e.node_id ?? null
@@ -1649,7 +1580,6 @@ function StructureModeInner({
             setGenStatus(isAbortError(err) ? '作り直しを中止しました' : `作り直せません: ${String(err)}`)
           } finally {
             markNodeBusy(current, false)
-            setReextracting(null)
             await reload()
           }
         }
@@ -2555,19 +2485,7 @@ function StructureModeInner({
                     setSelectedId(null)
                     void reload()
                   }}
-                  reextracting={reextracting !== null}
                   onNodeBusyChange={markNodeBusy}
-                  onReextractChain={(nodeId) => {
-                    const count = countSubtree(nodeId)
-                    if (
-                      window.confirm(
-                        `このシーンから先 ${count} シーンのイベントを作り直しますか?\n` +
-                          `(親から順に LLM で抽出し直します。手動で足したイベントは残します)`
-                      )
-                    ) {
-                      void runReextractChain(nodeId)
-                    }
-                  }}
                 />
               ) : (
                 <CharTab
