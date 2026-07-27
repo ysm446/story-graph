@@ -26,10 +26,39 @@ interface Proposal {
 // 編集 / 再生成 / 削除はこの位置を使ってサーバー側の履歴を操作する。
 // ストリーミング中に増えた項目は位置が未確定なので undefined。
 type DisplayItem =
-  | { kind: 'user'; text: string; turn?: number }
-  | { kind: 'assistant'; text: string; stats?: ChatStats | null; turn?: number }
+  | { kind: 'user'; text: string; turn?: number; ts?: string }
+  | { kind: 'assistant'; text: string; stats?: ChatStats | null; turn?: number; ts?: string }
   | { kind: 'tool'; name: string; turn?: number }
   | { kind: 'proposals'; proposals: Proposal[]; turn?: number }
+
+/** 発言時刻(保存は UTC の ISO 8601)を「7/20 12:05」の形にする。
+ *  古い履歴には時刻が無いので、その場合は何も出さない。 */
+function TimeLabel({
+  ts,
+  align,
+  indent = 0
+}: {
+  ts?: string
+  align: 'left' | 'right'
+  /** アイコンぶんの字下げ(px)。吹き出しの真上に来るように使う */
+  indent?: number
+}): React.JSX.Element | null {
+  if (!ts) return null
+  const date = new Date(ts)
+  if (Number.isNaN(date.getTime())) return null
+  const label = `${date.getMonth() + 1}/${date.getDate()} ${date.getHours()}:${String(
+    date.getMinutes()
+  ).padStart(2, '0')}`
+  return (
+    <div
+      className={`mb-0.5 text-[10px] ${align === 'right' ? 'text-right' : ''}`}
+      style={{ color: 'var(--text-faint)', marginLeft: indent || undefined }}
+      title={date.toLocaleString()}
+    >
+      {label}
+    </div>
+  )
+}
 
 /** 保存済みメッセージ配列から表示用の項目を組み立てる */
 function buildDisplay(messages: Array<Record<string, unknown>>): DisplayItem[] {
@@ -41,7 +70,7 @@ function buildDisplay(messages: Array<Record<string, unknown>>): DisplayItem[] {
       const text = String(m.content ?? '')
       if (text.startsWith('(これ以上ツールは使えません')) return // 内部指示は隠す
       turn = index
-      display.push({ kind: 'user', text, turn })
+      display.push({ kind: 'user', text, turn, ts: m.ts as string | undefined })
       return
     }
     if (role !== 'assistant') return
@@ -65,7 +94,8 @@ function buildDisplay(messages: Array<Record<string, unknown>>): DisplayItem[] {
         kind: 'assistant',
         text: String(m.content),
         stats: (m.meta as ChatStats | undefined) ?? null,
-        turn
+        turn,
+        ts: m.ts as string | undefined
       })
     }
   })
@@ -437,7 +467,9 @@ export default function ChatDrawer({
     abortRef.current = controller
     setBusy(true)
     setInput('')
-    setItems((prev) => [...prev, { kind: 'user', text: message }])
+    // 送信直後の吹き出しにも時刻を出す(保存側の ts と同じ形式)。
+    // 再読み込み後はサーバーが付けた ts に置き換わる
+    setItems((prev) => [...prev, { kind: 'user', text: message, ts: new Date().toISOString() }])
     setStatus('考え中…')
     const effectiveAnchor = chatId ? anchorNode : anchorNode ?? selectedId ?? canonTailId
     if (!chatId) setAnchorNode(effectiveAnchor)
@@ -449,7 +481,7 @@ export default function ChatDrawer({
       const text = live
       live = ''
       setLiveText('')
-      setItems((prev) => [...prev, { kind: 'assistant', text }])
+      setItems((prev) => [...prev, { kind: 'assistant', text, ts: new Date().toISOString() }])
     }
     try {
       await chatSendStream(
@@ -487,7 +519,7 @@ export default function ChatDrawer({
             live = ''
             setLiveText('')
             if (e.answer) {
-              setItems((prev) => [...prev, { kind: 'assistant', text: e.answer!, stats: e.stats ?? null }])
+              setItems((prev) => [...prev, { kind: 'assistant', text: e.answer!, stats: e.stats ?? null, ts: new Date().toISOString() }])
             } else if (e.stats) {
               // ストリーミングで確定済みの吹き出しに統計だけ後付けする
               setItems((prev) => {
@@ -842,6 +874,7 @@ export default function ChatDrawer({
                 }
                 return (
                   <div key={i} className="group mb-2 flex flex-col items-end">
+                    <TimeLabel ts={item.ts} align="right" />
                     <div
                       className="max-w-[70%] whitespace-pre-wrap rounded-2xl rounded-br-md px-3 py-1.5 text-[13px]"
                       style={{ background: 'var(--accent-soft)', color: 'var(--text)' }}
@@ -872,32 +905,38 @@ export default function ChatDrawer({
               }
               if (item.kind === 'assistant') {
                 return (
-                  <div key={i} className="group mb-2 flex items-start gap-2">
-                    {/* キャラモードでは発言者のアイコンを添える */}
-                    {activeChar && <CharAvatar char={activeChar} size={56} />}
-                    <div className="min-w-0 max-w-[80%]">
-                      <div
-                        className="rounded-2xl rounded-bl-md border px-3 py-1.5 text-[13px] leading-relaxed"
-                        style={{
-                          background: 'var(--bg-card)',
-                          // キャラモードはキャラ色の枠で「本人の発言」を示す
-                          borderColor: activeChar?.color || 'var(--border)',
-                          color: 'var(--text)'
-                        }}
-                      >
-                        <Markdown text={item.text} />
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {item.stats && <StatsLine stats={item.stats} />}
-                        {item.turn !== undefined && !busy && (
-                          <div className="mt-0.5 flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
-                            <MsgActionButton
-                              kind="delete"
-                              title="この返事を削除(発言は残す)"
-                              onClick={() => void deleteTurn(item.turn!, true)}
-                            />
-                          </div>
-                        )}
+                  <div key={i} className="group mb-2">
+                    {/* 時刻は行の外に出す。中に入れるとアイコンが時刻の高さに
+                        引っ張られて吹き出しとずれる。アイコンぶん字下げして
+                        吹き出しの真上に来るようにする */}
+                    <TimeLabel ts={item.ts} align="left" indent={activeChar ? 64 : 0} />
+                    <div className="flex items-start gap-2">
+                      {/* キャラモードでは発言者のアイコンを添える */}
+                      {activeChar && <CharAvatar char={activeChar} size={56} />}
+                      <div className="min-w-0 max-w-[80%]">
+                        <div
+                          className="rounded-2xl rounded-bl-md border px-3 py-1.5 text-[13px] leading-relaxed"
+                          style={{
+                            background: 'var(--bg-card)',
+                            // キャラモードはキャラ色の枠で「本人の発言」を示す
+                            borderColor: activeChar?.color || 'var(--border)',
+                            color: 'var(--text)'
+                          }}
+                        >
+                          <Markdown text={item.text} />
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {item.stats && <StatsLine stats={item.stats} />}
+                          {item.turn !== undefined && !busy && (
+                            <div className="mt-0.5 flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                              <MsgActionButton
+                                kind="delete"
+                                title="この返事を削除(発言は残す)"
+                                onClick={() => void deleteTurn(item.turn!, true)}
+                              />
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>

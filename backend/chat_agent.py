@@ -10,11 +10,18 @@ news-picker の chat_agent.py の tool calling ループを踏襲。
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from typing import Any, AsyncIterator
 
 import llm
 import retrieval
 from store import Store
+
+
+def _now() -> str:
+    """発言時刻(UTC の ISO 8601)。表示側でローカル時刻に直す。"""
+    return datetime.now(timezone.utc).isoformat()
+
 
 MAX_TOOL_STEPS = 8
 CHAT_TEMPERATURE = 0.7
@@ -386,7 +393,7 @@ async def _chat_impl(
     # 編集・再生成: 指定位置以降を捨ててから、新しい発言を積み直す
     if replace_from is not None and 0 <= replace_from <= len(history):
         history = history[:replace_from]
-    history.append({"role": "user", "content": user_message})
+    history.append({"role": "user", "content": user_message, "ts": _now()})
     if char_id:
         system = build_character_system(store, path, char_id, mode)
         tools = build_character_tools()
@@ -395,10 +402,10 @@ async def _chat_impl(
         tools = build_tools()
 
     def messages() -> list[dict[str, Any]]:
-        # meta(生成統計)は保存用の付加情報なので LLM には渡さない
+        # meta(生成統計)と ts(発言時刻)は保存用の付加情報なので LLM には渡さない
         return [
             {"role": "system", "content": system},
-            *({k: v for k, v in m.items() if k != "meta"} for m in history),
+            *({k: v for k, v in m.items() if k not in ("meta", "ts")} for m in history),
         ]
 
     # ツールステップをまたいだ合計。ツール呼び出しの分も含めて「この返事にかかった量」
@@ -448,7 +455,7 @@ async def _chat_impl(
             final_answer = result["content"]
             stats = final_stats()
             history.append(
-                {"role": "assistant", "content": final_answer, **({"meta": stats} if stats else {})}
+                {"role": "assistant", "content": final_answer, "ts": _now(), **({"meta": stats} if stats else {})}
             )
             break
         history.append(result["message"])
@@ -506,7 +513,7 @@ async def _chat_impl(
         final_answer = result.get("content") or ""
         stats = final_stats()
         history.append(
-            {"role": "assistant", "content": final_answer, **({"meta": stats} if stats else {})}
+            {"role": "assistant", "content": final_answer, "ts": _now(), **({"meta": stats} if stats else {})}
         )
 
     store.save_chat_messages(chat_id, history)

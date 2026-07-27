@@ -1171,8 +1171,10 @@ function StructureModeInner({
     return saved >= 320 && saved <= 900 ? saved : 480
   })
   const rowRef = useRef<HTMLDivElement | null>(null)
-  // 相談チャットはノードエリアとの上下分割ペイン。開閉と高さは親が持つ
-  const [chatOpen, setChatOpen] = useState(false)
+  // 相談チャットはノードエリアとの上下分割ペイン。開閉と高さは親が持つ。
+  // モードを切り替えるとこのコンポーネントは破棄されるので、高さと同じく
+  // localStorage に覚えておく(閉じた状態が既定)
+  const [chatOpen, setChatOpen] = useState(() => localStorage.getItem('chatDrawerOpen') === '1')
   const [chatHeight, setChatHeight] = useState(() => {
     const saved = Number(localStorage.getItem('chatDrawerHeight'))
     return saved >= 220 && saved <= 1200 ? saved : 440
@@ -1893,7 +1895,10 @@ function StructureModeInner({
   const toggleChat = useCallback((): void => {
     // 分割線(1px)を含めた分だけノードエリアが縮む / 拡がる
     shiftViewportForShrink(0, chatOpen ? -(chatHeight + 1) : chatHeight + 1)
-    setChatOpen((prev) => !prev)
+    setChatOpen((prev) => {
+      localStorage.setItem('chatDrawerOpen', prev ? '0' : '1')
+      return !prev
+    })
   }, [chatOpen, chatHeight, shiftViewportForShrink])
 
   // 分割線のドラッグでチャットの高さを変える(上へドラッグで拡大)。
