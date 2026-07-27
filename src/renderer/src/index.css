@@ -21,6 +21,8 @@
   --accent-hover: #6d4de6;
   --accent-soft: rgba(124, 90, 247, 0.12);
   --accent-border: rgba(124, 90, 247, 0.35);
+  /* 状態を強く示したいときの枠(モデル読み込み済みのバー等) */
+  --accent-border-bright: rgba(140, 110, 255, 0.75);
   --danger: #ef4444;
   font-family: "Inter", "Segoe UI", "Noto Sans JP", system-ui, sans-serif;
 }

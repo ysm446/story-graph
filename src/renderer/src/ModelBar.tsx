@@ -265,7 +265,8 @@ export default function ModelBar({ refreshKey }: { refreshKey: number }): React.
           className={`flex min-w-[220px] max-w-[420px] items-center gap-2 rounded-lg border px-3 py-1 transition-colors ${switching ? 'node-busy-ring' : ''}`}
           style={{
             background: active ? 'var(--accent-soft)' : 'var(--bg-elevated)',
-            borderColor: hasError ? 'var(--danger)' : active ? 'var(--accent-border)' : 'var(--border-strong)',
+            // 読み込み済みは枠をはっきり光らせて、遠目でも状態が分かるようにする
+            borderColor: hasError ? 'var(--danger)' : active ? 'var(--accent-border-bright)' : 'var(--border-strong)',
             color: 'var(--text)',
             // 読み込み中のリング(ノードと同じ時計まわりの光)。バーは小さいので細めにする
             ...(switching
