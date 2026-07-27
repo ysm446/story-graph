@@ -393,6 +393,10 @@ class NodeImageIn(BaseModel):
     image_path: str | None = None
 
 
+class NodeThumbIn(BaseModel):
+    thumb_path: str | None = None
+
+
 # ---- 画像/動画アセット(装飾専用。LLM には渡さない) ------------------
 
 ALLOWED_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
@@ -440,6 +444,14 @@ async def set_node_image(node_id: str, body: NodeImageIn) -> dict[str, str]:
     if store.get_node(node_id) is None:
         raise HTTPException(404, "node not found")
     store.set_node_image(node_id, body.image_path)
+    return {"status": "ok"}
+
+
+@app.post("/nodes/{node_id}/thumb")
+async def set_node_thumb(node_id: str, body: NodeThumbIn) -> dict[str, str]:
+    if store.get_node(node_id) is None:
+        raise HTTPException(404, "node not found")
+    store.set_node_thumb(node_id, body.thumb_path)
     return {"status": "ok"}
 
 

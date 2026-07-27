@@ -53,6 +53,8 @@ export interface StoryNode {
   pos_x: number | null
   pos_y: number | null
   image_path: string | null
+  /** 挿絵が動画のときのサムネイル画像(構造モードのカード用。無ければ描画時に生成される) */
+  thumb_path: string | null
   created_at: string
   updated_at: string
   events: StoryEvent[]

@@ -35,6 +35,7 @@ import ProofreadTextarea from '../ProofreadTextarea'
 import RelationGraph from '../RelationGraph'
 import { cancelTask, enqueueTask } from '../tasks'
 import { useElapsedSeconds } from '../useElapsed'
+import { backfillVideoThumbs } from '../videoThumb'
 import type { Character, GraphEdge, Place, StateSnapshot, StoryEvent, StoryNode } from '../types'
 
 const COLUMN_GAP_X = 344 // カード幅(w-72 = 288)+ 余白
@@ -128,15 +129,25 @@ function BeatNodeCard({ data, selected }: NodeProps<BeatFlowNode>): React.JSX.El
       <Handle type="target" position={Position.Left} />
       {assetUrl(storyNode.image_path) &&
         (isVideoAsset(storyNode.image_path) ? (
-          // グラフ上のカードでは負荷を抑えるため再生せず、先頭フレームをサムネイルとして表示
-          <video
-            src={assetUrl(storyNode.image_path)!}
-            preload="metadata"
-            muted
-            playsInline
-            className="mx-auto mb-2 max-h-40 max-w-full rounded-xl"
-            style={{ opacity: isDraft ? 0.8 : 1 }}
-          />
+          // グラフ上のカードは静止画で足りるので、保存済みのサムネイルを出す。
+          // まだ無い場合だけ動画要素で先頭フレームを見せる(その裏で
+          // videoThumb.backfillVideoThumbs が生成して、次回からは <img> になる)
+          assetUrl(storyNode.thumb_path) ? (
+            <img
+              src={assetUrl(storyNode.thumb_path)!}
+              className="mx-auto mb-2 max-h-40 max-w-full rounded-xl"
+              style={{ opacity: isDraft ? 0.8 : 1 }}
+            />
+          ) : (
+            <video
+              src={assetUrl(storyNode.image_path)!}
+              preload="metadata"
+              muted
+              playsInline
+              className="mx-auto mb-2 max-h-40 max-w-full rounded-xl"
+              style={{ opacity: isDraft ? 0.8 : 1 }}
+            />
+          )
         ) : (
           <img
             src={assetUrl(storyNode.image_path)!}
@@ -1062,10 +1073,12 @@ function CharTab({
 
 function StructureModeInner({
   settingsVersion,
-  onSelectedNodeChange
+  onSelectedNodeChange,
+  onSelectionCountChange
 }: {
   settingsVersion: number
   onSelectedNodeChange?: (nodeId: string | null) => void
+  onSelectionCountChange?: (count: number) => void
 }): React.JSX.Element {
   const [minimapVisible, setMinimapVisible] = useState(true)
   const [chatDynamicSuggestions, setChatDynamicSuggestions] = useState(true)
@@ -1179,9 +1192,27 @@ function StructureModeInner({
     onSelectedNodeChange?.(selectedId)
   }, [selectedId, onSelectedNodeChange])
 
+  // 範囲選択の数をステータスバーへ。モードを離れるとこのコンポーネントは
+  // 破棄されるが、ステータスバーは生きているので、アンマウント時に 0 を送る
+  const selectionCount = flowNodes.filter((n) => n.selected).length
+  useEffect(() => {
+    onSelectionCountChange?.(selectionCount)
+  }, [selectionCount, onSelectionCountChange])
+  useEffect(() => {
+    return () => onSelectionCountChange?.(0)
+  }, [onSelectionCountChange])
+
   useEffect(() => {
     void reload()
   }, [reload])
+
+  // 動画挿絵のサムネイルを埋める(未生成のものだけ、1 件ずつ)。
+  // 生成できたら reload して、カードを <video> から <img> に切り替える
+  useEffect(() => {
+    void backfillVideoThumbs(graphNodes).then((created) => {
+      if (created) void reload()
+    })
+  }, [graphNodes, reload])
 
   // 設定(ミニマップ表示 / 質問候補の自動生成)を読み込む。settingsVersion は
   // 設定ポップアップを閉じたときに変わるので、そこで変更が反映される
@@ -2415,15 +2446,22 @@ function StructureModeInner({
 
 export default function StructureMode({
   settingsVersion = 0,
-  onSelectedNodeChange
+  onSelectedNodeChange,
+  onSelectionCountChange
 }: {
   settingsVersion?: number
   /** 選択シーンを親に伝える(鑑賞モードを開いたときにそこへ飛ぶため) */
   onSelectedNodeChange?: (nodeId: string | null) => void
+  /** 範囲選択しているシーン数を親に伝える(ステータスバーの表示用) */
+  onSelectionCountChange?: (count: number) => void
 }): React.JSX.Element {
   return (
     <ReactFlowProvider>
-      <StructureModeInner settingsVersion={settingsVersion} onSelectedNodeChange={onSelectedNodeChange} />
+      <StructureModeInner
+        settingsVersion={settingsVersion}
+        onSelectedNodeChange={onSelectedNodeChange}
+        onSelectionCountChange={onSelectionCountChange}
+      />
     </ReactFlowProvider>
   )
 }

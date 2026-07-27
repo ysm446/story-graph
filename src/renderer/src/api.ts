@@ -95,6 +95,9 @@ export const api = {
     request<unknown>(`/nodes/${id}/position`, { method: 'POST', body: JSON.stringify({ x, y }) }),
   setNodeImage: (id: string, imagePath: string | null) =>
     request<unknown>(`/nodes/${id}/image`, { method: 'POST', body: JSON.stringify({ image_path: imagePath }) }),
+  // 動画挿絵のサムネイル(videoThumb.ts が生成して保存する)
+  setNodeThumb: (id: string, thumbPath: string | null) =>
+    request<unknown>(`/nodes/${id}/thumb`, { method: 'POST', body: JSON.stringify({ thumb_path: thumbPath }) }),
   resetLayout: () => request<unknown>('/layout/reset', { method: 'POST' }),
   putEvents: (nodeId: string, events: EventInput[]) =>
     request<{ events: StoryEvent[]; validation: string[] }>(`/nodes/${nodeId}/events`, {

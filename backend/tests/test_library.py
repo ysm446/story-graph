@@ -51,3 +51,27 @@ def test_gc_assets_removes_orphans(tmp_path):
     assert (assets / "kept.png").exists()  # 参照中は残る
     assert not (assets / "orphan.png").exists()  # 未参照の古いファイルは削除
     assert (assets / "fresh.png").exists()  # 直近1時間以内は未参照でも保護
+
+
+def test_gc_assets_keeps_video_thumb(tmp_path):
+    """動画サムネイル(nodes.thumb_path)も参照として数える(消されると作り直しになる)。"""
+    lib = tmp_path / "story"
+    lib.mkdir()
+    store = Store(db.connect(":memory:"), root=str(lib))
+    assets = Path(store.assets_dir())
+    for name in ("scene.mp4", "thumb.jpg", "old-thumb.jpg"):
+        (assets / name).write_bytes(b"x")
+        old = time.time() - 7200
+        os.utime(assets / name, (old, old))
+
+    node = store.append_node({"beat": "映像のあるシーン", "cast": []})
+    store.set_node_image(node["id"], "scene.mp4")
+    store.set_node_thumb(node["id"], "thumb.jpg")
+
+    assert store.gc_assets() == 1  # old-thumb.jpg だけが未参照
+    assert (assets / "scene.mp4").exists()
+    assert (assets / "thumb.jpg").exists()
+
+    # 挿絵を差し替えるとサムネイルの参照は外れる(古いサムネイルは回収対象になる)
+    store.set_node_image(node["id"], "other.mp4")
+    assert store.get_node(node["id"])["thumb_path"] is None

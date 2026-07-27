@@ -39,7 +39,14 @@ function elapsedLabel(now: number, startedAt: number): string {
   return sec < 60 ? `${sec}s` : `${Math.floor(sec / 60)}m${String(sec % 60).padStart(2, '0')}s`
 }
 
-export default function StatusBar({ backendReady }: { backendReady: boolean }): React.JSX.Element {
+export default function StatusBar({
+  backendReady,
+  selectedCount = 0
+}: {
+  backendReady: boolean
+  /** 構造モードで範囲選択しているシーン数(2 件以上のときだけ表示する) */
+  selectedCount?: number
+}): React.JSX.Element {
   const [res, setRes] = useState<SystemResources | null>(null)
   const tasks = useTasks()
   const [now, setNow] = useState(() => Date.now())
@@ -154,6 +161,13 @@ export default function StatusBar({ backendReady }: { backendReady: boolean }): 
           </>
         )}
       </div>
+      {/* 範囲選択の状態。1 件はインスペクタが映しているので 2 件以上のときだけ出す */}
+      {selectedCount >= 2 && (
+        <span className="flex shrink-0 items-center gap-1.5 text-[11px]">
+          <span style={{ color: 'var(--accent)' }}>{selectedCount} シーンを選択中</span>
+          <span style={{ color: 'var(--text-faint)' }}>・右クリックで一括操作</span>
+        </span>
+      )}
       <div className="ml-auto flex items-center gap-3">
         {res && (
           <>

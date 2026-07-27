@@ -590,9 +590,20 @@ class Store:
         return self.get_node(node_id)
 
     def set_node_image(self, node_id: str, image_path: str | None) -> None:
-        """シーン挿絵(装飾専用)。state に影響しないので dirty 化しない。"""
+        """シーン挿絵(装飾専用)。state に影響しないので dirty 化しない。
+
+        差し替え・取り外しでサムネイルは意味を失うので同時に落とす(古いファイルは
+        参照が外れるので gc_assets が回収する)。動画なら次の描画で作り直される。
+        """
         self.conn.execute(
-            "UPDATE nodes SET image_path = ? WHERE id = ?", (image_path, node_id)
+            "UPDATE nodes SET image_path = ?, thumb_path = NULL WHERE id = ?", (image_path, node_id)
+        )
+        self.conn.commit()
+
+    def set_node_thumb(self, node_id: str, thumb_path: str | None) -> None:
+        """動画挿絵のサムネイル。構造モードのカードが動画をデコードしないために持つ。"""
+        self.conn.execute(
+            "UPDATE nodes SET thumb_path = ? WHERE id = ?", (thumb_path, node_id)
         )
         self.conn.commit()
 
@@ -624,6 +635,7 @@ class Store:
         referenced: set[str] = set()
         for sql in (
             "SELECT image_path FROM nodes WHERE image_path IS NOT NULL",
+            "SELECT thumb_path FROM nodes WHERE thumb_path IS NOT NULL",
             "SELECT portrait_path FROM characters WHERE portrait_path IS NOT NULL",
             "SELECT portrait_source_path FROM characters WHERE portrait_source_path IS NOT NULL",
             "SELECT image_path FROM places WHERE image_path IS NOT NULL",

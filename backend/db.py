@@ -185,6 +185,9 @@ def init_schema(conn: sqlite3.Connection) -> None:
         "ALTER TABLE nodes ADD COLUMN pos_x REAL",  # キャンバス上の手動配置(NULL = 自動レイアウト)
         "ALTER TABLE nodes ADD COLUMN pos_y REAL",
         "ALTER TABLE nodes ADD COLUMN image_path TEXT",  # シーン挿絵(装飾専用。LLM には渡さない)
+        # 挿絵が動画のときのサムネイル画像。構造モードのカードで動画をデコードしないために持つ
+        # (無ければ描画時に生成して埋める。docs/changelog.md 2026-07-27)
+        "ALTER TABLE nodes ADD COLUMN thumb_path TEXT",
         "ALTER TABLE characters ADD COLUMN portrait_path TEXT",  # プロフィール画像(切り抜き後。表示用)
         "ALTER TABLE characters ADD COLUMN portrait_source_path TEXT",  # 元画像(再クロップ用に保持)
         "ALTER TABLE characters ADD COLUMN portrait_crop TEXT",  # 切り抜きパラメータ(JSON。エディタ復元用)
