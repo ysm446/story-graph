@@ -323,6 +323,7 @@ function BeatTab({
       }
     )
     setError(null)
+    setRetireTarget(null) // 前のシーンで開いた退場理由の入力を残さない
   }, [node.id, node.updated_at])
 
   const toggleCast = (charId: string): void => {
@@ -814,10 +815,36 @@ function CharTab({
 
   const eventsKey = node.events.map((e) => e.id).join(',')
 
+  // シーンが変わったら、前のシーンの状態を出したままにしない。
+  // 矢印キーで次々に切り替えると取得が複数走るので、古い応答は捨てる
+  // (捨てないと、後から返ってきた前のシーンの状態が残り続ける)
   useEffect(() => {
     setCharId((prev) => (prev && node.cast.includes(prev) ? prev : node.cast[0] ?? null))
-    void api.getState(node.id).then(setState).catch(() => setState(null))
+    let ignore = false
+    setState(null)
+    void api
+      .getState(node.id)
+      .then((s) => {
+        if (!ignore) setState(s)
+      })
+      .catch(() => {
+        if (!ignore) setState(null)
+      })
+    return () => {
+      ignore = true
+    }
   }, [node.id, node.updated_at, eventsKey])
+
+  // 書きかけの入力とエラーは前のシーンのものなので、切り替えたら捨てる
+  useEffect(() => {
+    setError(null)
+    setFactKey('')
+    setFactValue('')
+    setRelTarget('')
+    setRelReason('')
+    setRelLabel('')
+    setMemContent('')
+  }, [node.id])
 
   const charState = charId ? state?.chars[charId] : null
   const nameOf = (id: string): string => characters.find((c) => c.id === id)?.name ?? id
@@ -1262,15 +1289,26 @@ function StructureModeInner({
       .catch(() => undefined)
   }, [settingsVersion])
 
+  // 矢印キーで次々に選択が変わると取得が複数走るので、古い応答は捨てる
+  // (捨てないと、後から返ってきた前のシーンの結果が残り続ける)
   useEffect(() => {
     if (!selectedId) {
       setValidation([])
       return
     }
+    let ignore = false
+    setValidation([])
     void api
       .validateNode(selectedId)
-      .then((r) => setValidation(r.errors))
-      .catch(() => setValidation([]))
+      .then((r) => {
+        if (!ignore) setValidation(r.errors)
+      })
+      .catch(() => {
+        if (!ignore) setValidation([])
+      })
+    return () => {
+      ignore = true
+    }
   }, [selectedId, graphNodes])
 
   const charMap = useMemo(() => Object.fromEntries(characters.map((c) => [c.id, c])), [characters])

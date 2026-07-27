@@ -111,12 +111,25 @@ export default function RelationGraph({
     setScrubIndex(canonPath.length - 1)
   }, [pathKey])
 
+  // 基準時点が変わったら取り直す。時間スクラブや矢印キーで次々に変わると
+  // 取得が複数走るので、古い応答は捨てる(捨てないと前の時点の関係が残る)
   useEffect(() => {
     if (!scrubNode) {
       setState(null)
       return
     }
-    void api.getState(scrubNode.id).then(setState).catch(() => setState(null))
+    let ignore = false
+    void api
+      .getState(scrubNode.id)
+      .then((s) => {
+        if (!ignore) setState(s)
+      })
+      .catch(() => {
+        if (!ignore) setState(null)
+      })
+    return () => {
+      ignore = true
+    }
   }, [scrubNode?.id, scrubNode?.updated_at])
 
   // 表示対象: 登場済みキャラ + score 非ゼロの関係のみ(スパース)
