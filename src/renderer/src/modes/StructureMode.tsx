@@ -807,6 +807,10 @@ function CharTab({
   const [relLabel, setRelLabel] = useState('')
   const [memContent, setMemContent] = useState('')
   const [error, setError] = useState<string | null>(null)
+  // 記憶の並び順。既定は新しい順(直近の変化が上に来て差分が見やすい)
+  const [memNewestFirst, setMemNewestFirst] = useState(
+    () => localStorage.getItem('memoriesOldestFirst') !== '1'
+  )
 
   const eventsKey = node.events.map((e) => e.id).join(',')
 
@@ -1006,10 +1010,28 @@ function CharTab({
             </div>
           </section>
           <section>
-            <h4 className="mb-1 text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
-              Memories({charState.memories.length})
-            </h4>
-            {charState.memories.map((eventId) => {
+            <div className="mb-1 flex items-center justify-between">
+              <h4 className="text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
+                Memories({charState.memories.length})
+              </h4>
+              {charState.memories.length > 1 && (
+                <button
+                  onClick={() => {
+                    setMemNewestFirst((prev) => {
+                      localStorage.setItem('memoriesOldestFirst', prev ? '1' : '0')
+                      return !prev
+                    })
+                  }}
+                  className="text-[10px] hover:underline"
+                  style={{ color: 'var(--text-faint)' }}
+                  title="並び順を切り替える"
+                >
+                  {memNewestFirst ? '新 → 古' : '古 → 新'}
+                </button>
+              )}
+            </div>
+            {/* fold の積み順が古い順なので、新しい順は反転して出す */}
+            {(memNewestFirst ? [...charState.memories].reverse() : charState.memories).map((eventId) => {
               const memory = memoryContents[eventId]
               return (
                 <div
@@ -1702,8 +1724,66 @@ function StructureModeInner({
     }
   }, [menu])
 
+  /** 矢印キーでのシーン移動。
+   *
+   * ← → は時間軸(親 / 子)、↑ ↓ は同じ分岐点の兄弟レーン。DAG の 2 軸と
+   * キーの 2 軸を一致させている。兄弟の並びは自動レイアウトと同じ順
+   * (正史の子が先、あとは作成順)なので、画面の上下と ↑ ↓ が対応する。
+   * 選択ごと動かすので、インスペクタもついてくる。
+   */
+  const navigateSelection = useCallback(
+    (direction: 'left' | 'right' | 'up' | 'down'): void => {
+      const currentId = flowNodes.find((n) => n.selected)?.id ?? selectedId
+      if (!currentId) return
+      const orderIndex = new Map(graphNodes.map((n, i) => [n.id, i]))
+      const parentOf = new Map(graphEdges.map((e) => [e.to_node, e.from_node]))
+      const sortIds = (ids: string[]): string[] =>
+        ids.slice().sort((a, b) => {
+          const canonOf = (id: string): number =>
+            graphEdges.some((e) => e.to_node === id && e.is_canon) ? 1 : 0
+          return canonOf(b) - canonOf(a) || (orderIndex.get(a) ?? 0) - (orderIndex.get(b) ?? 0)
+        })
+      const childrenOf = (id: string): string[] =>
+        sortIds(graphEdges.filter((e) => e.from_node === id).map((e) => e.to_node))
+
+      let targetId: string | undefined
+      if (direction === 'right') {
+        targetId = childrenOf(currentId)[0] // 分岐しているときは正史の子へ
+      } else if (direction === 'left') {
+        targetId = parentOf.get(currentId)
+      } else {
+        // 兄弟(親が無ければ島の根どうし)を並べて 1 つ隣へ。端では止まる
+        const parent = parentOf.get(currentId)
+        const siblings = parent
+          ? childrenOf(parent)
+          : sortIds(graphNodes.filter((n) => !parentOf.has(n.id)).map((n) => n.id))
+        const index = siblings.indexOf(currentId)
+        if (index < 0) return
+        targetId = siblings[index + (direction === 'down' ? 1 : -1)]
+      }
+      if (!targetId) return
+
+      const flow = reactFlow.getNode(targetId)
+      if (flow) {
+        // ズームは保ったまま中央へ寄せる(F の fitBounds とは役割を分ける)
+        void reactFlow.setCenter(
+          flow.position.x + (flow.measured?.width ?? 288) / 2,
+          flow.position.y + (flow.measured?.height ?? FALLBACK_NODE_HEIGHT) / 2,
+          { zoom: reactFlow.getZoom(), duration: 300 }
+        )
+      }
+      const nextId = targetId
+      setSelectedId(nextId)
+      setFlowNodes((prev) =>
+        prev.map((n) => (n.selected === (n.id === nextId) ? n : { ...n, selected: n.id === nextId }))
+      )
+    },
+    [flowNodes, selectedId, graphNodes, graphEdges, reactFlow]
+  )
+
   // キーボードショートカット(lm-graph と同じ): A = 全体表示 / F = 選択にフォーカス
   // Delete = 選択ノードを削除(エッジ選択中は切断)
+  // 矢印 = シーン間の移動(← → が親子、↑ ↓ が分岐レーン)
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent): void => {
       const target = event.target as HTMLElement | null
@@ -1725,6 +1805,17 @@ function StructureModeInner({
         if (!targetId) return
         event.preventDefault()
         void deleteNodeById(targetId)
+        return
+      }
+      const arrows: Record<string, 'left' | 'right' | 'up' | 'down'> = {
+        ArrowLeft: 'left',
+        ArrowRight: 'right',
+        ArrowUp: 'up',
+        ArrowDown: 'down'
+      }
+      if (arrows[event.key]) {
+        event.preventDefault()
+        navigateSelection(arrows[event.key])
         return
       }
       if (event.key === 'a') {
@@ -1759,7 +1850,7 @@ function StructureModeInner({
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [reactFlow, flowNodes, selectedId, deleteNodeById])
+  }, [reactFlow, flowNodes, selectedId, deleteNodeById, navigateSelection])
 
   const toggleChat = useCallback((): void => {
     // 分割線(1px)を含めた分だけノードエリアが縮む / 拡がる
@@ -2004,6 +2095,9 @@ function StructureModeInner({
             // 既定の Backspace 削除は API を通さず画面だけ消えてしまうため無効化し、
             // 削除は Delete キー(下の keydown ハンドラ)に集約する
             deleteKeyCode={null}
+            // 矢印キーはシーン間の移動に使う。React Flow の既定(フォーカス中の
+            // ノードを矢印で動かす a11y 操作)と衝突するので明示的に切る
+            disableKeyboardA11y
             onNodesChange={handleNodesChange}
             onSelectionChange={({ nodes }) => {
               setSelectedId((prev) => {
