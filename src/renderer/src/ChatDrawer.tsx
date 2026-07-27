@@ -202,7 +202,11 @@ const TEMPLATES: { label: string; text: string }[] = [
   { label: '関係の変化', text: '関係値が大きく動いたところと、その理由を挙げて。' },
   { label: '未回収の伏線', text: '未回収の伏線・約束・謎を洗い出して。' },
   { label: '矛盾チェック', text: 'キャラの言動と facts に矛盾がないか点検して。' },
-  { label: '展開を提案', text: 'この先の展開を3案提案して。' }
+  { label: '展開を提案', text: 'この先の展開を3案提案して。' },
+  { label: '山場', text: 'ここまでで一番の山場はどこですか。理由も添えて。' },
+  { label: '弱いところ', text: '盛り上がりに欠けるシーンを挙げて、理由と直し方を教えて。' },
+  { label: '各人の望み', text: '各キャラがいま何を求めているか整理して。' },
+  { label: '場所の使い方', text: 'これまでに出た場所と、それぞれの使われ方を整理して。' }
 ]
 // キャラモード用の定型質問(インタビューの入り口。docs/design/chat.md §6)
 const CHAR_TEMPLATES: { label: string; text: string }[] = [
@@ -211,10 +215,15 @@ const CHAR_TEMPLATES: { label: string; text: string }[] = [
   { label: 'これから', text: 'これからどうするつもりですか?' },
   { label: '後悔', text: '後悔していることはありますか?' },
   { label: '信頼と警戒', text: '誰を信頼していて、誰を警戒していますか?' },
-  { label: '大切なもの', text: 'あなたにとって一番大切なものは何ですか?' }
+  { label: '大切なもの', text: 'あなたにとって一番大切なものは何ですか?' },
+  { label: '知っていること', text: 'いま自分が知っていることを整理して話してください。' },
+  { label: '言えていないこと', text: '誰か一人に言えていないことがあるなら、聞かせてください。' },
+  { label: 'この場所', text: 'いまいる場所について、どう感じていますか?' },
+  { label: '変わったこと', text: '出会ったころの自分と、いまの自分で変わったことは?' }
 ]
-const TEMPLATE_WINDOW = 3 // 同時に見せる件数
-const MAX_DYNAMIC = 2 // うち、内容から生成された質問に使う枠
+// 候補は会話と一緒にスクロールするので、固定枠だった頃より多めに出せる
+const TEMPLATE_WINDOW = 5 // 同時に見せる件数
+const MAX_DYNAMIC = 3 // うち、内容から生成された質問に使う枠(生成側の上限も 3 件)
 const RING_RADIUS = 10 // コンテキスト使用量リング(26px の SVG 内)
 const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS
 
@@ -1045,6 +1054,17 @@ export default function ChatDrawer({
                   <span className="truncate">{c.text}</span>
                 </button>
               ))}
+              {/* 候補の入れ替え。チップの並びの延長なので、入力欄ではなくここに置く */}
+              <button
+                // 送るのは表示中の並び(キャラモードは CHAR_TEMPLATES)なので、
+                // 送り幅もその配列の長さで折り返す
+                onClick={() => setTemplateOffset((v) => (v + TEMPLATE_WINDOW) % templates.length)}
+                className="flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px]"
+                style={{ color: 'var(--text-faint)' }}
+                title="ほかの候補を見る"
+              >
+                ⟳ ほかの候補
+              </button>
             </div>
           </div>
           {/* 入力 */}
@@ -1098,14 +1118,6 @@ export default function ChatDrawer({
                 </span>
               </div>
             )}
-            <button
-              onClick={() => setTemplateOffset((v) => (v + TEMPLATE_WINDOW) % TEMPLATES.length)}
-              className="shrink-0 rounded-lg border px-2.5 py-1.5 text-[13px]"
-              style={{ borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }}
-              title="ほかの候補を見る"
-            >
-              ⟳
-            </button>
             {busy ? (
               <button
                 onClick={() => abortRef.current?.abort()}
