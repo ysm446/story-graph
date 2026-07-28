@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, assetUrl, uploadAsset } from '../api'
 import ImageCropModal, { type CropState } from '../ImageCropModal'
 import PlaceEditor from './PlaceEditor'
 import ProofreadTextarea from '../ProofreadTextarea'
-import type { Character, Place } from '../types'
+import RelationGraph from '../RelationGraph'
+import type { Character, Place, StoryGraph, StoryNode } from '../types'
 
 const FIELD_DEFS: Array<{ key: 'profile' | 'appearance' | 'voice'; label: string; rows: number }> = [
   { key: 'profile', label: 'プロフィール(性格の基調・背景)', rows: 5 },
@@ -11,7 +12,7 @@ const FIELD_DEFS: Array<{ key: 'profile' | 'appearance' | 'voice'; label: string
   { key: 'voice', label: '口調・一人称', rows: 3 }
 ]
 
-type Tab = 'characters' | 'places'
+type Tab = 'characters' | 'places' | 'relations'
 
 /** 資料庫。キャラクターと場所を同じシェル(リサイズ可能なサイドバー + 編集ペイン)で扱う。
  *  場所も登録制のエンティティなので、庫としては同じ性格のもの(docs/design/places.md)。 */
@@ -19,6 +20,9 @@ export default function CharactersMode(): React.JSX.Element {
   const [tab, setTab] = useState<Tab>('characters')
   const [characters, setCharacters] = useState<Character[]>([])
   const [places, setPlaces] = useState<Place[]>([])
+  // 関係図タブ用: ノードグラフ(正史パスの導出と履歴表示に使う)とエゴ選択
+  const [graph, setGraph] = useState<StoryGraph | null>(null)
+  const [egoCharId, setEgoCharId] = useState<string | null>(null)
   const [selectedPlaceId, setSelectedPlaceId] = useState<string | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [draft, setDraft] = useState<Partial<Character>>({})
@@ -92,10 +96,38 @@ export default function CharactersMode(): React.JSX.Element {
   const selectedPlace = places.find((p) => p.id === selectedPlaceId) ?? null
 
   const reload = async (): Promise<void> => {
-    const [chars, placeList] = await Promise.all([api.listCharacters(), api.listPlaces()])
+    const [chars, placeList, g] = await Promise.all([
+      api.listCharacters(),
+      api.listPlaces(),
+      api.getGraph()
+    ])
     setCharacters(chars)
     setPlaces(placeList)
+    setGraph(g)
   }
+
+  // 正史パス(canon エッジを根から辿る。StructureMode と同じ導出)
+  const canonPath = useMemo(() => {
+    if (!graph) return [] as StoryNode[]
+    const canonChildren = new Map(graph.edges.filter((e) => e.is_canon).map((e) => [e.from_node, e.to_node]))
+    const hasParent = new Set(graph.edges.map((e) => e.to_node))
+    const nodeById = new Map(graph.nodes.map((n) => [n.id, n]))
+    const root = graph.nodes.find((n) => !hasParent.has(n.id))
+    if (!root) return [] as StoryNode[]
+    const path: StoryNode[] = [root]
+    const seen = new Set([root.id])
+    let current = root.id
+    while (canonChildren.has(current)) {
+      const next = canonChildren.get(current)!
+      if (seen.has(next)) break
+      const node = nodeById.get(next)
+      if (!node) break
+      path.push(node)
+      seen.add(next)
+      current = next
+    }
+    return path
+  }, [graph])
 
   useEffect(() => {
     void reload()
@@ -165,7 +197,8 @@ export default function CharactersMode(): React.JSX.Element {
             {(
               [
                 ['characters', 'キャラクター'],
-                ['places', '場所']
+                ['places', '場所'],
+                ['relations', '関係図']
               ] as Array<[Tab, string]>
             ).map(([id, label]) => (
               <button
@@ -182,13 +215,15 @@ export default function CharactersMode(): React.JSX.Element {
               </button>
             ))}
           </div>
-          <button
-            onClick={() => void handleCreate()}
-            className="rounded-md px-2 py-0.5 text-[12px]"
-            style={{ background: 'var(--accent-soft)', color: 'var(--text)' }}
-          >
-            + 追加
-          </button>
+          {tab !== 'relations' && (
+            <button
+              onClick={() => void handleCreate()}
+              className="rounded-md px-2 py-0.5 text-[12px]"
+              style={{ background: 'var(--accent-soft)', color: 'var(--text)' }}
+            >
+              + 追加
+            </button>
+          )}
         </div>
         <div className="inspector-scrollbar min-h-0 flex-1 overflow-y-auto px-2 pb-2">
           {tab === 'places' &&
@@ -218,14 +253,18 @@ export default function CharactersMode(): React.JSX.Element {
               シーンは登録した場所から 1 つ選びます。
             </div>
           )}
-          {tab === 'characters' &&
+          {(tab === 'characters' || tab === 'relations') &&
             characters.map((c) => (
             <button
               key={c.id}
-              onClick={() => setSelectedId(c.id)}
+              onClick={() =>
+                tab === 'relations'
+                  ? setEgoCharId((prev) => (prev === c.id ? null : c.id))
+                  : setSelectedId(c.id)
+              }
               className="mb-1 flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-[15px]"
               style={
-                c.id === selectedId
+                (tab === 'relations' ? c.id === egoCharId : c.id === selectedId)
                   ? { background: 'rgba(124, 90, 247, 0.18)', color: 'var(--text)' }
                   : { color: 'var(--text-dim)' }
               }
@@ -252,7 +291,7 @@ export default function CharactersMode(): React.JSX.Element {
               <span className="truncate">{c.name}</span>
             </button>
           ))}
-          {tab === 'characters' && characters.length === 0 && (
+          {(tab === 'characters' || tab === 'relations') && characters.length === 0 && (
             <div className="px-2 py-4 text-[12px]" style={{ color: 'var(--text-faint)' }}>
               まだキャラクターがいません
             </div>
@@ -271,7 +310,21 @@ export default function CharactersMode(): React.JSX.Element {
         />
       </div>
       <main className="inspector-scrollbar min-w-0 flex-1 overflow-y-auto p-6">
-        {tab === 'places' ? (
+        {tab === 'relations' ? (
+          <div className="mx-auto max-w-5xl">
+            <RelationGraph
+              characters={characters}
+              path={canonPath}
+              allNodes={graph?.nodes ?? []}
+              onCharactersChanged={() => void reload()}
+              orthogonal
+              width={880}
+              height={620}
+              egoCharId={egoCharId}
+              onEgoChange={setEgoCharId}
+            />
+          </div>
+        ) : tab === 'places' ? (
           selectedPlace ? (
             <PlaceEditor
               place={selectedPlace}
