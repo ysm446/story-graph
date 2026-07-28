@@ -318,6 +318,8 @@ export default function CharactersMode(): React.JSX.Element {
               allNodes={graph?.nodes ?? []}
               onCharactersChanged={() => void reload()}
               orthogonal
+              showAllChars
+              autoFit
               width={880}
               height={620}
               egoCharId={egoCharId}

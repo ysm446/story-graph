@@ -308,6 +308,8 @@ export default function RelationGraph({
   width = 360,
   height = 380,
   orthogonal = false,
+  showAllChars = false,
+  autoFit = false,
   egoCharId: egoProp,
   onEgoChange
 }: {
@@ -321,6 +323,12 @@ export default function RelationGraph({
   height?: number
   /** 直角折れ線ルーティング(経路探索でノードを避ける)を使う */
   orthogonal?: boolean
+  /** その時点で登場済みのキャラを、関係が無くても全員表示する(フル版=相関図の一望用)。
+   *  エゴ絞り込み中は従来どおり当事者のみ。しきい値は線を減らすだけでキャラは消さない */
+  showAllChars?: boolean
+  /** 初回表示時にノード全体が中央に収まるようズーム・パンを合わせる
+   *  (背景ダブルクリックのリセット先もフィットになる) */
+  autoFit?: boolean
   /** エゴネットワークの外部制御(指定時は controlled。省略時は内部 state) */
   egoCharId?: string | null
   onEgoChange?: (id: string | null) => void
@@ -359,7 +367,7 @@ export default function RelationGraph({
       const w = (e.clientY - rect.top) / rect.height
       const px = v.x + u * (width / v.zoom)
       const py = v.y + w * (height / v.zoom)
-      const zoom = Math.min(4, Math.max(0.4, v.zoom * (e.deltaY < 0 ? 1.15 : 1 / 1.15)))
+      const zoom = Math.min(4, Math.max(0.2, v.zoom * (e.deltaY < 0 ? 1.15 : 1 / 1.15)))
       setView({ x: px - u * (width / zoom), y: py - w * (height / zoom), zoom })
     }
     svg.addEventListener('wheel', onWheel, { passive: false })
@@ -431,9 +439,13 @@ export default function RelationGraph({
       rels = rels.filter((r) => r.from === egoCharId || r.to === egoCharId)
     }
     const used = new Set(rels.flatMap((r) => [r.from, r.to]))
-    const visible = chars.filter((id) => used.has(id) || id === egoCharId)
+    const visible = egoCharId
+      ? chars.filter((id) => used.has(id) || id === egoCharId)
+      : showAllChars
+        ? chars
+        : chars.filter((id) => used.has(id))
     return { visibleChars: visible, edges: rels }
-  }, [state, charMap, threshold, egoCharId])
+  }, [state, charMap, threshold, egoCharId, showAllChars])
 
   // レイアウト: 保存済み座標をピン留めし、未配置キャラのみ d3-force で配置
   useEffect(() => {
@@ -488,6 +500,32 @@ export default function RelationGraph({
     () => (orthogonal ? routeOrthogonal(edges, positions, visibleChars) : null),
     [orthogonal, edges, positions, visibleChars]
   )
+
+  // フィット表示: ノード全体の外接矩形が中央に収まるようズーム・パンを合わせる
+  const fitView = (): void => {
+    const pts = visibleChars.map((id) => positions[id]).filter(Boolean)
+    if (pts.length === 0) return
+    const margin = 60
+    const minX = Math.min(...pts.map((p) => p.x)) - margin
+    const maxX = Math.max(...pts.map((p) => p.x)) + margin
+    const minY = Math.min(...pts.map((p) => p.y)) - margin
+    const maxY = Math.max(...pts.map((p) => p.y)) + margin
+    // ノードが少なくても拡大しすぎない(上限 1)。広すぎる配置は 0.2 まで縮小
+    const zoom = Math.min(1, Math.max(0.2, Math.min(width / (maxX - minX), height / (maxY - minY))))
+    const cx = (minX + maxX) / 2
+    const cy = (minY + maxY) / 2
+    setView({ x: cx - width / (2 * zoom), y: cy - height / (2 * zoom), zoom })
+  }
+
+  // 初回、全ノードの配置が確定した時点で一度だけフィットする
+  const fittedRef = useRef(false)
+  useEffect(() => {
+    if (!autoFit || fittedRef.current) return
+    if (visibleChars.length === 0) return
+    if (!visibleChars.every((id) => positions[id])) return
+    fittedRef.current = true
+    fitView()
+  }, [autoFit, visibleChars, positions])
 
   // ノードドラッグ(ピン留め座標の更新)。座標変換は現在のズーム・パンを考慮
   const toSvgPoint = (event: React.PointerEvent): { x: number; y: number } => {
@@ -614,7 +652,9 @@ export default function RelationGraph({
         onPointerUp={handlePointerUp}
         onPointerLeave={handlePointerUp}
         onDoubleClick={(e) => {
-          if (e.target === svgRef.current) setView({ x: 0, y: 0, zoom: 1 })
+          if (e.target !== svgRef.current) return
+          if (autoFit) fitView()
+          else setView({ x: 0, y: 0, zoom: 1 })
         }}
       >
         <defs>
@@ -787,7 +827,9 @@ export default function RelationGraph({
         })}
         {visibleChars.length === 0 && (
           <text x={width / 2} y={height / 2} textAnchor="middle" fontSize="12" fill="var(--text-faint)">
-            この時点で表示できる関係はありません
+            {showAllChars
+              ? 'この時点で登場済みのキャラクターがいません'
+              : 'この時点で表示できる関係はありません'}
           </text>
         )}
       </svg>
