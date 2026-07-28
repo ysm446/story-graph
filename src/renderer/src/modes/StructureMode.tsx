@@ -1613,20 +1613,35 @@ function StructureModeInner({
 
   // 選択したシーンを一括清書(条件は鑑賞モードの選択をそのまま使う)
   const runRenderNodes = useCallback(
-    (nodeIds: string[], skipExisting: boolean): void => {
+    (nodeIds: string[], skipExisting: boolean, includeDownstream = false): void => {
       const presetId = readerSetting.presetId
       if (!presetId || nodeIds.length === 0) return
+      let targets = nodeIds
+      if (includeDownstream) {
+        // 下流(全子孫)を集める。順序はサーバーが正史・深さ順に並べ直す
+        const children: Record<string, string[]> = {}
+        for (const e of graphEdges) (children[e.from_node] ??= []).push(e.to_node)
+        const seen = new Set<string>()
+        const stack = [...nodeIds]
+        while (stack.length > 0) {
+          const id = stack.pop()!
+          if (seen.has(id)) continue
+          seen.add(id)
+          for (const c of children[id] ?? []) stack.push(c)
+        }
+        targets = [...seen]
+      }
       const pov = readerSetting.povChar
       enqueueTask({
         label: '清書',
-        total: nodeIds.length,
-        detail: `${nodeIds.length} シーン${skipExisting ? '(未清書のみ)' : ''}`,
+        total: targets.length,
+        detail: `${targets.length} シーン${skipExisting ? '(未清書のみ)' : ''}`,
         runner: async ({ update, signal }) => {
           let current: string | null = null
           let done = 0
           try {
             await renderStream(
-              { preset_id: presetId, pov_char: pov, node_ids: nodeIds, skip_existing: skipExisting },
+              { preset_id: presetId, pov_char: pov, node_ids: targets, skip_existing: skipExisting },
               (e) => {
                 // 実際に書くシーン数(未清書のみの絞り込み後)はサーバーが返す
                 if (e.stage === 'start') update({ total: e.total })
@@ -1655,7 +1670,7 @@ function StructureModeInner({
         }
       })
     },
-    [markNodeBusy, readerSetting]
+    [markNodeBusy, readerSetting, graphEdges]
   )
 
   // 選択したシーンをまとめて切り離す / 削除する
@@ -2358,6 +2373,18 @@ function StructureModeInner({
                     hint: '清書済みのシーンも作り直す',
                     disabled: !readerSetting.presetId,
                     run: () => void runRenderNodes(menu.targets, false)
+                  },
+                  {
+                    label: '清書(この先も / 未清書のみ)',
+                    hint: '選択したシーンと下流の、未清書か要更新のもの',
+                    disabled: !readerSetting.presetId,
+                    run: () => void runRenderNodes(menu.targets, true, true)
+                  },
+                  {
+                    label: '清書し直す(この先も / 上書き)',
+                    hint: '選択したシーンと、その下流すべて',
+                    disabled: !readerSetting.presetId,
+                    run: () => void runRenderNodes(menu.targets, false, true)
                   },
                   {
                     label: 'まとめて切り離す',
