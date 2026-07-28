@@ -224,6 +224,8 @@ const CHAR_TEMPLATES: { label: string; text: string }[] = [
 // 候補は会話と一緒にスクロールするので、固定枠だった頃より多めに出せる
 const TEMPLATE_WINDOW = 5 // 同時に見せる件数
 const MAX_DYNAMIC = 3 // うち、内容から生成された質問に使う枠(生成側の上限も 3 件)
+const SIDEBAR_MIN = 140 // 会話一覧の最小幅(見出しが読める下限)
+const SIDEBAR_MAX = 420 // 同・最大幅。会話エリアを潰さない上限
 const RING_RADIUS = 10 // コンテキスト使用量リング(26px の SVG 内)
 const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS
 
@@ -293,6 +295,12 @@ export default function ChatDrawer({
   // 候補チップは常に入力欄の右上に積む。全部出すと縦を食うので窓を 3 件に
   // 絞り、⟳ で次の 3 件へ送る(ランダムではなく決まった順。docs/design/chat.md)
   const [templateOffset, setTemplateOffset] = useState(0)
+  // 左サイドバー(会話一覧)の幅。分割線のドラッグで変えられる。モードを
+  // 切り替えるとこのコンポーネントは破棄されるので localStorage に覚えておく
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    const saved = Number(localStorage.getItem('chatSidebarWidth'))
+    return saved >= SIDEBAR_MIN && saved <= SIDEBAR_MAX ? saved : 208 // 208px = 旧 w-52
+  })
   // 左サイドバー(会話一覧)の ⋯ メニューと会話名の編集
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null)
   const [renamingId, setRenamingId] = useState<string | null>(null)
@@ -308,7 +316,35 @@ export default function ChatDrawer({
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
   const panelRef = useRef<HTMLDivElement | null>(null) // 入力欄の高さの上限を決めるのに使う
+  const rootRef = useRef<HTMLDivElement | null>(null) // 会話一覧の最大幅を決めるのに使う
   const busyElapsed = useElapsedSeconds(busy)
+
+  // 分割線のドラッグで会話一覧の幅を変える(構造モードの分割線と同じ作り)。
+  // 会話エリアは最低 320px 残す
+  const beginSidebarResize = useCallback(
+    (event: React.PointerEvent): void => {
+      event.preventDefault()
+      const startX = event.clientX
+      const startW = sidebarWidth
+      const rootWidth = rootRef.current?.clientWidth ?? 0
+      const maxW = rootWidth > 0 ? Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, rootWidth - 320)) : SIDEBAR_MAX
+      const onMove = (ev: PointerEvent): void => {
+        const next = Math.min(maxW, Math.max(SIDEBAR_MIN, startW + (ev.clientX - startX)))
+        setSidebarWidth(next)
+      }
+      const onUp = (): void => {
+        window.removeEventListener('pointermove', onMove)
+        window.removeEventListener('pointerup', onUp)
+        setSidebarWidth((w) => {
+          localStorage.setItem('chatSidebarWidth', String(Math.round(w)))
+          return w
+        })
+      }
+      window.addEventListener('pointermove', onMove)
+      window.addEventListener('pointerup', onUp)
+    },
+    [sidebarWidth]
+  )
 
   // 入力欄は内容に合わせて縦に伸ばす(1 行から始めて、書いた分だけ広がる)。
   // 会話が潰れないようドロワーの高さの 40% を上限にし、超えたらスクロールする
@@ -667,12 +703,10 @@ export default function ChatDrawer({
   if (!open) return null
 
   return (
-    <div className="flex h-full min-h-0" style={{ background: 'var(--bg-chat)' }}>
-      {/* 左サイドバー: これまでの会話。各項目の ⋯ で名前の変更と削除 */}
-      <aside
-        className="flex w-52 shrink-0 flex-col border-r"
-        style={{ borderColor: 'var(--border)' }}
-      >
+    <div ref={rootRef} className="flex h-full min-h-0" style={{ background: 'var(--bg-chat)' }}>
+      {/* 左サイドバー: これまでの会話。各項目の ⋯ で名前の変更と削除。
+          幅は右端の分割線をドラッグして変えられる */}
+      <aside className="flex shrink-0 flex-col" style={{ width: sidebarWidth }}>
         <button
           onClick={startNewChat}
           className="m-2 rounded-lg border px-2 py-1 text-[12px]"
@@ -689,6 +723,9 @@ export default function ChatDrawer({
           )}
           {history.map((h) => {
             const active = h.id === chatId
+            // キャラ会話は本人のアイコンで示す。線画の仮面だと小さくて見分けが
+            // つきにくいので、色と顔がそのまま出るアバターを使う
+            const char = h.char_id ? characters.find((c) => c.id === h.char_id) ?? null : null
             return (
               <div
                 key={h.id}
@@ -717,19 +754,38 @@ export default function ChatDrawer({
                     <button
                       onClick={() => void loadChat(h.id)}
                       disabled={busy}
-                      className="min-w-0 flex-1 px-1.5 py-1 text-left disabled:opacity-50"
+                      className="flex min-w-0 flex-1 items-center gap-1.5 px-1.5 py-1 text-left disabled:opacity-50"
                       title={`${h.char_name ? h.char_name + ' / ' : ''}${h.anchor_title || '(シーンなし)'} まで`}
                     >
-                      <div
-                        className="flex items-center gap-1 text-[12px]"
-                        style={{ color: active ? 'var(--text)' : 'var(--text-dim)' }}
+                      {/* 相手の目印。キャラ会話はアバター、相談チャットは吹き出し。
+                          幅を揃えて見出しの開始位置がずれないようにする */}
+                      <span
+                        className="flex w-5 shrink-0 items-center justify-center"
+                        style={{ color: 'var(--text-dim)' }}
                       >
-                        {h.char_name && <Icon name="mask" size={12} className="shrink-0" />}
-                        <span className="truncate">{chatLabel(h)}</span>
-                      </div>
-                      <div className="truncate text-[10px]" style={{ color: 'var(--text-faint)' }}>
-                        {h.anchor_title || '(シーンなし)'}
-                      </div>
+                        {char ? (
+                          <CharAvatar char={char} size={20} />
+                        ) : h.char_name ? (
+                          <Icon name="mask" size={16} />
+                        ) : (
+                          <Icon name="chat" size={14} className="opacity-70" />
+                        )}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span
+                          className="block truncate text-[12px]"
+                          style={{ color: active ? 'var(--text)' : 'var(--text-dim)' }}
+                        >
+                          {chatLabel(h)}
+                        </span>
+                        <span
+                          className="block truncate text-[10px]"
+                          style={{ color: 'var(--text-faint)' }}
+                        >
+                          {h.char_name ? `${h.char_name} / ` : ''}
+                          {h.anchor_title || '(シーンなし)'}
+                        </span>
+                      </span>
                     </button>
                     <button
                       onClick={(e) => {
@@ -774,6 +830,17 @@ export default function ChatDrawer({
           })}
         </div>
       </aside>
+      {/* リサイズハンドル(見た目は 1px の境界線、当たり判定は幅 4px) */}
+      <div
+        onPointerDown={beginSidebarResize}
+        className="group relative w-1 shrink-0 cursor-col-resize"
+        title="ドラッグで幅を変更"
+      >
+        <div
+          className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 transition-colors group-hover:bg-[var(--accent-border)]"
+          style={{ background: 'var(--border)' }}
+        />
+      </div>
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <div ref={panelRef} className="flex min-h-0 flex-1 flex-col px-4 pb-3 pt-2">
           {/* ヘッダー: 相手 / アンカー / スコープ */}
