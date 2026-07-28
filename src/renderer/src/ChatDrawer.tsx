@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   api,
   assetUrl,
@@ -307,7 +307,44 @@ export default function ChatDrawer({
   const abortRef = useRef<AbortController | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
+  const panelRef = useRef<HTMLDivElement | null>(null) // 入力欄の高さの上限を決めるのに使う
   const busyElapsed = useElapsedSeconds(busy)
+
+  // 入力欄は内容に合わせて縦に伸ばす(1 行から始めて、書いた分だけ広がる)。
+  // 会話が潰れないようドロワーの高さの 40% を上限にし、超えたらスクロールする
+  const autosizeInput = useCallback((): void => {
+    const el = inputRef.current
+    if (!el) return
+    const panelHeight = panelRef.current?.clientHeight ?? 0
+    const max = panelHeight > 0 ? Math.max(64, panelHeight * 0.4) : 160
+    el.style.height = 'auto'
+    const wanted = el.scrollHeight + 2
+    el.style.height = `${Math.min(wanted, max)}px`
+    el.style.overflowY = wanted > max ? 'auto' : 'hidden'
+  }, [])
+
+  useEffect(() => {
+    autosizeInput()
+  }, [input, open, autosizeInput])
+
+  // 幅が変わると折り返しが変わり(インスペクタのリサイズ等)、ドロワーの高さが
+  // 変わると上限が変わる(分割ペインのドラッグ)。どちらでも計算し直す
+  useEffect(() => {
+    const el = inputRef.current
+    const panel = panelRef.current
+    if (!el || !panel) return
+    let lastWidth = el.clientWidth
+    let lastPanelHeight = panel.clientHeight
+    const observer = new ResizeObserver(() => {
+      if (el.clientWidth === lastWidth && panel.clientHeight === lastPanelHeight) return
+      lastWidth = el.clientWidth
+      lastPanelHeight = panel.clientHeight
+      autosizeInput()
+    })
+    observer.observe(el)
+    observer.observe(panel)
+    return () => observer.disconnect()
+  }, [autosizeInput])
 
   // リングの色は lm-chat と同じ閾値(70% で警告、90% で危険)
   const usagePct = usage ? Math.min((usage.tokens / Math.max(usage.ctx, 1)) * 100, 100) : 0
@@ -738,7 +775,7 @@ export default function ChatDrawer({
         </div>
       </aside>
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <div className="flex min-h-0 flex-1 flex-col px-4 pb-3 pt-2">
+        <div ref={panelRef} className="flex min-h-0 flex-1 flex-col px-4 pb-3 pt-2">
           {/* ヘッダー: 相手 / アンカー / スコープ */}
           <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px]" style={{ color: 'var(--text-faint)' }}>
             {/* 話す相手: 相談(編集者) or キャラ本人。切替は新規チャット扱い */}
