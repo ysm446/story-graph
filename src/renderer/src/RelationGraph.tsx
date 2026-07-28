@@ -105,6 +105,51 @@ function pointAt(points: Pt[], frac: number): Pt {
   return points[points.length - 1] ?? { x: 0, y: 0 }
 }
 
+// ---- 終点の矢じり ---------------------------------------------------
+// marker + markerEnd をやめて自前の三角形にしてある。marker だと線は終点まで
+// 引かれたままなので、三角形の下を線が突き抜けて先端から飛び出して見えた
+// (線の太さが先端付近の三角形の高さを上回るため)。線を矢じりの根元で止める。
+const ARROW_LEN = 4.5 // 矢じりの長さ(線の太さの倍数。旧 marker と同じ比率)
+const ARROW_WIDTH = 4.5 // 矢じりの根元の幅(同上)
+
+/** 折れ線の終端側を len だけ削る */
+function trimEnd(points: Pt[], len: number): Pt[] {
+  const out = points.map((p) => ({ ...p }))
+  let rest = len
+  while (out.length >= 2) {
+    const b = out[out.length - 1]
+    const a = out[out.length - 2]
+    const seg = Math.hypot(b.x - a.x, b.y - a.y)
+    if (seg > rest) {
+      const t = (seg - rest) / seg
+      out[out.length - 1] = { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t }
+      return out
+    }
+    rest -= seg
+    out.pop()
+  }
+  return out
+}
+
+/** 終点に置く矢じりの三角形と、その根元で止めた線を返す */
+function arrowHead(points: Pt[], strokeWidth: number): { tri: string; shaft: Pt[] } {
+  const len = ARROW_LEN * strokeWidth
+  const end = points[points.length - 1]
+  const prev = points[points.length - 2]
+  const d = Math.hypot(end.x - prev.x, end.y - prev.y) || 1
+  const ux = (end.x - prev.x) / d
+  const uy = (end.y - prev.y) / d
+  const bx = end.x - ux * len
+  const by = end.y - uy * len
+  const hw = (ARROW_WIDTH * strokeWidth) / 2
+  const tri = [
+    `${end.x.toFixed(1)},${end.y.toFixed(1)}`,
+    `${(bx - uy * hw).toFixed(1)},${(by + ux * hw).toFixed(1)}`,
+    `${(bx + uy * hw).toFixed(1)},${(by - ux * hw).toFixed(1)}`
+  ].join(' ')
+  return { tri, shaft: trimEnd(points, len) }
+}
+
 function routeOrthogonal(
   edges: RelEdge[],
   positions: Record<string, Pt>,
@@ -657,19 +702,6 @@ export default function RelationGraph({
           else setView({ x: 0, y: 0, zoom: 1 })
         }}
       >
-        <defs>
-          <marker
-            id="rel-arrow"
-            viewBox="0 0 10 10"
-            refX="9"
-            refY="5"
-            markerWidth="4.5"
-            markerHeight="4.5"
-            orient="auto-start-reverse"
-          >
-            <path d="M 0 0 L 10 5 L 0 10 z" fill="context-stroke" />
-          </marker>
-        </defs>
         {edges.map((edge) => {
           const from = positions[edge.from]
           const to = positions[edge.to]
@@ -703,17 +735,21 @@ export default function RelationGraph({
           }
           const pointsAttr = pts.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ')
           const isSelected = selectedEdge?.from === edge.from && selectedEdge?.to === edge.to
+          const strokeWidth = 1 + Math.abs(edge.score) * 3
+          const opacity = isSelected ? 1 : 0.4 + Math.abs(edge.score) * 0.5
+          const { tri, shaft } = arrowHead(pts, strokeWidth)
           return (
             <g key={key}>
               <polyline
-                points={pointsAttr}
+                points={shaft.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ')}
                 fill="none"
                 stroke={edgeColor(edge.score)}
-                strokeWidth={1 + Math.abs(edge.score) * 3}
-                strokeOpacity={isSelected ? 1 : 0.4 + Math.abs(edge.score) * 0.5}
+                strokeWidth={strokeWidth}
+                strokeOpacity={opacity}
                 strokeDasharray={edge.score === 0 ? '4 4' : undefined}
-                markerEnd="url(#rel-arrow)"
               />
+              {/* 矢じり: 線と同じ不透明度にして色が浮かないようにする */}
+              <polygon points={tri} fill={edgeColor(edge.score)} fillOpacity={opacity} />
               {edge.label && (
                 <text
                   x={labelX}
