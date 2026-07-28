@@ -132,7 +132,8 @@ export default function RelationGraph({
     }
   }, [scrubNode?.id, scrubNode?.updated_at])
 
-  // 表示対象: 登場済みキャラ + score 非ゼロの関係のみ(スパース)
+  // 表示対象: 登場済みキャラ + イベントが発行された関係のみ(スパース)。
+  // score が 0 でも履歴(reasons)があれば「中立に戻った関係」として破線で表示する
   const { visibleChars, edges } = useMemo(() => {
     if (!state) return { visibleChars: [] as string[], edges: [] as RelEdge[] }
     const chars = Object.keys(state.chars).filter((id) => charMap[id])
@@ -141,7 +142,8 @@ export default function RelationGraph({
       const cs = state.chars[from]
       for (const [to, rel] of Object.entries(cs.relationships)) {
         if (rel.target_type !== 'char' || !charMap[to]) continue
-        if (rel.score === 0 || Math.abs(rel.score) < threshold) continue
+        if (rel.score === 0 && rel.reasons.length === 0) continue
+        if (Math.abs(rel.score) < threshold) continue
         rels.push({ from, to, score: rel.score, reasons: rel.reasons, label: rel.label })
       }
     }
@@ -372,6 +374,7 @@ export default function RelationGraph({
                 stroke={edgeColor(edge.score)}
                 strokeWidth={1 + Math.abs(edge.score) * 3}
                 strokeOpacity={isSelected ? 1 : 0.4 + Math.abs(edge.score) * 0.5}
+                strokeDasharray={edge.score === 0 ? '4 4' : undefined}
                 markerEnd="url(#rel-arrow)"
               />
               {edge.label && (
@@ -489,7 +492,7 @@ export default function RelationGraph({
         })}
         {visibleChars.length === 0 && (
           <text x={WIDTH / 2} y={HEIGHT / 2} textAnchor="middle" fontSize="12" fill="var(--text-faint)">
-            この時点で score 非ゼロの関係はありません
+            この時点で表示できる関係はありません
           </text>
         )}
       </svg>
