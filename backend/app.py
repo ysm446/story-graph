@@ -389,6 +389,16 @@ class PositionIn(BaseModel):
     y: float
 
 
+class NodePositionIn(BaseModel):
+    id: str
+    x: float
+    y: float
+
+
+class PositionsIn(BaseModel):
+    positions: list[NodePositionIn]
+
+
 class NodeImageIn(BaseModel):
     image_path: str | None = None
 
@@ -461,6 +471,17 @@ async def set_node_position(node_id: str, body: PositionIn) -> dict[str, str]:
         raise HTTPException(404, "node not found")
     store.set_node_position(node_id, body.x, body.y)
     return {"status": "ok"}
+
+
+@app.post("/layout/positions")
+async def set_node_positions(body: PositionsIn) -> dict[str, int]:
+    """複数ノードの配置をまとめて保存する。
+
+    自動レイアウト(pos が NULL)のノードを、画面に出ている位置でそのまま
+    固定するのに使う。以後は構造が変わってもノードが勝手に動かない。
+    """
+    updated = store.set_node_positions([(p.id, p.x, p.y) for p in body.positions])
+    return {"updated": updated}
 
 
 @app.post("/layout/reset")

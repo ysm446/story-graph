@@ -665,6 +665,21 @@ class Store:
         )
         self.conn.commit()
 
+    def set_node_positions(self, positions: list[tuple[str, float, float]]) -> int:
+        """複数ノードの手動配置をまとめて保存する(1 トランザクション)。
+
+        自動レイアウトのノードを「いま見えている位置」で固定するのに使う。
+        存在しない ID は黙って無視する(戻り値は実際に更新した件数)。
+        """
+        updated = 0
+        for node_id, x, y in positions:
+            cur = self.conn.execute(
+                "UPDATE nodes SET pos_x = ?, pos_y = ? WHERE id = ?", (x, y, node_id)
+            )
+            updated += cur.rowcount
+        self.conn.commit()
+        return updated
+
     def reset_positions(self) -> None:
         self.conn.execute("UPDATE nodes SET pos_x = NULL, pos_y = NULL")
         self.conn.commit()

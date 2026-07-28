@@ -1154,6 +1154,10 @@ function StructureModeInner({
   const genElapsed = useElapsedSeconds(generating)
   const genTaskIdRef = useRef<string | null>(null) // 生成タスクの ID(中止ボタン用)
   const [flowNodes, setFlowNodes] = useState<BeatFlowNode[]>([])
+  // 保存座標へ焼き付け済みのノード(pinLayout の二重送信よけ)と、
+  // 遅延して読むための最新の flowNodes
+  const pinnedRef = useRef<Set<string>>(new Set())
+  const flowNodesRef = useRef<BeatFlowNode[]>([])
   // エッジ選択(Delete で切断)と、チェーン再抽出の進捗
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null)
   // 右クリックメニュー(範囲選択した複数ノードへの一括操作)
@@ -1393,10 +1397,13 @@ function StructureModeInner({
       const computed = layoutDag(graphNodes, graphEdges, heights)
       return graphNodes.map((n) => {
         const existing = prevById.get(n.id)
+        // 一度置いたノードは動かさない。エッジの切断・正史の切り替え・シーンの
+        // 追加や削除で DAG の形が変わっても、既に画面にあるノードは自分の位置を
+        // 保つ(自動整列は ⟲ を押したときだけ)。新しく現れたノードだけ計算する
         const position =
           n.pos_x != null && n.pos_y != null
             ? { x: n.pos_x, y: n.pos_y }
-            : computed[n.id] ?? { x: 0, y: 0 }
+            : existing?.position ?? computed[n.id] ?? { x: 0, y: 0 }
         return {
           id: n.id,
           type: 'beatNode' as const,
@@ -1419,8 +1426,9 @@ function StructureModeInner({
     })
   }, [graphNodes, graphEdges, charMap, placeMap, effectiveLocations, busyNodeIds])
 
-  // 実測高さが揃ったら、自動レイアウトのノードだけ位置を組み直す
-  // (初回マウント直後は高さ未測定のため、測定後に一度リフローする)
+  // 実測高さが揃ったら、まだ置き場所が決まっていないノードだけ位置を組み直す
+  // (初回マウント直後は高さ未測定のため、測定後に一度リフローする)。
+  // 一度焼き付けた(下の effect で保存座標にした)ノードは以後この対象から外れる
   const heightsSig = flowNodes.map((n) => `${n.id}:${Math.round(n.measured?.height ?? 0)}`).join(',')
   useEffect(() => {
     setFlowNodes((prev) => {
@@ -1434,6 +1442,7 @@ function StructureModeInner({
       const next = prev.map((n) => {
         const gn = graphNodes.find((g) => g.id === n.id)
         if (!gn || (gn.pos_x != null && gn.pos_y != null)) return n // 手動配置は触らない
+        if (pinnedRef.current.has(n.id)) return n // 焼き付け済み(保存待ち)も触らない
         const p = computed[n.id]
         if (!p || (Math.abs(n.position.x - p.x) < 0.5 && Math.abs(n.position.y - p.y) < 0.5)) return n
         changed = true
@@ -1444,9 +1453,88 @@ function StructureModeInner({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [heightsSig])
 
+  // 高さが測れて位置が落ち着いたノードを、その位置のまま保存座標に焼き付ける。
+  // こうしておくと、エッジを切る / 正史を切り替える / シーンを足すといった
+  // 構造の変化で DAG の形が変わっても、ノードが自動整列で動くことがない
+  // (自動整列に戻したいときはツールバーの ⟲)。高さの測定は 1 ノードずつ
+  // 届くので、落ち着くまで待ってから 1 リクエストにまとめる
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      const targets = flowNodesRef.current.filter(
+        (n) =>
+          !n.dragging &&
+          !!n.measured?.height &&
+          !pinnedRef.current.has(n.id) &&
+          n.data.storyNode.pos_x == null &&
+          n.data.storyNode.pos_y == null
+      )
+      if (targets.length === 0) return
+      for (const n of targets) pinnedRef.current.add(n.id)
+      void api
+        .setNodePositions(
+          targets.map((n) => ({ id: n.id, x: Math.round(n.position.x), y: Math.round(n.position.y) }))
+        )
+        .catch(() => {
+          // 保存に失敗しても画面上の位置はそのまま。次の測定で焼き付け直す
+          for (const n of targets) pinnedRef.current.delete(n.id)
+        })
+    }, 400)
+    return () => clearTimeout(timer)
+  }, [heightsSig])
+
+  useEffect(() => {
+    flowNodesRef.current = flowNodes
+  }, [flowNodes])
+
   const handleNodesChange = useCallback((changes: NodeChange<BeatFlowNode>[]): void => {
     setFlowNodes((nds) => applyNodeChanges(changes, nds))
   }, [])
+
+  /** ⟲ の中身。
+   *
+   * - 2 つ以上のノードを選択中: **選択したノードだけ**を整列する。選択範囲の
+   *   左上を動かさないよう、部分 DAG のレイアウト結果を今の左上へ寄せる
+   *   (選択の外にあるノードとの重なりは作者に任せる)
+   * - それ以外: 手動配置をすべて捨てて全体を自動レイアウトに戻す
+   */
+  const realignLayout = useCallback(async (): Promise<void> => {
+    const selected = flowNodes.filter((n) => n.selected)
+    if (selected.length < 2) {
+      await api.resetLayout()
+      pinnedRef.current.clear()
+      setFlowNodes([]) // 保存座標を消した上でドラッグ中間状態も破棄して再構築する
+      await reload()
+      return
+    }
+    const ids = new Set(selected.map((n) => n.id))
+    const heights: Record<string, number> = {}
+    for (const n of selected) {
+      if (n.measured?.height) heights[n.id] = n.measured.height
+    }
+    const computed = layoutDag(
+      graphNodes.filter((n) => ids.has(n.id)),
+      graphEdges.filter((e) => ids.has(e.from_node) && ids.has(e.to_node)),
+      heights
+    )
+    const minX = Math.min(...selected.map((n) => n.position.x))
+    const minY = Math.min(...selected.map((n) => n.position.y))
+    const positions = selected.map((n) => ({
+      id: n.id,
+      x: Math.round(minX + (computed[n.id]?.x ?? 0)),
+      y: Math.round(minY + (computed[n.id]?.y ?? 0))
+    }))
+    const byId = new Map(positions.map((p) => [p.id, p]))
+    setFlowNodes((prev) =>
+      prev.map((n) => {
+        const p = byId.get(n.id)
+        return p ? { ...n, position: { x: p.x, y: p.y } } : n
+      })
+    )
+    for (const p of positions) pinnedRef.current.add(p.id)
+    await api.setNodePositions(positions)
+    setGenStatus(`${positions.length} シーンを整列しました`)
+    await reload()
+  }, [flowNodes, graphNodes, graphEdges, reload])
 
   // 選択ノードの削除(削除ボタンと Delete キーの共通処理)。子を持つノードは削除できない
   const deleteNodeById = useCallback(
@@ -1949,6 +2037,7 @@ function StructureModeInner({
   )
 
   const selectedNode = graphNodes.find((n) => n.id === selectedId) ?? null
+  const selectedCount = flowNodes.filter((n) => n.selected).length // ⟲ の対象(2 つ以上で部分整列)
 
   /** 新しいシーンを親の右隣に手動配置する(**親が手動配置のときだけ**)。
    *
@@ -2176,16 +2265,14 @@ function StructureModeInner({
                     </button>
                   )}
                   <button
-                    onClick={() => {
-                      void api.resetLayout().then(() => {
-                        // 保存座標を消した上でドラッグ中間状態も破棄して再構築する
-                        setFlowNodes([])
-                        void reload()
-                      })
-                    }}
+                    onClick={() => void realignLayout()}
                     className="rounded-lg border px-2.5 py-1.5 text-[13px] shadow-lg shadow-black/30"
                     style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-                    title="手動配置をリセットして自動レイアウトに戻す"
+                    title={
+                      selectedCount >= 2
+                        ? `選択中の ${selectedCount} シーンだけを整列する`
+                        : '手動配置をリセットして全体を自動レイアウトに戻す(複数選択中なら選択分だけ整列)'
+                    }
                   >
                     ⟲
                   </button>

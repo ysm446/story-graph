@@ -21,6 +21,17 @@ def test_position_save_and_reset(store):
     assert store.get_node(n1["id"])["pos_x"] is None
 
 
+def test_set_node_positions_bulk(store):
+    n1 = store.append_node({"beat": "b1", "cast": ["aya"]})
+    n2 = store.append_node({"beat": "b2", "cast": ["aya"], "parent_id": n1["id"]})
+    updated = store.set_node_positions(
+        [(n1["id"], 0.0, 0.0), (n2["id"], 344.0, 56.0), ("missing", 1.0, 1.0)]
+    )
+    assert updated == 2  # 存在しない ID は黙って無視する
+    assert (store.get_node(n1["id"])["pos_x"], store.get_node(n1["id"])["pos_y"]) == (0.0, 0.0)
+    assert (store.get_node(n2["id"])["pos_x"], store.get_node(n2["id"])["pos_y"]) == (344.0, 56.0)
+
+
 def test_position_does_not_dirty_state_or_renders(store):
     n1 = store.append_node({"beat": "b1", "cast": ["aya"]})
     store.get_state(n1["id"])  # キャッシュを温める

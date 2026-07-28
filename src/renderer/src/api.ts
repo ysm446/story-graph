@@ -92,6 +92,12 @@ export const api = {
   deleteNode: (id: string) => request<unknown>(`/nodes/${id}`, { method: 'DELETE' }),
   setNodePosition: (id: string, x: number, y: number) =>
     request<unknown>(`/nodes/${id}/position`, { method: 'POST', body: JSON.stringify({ x, y }) }),
+  // 複数ノードの配置をまとめて保存する(自動レイアウトの結果を焼き付けるのに使う)
+  setNodePositions: (positions: Array<{ id: string; x: number; y: number }>) =>
+    request<{ updated: number }>('/layout/positions', {
+      method: 'POST',
+      body: JSON.stringify({ positions })
+    }),
   setNodeImage: (id: string, imagePath: string | null) =>
     request<unknown>(`/nodes/${id}/image`, { method: 'POST', body: JSON.stringify({ image_path: imagePath }) }),
   // 動画挿絵のサムネイル(videoThumb.ts が生成して保存する)
