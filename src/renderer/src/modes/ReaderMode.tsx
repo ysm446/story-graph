@@ -295,7 +295,12 @@ export default function ReaderMode({
       const hasImage = !!scenes[si].node.image_path
       const maxHeight = hasImage ? areaHeight - Math.floor(areaHeight * 0.42) - 16 : areaHeight
       let pos = 0
+      let pushed = false
       while (pos < prose.length) {
+        // 前のページを改行で区切った名残で、ページの先頭が改行だけになることがある。
+        // そのまま出すと 1 行ぶん空いてしまうので詰める(字下げの全角空白は残す)
+        while (pos < prose.length && (prose[pos] === '\n' || prose[pos] === '\r')) pos += 1
+        if (pos >= prose.length) break
         let lo = pos + 1
         let hi = prose.length
         let fit = pos + 1
@@ -317,8 +322,11 @@ export default function ReaderMode({
           if (breakAt > slice.length * 0.5) end = pos + breakAt
         }
         result.push({ sceneIndex: si, text: prose.slice(pos, end) })
+        pushed = true
         pos = end
       }
+      // 改行だけの清書でもシーンは 1 ページ持たせる(挿絵とシーン移動のため)
+      if (!pushed) result.push({ sceneIndex: si, text: '' })
     }
     measurer.textContent = ''
     setPages(result)
