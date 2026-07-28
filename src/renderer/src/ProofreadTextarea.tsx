@@ -254,19 +254,22 @@ export default function ProofreadTextarea({
           ✎ 校正
         </button>
       )}
+      {/* 本文に重ねると 1 行目が読めなくなるので、テキストエリアの下に出す */}
       {backup !== null && !result && (
-        <button
-          type="button"
-          onClick={() => {
-            onChange(backup)
-            setBackup(null)
-          }}
-          className="absolute right-2 top-2 rounded-md border px-1.5 py-px text-[10px]"
-          style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }}
-          title="校正前の文章に戻す"
-        >
-          ↩ 元に戻す
-        </button>
+        <span className="mt-1 flex justify-end">
+          <button
+            type="button"
+            onClick={() => {
+              onChange(backup)
+              setBackup(null)
+            }}
+            className="rounded-md border px-1.5 py-px text-[10px]"
+            style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }}
+            title="校正前の文章に戻す"
+          >
+            ↩ 元に戻す
+          </button>
+        </span>
       )}
       {error && (
         <span className="mt-1 block text-[11px]" style={{ color: 'var(--text-faint)' }}>
