@@ -830,15 +830,16 @@ export default function ChatDrawer({
           })}
         </div>
       </aside>
-      {/* リサイズハンドル(見た目は 1px の境界線、当たり判定は幅 4px) */}
+      {/* リサイズハンドル: 線はレイアウト実体の 1px、当たり判定だけ左右 3px はみ出させる */}
       <div
-        onPointerDown={beginSidebarResize}
-        className="group relative w-1 shrink-0 cursor-col-resize"
+        className="relative w-px shrink-0 cursor-col-resize transition-colors hover:bg-[var(--accent-border)]"
+        style={{ background: 'var(--border)' }}
         title="ドラッグで幅を変更"
       >
         <div
-          className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 transition-colors group-hover:bg-[var(--accent-border)]"
-          style={{ background: 'var(--border)' }}
+          onPointerDown={beginSidebarResize}
+          className="absolute inset-y-0 z-10 cursor-col-resize"
+          style={{ left: -3, right: -3 }}
         />
       </div>
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">

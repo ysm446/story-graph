@@ -2509,13 +2509,14 @@ function StructureModeInner({
           <>
             {/* 上下の分割線(インスペクタの分割線と同じ見た目・当たり判定) */}
             <div
-              onPointerDown={beginChatResize}
-              className="group relative h-1 shrink-0 cursor-row-resize"
+              className="relative h-px shrink-0 cursor-row-resize transition-colors hover:bg-[var(--accent-border)]"
+              style={{ background: 'var(--border)' }}
               title="ドラッグで高さを変更"
             >
               <div
-                className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 transition-colors group-hover:bg-[var(--accent-border)]"
-                style={{ background: 'var(--border)' }}
+                onPointerDown={beginChatResize}
+                className="absolute inset-x-0 z-10 cursor-row-resize"
+                style={{ top: -3, bottom: -3 }}
               />
             </div>
             <div className="min-h-0 shrink-0" style={{ height: chatHeight }}>
@@ -2533,15 +2534,16 @@ function StructureModeInner({
           </>
         )}
         </div>
-        {/* リサイズハンドル(見た目は 1px のライン、当たり判定は幅 4px のまま) */}
+        {/* リサイズハンドル: 線はレイアウト実体の 1px、当たり判定だけ左右 3px はみ出させる */}
         <div
-          onPointerDown={beginInspectorResize}
-          className="group relative w-1 shrink-0 cursor-col-resize"
+          className="relative w-px shrink-0 cursor-col-resize transition-colors hover:bg-[var(--accent-border)]"
+          style={{ background: 'var(--border)' }}
           title="ドラッグで幅を変更"
         >
           <div
-            className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 transition-colors group-hover:bg-[var(--accent-border)]"
-            style={{ background: 'var(--border)' }}
+            onPointerDown={beginInspectorResize}
+            className="absolute inset-y-0 z-10 cursor-col-resize"
+            style={{ left: -3, right: -3 }}
           />
         </div>
         <aside

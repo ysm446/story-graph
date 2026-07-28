@@ -300,13 +300,14 @@ export default function CharactersMode(): React.JSX.Element {
       </aside>
       {/* サイドバー幅のリサイズハンドル(構造モードのインスペクタと同じ作り) */}
       <div
-        onPointerDown={beginSidebarResize}
-        className="group relative w-1 shrink-0 cursor-col-resize"
+        className="relative w-px shrink-0 cursor-col-resize transition-colors hover:bg-[var(--accent-border)]"
+        style={{ background: 'var(--border)' }}
         title="ドラッグで幅を変更"
       >
         <div
-          className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 transition-colors group-hover:bg-[var(--accent-border)]"
-          style={{ background: 'var(--border)' }}
+          onPointerDown={beginSidebarResize}
+          className="absolute inset-y-0 z-10 cursor-col-resize"
+          style={{ left: -3, right: -3 }}
         />
       </div>
       <main className="inspector-scrollbar min-w-0 flex-1 overflow-y-auto p-6">
