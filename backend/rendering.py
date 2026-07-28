@@ -3,7 +3,6 @@
 - シーン n のレンダー時、直前レンダー散文の末尾を渡して文体と場面転換を接続する
 - ビートにある出来事以外を発生させない(プロンプトで厳守)
 - pov_char 指定時は、そのキャラの state にある情報しか知らないものとして書く
-- ビート昇格: 散文中の選択テキストからビート追記案 + イベント diff 案を生成
 """
 
 from __future__ import annotations
@@ -11,7 +10,6 @@ from __future__ import annotations
 import json
 from typing import Any, AsyncIterator
 
-import generation
 import llm
 from store import Store
 
@@ -200,57 +198,3 @@ async def render_stream(
     except Exception as e:  # noqa: BLE001
         yield _sse({"error": f"{type(e).__name__}: {e}"})
 
-
-# ---- ビート昇格(散文 → 正史への唯一の還流経路。spec §7) --------------
-
-PROMOTE_PROMPT = """あなたは物語の編集者です。散文レンダリングの中からユーザーが気に入った一節を、
-正史(ビート = 出来事の仕様書)に取り込むための提案を作ります。
-
-- beat_appendix: 選択された一節の内容をビートに追記する 1〜2 文(出来事の記述として)
-- events: その内容が状態に影響する場合のイベント(なければ空配列)
-- 選択部分に書かれていないことを追加しない"""
-
-
-def promote_schema(char_ids: list[str]) -> dict[str, Any]:
-    return {
-        "type": "object",
-        "properties": {
-            "beat_appendix": {"type": "string"},
-            "events": {"type": "array", "items": {"anyOf": generation._event_schemas(char_ids)}},
-        },
-        "required": ["beat_appendix", "events"],
-    }
-
-
-async def promote_preview(
-    store: Store, base_url: str, node_id: str, selection: str
-) -> dict[str, Any]:
-    node = store.get_node(node_id)
-    if node is None:
-        raise KeyError(f"node not found: {node_id}")
-    char_ids = sorted(store.known_char_ids())
-    messages = [
-        {"role": "system", "content": PROMOTE_PROMPT},
-        {
-            "role": "user",
-            "content": "\n".join(
-                [
-                    "## 現在のビート",
-                    node["beat"],
-                    "",
-                    "## ユーザーが選択した散文の一節",
-                    selection,
-                ]
-            ),
-        },
-    ]
-    result = await llm.chat_json(
-        messages,
-        base_url=base_url,
-        schema=promote_schema(char_ids),
-        temperature=0.3,
-        max_tokens=1024,
-        label="シーン取り込み提案",
-    )
-    generation.normalize_events(result.get("events", []))
-    return result

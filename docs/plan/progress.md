@@ -1,7 +1,7 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-07-24 22:38
-更新日時: 2026-07-27 08:25
+更新日時: 2026-07-28 12:50
 
 ## 現在の状態
 
@@ -31,7 +31,7 @@
 
 - [x] **Phase 3 — 関係グラフ**(2026-07-25): インスペクタ「関係図」タブ(`src/renderer/src/RelationGraph.tsx`)。有向グラフ(色=感情価 / 太さ=|score| / 矢印=方向)、正史パスの時間スクラブ、|score| 閾値フィルタ、ノードクリックでエゴネットワーク、エッジクリックで reasons のイベント履歴(delta/理由/ノード)、初回 d3-force 配置 → `characters.graph_x/y` にピン留め保存(ドラッグで再配置可、新キャラのみ追加配置)
 
-- [x] **Phase 4 — 鑑賞モード**(2026-07-25): `backend/rendering.py` + `modes/ReaderMode.tsx`。シーケンシャルレンダリング(直前散文の末尾 ~1400 字をスライディングウィンドウで接続、12B 実機で接続を確認)、スタイルプリセット(seed 2 種 + CRUD API)、POV(pov キャラの state にある情報のみをプロンプトへ)、部分レンダー(「このシーンのみ」「ここから最後まで」、上流編集で renders.stale 自動化)、ビート昇格(散文の選択 → LLM が追記案+イベント diff 案 → 確認して正史へ)、Markdown エクスポート、SSE トークンストリーミング表示
+- [x] **Phase 4 — 鑑賞モード**(2026-07-25): `backend/rendering.py` + `modes/ReaderMode.tsx`。シーケンシャルレンダリング(直前散文の末尾 ~1400 字をスライディングウィンドウで接続、12B 実機で接続を確認)、スタイルプリセット(seed 2 種 + CRUD API)、POV(pov キャラの state にある情報のみをプロンプトへ)、部分レンダー(「このシーンのみ」「ここから最後まで」、上流編集で renders.stale 自動化)、ビート昇格(散文の選択 → LLM が追記案+イベント diff 案 → 確認して正史へ。**使われないため 2026-07-28 に削除**)、Markdown エクスポート、SSE トークンストリーミング表示
 
 - [x] **Phase 5 — 相談チャット**(2026-07-25): `backend/chat_agent.py` + `src/renderer/src/ChatDrawer.tsx`。
   tool calling ループ(news-picker 方式、MAX_TOOL_STEPS=8、上限到達時は打ち切らずまとめさせる)。

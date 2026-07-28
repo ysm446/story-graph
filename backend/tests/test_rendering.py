@@ -111,18 +111,3 @@ def test_stale_marked_on_upstream_edit(store, monkeypatch):
     assert store.latest_render(path[0], preset["id"], None)["stale"] == 1
     assert store.latest_render(path[1], preset["id"], None)["stale"] == 1
 
-
-def test_promote_preview_normalizes(store, monkeypatch):
-    async def fake_chat_json(messages, **kwargs):
-        return {
-            "beat_appendix": "アヤは形見の指輪を握りしめる。",
-            "events": [
-                {"type": "relationship_update", "payload": {"char": "aya", "target": "ken", "delta": 5, "reason": "指輪"}},
-            ],
-        }
-
-    monkeypatch.setattr(llm_mod, "chat_json", fake_chat_json)
-    node_id = store.canon_path()[0]
-    result = asyncio.run(rendering.promote_preview(store, "http://fake", node_id, "指輪を握りしめた"))
-    assert result["beat_appendix"]
-    assert result["events"][0]["payload"]["delta"] == 1.0  # clamp される

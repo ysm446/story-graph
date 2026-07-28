@@ -762,10 +762,6 @@ class RenderIn(BaseModel):
     skip_existing: bool = False  # 既に清書済み(stale でない)シーンを飛ばす
 
 
-class PromoteIn(BaseModel):
-    selection: str
-
-
 @app.get("/presets")
 async def list_presets() -> list[dict[str, Any]]:
     return store.list_presets()
@@ -829,17 +825,6 @@ async def render(body: RenderIn) -> StreamingResponse:
         rendering.render_stream(store, base_url, node_ids, body.preset_id, body.pov_char),
         media_type="text/event-stream",
     )
-
-
-@app.post("/nodes/{node_id}/promote_preview")
-async def promote_preview(node_id: str, body: PromoteIn) -> dict[str, Any]:
-    try:
-        base_url = await llama.ensure_running(store.get_settings())
-        return await rendering.promote_preview(store, base_url, node_id, body.selection)
-    except KeyError:
-        raise HTTPException(404, "node not found")
-    except RuntimeError as e:
-        raise HTTPException(500, str(e))
 
 
 # ---- 相談チャット ---------------------------------------------------

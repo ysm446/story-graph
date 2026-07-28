@@ -3,15 +3,7 @@ import { api, assetUrl, isAbortError, isVideoAsset, renderStream } from '../api'
 import { CrossfadeLoopVideo, DEFAULT_VIDEO_CROSSFADE_SECONDS } from '../CrossfadeLoopVideo'
 import { cancelTask, enqueueTask } from '../tasks'
 import { useElapsedSeconds } from '../useElapsed'
-import type { Character, PromoteProposal, SceneEntry, StylePreset } from '../types'
-
-interface PromoteState {
-  nodeId: string
-  selection: string
-  proposal: PromoteProposal | null
-  loading: boolean
-  error: string | null
-}
+import type { Character, SceneEntry, StylePreset } from '../types'
 
 // 本文フォント(ローカルにインストール済みのものが使われる。無ければ後続へフォールバック)
 const FONT_OPTIONS = [
@@ -203,7 +195,6 @@ export default function ReaderMode({
   const [liveNodeId, setLiveNodeId] = useState<string | null>(null)
   const [liveText, setLiveText] = useState('')
   const [status, setStatus] = useState<string | null>(null)
-  const [promote, setPromote] = useState<PromoteState | null>(null)
   const [presetEditor, setPresetEditor] = useState<PresetDraft | null>(null)
   const [viewMode, setViewMode] = useState<ViewMode>('scroll')
   const [fontId, setFontId] = useState<string>('sans')
@@ -220,7 +211,6 @@ export default function ReaderMode({
 
   const proseFont = FONT_OPTIONS.find((f) => f.id === fontId)?.stack ?? FONT_OPTIONS[0].stack
   const renderElapsed = useElapsedSeconds(rendering)
-  const promoteElapsed = useElapsedSeconds(promote?.loading ?? false)
 
   const reloadPresets = useCallback(async (selectId?: string): Promise<void> => {
     const p = await api.listPresets()
@@ -451,41 +441,6 @@ export default function ReaderMode({
     renderTaskIdRef.current = taskId // ページ内の「■ 清書を中止」用
   }
 
-  // 散文の選択 → ビート昇格
-  const handleMouseUp = (nodeId: string): void => {
-    const selection = window.getSelection()
-    const text = selection?.toString().trim() ?? ''
-    if (!text || text.length < 4) return
-    setPromote({ nodeId, selection: text, proposal: null, loading: false, error: null })
-  }
-
-  const requestProposal = async (): Promise<void> => {
-    if (!promote) return
-    setPromote((p) => (p ? { ...p, loading: true, error: null } : p))
-    try {
-      const proposal = await api.promotePreview(promote.nodeId, promote.selection)
-      setPromote((p) => (p ? { ...p, proposal, loading: false } : p))
-    } catch (e) {
-      setPromote((p) => (p ? { ...p, loading: false, error: String(e) } : p))
-    }
-  }
-
-  const applyProposal = async (): Promise<void> => {
-    if (!promote?.proposal) return
-    const scene = scenes.find((s) => s.node.id === promote.nodeId)
-    if (!scene) return
-    const proposal = promote.proposal
-    await api.updateNode(scene.node.id, { beat: `${scene.node.beat}\n${proposal.beat_appendix}` })
-    if (proposal.events.length > 0) {
-      await api.putEvents(scene.node.id, [
-        ...scene.node.events.map((e) => ({ type: e.type, payload: e.payload, source: e.source })),
-        ...proposal.events.map((e) => ({ ...e, source: 'llm' as const }))
-      ])
-    }
-    setPromote(null)
-    void reloadScenes()
-  }
-
   const exportMarkdown = (): void => {
     const parts = scenes
       .filter((s) => s.render)
@@ -607,11 +562,7 @@ export default function ReaderMode({
     }
     if (scene.render) {
       return (
-        <div
-          className="whitespace-pre-wrap"
-          style={{ ...proseStyle, opacity: stale ? 0.6 : 1 }}
-          onMouseUp={() => handleMouseUp(scene.node.id)}
-        >
+        <div className="whitespace-pre-wrap" style={{ ...proseStyle, opacity: stale ? 0.6 : 1 }}>
           {textOverride ?? scene.render.prose}
           {typing && (
             <span className="ml-0.5 inline-block h-4 w-1.5 align-middle" style={{ background: 'var(--text-faint)' }} />
@@ -975,88 +926,6 @@ export default function ReaderMode({
         />
       )}
 
-      {/* ビート昇格モーダル */}
-      {promote && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center"
-          style={{ background: 'rgba(0,0,0,0.55)' }}
-          onClick={() => setPromote(null)}
-        >
-          <div
-            className="w-[540px] max-w-[90vw] rounded-2xl border p-5"
-            style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)' }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 className="mb-2 text-[14px] font-semibold" style={{ color: 'var(--text)' }}>
-              シーンに取り込む
-            </h3>
-            <div
-              className="mb-3 max-h-28 overflow-y-auto rounded-lg border px-3 py-2 text-[12px] leading-relaxed"
-              style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-dim)' }}
-            >
-              {promote.selection}
-            </div>
-            {promote.proposal ? (
-              <>
-                <div className="mb-1 text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
-                  シーン追記案
-                </div>
-                <div className="mb-3 rounded-lg border px-3 py-2 text-[13px]" style={{ background: 'var(--bg-input)', borderColor: 'var(--border)', color: 'var(--text)' }}>
-                  {promote.proposal.beat_appendix}
-                </div>
-                {promote.proposal.events.length > 0 && (
-                  <>
-                    <div className="mb-1 text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
-                      イベント diff 案
-                    </div>
-                    {promote.proposal.events.map((e, i) => (
-                      <div
-                        key={i}
-                        className="mb-1 rounded-lg border px-3 py-1.5 font-mono text-[11px]"
-                        style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-dim)' }}
-                      >
-                        {e.type} {JSON.stringify(e.payload)}
-                      </div>
-                    ))}
-                  </>
-                )}
-                <div className="mt-3 flex justify-end gap-2">
-                  <button onClick={() => setPromote(null)} className="px-3 py-1.5 text-[13px]" style={{ color: 'var(--text-dim)' }}>
-                    キャンセル
-                  </button>
-                  <button
-                    onClick={() => void applyProposal()}
-                    className="rounded-lg px-4 py-1.5 text-[13px] font-medium text-white"
-                    style={{ background: 'var(--accent)' }}
-                  >
-                    正史に取り込む
-                  </button>
-                </div>
-              </>
-            ) : (
-              <div className="flex items-center justify-between">
-                <span className="text-[12px]" style={{ color: promote.error ? 'var(--danger)' : 'var(--text-dim)' }}>
-                  {promote.error ??
-                    (promote.loading ? `LLM が提案を作成中… (${promoteElapsed}s)` : 'この一節をシーン記述+イベントに変換します')}
-                </span>
-                <div className="flex gap-2">
-                  <button onClick={() => setPromote(null)} className="px-3 py-1.5 text-[13px]" style={{ color: 'var(--text-dim)' }}>
-                    キャンセル
-                  </button>
-                  <button
-                    onClick={() => void requestProposal()}
-                    disabled={promote.loading}
-                    className="rounded-lg px-4 py-1.5 text-[13px] font-medium text-white disabled:opacity-50"
-                    style={{ background: 'var(--accent)' }}
-                  >
-                    提案を生成
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
     </div>
   )
 }

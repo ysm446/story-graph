@@ -2,7 +2,6 @@ import type {
   Character,
   EventInput,
   Place,
-  PromoteProposal,
   SceneEntry,
   StateSnapshot,
   StoryEvent,
@@ -135,12 +134,6 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ beat, field })
     }),
-  promotePreview: (nodeId: string, selection: string) =>
-    request<PromoteProposal>(`/nodes/${nodeId}/promote_preview`, {
-      method: 'POST',
-      body: JSON.stringify({ selection })
-    }),
-
   debugPrompts: () =>
     request<
       Array<{

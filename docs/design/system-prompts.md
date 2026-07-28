@@ -1,7 +1,7 @@
 # システムプロンプト設計
 
 作成日時: 2026-07-25 01:34
-更新日時: 2026-07-26 05:40
+更新日時: 2026-07-28 12:50
 
 本アプリが LLM(llama.cpp / Gemma4)に送るプロンプトの構成と、編集可能な範囲のまとめ。
 「また後々も考えましょう」の検討候補は末尾の「今後の検討事項」に集約する。
@@ -13,7 +13,6 @@
 | シーン生成 | 0.8(リトライ時 0.4) | JSON schema | **設定で本文編集可** + ルール自動追加 | `backend/generation.py` `generation_system_prompt` |
 | イベント抽出(手動シーン) | 0.2(リトライ時 0.5) | JSON schema | 固定 | `backend/generation.py` `EXTRACTION_PROMPT` |
 | 清書(レンダリング) | 0.9 | なし(自由文) | **プリセットで全文編集可** + 自動追加部 | `backend/rendering.py` `build_render_messages` |
-| シーンに取り込む(散文→正史) | 0.3 | JSON schema | 固定 | `backend/rendering.py` `PROMOTE_PROMPT` |
 | LLM 検証パス | 0.1 | JSON schema | 未実装(Phase 6) | - |
 | 相談チャット | 0.7 | tool calling | 固定(`build_system`) | `backend/chat_agent.py` |
 | 質問候補(内容から生成) | 0.9 | JSON schema | 固定(user のみ) | `backend/chat_agent.py` `suggest_questions` |
@@ -129,19 +128,6 @@ location / events)。LLM が発行できるイベントは 5 種のみ
 
 ユーザーメッセージ: キャラ一覧 / 適用前の状態 / 対象ビート本文。
 
-## 4. シーンに取り込む(散文 → 正史への還流)
-
-```
-あなたは物語の編集者です。散文レンダリングの中からユーザーが気に入った一節を、
-正史(ビート = 出来事の仕様書)に取り込むための提案を作ります。
-
-- beat_appendix: 選択された一節の内容をビートに追記する 1〜2 文(出来事の記述として)
-- events: その内容が状態に影響する場合のイベント(なければ空配列)
-- 選択部分に書かれていないことを追加しない
-```
-
-ユーザーメッセージ: 現在のビート + ユーザーが選択した散文の一節。
-
 ## 共通の技術的制約(llama.cpp グラマー)
 
 - JSON schema の `minimum`/`maximum` は無視される → 生成後に `normalize_events` で clamp
@@ -150,7 +136,7 @@ location / events)。LLM が発行できるイベントは 5 種のみ
 
 詳細は [docs/plan/progress.md](../plan/progress.md) の知見メモを参照。
 
-## 5. 相談チャット(エージェント)
+## 4. 相談チャット(エージェント)
 
 システムプロンプト(`chat_agent.build_system`。スコープとキャラ一覧を埋め込み):
 

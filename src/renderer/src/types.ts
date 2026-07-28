@@ -117,7 +117,3 @@ export interface SceneEntry {
   render: RenderResult | null
 }
 
-export interface PromoteProposal {
-  beat_appendix: string
-  events: Array<{ type: string; payload: Record<string, unknown> }>
-}
