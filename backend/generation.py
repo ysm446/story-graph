@@ -69,8 +69,11 @@ def _event_schemas(char_ids: list[str]) -> list[dict[str, Any]]:
             },
             ["char", "target", "delta", "reason", "label"],
         ),
-        # fact_set は scope ごとに分割する(scope=char のとき char を必須にするため。
-        # JSON schema の条件付き required は llama.cpp のグラマー変換が扱えない)
+        # fact_set は scope=char のみ LLM に出させる(char を必須にできる形。
+        # JSON schema の条件付き required は llama.cpp のグラマー変換が扱えない)。
+        # scope=world は「誰もが知っている公のこと」専用で、作者が手動イベントで
+        # 置く(2026-07-29)。LLM に開放すると秘密(真犯人 等)を world に落とし、
+        # キャラチャットや POV 清書で「知らないはずのことを知っている」が起きる
         event(
             "fact_set",
             {
@@ -80,15 +83,6 @@ def _event_schemas(char_ids: list[str]) -> list[dict[str, Any]]:
                 "value": value_ref,
             },
             ["scope", "char", "key", "value"],
-        ),
-        event(
-            "fact_set",
-            {
-                "scope": {"const": "world"},
-                "key": {"type": "string"},
-                "value": value_ref,
-            },
-            ["scope", "key", "value"],
         ),
         # char_introduce / char_retire は LLM に出させない(2026-07-26):
         # 登場は cast から導出でき、退場は「死亡か、その場を去っただけか」の
@@ -242,8 +236,8 @@ EVENT_RULES = """イベント発行のルール:
     目撃・伝聞 0.3〜0.5 / 些細なこと 0.1〜0.2
 - 関係が動いたら relationship_update(delta は -0.3〜+0.3 程度の小さな変化。±1.0 は人生を変える出来事のみ。reason 必須)
   - label にはその時点の関係を一言で(例: 幼なじみ、ライバル視、想いを寄せる、犯人と疑う)。相関図の矢印に表示される
-- 事実の変化は fact_set。キャラ個人の事実(goal, items, 怪我 等)は scope="char" + char にキャラ ID。
-  scope="world" は天気・日付・世界情勢など、特定キャラに属さない事実のみ
+- 事実の変化は fact_set(scope="char" + char にキャラ ID。goal, items, 怪我 等)。
+  そのキャラだけが知る秘密も、知っているキャラの事実として書く(例: 知っていること=真犯人は執事)
   - 誰がどこにいるかはシーンの location と cast で決まる。fact_set で場所を書かないこと"""
 
 GENERATION_RULES = f"""出力は必ず指定の JSON 形式に従ってください。

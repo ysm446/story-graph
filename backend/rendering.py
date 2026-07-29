@@ -60,14 +60,17 @@ def _memory_contents(store: Store, memory_ids: list[str], limit: int = MEMORY_LI
 
 
 def _state_summary(store: Store, node_id: str, cast: list[str], pov_char: str | None) -> str:
-    """レンダー用の状態要約。pov 指定時は pov キャラが知る情報のみ。"""
+    """レンダー用の状態要約。pov 指定時は pov キャラが知る情報のみ。
+
+    world facts は「誰もが知っている公のこと」という規約(2026-07-29。秘密は
+    知っているキャラの char fact に置く)なので、POV でも出してよい。
+    """
     state = store.get_state(node_id)
     lines: list[str] = []
     if state["world"]["time"] is not None:
         lines.append(f"時間: {state['world']['time']}")
-    if pov_char is None:
-        for key, value in state["world"]["facts"].items():
-            lines.append(f"世界: {key} = {value}")
+    for key, value in state["world"]["facts"].items():
+        lines.append(f"世界: {key} = {value}")
     target_chars = [pov_char] if pov_char else cast
     for char_id in target_chars:
         cs = state["chars"].get(char_id)

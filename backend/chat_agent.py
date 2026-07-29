@@ -258,8 +258,10 @@ def build_character_system(store: Store, path: list[str], char_id: str, mode: st
             lines.append(f"- 時間: {state['world']['time']}")
         for k, v in facts.items():
             lines.append(f"- {k}: {v}")
+        # world facts は「誰もが知っている公のこと」という規約(2026-07-29)なので
+        # 本人に渡してよい。秘密は知っているキャラの char fact に置く運用
         for k, v in state["world"]["facts"].items():
-            lines.append(f"- (世界){k}: {v}")
+            lines.append(f"- (世間で知られていること){k}: {v}")
 
     rels = cs.get("relationships") or {}
     if rels:

@@ -251,3 +251,13 @@ def test_retire_is_authored_not_extracted(store, monkeypatch):
     monkeypatch.setattr(llm_mod, "chat_json", fake_chat_json)
     events = asyncio.run(generation.extract_events(store, "http://fake", first["id"]))
     assert [e["type"] for e in events] == ["fact_set", "char_retire"]
+
+
+def test_llm_fact_set_schema_is_char_only():
+    """scope="world" は作者の手動イベント専用(2026-07-29 の規約)。
+    LLM の抽出スキーマに world 変種があると、秘密が world facts に落ちて
+    キャラチャット・POV 清書で「知らないはずのことを知っている」が起きる。"""
+    schemas = generation._event_schemas(["aya"])
+    fact_sets = [s for s in schemas if s["properties"]["type"]["const"] == "fact_set"]
+    assert len(fact_sets) == 1
+    assert fact_sets[0]["properties"]["payload"]["properties"]["scope"]["const"] == "char"
