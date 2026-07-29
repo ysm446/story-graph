@@ -740,7 +740,20 @@ export default function ChatDrawer({
         >
           + 新しい会話
         </button>
-        <div className="inspector-scrollbar min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+        <div
+          className="inspector-scrollbar min-h-0 flex-1 overflow-y-auto px-2 pb-2"
+          onKeyDown={(e) => {
+            // 会話一覧にフォーカスがあるときの Delete は選択中の会話の削除。
+            // stopPropagation で構造モードの Delete(ノード削除)に届かせない
+            if (e.key !== 'Delete') return
+            const target = e.target as HTMLElement
+            if (target.tagName === 'INPUT') return // 名前変更中は文字の削除に任せる
+            if (!chatId) return
+            e.preventDefault()
+            e.stopPropagation()
+            void deleteChat(chatId)
+          }}
+        >
           {history.length === 0 && (
             <div className="px-1 py-3 text-[11px]" style={{ color: 'var(--text-faint)' }}>
               まだ会話がありません
