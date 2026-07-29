@@ -263,6 +263,19 @@ function createWindow(): void {
   }
 }
 
+// 二重起動防止: 2 つ目のインスタンスは即終了し、既存ウィンドウを前面に出す。
+// 二重に起動すると userData の Chromium キャッシュを取り合い、起動ログに
+// GPU キャッシュの Access Denied が並ぶ(実害は小さいが紛らわしい)
+if (!app.requestSingleInstanceLock()) {
+  app.quit()
+}
+app.on('second-instance', () => {
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.focus()
+  }
+})
+
 app.whenReady().then(async () => {
   ipcMain.handle('bootstrap', async () => {
     try {
