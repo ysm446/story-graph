@@ -55,6 +55,8 @@ export interface StoryNode {
   image_path: string | null
   /** 挿絵が動画のときのサムネイル画像(構造モードのカード用。無ければ描画時に生成される) */
   thumb_path: string | null
+  /** このシーンだけの清書の目安の字数(null / 0 = 共通の設定に従う) */
+  target_chars: number | null
   created_at: string
   updated_at: string
   events: StoryEvent[]

@@ -35,13 +35,113 @@ export const FONT_SIZES = [
 /** 1 シーンあたりの目安の字数。0 = 指定なし(モデルに任せる)。
  *  ここに無い値は「字数を指定」として数値入力で扱う */
 export const LENGTH_PRESETS = [
-  { value: 0, label: '分量: おまかせ' },
-  { value: 600, label: '分量: 短め(~600字)' },
-  { value: 1200, label: '分量: 標準(~1200字)' },
-  { value: 2000, label: '分量: 長め(~2000字)' }
+  { value: 600, label: '短め(~600字)' },
+  { value: 1200, label: '標準(~1200字)' },
+  { value: 2000, label: '長め(~2000字)' }
 ]
 const LENGTH_MIN = 100
 const LENGTH_MAX = 5000
+
+/** 字数の呼び名(「共通に従う」の補足表示などに使う) */
+export function lengthLabel(chars: number): string {
+  if (!chars) return 'おまかせ'
+  return LENGTH_PRESETS.find((p) => p.value === chars)?.label ?? `${chars}字`
+}
+
+/** 目安の字数を選ぶプルダウン(+「字数を指定」の数値入力)。
+ *
+ *  共通の設定(鑑賞モードのバー)とシーン個別の指定(構造モードの清書タブ)で
+ *  同じものを使う。違いは先頭の選択肢だけ:
+ *  - 共通: 「おまかせ」(= 分量の指示をしない)
+ *  - 個別: 「共通に従う」(= 共通の設定値を使う)
+ *  どちらも内部表現は 0 なので、扱いは同じ。
+ */
+export function LengthSelect({
+  value,
+  onChange,
+  zeroLabel,
+  className = '',
+  title
+}: {
+  value: number
+  onChange: (chars: number) => void
+  /** 0 のときの選択肢の文言 */
+  zeroLabel: string
+  className?: string
+  title?: string
+}): React.JSX.Element {
+  const isCustom = value > 0 && !LENGTH_PRESETS.some((p) => p.value === value)
+  const [customOpen, setCustomOpen] = useState(isCustom)
+  const [customText, setCustomText] = useState(String(value || 1200))
+  const showCustom = customOpen || isCustom
+  // 別のシーンへ移ったときなど、外から値が変わったら入力欄も追従させる
+  useEffect(() => {
+    setCustomOpen(value > 0 && !LENGTH_PRESETS.some((p) => p.value === value))
+    setCustomText(String(value || 1200))
+  }, [value])
+
+  const commit = (): void => {
+    const parsed = Number(customText)
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      setCustomText(String(value || 1200))
+      return
+    }
+    const clamped = Math.min(Math.max(Math.round(parsed), LENGTH_MIN), LENGTH_MAX)
+    setCustomText(String(clamped))
+    if (clamped !== value) onChange(clamped)
+  }
+
+  return (
+    <>
+      <select
+        value={showCustom ? 'custom' : String(value)}
+        onChange={(e) => {
+          if (e.target.value === 'custom') {
+            setCustomOpen(true)
+            setCustomText(String(value || 1200))
+            if (!value) onChange(1200)
+            return
+          }
+          setCustomOpen(false)
+          onChange(Number(e.target.value))
+        }}
+        className={`rounded-lg border px-2 py-1 text-[12px] ${className}`}
+        style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
+        title={title}
+      >
+        <option value={0}>{zeroLabel}</option>
+        {LENGTH_PRESETS.map((p) => (
+          <option key={p.value} value={p.value}>
+            分量: {p.label}
+          </option>
+        ))}
+        <option value="custom">分量: 字数を指定…</option>
+      </select>
+      {showCustom && (
+        <span className="flex shrink-0 items-center gap-1">
+          <input
+            type="number"
+            value={customText}
+            min={LENGTH_MIN}
+            max={LENGTH_MAX}
+            step={100}
+            onChange={(e) => setCustomText(e.target.value)}
+            onBlur={commit}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') e.currentTarget.blur()
+            }}
+            className="w-20 rounded-lg border px-2 py-1 text-[12px] tabular-nums outline-none"
+            style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
+            title={`${LENGTH_MIN}〜${LENGTH_MAX} 字`}
+          />
+          <span className="text-[11px]" style={{ color: 'var(--text-faint)' }}>
+            字
+          </span>
+        </span>
+      )}
+    </>
+  )
+}
 
 export interface RenderStyleState {
   presets: StylePreset[]
@@ -292,32 +392,19 @@ function PresetEditorModal({
 export function RenderStyleControls({
   style,
   variant = 'full',
+  showLength = true,
   onStatus
 }: {
   style: RenderStyleState
   variant?: 'full' | 'compact'
+  /** 分量のプルダウンを出すか。構造モードの清書タブは**シーン個別**の分量を
+   *  自前で出すので、共通のほうは畳む(同じ列に 2 つ並ぶと意味を取り違える) */
+  showLength?: boolean
   onStatus?: (message: string) => void
 }): React.JSX.Element {
   const [editor, setEditor] = useState<PresetDraft | null>(null)
   const importRef = useRef<HTMLInputElement | null>(null)
   const compact = variant === 'compact'
-  // 目安の字数: プルダウンに無い値なら「字数を指定」として数値入力を出す。
-  // 入力中は文字列で持ち、確定(Enter / フォーカスアウト)のときだけ丸めて保存する
-  const isCustomLength = style.targetChars > 0 && !LENGTH_PRESETS.some((p) => p.value === style.targetChars)
-  const [customOpen, setCustomOpen] = useState(isCustomLength)
-  const [customText, setCustomText] = useState(String(style.targetChars || 1200))
-  const showCustom = customOpen || isCustomLength
-
-  const commitCustomLength = (): void => {
-    const parsed = Number(customText)
-    if (!Number.isFinite(parsed) || parsed <= 0) {
-      setCustomText(String(style.targetChars || 1200))
-      return
-    }
-    const clamped = Math.min(Math.max(Math.round(parsed), LENGTH_MIN), LENGTH_MAX)
-    setCustomText(String(clamped))
-    if (clamped !== style.targetChars) style.setTargetChars(clamped)
-  }
 
   const selectStyle = { background: 'var(--bg-input)', borderColor: 'var(--border)' }
   const buttonClass = 'shrink-0 rounded-lg border px-2 py-1 text-[12px] disabled:opacity-40'
@@ -461,50 +548,14 @@ export function RenderStyleControls({
           </option>
         ))}
       </select>
-      <select
-        value={showCustom ? 'custom' : String(style.targetChars)}
-        onChange={(e) => {
-          if (e.target.value === 'custom') {
-            setCustomOpen(true)
-            setCustomText(String(style.targetChars || 1200))
-            if (!style.targetChars) style.setTargetChars(1200)
-            return
-          }
-          setCustomOpen(false)
-          style.setTargetChars(Number(e.target.value))
-        }}
-        className={`rounded-lg border px-2 py-1 text-[12px] ${compact ? 'min-w-0 flex-1 basis-40' : ''}`}
-        style={selectStyle}
-        title="1 シーンあたりの目安の字数。プロンプトの分量指示と生成上限に効く(目安なので厳密ではない)"
-      >
-        {LENGTH_PRESETS.map((p) => (
-          <option key={p.value} value={p.value}>
-            {p.label}
-          </option>
-        ))}
-        <option value="custom">分量: 字数を指定…</option>
-      </select>
-      {showCustom && (
-        <span className="flex shrink-0 items-center gap-1">
-          <input
-            type="number"
-            value={customText}
-            min={LENGTH_MIN}
-            max={LENGTH_MAX}
-            step={100}
-            onChange={(e) => setCustomText(e.target.value)}
-            onBlur={commitCustomLength}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') e.currentTarget.blur()
-            }}
-            className="w-20 rounded-lg border px-2 py-1 text-[12px] tabular-nums outline-none"
-            style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
-            title={`${LENGTH_MIN}〜${LENGTH_MAX} 字`}
-          />
-          <span className="text-[11px]" style={{ color: 'var(--text-faint)' }}>
-            字
-          </span>
-        </span>
+      {showLength && (
+        <LengthSelect
+          value={style.targetChars}
+          onChange={style.setTargetChars}
+          zeroLabel="分量: おまかせ"
+          className={compact ? 'min-w-0 flex-1 basis-40' : ''}
+          title="全シーン共通の目安の字数。シーンごとの指定があればそちらが優先する"
+        />
       )}
       {editor && (
         <PresetEditorModal

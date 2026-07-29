@@ -38,6 +38,14 @@ def _max_tokens(target_chars: int | None) -> int:
     return min(max(int(target_chars * TOKENS_PER_CHAR), 1024), MAX_TOKENS_CAP)
 
 
+def effective_target_chars(node: dict[str, Any], default_chars: int | None) -> int | None:
+    """このシーンに効く目安の字数。ノードの個別指定が共通の設定に優先する。"""
+    own = node.get("target_chars")
+    if own and int(own) > 0:
+        return int(own)
+    return default_chars
+
+
 def _sse(data: dict[str, Any]) -> str:
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
@@ -181,7 +189,10 @@ async def render_stream(
     pov_char: str | None,
     target_chars: int | None = None,
 ) -> AsyncIterator[str]:
-    """node_ids を順にレンダーする SSE ストリーム。"""
+    """node_ids を順にレンダーする SSE ストリーム。
+
+    target_chars は共通の設定(既定値)。シーンに個別指定があればそちらが優先する。
+    """
     try:
         preset = store.get_preset(preset_id)
         if preset is None:
@@ -204,13 +215,14 @@ async def render_stream(
                     if prev:
                         prev_tail = prev["prose"][-PREV_TAIL_CHARS:]
             yield _sse({"scene_start": node_id, "title": node["title"]})
-            messages = build_render_messages(store, node, preset, pov_char, prev_tail, target_chars)
+            chars = effective_target_chars(node, target_chars)
+            messages = build_render_messages(store, node, preset, pov_char, prev_tail, chars)
             prose_parts: list[str] = []
             async for delta in llm.chat_stream(
                 messages,
                 base_url=base_url,
                 temperature=RENDER_TEMPERATURE,
-                max_tokens=_max_tokens(target_chars),
+                max_tokens=_max_tokens(chars),
                 label=f"清書: {node['title'] or '(無題)'}",
             ):
                 prose_parts.append(delta)

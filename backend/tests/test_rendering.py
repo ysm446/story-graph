@@ -115,6 +115,46 @@ def test_target_chars_adds_length_instruction_and_raises_max_tokens(store, monke
     assert kwargs["max_tokens"] == 5000
 
 
+def test_node_target_chars_overrides_the_shared_default(store, monkeypatch):
+    """シーン個別の分量が共通の設定より優先される(一括清書でシーンごとに変わる)。"""
+    captured = []
+
+    async def fake_stream(messages, **kwargs):
+        captured.append((messages, kwargs))
+        yield "本文"
+
+    monkeypatch.setattr(llm_mod, "chat_stream", fake_stream)
+    preset = store.list_presets()[0]
+    path = store.canon_path()
+    store.set_node_target_chars(path[0], 2000)  # 1 シーン目だけ長め
+    collect_sse(rendering.render_stream(store, "http://fake", path, preset["id"], None, 600))
+    first, second = captured[0][0][0]["content"], captured[1][0][0]["content"]
+    assert "1500〜2500 字程度" in first  # 個別指定の 2000
+    assert "450〜750 字程度" in second  # 共通の 600
+    assert captured[0][1]["max_tokens"] == 5000
+    assert captured[1][1]["max_tokens"] == 1500
+
+
+def test_node_target_chars_applies_without_shared_default(store, monkeypatch):
+    """共通がおまかせでも、指定のあるシーンだけ分量が効く。"""
+    captured = []
+
+    async def fake_stream(messages, **kwargs):
+        captured.append((messages, kwargs))
+        yield "本文"
+
+    monkeypatch.setattr(llm_mod, "chat_stream", fake_stream)
+    preset = store.list_presets()[0]
+    path = store.canon_path()
+    store.set_node_target_chars(path[1], 800)
+    collect_sse(rendering.render_stream(store, "http://fake", path, preset["id"], None))
+    assert "分量:" not in captured[0][0][0]["content"]
+    assert "600〜1000 字程度" in captured[1][0][0]["content"]
+    # 0 を渡すと個別指定を外せる(共通に戻る)
+    store.set_node_target_chars(path[1], 0)
+    assert store.get_node(path[1])["target_chars"] is None
+
+
 def test_no_length_instruction_by_default(store, monkeypatch):
     captured = []
 

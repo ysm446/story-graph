@@ -407,6 +407,11 @@ class NodeThumbIn(BaseModel):
     thumb_path: str | None = None
 
 
+class NodeTargetCharsIn(BaseModel):
+    # このシーンだけの目安の字数。None / 0 で共通の設定(reader_target_chars)に従う
+    target_chars: int | None = None
+
+
 # ---- 画像/動画アセット(装飾専用。LLM には渡さない) ------------------
 
 ALLOWED_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
@@ -462,6 +467,14 @@ async def set_node_thumb(node_id: str, body: NodeThumbIn) -> dict[str, str]:
     if store.get_node(node_id) is None:
         raise HTTPException(404, "node not found")
     store.set_node_thumb(node_id, body.thumb_path)
+    return {"status": "ok"}
+
+
+@app.post("/nodes/{node_id}/target_chars")
+async def set_node_target_chars(node_id: str, body: NodeTargetCharsIn) -> dict[str, str]:
+    if store.get_node(node_id) is None:
+        raise HTTPException(404, "node not found")
+    store.set_node_target_chars(node_id, body.target_chars)
     return {"status": "ok"}
 
 

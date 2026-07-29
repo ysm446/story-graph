@@ -1,7 +1,7 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-07-24 22:38
-更新日時: 2026-07-29 20:36
+更新日時: 2026-07-29 21:30
 
 ## 現在の状態
 
@@ -9,7 +9,7 @@
 - **ライブラリ方式を導入**(lm-graph 踏襲): ストーリーごとのフォルダに `story-graph.db` を置く。現在のライブラリと最近使ったライブラリは `%APPDATA%/story-graph/app.json`(Electron userData)に保存。ヘッダー右のドロップダウンで切替(切替時はレンダラをリロード)。デフォルトはリポジトリ内 `data/`。
 - `npm run dev` で Electron が起動し、FastAPI sidecar(ポート 8765〜自動探索)が自動 spawn される。
 - バックエンドは単体でも起動可能: `cd backend && ../.venv/Scripts/python.exe -m uvicorn app:app --port 8765`
-- テスト: `cd backend && ../.venv/Scripts/python.exe -m pytest tests/ -q`(111件、全て成功)
+- テスト: `cd backend && ../.venv/Scripts/python.exe -m pytest tests/ -q`(113件、全て成功)
 
 ## 完了済み
 
@@ -84,10 +84,13 @@
   文章を直したいときはシーン本文を直して清書し直す)
 
 - [x] **清書の分量指定**(2026-07-29): 目安の字数(おまかせ / 短め ~600 / 標準 ~1200 / 長め ~2000 /
-  字数を指定)を上記の共通コントロールに追加(settings の `reader_target_chars`)。
-  プロンプトには目安の ±25% を幅として渡し、`max_tokens` も字数から算出する
+  字数を指定)。プロンプトには目安の ±25% を幅として渡し、`max_tokens` も字数から算出する
   (`rendering.length_instruction` / `_max_tokens`。従来は 4096 固定で、長い指定だと切れていた)。
-  シーンごとの上書きは付けていない(必要になったら `nodes` に列 1 つ + マイグレーションで足せる)
+  **2 段構え**: 共通の既定値(settings の `reader_target_chars`。鑑賞モードのバーで変える)と、
+  **シーン個別の指定**(`nodes.target_chars`。構造モードの清書タブで変える)。
+  解決はサーバー側(`rendering.effective_target_chars`)なので、全編清書・一括清書でも
+  シーンごとに書き分かる。保存は `POST /nodes/{node_id}/target_chars` で
+  **state を汚さず既存の清書も stale にしない**(分量は fold に無関係)
 
 ## 未完了
 

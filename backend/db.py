@@ -188,6 +188,8 @@ def init_schema(conn: sqlite3.Connection) -> None:
         # 挿絵が動画のときのサムネイル画像。構造モードのカードで動画をデコードしないために持つ
         # (無ければ描画時に生成して埋める。docs/changelog.md 2026-07-27)
         "ALTER TABLE nodes ADD COLUMN thumb_path TEXT",
+        # 清書の目安の字数。NULL / 0 = 共通の設定(settings の reader_target_chars)に従う
+        "ALTER TABLE nodes ADD COLUMN target_chars INTEGER",
         "ALTER TABLE characters ADD COLUMN portrait_path TEXT",  # プロフィール画像(切り抜き後。表示用)
         "ALTER TABLE characters ADD COLUMN portrait_source_path TEXT",  # 元画像(再クロップ用に保持)
         "ALTER TABLE characters ADD COLUMN portrait_crop TEXT",  # 切り抜きパラメータ(JSON。エディタ復元用)

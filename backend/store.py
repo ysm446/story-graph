@@ -572,7 +572,8 @@ class Store:
         cast = data.get("cast")
         self.conn.execute(
             """UPDATE nodes SET title = ?, beat = ?, emotional_core = ?, cast = ?,
-               location = ?, story_time = ?, status = ?, updated_at = ? WHERE id = ?""",
+               location = ?, story_time = ?, status = ?, target_chars = ?, updated_at = ?
+               WHERE id = ?""",
             (
                 data.get("title", current["title"]),
                 data.get("beat", current["beat"]),
@@ -581,6 +582,7 @@ class Store:
                 data.get("location", current["location"]),
                 data.get("story_time", current["story_time"]),
                 data.get("status", current["status"]),
+                data.get("target_chars", current["target_chars"]),
                 _now(),
                 node_id,
             ),
@@ -598,6 +600,16 @@ class Store:
         self.conn.execute(
             "UPDATE nodes SET image_path = ?, thumb_path = NULL WHERE id = ?", (image_path, node_id)
         )
+        self.conn.commit()
+
+    def set_node_target_chars(self, node_id: str, target_chars: int | None) -> None:
+        """このシーンだけの目安の字数(None / 0 = 共通の設定に従う)。
+
+        清書のプロンプトにしか効かず state は変わらないので dirty 化しない。
+        既存の清書も stale にしない(作り直すかどうかは作者が決める)。
+        """
+        value = int(target_chars) if target_chars else None
+        self.conn.execute("UPDATE nodes SET target_chars = ? WHERE id = ?", (value, node_id))
         self.conn.commit()
 
     def set_node_thumb(self, node_id: str, thumb_path: str | None) -> None:

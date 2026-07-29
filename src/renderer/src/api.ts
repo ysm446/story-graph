@@ -101,6 +101,12 @@ export const api = {
     }),
   setNodeImage: (id: string, imagePath: string | null) =>
     request<unknown>(`/nodes/${id}/image`, { method: 'POST', body: JSON.stringify({ image_path: imagePath }) }),
+  // このシーンだけの清書の目安の字数(null / 0 で共通の設定に従う)
+  setNodeTargetChars: (id: string, targetChars: number | null) =>
+    request<unknown>(`/nodes/${id}/target_chars`, {
+      method: 'POST',
+      body: JSON.stringify({ target_chars: targetChars })
+    }),
   // 動画挿絵のサムネイル(videoThumb.ts が生成して保存する)
   setNodeThumb: (id: string, thumbPath: string | null) =>
     request<unknown>(`/nodes/${id}/thumb`, { method: 'POST', body: JSON.stringify({ thumb_path: thumbPath }) }),

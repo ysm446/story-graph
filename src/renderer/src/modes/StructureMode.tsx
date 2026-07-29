@@ -32,7 +32,13 @@ import FactTimeline from '../FactTimeline'
 import { Icon } from '../icons'
 import ProofreadTextarea from '../ProofreadTextarea'
 import RelationGraph from '../RelationGraph'
-import { RenderStyleControls, useRenderStyle, type RenderStyleState } from '../RenderStyle'
+import {
+  LengthSelect,
+  lengthLabel,
+  RenderStyleControls,
+  useRenderStyle,
+  type RenderStyleState
+} from '../RenderStyle'
 import { cancelTask, enqueueTask, useTaskFor } from '../tasks'
 import { useElapsedSeconds } from '../useElapsed'
 import { backfillVideoThumbs } from '../videoThumb'
@@ -1148,13 +1154,16 @@ function RenderTab({
   node,
   style,
   isCanon,
-  onNodeBusyChange
+  onNodeBusyChange,
+  onNodeChanged
 }: {
   node: StoryNode
   style: RenderStyleState
   /** 正史パス上のシーンか(分岐・島は直前シーンの文体接続が効かない) */
   isCanon: boolean
   onNodeBusyChange: (nodeId: string, busy: boolean) => void
+  /** シーン個別の分量を変えたとき(グラフの node を取り直す) */
+  onNodeChanged: () => void
 }): React.JSX.Element {
   const { presetId, povChar, proseFont, fontSize } = style
   const [render, setRender] = useState<RenderResult | null>(null)
@@ -1166,6 +1175,25 @@ function RenderTab({
   const running = task?.status === 'running'
   const elapsed = useElapsedSeconds(running)
   const bodyRef = useRef<HTMLDivElement | null>(null)
+  // シーン個別の分量。保存はサーバー任せだが、reload を待つと選択が戻って見えるので
+  // 楽観的にローカルへ反映する(node が更新されたら破棄)
+  const [charsOverride, setCharsOverride] = useState<number | null>(null)
+  useEffect(() => {
+    setCharsOverride(null)
+  }, [node.id, node.target_chars])
+  const nodeChars = charsOverride ?? node.target_chars ?? 0
+  // 実際に効く字数(シーン個別 > 共通)。表示と字数比較に使う
+  const effectiveChars = nodeChars || style.targetChars
+  // 分量の保存が終わる前に清書を押されても取りこぼさないよう、保存を待ってから流す
+  const savingRef = useRef<Promise<unknown>>(Promise.resolve())
+
+  const saveNodeChars = (chars: number): void => {
+    setCharsOverride(chars)
+    savingRef.current = api
+      .setNodeTargetChars(node.id, chars || null)
+      .then(onNodeChanged)
+      .catch((e) => setError(String(e)))
+  }
 
   // いま何を映しているか。生成完了時に「まだ同じ条件を見ているか」の判定に使う
   const shownRef = useRef({ nodeId: node.id, presetId, povChar })
@@ -1222,6 +1250,9 @@ function RenderTab({
         onNodeBusyChange(targetId, true)
         setLive({ nodeId: targetId, text: '' })
         try {
+          // 直前に分量を変えていたら、その保存を待ってから流す
+          // (シーン個別の分量はサーバーがノードから読むため)
+          await savingRef.current.catch(() => undefined)
           await renderStream(
             {
               preset_id: preset,
@@ -1257,9 +1288,16 @@ function RenderTab({
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-2">
-      {/* 条件(鑑賞モードと共通。ここで変えると鑑賞モードにも効く) */}
+      {/* 条件。プリセットと POV は鑑賞モードと共通、分量はこのシーンだけの指定 */}
       <div className="flex flex-wrap items-center gap-1.5">
-        <RenderStyleControls style={style} variant="compact" onStatus={setError} />
+        <RenderStyleControls style={style} variant="compact" showLength={false} onStatus={setError} />
+        <LengthSelect
+          value={nodeChars}
+          onChange={saveNodeChars}
+          zeroLabel={`分量: 共通に従う(${lengthLabel(style.targetChars)})`}
+          className="min-w-0 flex-1 basis-40"
+          title="このシーンだけの目安の字数。共通の設定より優先される(鑑賞モードの全編清書にも効く)"
+        />
       </div>
       <div className="flex items-center gap-1.5">
         {running || task ? (
@@ -1294,9 +1332,13 @@ function RenderTab({
           <span
             className="ml-auto text-[11px] tabular-nums"
             style={{ color: 'var(--text-faint)' }}
-            title={style.targetChars ? `目安は ${style.targetChars} 字` : undefined}
+            title={
+              effectiveChars
+                ? `目安は ${effectiveChars} 字(${nodeChars ? 'このシーンの指定' : '共通の設定'})`
+                : undefined
+            }
           >
-            {render.prose.length} 字{style.targetChars ? ` / 目安 ${style.targetChars}` : ''}
+            {render.prose.length} 字{effectiveChars ? ` / 目安 ${effectiveChars}` : ''}
           </span>
         )}
       </div>
@@ -2799,6 +2841,7 @@ function StructureModeInner({
                   style={renderStyle}
                   isCanon={canonPath.some((n) => n.id === selectedNode.id)}
                   onNodeBusyChange={markNodeBusy}
+                  onNodeChanged={() => void reload()}
                 />
               ) : inspectorTab === 'beat' ? (
                 <BeatTab
