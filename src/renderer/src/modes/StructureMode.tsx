@@ -39,11 +39,20 @@ import {
   useRenderStyle,
   type RenderStyleState
 } from '../RenderStyle'
-import { cancelTask, enqueueTask, useTaskFor } from '../tasks'
+import {
+  cancelTask,
+  enqueueTask,
+  notifyGraphChanged,
+  setNodeBusy,
+  subscribeGraphChanged,
+  useBusyNodeIds,
+  useTaskFor
+} from '../tasks'
 import { useElapsedSeconds } from '../useElapsed'
 import { backfillVideoThumbs } from '../videoThumb'
 import type {
   Character,
+  EventInput,
   GraphEdge,
   Place,
   RenderResult,
@@ -234,6 +243,19 @@ const nodeTypes = { beatNode: BeatNodeCard }
 // 保存やキャンセルではなく「一時退避」なので、保存成功時に該当エントリを消す。
 const beatDraftCache = new Map<string, Partial<StoryNode>>()
 
+// putEvents は全件置換なので、手元の node.events を土台にすると、直前の保存が
+// reload 前だった場合にそのイベントが消える。保存前にサーバーの最新を取り直す
+async function latestEventInputs(nodeId: string, fallback: StoryEvent[]): Promise<EventInput[]> {
+  let events = fallback
+  try {
+    const graph = await api.getGraph()
+    events = graph.nodes.find((n) => n.id === nodeId)?.events ?? fallback
+  } catch {
+    /* 取れなければ手元の値で続行 */
+  }
+  return events.map((e) => ({ type: e.type, payload: e.payload, source: e.source }))
+}
+
 function BeatTab({
   node,
   characters,
@@ -268,6 +290,9 @@ function BeatTab({
   const imageDragDepth = useRef(0) // 子要素との境界で dragleave が発火してもチラつかないよう深さを数える
   const imageInputRef = useRef<HTMLInputElement | null>(null)
   const coreTextareaRef = useRef<HTMLTextAreaElement | null>(null)
+  // いま表示しているシーン。自動生成の応答が別のシーンの下書きに混ざらないよう突き合わせる
+  const shownNodeId = useRef(node.id)
+  shownNodeId.current = node.id
 
   const handleImageFile = (file: File): void => {
     if (!file.type.startsWith('image/') && !file.type.startsWith('video/')) {
@@ -311,15 +336,20 @@ function BeatTab({
   const suggestField = (field: 'title' | 'emotional_core'): void => {
     const beat = (draft.beat ?? '').trim()
     if (!beat || suggesting) return
+    const targetId = node.id // 応答が返るまでに別のシーンへ移っていたら捨てる
     setSuggesting(field)
     setError(null)
     api
       .suggestSceneMeta(beat, field)
       .then(({ value }) => {
-        if (value) setDraft((d) => ({ ...d, [field]: value }))
+        if (value && shownNodeId.current === targetId) setDraft((d) => ({ ...d, [field]: value }))
       })
-      .catch((e) => setError(String(e)))
-      .finally(() => setSuggesting(null))
+      .catch((e) => {
+        if (shownNodeId.current === targetId) setError(String(e))
+      })
+      .finally(() => {
+        if (shownNodeId.current === targetId) setSuggesting(null)
+      })
   }
 
   useEffect(() => {
@@ -337,6 +367,7 @@ function BeatTab({
     )
     setDraftNodeId(node.id)
     setError(null)
+    setSuggesting(null) // 前のシーンで押した自動生成の表示を引き継がない
     setRetireTarget(null) // 前のシーンで開いた退場理由の入力を残さない
   }, [node.id, node.updated_at])
 
@@ -355,8 +386,8 @@ function BeatTab({
   // 退場は作者が決める。char_retire イベントの付け外しで表現する。
   // Electron では window.prompt が使えないので、理由の入力はインラインで行う
   const saveRetire = async (charId: string, reason: string): Promise<void> => {
-    const events = node.events.map((e) => ({ type: e.type, payload: e.payload, source: e.source }))
     try {
+      const events = await latestEventInputs(node.id, node.events)
       await api.putEvents(node.id, [
         ...events,
         { type: 'char_retire', payload: { char: charId, reason: reason.trim() || 'death' }, source: 'user' }
@@ -369,10 +400,10 @@ function BeatTab({
   }
 
   const cancelRetire = async (charId: string): Promise<void> => {
-    const events = node.events
-      .filter((e) => !(e.type === 'char_retire' && (e.payload as { char?: string }).char === charId))
-      .map((e) => ({ type: e.type, payload: e.payload, source: e.source }))
     try {
+      const events = (await latestEventInputs(node.id, node.events)).filter(
+        (e) => !(e.type === 'char_retire' && (e.payload as { char?: string }).char === charId)
+      )
       await api.putEvents(node.id, events)
       onSaved()
     } catch (e) {
@@ -878,7 +909,7 @@ function CharTab({
     setError(null)
     try {
       await api.putEvents(node.id, [
-        ...node.events.map((e) => ({ type: e.type, payload: e.payload, source: e.source })),
+        ...(await latestEventInputs(node.id, node.events)),
         { type, payload: event as Record<string, unknown>, source: 'user' as const }
       ])
       onChanged()
@@ -1186,13 +1217,19 @@ function RenderTab({
   const effectiveChars = nodeChars || style.targetChars
   // 分量の保存が終わる前に清書を押されても取りこぼさないよう、保存を待ってから流す
   const savingRef = useRef<Promise<unknown>>(Promise.resolve())
+  // 清書タスクを中止したとき、保存待ちで固まらないよう保存も中止できるようにする
+  const saveAbortRef = useRef<AbortController | null>(null)
 
   const saveNodeChars = (chars: number): void => {
     setCharsOverride(chars)
+    const controller = new AbortController()
+    saveAbortRef.current = controller
     savingRef.current = api
-      .setNodeTargetChars(node.id, chars || null)
+      .setNodeTargetChars(node.id, chars || null, controller.signal)
       .then(onNodeChanged)
-      .catch((e) => setError(String(e)))
+      .catch((e) => {
+        if (!isAbortError(e)) setError(String(e))
+      })
   }
 
   // いま何を映しているか。生成完了時に「まだ同じ条件を見ているか」の判定に使う
@@ -1224,7 +1261,8 @@ function RenderTab({
     return () => {
       ignore = true
     }
-  }, [node.id, presetId, povChar])
+    // updated_at はシーン編集後に stale 表示を取り直すために見る
+  }, [node.id, node.updated_at, presetId, povChar])
 
   // 生成中は末尾に追従する
   const liveText = live?.nodeId === node.id ? live.text : null
@@ -1249,6 +1287,9 @@ function RenderTab({
       runner: async ({ signal }) => {
         onNodeBusyChange(targetId, true)
         setLive({ nodeId: targetId, text: '' })
+        // 中止されたら保存も中止する(保存待ちのまま固まらないように)
+        const onAbort = (): void => saveAbortRef.current?.abort()
+        signal.addEventListener('abort', onAbort, { once: true })
         try {
           // 直前に分量を変えていたら、その保存を待ってから流す
           // (シーン個別の分量はサーバーがノードから読むため)
@@ -1269,13 +1310,15 @@ function RenderTab({
                   setRender(e.render)
                 }
               }
-              if (e.error) setError(e.error)
+              // エラーも同じ条件を見ているときだけ出す(別のシーンに混ざらないように)
+              if (e.error && shownRef.current.nodeId === targetId) setError(e.error)
             },
             signal
           )
         } catch (err) {
           setError(isAbortError(err) ? '清書を中止しました(書きかけは保存されません)' : String(err))
         } finally {
+          signal.removeEventListener('abort', onAbort)
           onNodeBusyChange(targetId, false)
           setLive(null)
         }
@@ -1407,7 +1450,7 @@ function StructureModeInner({
   const [generating, setGenerating] = useState(false)
   const [genStatus, setGenStatus] = useState<string | null>(null)
   const genElapsed = useElapsedSeconds(generating)
-  const genTaskIdRef = useRef<string | null>(null) // 生成タスクの ID(中止ボタン用)
+  const genTaskIdRef = useRef<string | null>(null) // 実行中の生成タスクの ID(中止ボタン用)
   const [flowNodes, setFlowNodes] = useState<BeatFlowNode[]>([])
   // 保存座標へ焼き付け済みのノード(pinLayout の二重送信よけ)と、
   // 遅延して読むための最新の flowNodes
@@ -1420,17 +1463,10 @@ function StructureModeInner({
   // 清書の条件(スタイルプリセット / POV)。清書タブと右クリックの一括清書で共用し、
   // 鑑賞モードとも settings 経由で共通(RenderStyle.tsx)
   const renderStyle = useRenderStyle()
-  // LLM 処理中のノード(枠が時計まわりに光る)。生成・抽出・再抽出で共用
-  const [busyNodeIds, setBusyNodeIds] = useState<Set<string>>(new Set())
-  const markNodeBusy = useCallback((nodeId: string | null, busy: boolean): void => {
-    if (!nodeId) return
-    setBusyNodeIds((prev) => {
-      const next = new Set(prev)
-      if (busy) next.add(nodeId)
-      else next.delete(nodeId)
-      return next
-    })
-  }, [])
+  // LLM 処理中のノード(枠が時計まわりに光る)。生成・抽出・再抽出で共用。
+  // モジュールレベル(tasks.ts)で持つので、モードを離れて戻っても復元される
+  const busyNodeIds = useBusyNodeIds()
+  const markNodeBusy = setNodeBusy
   const [inspectorWidth, setInspectorWidth] = useState(() => {
     const saved = Number(localStorage.getItem('inspectorWidth'))
     return saved >= 320 && saved <= 900 ? saved : 480
@@ -1463,6 +1499,13 @@ function StructureModeInner({
     [reactFlow]
   )
 
+  // ドラッグ中にアンマウントしても window リスナーと body.userSelect が残らないように、
+  // 進行中のドラッグの後始末を持っておく(同時に動くドラッグは 1 つだけ)
+  const resizeCleanupRef = useRef<(() => void) | null>(null)
+  useEffect(() => {
+    return () => resizeCleanupRef.current?.()
+  }, [])
+
   const beginInspectorResize = useCallback(
     (event: React.PointerEvent): void => {
       event.preventDefault()
@@ -1477,9 +1520,13 @@ function StructureModeInner({
         current = next
         setInspectorWidth(next)
       }
-      const onUp = (): void => {
+      const cleanup = (): void => {
         window.removeEventListener('pointermove', onMove)
         window.removeEventListener('pointerup', onUp)
+        resizeCleanupRef.current = null
+      }
+      const onUp = (): void => {
+        cleanup()
         setInspectorWidth((w) => {
           localStorage.setItem('inspectorWidth', String(Math.round(w)))
           return w
@@ -1487,6 +1534,7 @@ function StructureModeInner({
       }
       window.addEventListener('pointermove', onMove)
       window.addEventListener('pointerup', onUp)
+      resizeCleanupRef.current = cleanup
     },
     [inspectorWidth, shiftViewportForShrink]
   )
@@ -1519,8 +1567,13 @@ function StructureModeInner({
   }, [onSelectionCountChange])
 
   useEffect(() => {
-    void reload()
+    void reload().catch((e) => setGenStatus(`読み込みに失敗しました: ${String(e)}`))
   }, [reload])
+
+  // キュー(tasks.ts)の runner は完了時に notifyGraphChanged を呼ぶ。runner の
+  // クロージャは積んだ時点のコンポーネントを握るため、マウント中はここで購読して
+  // reload する(再マウント後もタスク完了が画面に反映される)
+  useEffect(() => subscribeGraphChanged(() => void reload().catch(() => undefined)), [reload])
 
   // 動画挿絵のサムネイルを埋める(未生成のものだけ、1 件ずつ)。
   // 生成できたら reload して、カードを <video> から <img> に切り替える
@@ -1736,42 +1789,52 @@ function StructureModeInner({
    * - それ以外: 手動配置をすべて捨てて全体を自動レイアウトに戻す
    */
   const realignLayout = useCallback(async (): Promise<void> => {
-    const selected = flowNodes.filter((n) => n.selected)
-    if (selected.length < 2) {
-      await api.resetLayout()
-      pinnedRef.current.clear()
-      setFlowNodes([]) // 保存座標を消した上でドラッグ中間状態も破棄して再構築する
+    try {
+      const selected = flowNodes.filter((n) => n.selected)
+      if (selected.length < 2) {
+        await api.resetLayout()
+        pinnedRef.current.clear()
+        setFlowNodes([]) // 保存座標を消した上でドラッグ中間状態も破棄して再構築する
+        await reload()
+        return
+      }
+      const ids = new Set(selected.map((n) => n.id))
+      const heights: Record<string, number> = {}
+      for (const n of selected) {
+        if (n.measured?.height) heights[n.id] = n.measured.height
+      }
+      const computed = layoutDag(
+        graphNodes.filter((n) => ids.has(n.id)),
+        graphEdges.filter((e) => ids.has(e.from_node) && ids.has(e.to_node)),
+        heights
+      )
+      const minX = Math.min(...selected.map((n) => n.position.x))
+      const minY = Math.min(...selected.map((n) => n.position.y))
+      const positions = selected.map((n) => ({
+        id: n.id,
+        x: Math.round(minX + (computed[n.id]?.x ?? 0)),
+        y: Math.round(minY + (computed[n.id]?.y ?? 0))
+      }))
+      const byId = new Map(positions.map((p) => [p.id, p]))
+      setFlowNodes((prev) =>
+        prev.map((n) => {
+          const p = byId.get(n.id)
+          return p ? { ...n, position: { x: p.x, y: p.y } } : n
+        })
+      )
+      for (const p of positions) pinnedRef.current.add(p.id)
+      try {
+        await api.setNodePositions(positions)
+      } catch (e) {
+        // 保存できなかったら焼き付け済み扱いにしない(次の測定で保存し直せるように)
+        for (const p of positions) pinnedRef.current.delete(p.id)
+        throw e
+      }
+      setGenStatus(`${positions.length} シーンを整列しました`)
       await reload()
-      return
+    } catch (e) {
+      setGenStatus(`整列できません: ${String(e)}`)
     }
-    const ids = new Set(selected.map((n) => n.id))
-    const heights: Record<string, number> = {}
-    for (const n of selected) {
-      if (n.measured?.height) heights[n.id] = n.measured.height
-    }
-    const computed = layoutDag(
-      graphNodes.filter((n) => ids.has(n.id)),
-      graphEdges.filter((e) => ids.has(e.from_node) && ids.has(e.to_node)),
-      heights
-    )
-    const minX = Math.min(...selected.map((n) => n.position.x))
-    const minY = Math.min(...selected.map((n) => n.position.y))
-    const positions = selected.map((n) => ({
-      id: n.id,
-      x: Math.round(minX + (computed[n.id]?.x ?? 0)),
-      y: Math.round(minY + (computed[n.id]?.y ?? 0))
-    }))
-    const byId = new Map(positions.map((p) => [p.id, p]))
-    setFlowNodes((prev) =>
-      prev.map((n) => {
-        const p = byId.get(n.id)
-        return p ? { ...n, position: { x: p.x, y: p.y } } : n
-      })
-    )
-    for (const p of positions) pinnedRef.current.add(p.id)
-    await api.setNodePositions(positions)
-    setGenStatus(`${positions.length} シーンを整列しました`)
-    await reload()
   }, [flowNodes, graphNodes, graphEdges, reload])
 
   // 選択ノードの削除(削除ボタンと Delete キーの共通処理)。子を持つノードは削除できない
@@ -1798,7 +1861,10 @@ function StructureModeInner({
   const detachEdge = useCallback(
     async (edgeId: string): Promise<void> => {
       const edge = graphEdges.find((e) => e.id === edgeId)
-      if (!edge) return
+      if (!edge) {
+        setSelectedEdgeId(null) // 消えたエッジの選択を残さない(Delete が誤爆しないように)
+        return
+      }
       const child = graphNodes.find((n) => n.id === edge.to_node)
       const label = child?.title || '(無題)'
       if (!window.confirm(`「${label}」から先を切り離しますか?(シーンは残り、独立した島になります)`)) return
@@ -1842,6 +1908,11 @@ function StructureModeInner({
       if (!source || !target || !isValidConnection(connection)) return
       try {
         await api.connectNodes(source, target)
+      } catch (e) {
+        setGenStatus(`繋げません: ${String(e)}`)
+        return
+      }
+      try {
         // 状態は fold が親から積み直すので LLM は不要。ここでは重複した
         // char_introduce の掃除と検証だけを行う(即時・非破壊的)
         const normalized = await api.normalizeChain(target)
@@ -1855,7 +1926,9 @@ function StructureModeInner({
         }
         setGenStatus(parts.join(' / '))
       } catch (e) {
-        setGenStatus(`繋げません: ${String(e)}`)
+        // 接続自体は済んでいる。整合取りの失敗を接続失敗のように報告しない
+        await reload().catch(() => undefined)
+        setGenStatus(`繋ぎました(下書きとして接続)/ 整合取りに失敗: ${String(e)}`)
       }
     },
     // graphEdges / graphNodes は本体では使わないが、繋いだ結果の再評価に合わせて更新する
@@ -1906,12 +1979,14 @@ function StructureModeInner({
             setGenStatus(isAbortError(err) ? '作り直しを中止しました' : `作り直せません: ${String(err)}`)
           } finally {
             markNodeBusy(current, false)
-            await reload()
+            // reload はこの runner を積んだ時点のインスタンスを握るため、
+            // 再マウント後も届くモジュールレベルの通知で反映する
+            notifyGraphChanged()
           }
         }
       })
     },
-    [markNodeBusy, reload]
+    [markNodeBusy]
   )
 
   // 整合取り(LLM なし)。重複した登場イベントの掃除 + 検証
@@ -2015,10 +2090,14 @@ function StructureModeInner({
         return
       }
       if (!window.confirm(`${targets.length} シーンを親から切り離しますか?(シーンは残ります)`)) return
+      let failed = 0
       for (const id of targets) {
-        await api.detachNode(id).catch(() => undefined)
+        await api.detachNode(id).catch(() => {
+          failed += 1
+        })
       }
-      await reload()
+      await reload().catch(() => undefined)
+      if (failed > 0) setGenStatus(`${failed} 件のシーンを切り離せませんでした`)
     },
     [graphEdges, reload]
   )
@@ -2026,12 +2105,16 @@ function StructureModeInner({
   const deleteNodes = useCallback(
     async (nodeIds: string[]): Promise<void> => {
       if (!window.confirm(`${nodeIds.length} シーンを削除しますか?(後続シーンは前のシーンに繋がります)`)) return
+      let failed = 0
       for (const id of nodeIds) {
-        await api.deleteNode(id).catch(() => undefined)
+        await api.deleteNode(id).catch(() => {
+          failed += 1
+        })
         beatDraftCache.delete(id)
       }
       setSelectedId((current) => (current && nodeIds.includes(current) ? null : current))
-      await reload()
+      await reload().catch(() => undefined)
+      if (failed > 0) setGenStatus(`${failed} 件のシーンを削除できませんでした(子を持つシーンなど)`)
     },
     [reload]
   )
@@ -2205,15 +2288,20 @@ function StructureModeInner({
         current = next
         setChatHeight(next)
       }
-      const onUp = (): void => {
+      const cleanup = (): void => {
         document.body.style.userSelect = ''
         window.removeEventListener('pointermove', onMove)
         window.removeEventListener('pointerup', onUp)
+        resizeCleanupRef.current = null
+      }
+      const onUp = (): void => {
+        cleanup()
         localStorage.setItem('chatDrawerHeight', String(Math.round(current)))
       }
       document.body.style.userSelect = 'none'
       window.addEventListener('pointermove', onMove)
       window.addEventListener('pointerup', onUp)
+      resizeCleanupRef.current = cleanup
     },
     [chatHeight, shiftViewportForShrink]
   )
@@ -2311,53 +2399,65 @@ function StructureModeInner({
   )
 
   const handleAddBeat = async (): Promise<void> => {
-    // 実際に親になるノード(未選択なら正史の末尾に付く)
-    const parentId = selectedId ?? canonPath[canonPath.length - 1]?.id ?? null
-    const node = await api.createNode({
-      beat: '(ここに出来事の仕様を書く)',
-      cast: [],
-      parent_id: selectedId ?? undefined
-    })
-    await placeNextToParent(node.id, parentId)
-    await reload()
-    setSelectedId(node.id)
-    setInspectorTab('beat')
+    try {
+      // 実際に親になるノード(未選択なら正史の末尾に付く)
+      const parentId = selectedId ?? canonPath[canonPath.length - 1]?.id ?? null
+      const node = await api.createNode({
+        beat: '(ここに出来事の仕様を書く)',
+        cast: [],
+        parent_id: selectedId ?? undefined
+      })
+      await placeNextToParent(node.id, parentId)
+      await reload()
+      setSelectedId(node.id)
+      setInspectorTab('beat')
+    } catch (e) {
+      setGenStatus(`シーンを追加できません: ${String(e)}`)
+    }
   }
 
   // どこにも繋がない独立シーン。自動レイアウトの対象外にしたいので、
   // 画面の中央に手動配置として置く(島を作り置きするための入り口)
   const handleAddDetached = async (): Promise<void> => {
-    const node = await api.createNode({
-      beat: '(ここに出来事の仕様を書く)',
-      cast: [],
-      detached: true
-    })
-    const rect = canvasRef.current?.getBoundingClientRect()
-    if (rect) {
-      const center = reactFlow.screenToFlowPosition({
-        x: rect.left + rect.width / 2,
-        y: rect.top + rect.height / 2
+    try {
+      const node = await api.createNode({
+        beat: '(ここに出来事の仕様を書く)',
+        cast: [],
+        detached: true
       })
-      // カード幅 288 / 高さの目安 160 の分だけ左上にずらして中央に見せる
-      await api.setNodePosition(node.id, Math.round(center.x - 144), Math.round(center.y - 80))
+      const rect = canvasRef.current?.getBoundingClientRect()
+      if (rect) {
+        const center = reactFlow.screenToFlowPosition({
+          x: rect.left + rect.width / 2,
+          y: rect.top + rect.height / 2
+        })
+        // カード幅 288 / 高さの目安 160 の分だけ左上にずらして中央に見せる
+        await api.setNodePosition(node.id, Math.round(center.x - 144), Math.round(center.y - 80))
+      }
+      await reload()
+      setSelectedId(node.id)
+      setInspectorTab('beat')
+    } catch (e) {
+      setGenStatus(`シーンを追加できません: ${String(e)}`)
     }
-    await reload()
-    setSelectedId(node.id)
-    setInspectorTab('beat')
   }
 
   const handleInsertAfter = async (): Promise<void> => {
     if (!selectedId) return
-    const node = await api.insertNodeAfter(selectedId, {
-      beat: '(ここに出来事の仕様を書く)',
-      cast: []
-    })
-    // 割り込みなので、元の後続シーンが居る右隣とは重ならないよう 1 レーン下に置く
-    // (手動配置の領域では下流を自動で押し出せないため、位置の調整は作者に任せる)
-    await placeNextToParent(node.id, selectedId, 1)
-    await reload()
-    setSelectedId(node.id)
-    setInspectorTab('beat')
+    try {
+      const node = await api.insertNodeAfter(selectedId, {
+        beat: '(ここに出来事の仕様を書く)',
+        cast: []
+      })
+      // 割り込みなので、元の後続シーンが居る右隣とは重ならないよう 1 レーン下に置く
+      // (手動配置の領域では下流を自動で押し出せないため、位置の調整は作者に任せる)
+      await placeNextToParent(node.id, selectedId, 1)
+      await reload()
+      setSelectedId(node.id)
+      setInspectorTab('beat')
+    } catch (e) {
+      setGenStatus(`シーンを割り込ませられません: ${String(e)}`)
+    }
   }
 
   // 生成もキューに積む(連続して指示を出しても取りこぼさない)。
@@ -2371,6 +2471,9 @@ function StructureModeInner({
       label: parentId ? '分岐生成' : 'シーン生成',
       detail: promptText ?? '(指示なし)',
       runner: async ({ update, signal }) => {
+        // 中止ボタンは「実行中」の生成を止める。最後に積んだ ID ではなく、
+        // runner が動き出したここで記録する(複数積んだときの誤爆よけ)
+        genTaskIdRef.current = taskId
         setGenerating(true)
         setGenStatus('LLM 準備中…(初回はモデルロードに時間がかかります)')
         markNodeBusy(originId, true)
@@ -2392,8 +2495,11 @@ function StructureModeInner({
                 )
                 const newId = e.node.id
                 void placeNextToParent(newId, originId)
-                  .then(() => reload())
+                  .catch(() => undefined)
                   .then(() => {
+                    // reload はこの runner を積んだ時点のインスタンスを握るため、
+                    // 再マウント後も届くモジュールレベルの通知で反映する
+                    notifyGraphChanged()
                     setSelectedId(newId)
                     setInspectorTab('beat')
                   })
@@ -2410,7 +2516,6 @@ function StructureModeInner({
         }
       }
     })
-    genTaskIdRef.current = taskId // 生成パネルの「■ 実行中の生成を中止」用
   }
 
   return (
@@ -2430,7 +2535,10 @@ function StructureModeInner({
             // ノードを矢印で動かす a11y 操作)と衝突するので明示的に切る
             disableKeyboardA11y
             onNodesChange={handleNodesChange}
+            // ノードを選んだらエッジ選択は解く(残すと Delete がエッジ切断に化ける)
+            onNodeClick={() => setSelectedEdgeId(null)}
             onSelectionChange={({ nodes }) => {
+              if (nodes.length > 0) setSelectedEdgeId(null)
               setSelectedId((prev) => {
                 if (nodes.length === 0) return null
                 // 複数選択中は先頭をインスペクタ対象にする
@@ -2462,8 +2570,19 @@ function StructureModeInner({
               setMenu(null)
             }}
             onNodeDragStop={(_, __, draggedNodes) => {
+              // busyNodeIds の変化などでノード配列が再構築されても座標が戻らないよう、
+              // サーバー由来の graphNodes にも先に反映しておく(楽観更新)
+              const moved = new Map(draggedNodes.map((n) => [n.id, n.position]))
+              setGraphNodes((prev) =>
+                prev.map((n) => {
+                  const p = moved.get(n.id)
+                  return p ? { ...n, pos_x: p.x, pos_y: p.y } : n
+                })
+              )
               for (const dragged of draggedNodes) {
-                void api.setNodePosition(dragged.id, dragged.position.x, dragged.position.y)
+                void api
+                  .setNodePosition(dragged.id, dragged.position.x, dragged.position.y)
+                  .catch((e) => setGenStatus(`位置を保存できません: ${String(e)}`))
               }
             }}
             minZoom={0.1}

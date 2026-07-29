@@ -13,10 +13,12 @@ import asyncio
 import os
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi import FastAPI, HTTPException, Request, UploadFile
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 import chat_agent
 import db
@@ -45,6 +47,27 @@ if _library_root:
 else:
     store = Store(db.connect(_db_path), root=str(db.DEFAULT_DB_PATH.parent))
 llama = LlamaManager()
+
+
+# 書き込みメソッドの途中で例外が出ると、共有コネクションに半端な変更が残り、
+# 次のリクエストの commit で意図せず確定してしまう。エラー応答時は必ず捨てる。
+def _rollback_pending() -> None:
+    try:
+        store.conn.rollback()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+@app.exception_handler(StarletteHTTPException)
+async def _http_error_rollback(request: Request, exc: StarletteHTTPException):
+    _rollback_pending()
+    return await http_exception_handler(request, exc)
+
+
+@app.exception_handler(Exception)
+async def _unhandled_error_rollback(request: Request, exc: Exception):
+    _rollback_pending()
+    return JSONResponse(status_code=500, content={"detail": f"{type(exc).__name__}: {exc}"})
 
 
 @app.on_event("startup")
@@ -432,11 +455,14 @@ async def upload_asset(file: UploadFile) -> dict[str, str]:
     if ext not in ALLOWED_IMAGE_EXTS | ALLOWED_VIDEO_EXTS:
         raise HTTPException(400, f"対応していない形式です: {ext}(画像: png/jpg/gif/webp、動画: mp4/webm)")
     name = f"{uuid.uuid4().hex[:12]}{ext}"
-    data = await file.read()
     limit = MAX_VIDEO_BYTES if ext in ALLOWED_VIDEO_EXTS else MAX_IMAGE_BYTES
-    if len(data) > limit:
-        raise HTTPException(400, f"{limit // (1024 * 1024)}MB を超えるファイルはアップロードできません")
-    (_Path(assets) / name).write_bytes(data)
+    data = bytearray()
+    while chunk := await file.read(1 << 20):
+        data.extend(chunk)
+        if len(data) > limit:
+            raise HTTPException(400, f"{limit // (1024 * 1024)}MB を超えるファイルはアップロードできません")
+    # 大きい動画の書き込みでイベントループを塞がないようスレッドに逃がす
+    await asyncio.to_thread((_Path(assets) / name).write_bytes, bytes(data))
     return {"path": name}
 
 
@@ -513,12 +539,13 @@ async def put_events(node_id: str, body: EventsPut) -> dict[str, Any]:
 
 @app.get("/nodes/{node_id}/state")
 async def node_state(node_id: str) -> dict[str, Any]:
+    if store.get_node(node_id) is None:
+        raise HTTPException(404, "node not found")
     try:
         return store.get_state(node_id)
-    except KeyError:
-        raise HTTPException(404, "node not on canon path")
-    except ValueError as e:
-        raise HTTPException(422, f"fold に失敗しました(不正なイベント): {e}")
+    except (KeyError, TypeError, ValueError) as e:
+        # 保存済みの不正イベント(必須フィールド欠落など)で fold が失敗したケース
+        raise HTTPException(422, f"fold に失敗しました(不正なイベント): {type(e).__name__}: {e}")
 
 
 @app.get("/nodes/{node_id}/validate")
@@ -595,7 +622,8 @@ async def llm_start() -> dict[str, Any]:
 
 @app.post("/llm/stop")
 async def llm_stop() -> dict[str, Any]:
-    llama.stop()
+    # taskkill の完走待ちでイベントループを塞がないようスレッドに逃がす
+    await llama.stop_async()
     return {"stopped": True}
 
 

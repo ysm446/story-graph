@@ -390,7 +390,7 @@ export default function RelationGraph({
   }
   const [selectedEdge, setSelectedEdge] = useState<{ from: string; to: string } | null>(null)
   const [positions, setPositions] = useState<Record<string, { x: number; y: number }>>({})
-  const dragRef = useRef<{ id: string; moved: boolean } | null>(null)
+  const dragRef = useRef<{ id: string; moved: boolean; sx: number; sy: number } | null>(null)
   const svgRef = useRef<SVGSVGElement | null>(null)
   const [view, setView] = useState({ x: 0, y: 0, zoom: 1 })
   const viewRef = useRef(view)
@@ -533,10 +533,12 @@ export default function RelationGraph({
       next[n.id] = { x: n.x ?? width / 2, y: n.y ?? height / 2 }
     }
     setPositions(next)
-    // 新規配置分をピン留め保存
-    for (const id of missing) {
-      const p = next[id]
-      if (p) void api.updateCharacter(id, { graph_x: p.x, graph_y: p.y }).then(() => onCharactersChanged())
+    // 新規配置分をピン留め保存(親の reload はまとめて全件完了後に 1 回)
+    const placedNew = missing.filter((id) => next[id])
+    if (placedNew.length > 0) {
+      void Promise.all(
+        placedNew.map((id) => api.updateCharacter(id, { graph_x: next[id].x, graph_y: next[id].y }))
+      ).then(() => onCharactersChanged())
     }
   }, [visibleChars.join(','), edges.length])
 
@@ -595,6 +597,8 @@ export default function RelationGraph({
   const handlePointerMove = (event: React.PointerEvent): void => {
     const drag = dragRef.current
     if (drag) {
+      // 数 px 以内の揺れはクリック扱いのまま(誤ドラッグで座標を保存しない)
+      if (!drag.moved && Math.hypot(event.clientX - drag.sx, event.clientY - drag.sy) < 4) return
       drag.moved = true
       const p = toSvgPoint(event)
       setPositions((prev) => ({ ...prev, [drag.id]: p }))
@@ -791,7 +795,7 @@ export default function RelationGraph({
               onPointerDown={(e) => {
                 e.stopPropagation()
                 ;(e.target as Element).setPointerCapture?.(e.pointerId)
-                dragRef.current = { id, moved: false }
+                dragRef.current = { id, moved: false, sx: e.clientX, sy: e.clientY }
               }}
             >
               {assetUrl(c?.portrait_path) ? (

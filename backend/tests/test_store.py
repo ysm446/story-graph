@@ -267,3 +267,64 @@ def test_extend_from_branch_and_make_canon(store):
     store.make_canon(b2["id"])
     assert store.canon_path() == [n1["id"], b1["id"], b2["id"]]
     assert store.get_node(n2["id"])["status"] == "draft"
+
+
+def test_delete_branch_root_does_not_duplicate_canon(store):
+    """分岐の根を削除しても、付け替えエッジが正史を二重にしない。"""
+    _setup_chars(store)
+    n1 = store.append_node({"beat": "b1", "cast": ["aya"]}, _intro_events("aya"))
+    n2 = store.append_node({"beat": "正史の続き", "cast": ["aya"]})
+    b1 = store.append_node({"beat": "分岐", "cast": ["aya"]}, parent_id=n1["id"])
+    # 分岐の延長は(b1 の線内では)canon エッジになる
+    b2 = store.append_node({"beat": "分岐の続き", "cast": ["aya"]}, parent_id=b1["id"])
+    assert store.delete_node(b1["id"]) is True
+    # b2 は n1 に付け替わるが draft のまま。正史は n1 → n2 で変わらない
+    assert store.parent_of(b2["id"]) == n1["id"]
+    canon_children = store.conn.execute(
+        "SELECT COUNT(*) FROM edges WHERE from_node = ? AND is_canon = 1", (n1["id"],)
+    ).fetchone()[0]
+    assert canon_children == 1
+    assert store.canon_path() == [n1["id"], n2["id"]]
+    assert store.get_node(b2["id"])["status"] == "draft"
+
+
+def test_memory_compress_materializes_memory_row(store):
+    """memory_compress の要約も memories 行になる(検索から消えない)。"""
+    _setup_chars(store)
+    n1 = store.append_node({"beat": "b1", "cast": ["aya"]}, [
+        {"type": "memory_add", "payload": {"char": "aya", "content": "村が焼けた", "importance": 1.0}},
+        {"type": "memory_add", "payload": {"char": "aya", "content": "ケンと出会った", "importance": 0.5}},
+    ])
+    ids = [e["id"] for e in store.get_node(n1["id"])["events"]]
+    n2 = store.append_node({"beat": "b2", "cast": ["aya"]}, [
+        {"type": "memory_compress", "payload": {"char": "aya", "summary": "故郷を失いケンと旅している", "replaces": ids}},
+    ])
+    compress_id = store.get_node(n2["id"])["events"][0]["id"]
+    row = store.conn.execute("SELECT * FROM memories WHERE id = ?", (compress_id,)).fetchone()
+    assert row is not None
+    assert row["content"] == "故郷を失いケンと旅している"
+    # state 側は要約だけを参照している
+    memories = store.get_state(n2["id"])["chars"]["aya"]["memories"]
+    assert memories == [compress_id]
+
+
+def test_replace_events_tolerates_malformed_memory_payload(store):
+    """必須フィールドを欠く memory_add で置換が途中で壊れない(行は作らない)。"""
+    _setup_chars(store)
+    n1 = store.append_node({"beat": "b1", "cast": ["aya"]})
+    store.replace_events(n1["id"], [
+        {"type": "memory_add", "payload": {"content": "char が無い"}},
+        {"type": "memory_add", "payload": {"char": "aya", "content": "正常な記憶"}},
+    ])
+    rows = store.conn.execute("SELECT content FROM memories").fetchall()
+    assert [r["content"] for r in rows] == ["正常な記憶"]
+
+
+def test_delete_node_removes_renders(store):
+    _setup_chars(store)
+    n1 = store.append_node({"beat": "b1", "cast": ["aya"]})
+    store.seed_presets()
+    store.save_render(n1["id"], "default-third", None, "散文")
+    store.delete_node(n1["id"])
+    rows = store.conn.execute("SELECT * FROM renders WHERE node_id = ?", (n1["id"],)).fetchall()
+    assert rows == []

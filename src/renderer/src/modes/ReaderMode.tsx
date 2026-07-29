@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { api, assetUrl, isAbortError, isVideoAsset, renderStream } from '../api'
 import { CrossfadeLoopVideo, DEFAULT_VIDEO_CROSSFADE_SECONDS } from '../CrossfadeLoopVideo'
 import { FONT_OPTIONS, FONT_SIZES, RenderStyleControls, useRenderStyle } from '../RenderStyle'
-import { cancelTask, enqueueTask } from '../tasks'
+import { cancelTask, enqueueTask, useTasks } from '../tasks'
 import { useElapsedSeconds } from '../useElapsed'
 import type { SceneEntry } from '../types'
 
@@ -48,16 +48,24 @@ export default function ReaderMode({
   const measurerRef = useRef<HTMLDivElement | null>(null)
 
   const renderElapsed = useElapsedSeconds(rendering)
+  // キューに清書タスクが残っている間は多重投入させない
+  // (rendering は実行が始まるまで立たないので、待機中はキューから引く)
+  const renderQueued = useTasks().some((t) => t.label === '清書')
 
   // 鑑賞モードだけの表示設定(共有しないもの)
   useEffect(() => {
-    void api.getSettings().then((settings) => {
-      if (settings.reader_view === 'split' || settings.reader_view === 'page') {
-        setViewMode(settings.reader_view)
-      }
-      const savedFade = Number(settings.video_crossfade_seconds)
-      if (Number.isFinite(savedFade) && savedFade >= 0) setVideoFade(Math.min(savedFade, 5))
-    })
+    void api
+      .getSettings()
+      .then((settings) => {
+        if (settings.reader_view === 'split' || settings.reader_view === 'page') {
+          setViewMode(settings.reader_view)
+        }
+        const savedFade = Number(settings.video_crossfade_seconds)
+        if (Number.isFinite(savedFade) && savedFade >= 0) setVideoFade(Math.min(savedFade, 5))
+      })
+      .catch(() => {
+        /* 取れなければ既定の表示設定のまま */
+      })
   }, [])
 
   // ---- ページモード: 画面に収まる分量でページ分割する ----------------
@@ -172,7 +180,11 @@ export default function ReaderMode({
 
   const reloadScenes = useCallback(async (): Promise<void> => {
     if (!presetId) return
-    setScenes(await api.listRenders(presetId, povChar))
+    try {
+      setScenes(await api.listRenders(presetId, povChar))
+    } catch (e) {
+      setStatus(`シーン一覧の取得に失敗しました: ${String(e)}`)
+    }
   }, [presetId, povChar])
 
   useEffect(() => {
@@ -291,7 +303,7 @@ export default function ReaderMode({
         <div className="ml-auto flex gap-1.5">
           <button
             onClick={() => void runRender(scene.node.id, 'single')}
-            disabled={!presetId}
+            disabled={!presetId || renderQueued}
             className="rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-40"
             style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
           >
@@ -299,7 +311,7 @@ export default function ReaderMode({
           </button>
           <button
             onClick={() => void runRender(scene.node.id, 'to_end')}
-            disabled={!presetId}
+            disabled={!presetId || renderQueued}
             className="rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-40"
             style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
           >
@@ -366,7 +378,7 @@ export default function ReaderMode({
         ) : (
           <button
             onClick={() => void runRender(null, 'to_end')}
-            disabled={!presetId}
+            disabled={!presetId || renderQueued}
             className="rounded-lg px-3 py-1 text-[12px] font-medium text-white disabled:opacity-50"
             style={{ background: 'var(--accent)' }}
           >

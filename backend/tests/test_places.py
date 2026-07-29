@@ -168,3 +168,26 @@ def test_migration_converts_free_text_locations():
     # 冪等: もう一度走らせても場所は増えない
     db.init_schema(conn)
     assert conn.execute("SELECT COUNT(*) FROM places").fetchone()[0] == 2
+
+
+def test_update_place_stales_renders_including_inherited(store):
+    """場所の説明を変えると、直接参照ノードと引き継ぎ子孫の清書が stale になる。"""
+    _chars(store)
+    port = store.create_place({"name": "港町"})
+    n1 = store.append_node({"beat": "到着", "cast": ["aya"], "location": port["id"]})
+    n2 = store.append_node({"beat": "散策", "cast": ["aya"]})  # location 空欄 = 引き継ぎ
+    store.seed_presets()
+    store.save_render(n1["id"], "default-third", None, "散文1")
+    store.save_render(n2["id"], "default-third", None, "散文2")
+    store.update_place(port["id"], {"description": "夜は静かな港"})
+    stales = {
+        r["node_id"]: r["stale"]
+        for r in store.conn.execute("SELECT node_id, stale FROM renders")
+    }
+    assert stales[n1["id"]] == 1
+    assert stales[n2["id"]] == 1
+    # 色だけの変更ではプロンプトが変わらないので stale にしない
+    store.save_render(n1["id"], "default-third", None, "散文3")
+    store.update_place(port["id"], {"color": "#123456"})
+    latest = store.latest_render(n1["id"], "default-third", None)
+    assert latest["stale"] == 0

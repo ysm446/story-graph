@@ -10,6 +10,7 @@ import asyncio
 import logging
 import subprocess
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import llm
 
@@ -29,6 +30,9 @@ class LlamaManager:
         self.proc: subprocess.Popen | None = None
         self.base_url: str | None = None
         self.model_path: str | None = None
+        # 並行リクエスト(生成 + チャット等)が同時に spawn して proc を
+        # 上書きし合わないための排他。ensure_running / switch 全体に掛ける
+        self._lock = asyncio.Lock()
 
     def status(self) -> dict:
         running = self.proc is not None and self.proc.poll() is None
@@ -44,31 +48,37 @@ class LlamaManager:
         if await llm.health(base_url):
             self.base_url = base_url
             return base_url
-        if self.proc is not None and self.proc.poll() is None:
-            # spawn 済みだがまだ起動中
-            if await self._wait_healthy(base_url, 60):
+        async with self._lock:
+            # ロック待ちの間に別リクエストが起動を済ませていることがある
+            if await llm.health(base_url):
+                self.base_url = base_url
                 return base_url
-            raise RuntimeError("llama-server が応答しません(起動待ちタイムアウト)")
-        return await self.start(settings)
+            if self.proc is not None and self.proc.poll() is None:
+                # spawn 済みだがまだ起動中
+                if await self._wait_healthy(base_url, 60):
+                    return base_url
+                raise RuntimeError("llama-server が応答しません(起動待ちタイムアウト)")
+            return await self.start(settings)
 
     async def switch(self, settings: dict[str, str]) -> str:
         """現在のモデルを止めて、settings のモデルで起動し直す(モデル選択からのロード用)。"""
-        base_url = settings.get("llm_base_url") or f"http://127.0.0.1:{DEFAULT_PORT}"
-        was_managed = self.proc is not None and self.proc.poll() is None
-        self.stop()
-        if not was_managed and await llm.health(base_url):
-            # 外部で起動された llama-server は当アプリからは切り替えられない
-            raise RuntimeError(
-                "外部起動の llama-server が使用中のため切り替えられません。"
-                "その llama-server を停止してから再試行してください。"
-            )
-        # 旧プロセスのポート解放を待つ(健全応答が消えるまで)
-        deadline = asyncio.get_event_loop().time() + 10
-        while asyncio.get_event_loop().time() < deadline:
-            if not await llm.health(base_url):
-                break
-            await asyncio.sleep(0.3)
-        return await self.start(settings)
+        async with self._lock:
+            base_url = settings.get("llm_base_url") or f"http://127.0.0.1:{DEFAULT_PORT}"
+            was_managed = self.proc is not None and self.proc.poll() is None
+            await self.stop_async()
+            if not was_managed and await llm.health(base_url):
+                # 外部で起動された llama-server は当アプリからは切り替えられない
+                raise RuntimeError(
+                    "外部起動の llama-server が使用中のため切り替えられません。"
+                    "その llama-server を停止してから再試行してください。"
+                )
+            # 旧プロセスのポート解放を待つ(健全応答が消えるまで)
+            deadline = asyncio.get_event_loop().time() + 10
+            while asyncio.get_event_loop().time() < deadline:
+                if not await llm.health(base_url):
+                    break
+                await asyncio.sleep(0.3)
+            return await self.start(settings)
 
     async def start(self, settings: dict[str, str]) -> str:
         # 優先度: 設定の手入力パス > runtime/ 等に自動インストール済みのもの > lm-graph 流用の既定
@@ -77,7 +87,10 @@ class LlamaManager:
         server_path = settings.get("llama_server_path") or llama_installer.resolve_server_path() or DEFAULT_SERVER_PATH
         model_path = settings.get("llm_model_path") or DEFAULT_MODEL_PATH
         base_url = settings.get("llm_base_url") or f"http://127.0.0.1:{DEFAULT_PORT}"
-        port = int(base_url.rsplit(":", 1)[-1].rstrip("/"))
+        try:
+            port = urlsplit(base_url).port or DEFAULT_PORT
+        except ValueError:
+            raise RuntimeError(f"llm_base_url からポートを読めません: {base_url}")
         ctx_size = int(settings.get("llm_ctx_size") or 16384)
 
         if not Path(server_path).exists():
@@ -134,4 +147,13 @@ class LlamaManager:
                     check=False,
                 )
             except OSError:
+                pass
+            # taskkill が失敗してもプロセスを残さない(VRAM を掴んだ孤児を防ぐ)
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
                 proc.kill()
+
+    async def stop_async(self) -> None:
+        """async ハンドラ用。taskkill の完走待ちでイベントループを塞がない。"""
+        await asyncio.to_thread(self.stop)

@@ -146,8 +146,38 @@ class Store:
             self.conn.execute(
                 f"UPDATE places SET {sets} WHERE id = ?", (*updates.values(), place_id)
             )
+            # 名前・説明・雰囲気は清書プロンプトに載るので、既存の清書を stale にする
+            if {"name", "description", "atmosphere"} & updates.keys():
+                self.conn.executemany(
+                    "UPDATE renders SET stale = 1 WHERE node_id = ?",
+                    [(n,) for n in self._nodes_using_place(place_id)],
+                )
             self.conn.commit()
         return self.get_place(place_id)
+
+    def _nodes_using_place(self, place_id: str) -> list[str]:
+        """実効ロケーションがこの場所になるノード(直接参照 + 空欄で引き継ぐ子孫)。"""
+        direct = [
+            r["id"] for r in self.conn.execute("SELECT id FROM nodes WHERE location = ?", (place_id,))
+        ]
+        children: dict[str, list[str]] = {}
+        for r in self.conn.execute("SELECT from_node, to_node FROM edges"):
+            children.setdefault(r["from_node"], []).append(r["to_node"])
+        locations = {
+            r["id"]: r["location"] for r in self.conn.execute("SELECT id, location FROM nodes")
+        }
+        affected = list(direct)
+        seen = set(direct)
+        frontier = list(direct)
+        while frontier:
+            current = frontier.pop()
+            for child in children.get(current, []):
+                if child in seen or locations.get(child):
+                    continue  # 自分の場所を持つ子から先は引き継がない
+                seen.add(child)
+                affected.append(child)
+                frontier.append(child)
+        return affected
 
     def delete_place(self, place_id: str) -> None:
         """場所を削除する。参照していたノードは「引き継ぐ」状態(空欄)に戻る。
@@ -155,9 +185,7 @@ class Store:
         location は state に影響しない(Step 0 時点)ので dirty 化はしないが、
         清書プロンプトには載るので renders は stale にする。
         """
-        node_ids = [
-            r["id"] for r in self.conn.execute("SELECT id FROM nodes WHERE location = ?", (place_id,))
-        ]
+        node_ids = self._nodes_using_place(place_id)
         self.conn.execute("UPDATE nodes SET location = NULL WHERE location = ?", (place_id,))
         self.conn.execute("DELETE FROM places WHERE id = ?", (place_id,))
         self.conn.executemany(
@@ -708,6 +736,9 @@ class Store:
         if self.get_node(node_id) is None:
             return False
         parent_id = self.parent_of(node_id)
+        parent_edge = self.conn.execute(
+            "SELECT is_canon FROM edges WHERE to_node = ?", (node_id,)
+        ).fetchone()
         child_ids = [
             r["to_node"]
             for r in self.conn.execute("SELECT to_node FROM edges WHERE from_node = ?", (node_id,))
@@ -725,16 +756,25 @@ class Store:
             (node_id,),
         )
         if parent_id is not None:
-            # 子エッジを親発に付け替える(is_canon はそのまま引き継ぐ)
-            self.conn.execute(
-                "UPDATE edges SET from_node = ? WHERE from_node = ?", (parent_id, node_id)
-            )
+            if parent_edge and parent_edge["is_canon"]:
+                # 連鎖の途中を抜く: 子エッジの is_canon をそのまま引き継いで正史を繋ぐ
+                self.conn.execute(
+                    "UPDATE edges SET from_node = ? WHERE from_node = ?", (parent_id, node_id)
+                )
+            else:
+                # 分岐の根を抜く: 親には別の canon の子がいるので、付け替えエッジを
+                # canon のまま持ち込むと正史が二重になる。draft に落として付け替える
+                self.conn.execute(
+                    "UPDATE edges SET from_node = ?, is_canon = 0 WHERE from_node = ?",
+                    (parent_id, node_id),
+                )
         else:
             # 根の削除: 子は根になるので親エッジを落とす
             self.conn.execute("DELETE FROM edges WHERE from_node = ?", (node_id,))
         self.conn.execute("DELETE FROM edges WHERE to_node = ?", (node_id,))
         self.conn.execute("DELETE FROM events WHERE node_id = ?", (node_id,))
         self.conn.execute("DELETE FROM state_cache WHERE node_id = ?", (node_id,))
+        self.conn.execute("DELETE FROM renders WHERE node_id = ?", (node_id,))
         self.conn.execute("DELETE FROM nodes WHERE id = ?", (node_id,))
         for child_id in child_ids:
             self.mark_dirty_downstream(child_id, commit=False)
@@ -800,16 +840,23 @@ class Store:
         return self.list_events(node_id)
 
     def _sync_memories(self, node_id: str, commit: bool = True) -> None:
-        """memory_add イベントから memories 行を再構築する(導出物)。
+        """memory_add / memory_compress イベントから memories 行を再構築する(導出物)。
 
         story_order は正史パス上の位置。分岐ノードは -1(時間減衰では「現在」扱い)。
+        memory_compress も行にする: fold が要約のイベント ID を state の memories に
+        積むので、行が無いと圧縮後の記憶が検索から消えてしまう。
+        必須フィールドを欠く payload は落とす(validation が警告する。ここで
+        KeyError にすると置換の途中で止まり半端な書き込みが残る)。
         """
         path = self.canon_path()
         story_order = path.index(node_id) if node_id in path else -1
         for event in self.list_events(node_id):
-            if event["type"] != "memory_add":
+            if event["type"] not in ("memory_add", "memory_compress"):
                 continue
             p = event["payload"]
+            content = p.get("content") if event["type"] == "memory_add" else p.get("summary")
+            if not p.get("char") or not content:
+                continue
             self.conn.execute(
                 """INSERT OR REPLACE INTO memories(id, event_id, char_id, content, emotion, importance, story_order)
                    VALUES(?,?,?,?,?,?,?)""",
@@ -817,13 +864,13 @@ class Store:
                     event["id"],
                     event["id"],
                     p["char"],
-                    p["content"],
+                    content,
                     p.get("emotion"),
                     p.get("importance"),
                     story_order,
                 ),
             )
-            self._index_memory(event["id"], p["content"])
+            self._index_memory(event["id"], content)
         if commit:
             self.conn.commit()
 
@@ -836,8 +883,10 @@ class Store:
         )
         if db_mod.has_vec(self.conn) and embed.is_ready():
             vector = embed.embed_document(content)
+            # vec0 仮想テーブルは版によって UPSERT 非対応なので DELETE → INSERT にする
+            self.conn.execute("DELETE FROM memories_vec WHERE memory_id = ?", (memory_id,))
             self.conn.execute(
-                "INSERT OR REPLACE INTO memories_vec(memory_id, embedding) VALUES(?,?)",
+                "INSERT INTO memories_vec(memory_id, embedding) VALUES(?,?)",
                 (memory_id, struct.pack(f"{len(vector)}f", *vector)),
             )
 

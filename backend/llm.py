@@ -148,8 +148,12 @@ async def chat(
         entry["error"] = str(e)
         raise
 
-    choice = data["choices"][0]
-    message = choice["message"]
+    try:
+        choice = data["choices"][0]
+        message = choice["message"]
+    except (KeyError, IndexError, TypeError) as e:
+        entry["error"] = f"応答形式が不正: {str(data)[:200]}"
+        raise RuntimeError(entry["error"]) from e
     content = message.get("content") or ""
     tool_calls = message.get("tool_calls")
     entry["response"] = (
@@ -205,6 +209,12 @@ async def chat_stream(
                         if data == "[DONE]":
                             return
                         obj = json.loads(data)
+                        # ストリーム開始後のエラーは HTTP 200 のまま error オブジェクトで
+                        # 届く(ctx 溢れ等)。捨てると途切れた出力が成功扱いになる
+                        if obj.get("error"):
+                            raise RuntimeError(
+                                f"llama-server ストリームエラー: {json.dumps(obj['error'], ensure_ascii=False)[:300]}"
+                            )
                         choices = obj.get("choices") or []
                         if not choices:
                             continue
@@ -271,6 +281,10 @@ async def chat_stream_tools(
                             buffer = ""
                             break
                         obj = json.loads(data)
+                        if obj.get("error"):
+                            raise RuntimeError(
+                                f"llama-server ストリームエラー: {json.dumps(obj['error'], ensure_ascii=False)[:300]}"
+                            )
                         choices = obj.get("choices") or []
                         if not choices:
                             continue

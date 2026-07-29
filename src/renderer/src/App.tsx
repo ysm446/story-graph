@@ -212,7 +212,14 @@ export default function App(): React.JSX.Element {
   useEffect(() => {
     let cancelled = false
     const tryInit = async (attempt: number): Promise<void> => {
-      const { baseUrl, error } = await initApi()
+      // initApi 自体の例外(IPC 失敗など)もリトライ / エラー表示の経路に乗せる
+      let baseUrl: string | null = null
+      let error: string | null = null
+      try {
+        ;({ baseUrl, error } = await initApi())
+      } catch (e) {
+        error = String(e)
+      }
       if (cancelled) return
       if (baseUrl) {
         // 再利用した sidecar が別のライブラリを開いている場合に備えて同期する

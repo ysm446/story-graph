@@ -434,89 +434,97 @@ async def _chat_impl(
         }
 
     final_answer: str | None = None
-    for step in range(MAX_TOOL_STEPS):
-        yield _sse({"stage": "thinking"})
-        result: dict[str, Any] = {}
-        async for kind, value in llm.chat_stream_tools(
-            messages(),
-            base_url=base_url,
-            temperature=CHAT_TEMPERATURE,
-            max_tokens=2048,
-            tools=tools,
-            label=f"相談チャット(step {step + 1})",
-        ):
-            if kind == "content":
-                yield _sse({"delta": value})
-            elif kind == "done":
-                result = value
-        accumulate(result)
-        tool_calls = result.get("tool_calls")
-        if not tool_calls:
-            final_answer = result["content"]
+    try:
+        for step in range(MAX_TOOL_STEPS):
+            yield _sse({"stage": "thinking"})
+            result: dict[str, Any] = {}
+            async for kind, value in llm.chat_stream_tools(
+                messages(),
+                base_url=base_url,
+                temperature=CHAT_TEMPERATURE,
+                max_tokens=2048,
+                tools=tools,
+                label=f"相談チャット(step {step + 1})",
+            ):
+                if kind == "content":
+                    yield _sse({"delta": value})
+                elif kind == "done":
+                    result = value
+            accumulate(result)
+            tool_calls = result.get("tool_calls")
+            if not tool_calls:
+                final_answer = result["content"]
+                stats = final_stats()
+                history.append(
+                    {"role": "assistant", "content": final_answer, "ts": _now(), **({"meta": stats} if stats else {})}
+                )
+                break
+            history.append(result["message"])
+            for tc in tool_calls:
+                name = tc.get("function", {}).get("name", "")
+                try:
+                    args = json.loads(tc.get("function", {}).get("arguments") or "{}")
+                except json.JSONDecodeError:
+                    args = {}
+                yield _sse({"tool_call": {"name": name, "args": args}})
+                if char_id:
+                    # キャラモードのツールは recall(自分の記憶の検索)だけ
+                    if name == "recall":
+                        payload: dict[str, Any] = _tool_search_memories(
+                            store, path, scope, {"query": args.get("query") or "", "char_id": char_id}
+                        )
+                    else:
+                        payload = {"error": f"unknown tool: {name}"}
+                elif name == "propose_beats":
+                    proposals = (args.get("proposals") or [])[:3]
+                    # LLM が ID でなくキャラ名を cast に入れることがあるので、実在 ID に絞る
+                    known = store.known_char_ids()
+                    for p in proposals:
+                        if isinstance(p.get("cast"), list):
+                            p["cast"] = [c for c in p["cast"] if c in known]
+                    yield _sse({"proposals": proposals})
+                    payload = {"ok": True, "count": len(proposals)}
+                else:
+                    payload = dispatch_tool(store, name, args, path, scope)
+                history.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tc.get("id", ""),
+                        "content": json.dumps(payload, ensure_ascii=False),
+                    }
+                )
+                yield _sse({"tool_result": {"name": name, "is_error": "error" in payload}})
+        else:
+            # ツール上限到達 → 打ち切らず、手持ちの情報でまとめさせる(news-picker 方式)
+            history.append(
+                {
+                    "role": "user",
+                    "content": "(これ以上ツールは使えません。ここまでに得られた情報で回答をまとめてください)",
+                }
+            )
+            yield _sse({"stage": "thinking"})
+            result = {}
+            async for kind, value in llm.chat_stream_tools(
+                messages(),
+                base_url=base_url,
+                temperature=CHAT_TEMPERATURE,
+                max_tokens=2048,
+                label="相談チャット(まとめ)",
+            ):
+                if kind == "content":
+                    yield _sse({"delta": value})
+                elif kind == "done":
+                    result = value
+            accumulate(result)
+            final_answer = result.get("content") or ""
             stats = final_stats()
             history.append(
                 {"role": "assistant", "content": final_answer, "ts": _now(), **({"meta": stats} if stats else {})}
             )
-            break
-        history.append(result["message"])
-        for tc in tool_calls:
-            name = tc.get("function", {}).get("name", "")
-            try:
-                args = json.loads(tc.get("function", {}).get("arguments") or "{}")
-            except json.JSONDecodeError:
-                args = {}
-            yield _sse({"tool_call": {"name": name, "args": args}})
-            if char_id:
-                # キャラモードのツールは recall(自分の記憶の検索)だけ
-                if name == "recall":
-                    payload: dict[str, Any] = _tool_search_memories(
-                        store, path, scope, {"query": args.get("query") or "", "char_id": char_id}
-                    )
-                else:
-                    payload = {"error": f"unknown tool: {name}"}
-            elif name == "propose_beats":
-                proposals = (args.get("proposals") or [])[:3]
-                yield _sse({"proposals": proposals})
-                payload = {"ok": True, "count": len(proposals)}
-            else:
-                payload = dispatch_tool(store, name, args, path, scope)
-            history.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tc.get("id", ""),
-                    "content": json.dumps(payload, ensure_ascii=False),
-                }
-            )
-            yield _sse({"tool_result": {"name": name, "is_error": "error" in payload}})
-    else:
-        # ツール上限到達 → 打ち切らず、手持ちの情報でまとめさせる(news-picker 方式)
-        history.append(
-            {
-                "role": "user",
-                "content": "(これ以上ツールは使えません。ここまでに得られた情報で回答をまとめてください)",
-            }
-        )
-        yield _sse({"stage": "thinking"})
-        result = {}
-        async for kind, value in llm.chat_stream_tools(
-            messages(),
-            base_url=base_url,
-            temperature=CHAT_TEMPERATURE,
-            max_tokens=2048,
-            label="相談チャット(まとめ)",
-        ):
-            if kind == "content":
-                yield _sse({"delta": value})
-            elif kind == "done":
-                result = value
-        accumulate(result)
-        final_answer = result.get("content") or ""
-        stats = final_stats()
-        history.append(
-            {"role": "assistant", "content": final_answer, "ts": _now(), **({"meta": stats} if stats else {})}
-        )
+    finally:
+        # 途中失敗・切断でも、ここまでの往復(ユーザー発言・ツール結果)は保存する
+        store.save_chat_messages(chat_id, history)
 
-    store.save_chat_messages(chat_id, history)
     yield _sse({"answer": final_answer or "", "chat_id": chat_id, "stats": final_stats()})
 
 

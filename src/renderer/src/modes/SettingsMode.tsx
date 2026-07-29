@@ -426,10 +426,18 @@ export default function SettingsMode(): React.JSX.Element {
     savedTimer.current = setTimeout(() => setSavedMsg(false), 1500)
   }
 
+  useEffect(
+    () => () => {
+      if (savedTimer.current) clearTimeout(savedTimer.current)
+    },
+    []
+  )
+
+  // 変更されたキーだけ送る(PUT /settings はマージ)。全設定を書き戻すと、
+  // 開いている間に他所(ModelBar 等)で変わった設定が巻き戻ってしまう
   const save = async (patch: Record<string, string>): Promise<void> => {
-    const next = { ...values, ...patch }
-    setValues(next)
-    await api.putSettings(next)
+    setValues((v) => ({ ...v, ...patch }))
+    if (Object.keys(patch).length > 0) await api.putSettings(patch)
     showSaved()
     void refreshStatus()
   }
@@ -451,6 +459,8 @@ export default function SettingsMode(): React.JSX.Element {
     setBusy('停止中…')
     try {
       await api.llmStop()
+    } catch (e) {
+      setLlmError(String(e))
     } finally {
       setBusy(null)
       void refreshStatus()
@@ -549,7 +559,7 @@ export default function SettingsMode(): React.JSX.Element {
                   value={values[def.key] ?? ''}
                   placeholder={def.placeholder}
                   onChange={(e) => setValues((v) => ({ ...v, [def.key]: e.target.value }))}
-                  onBlur={() => void save({})}
+                  onBlur={() => void save({ [def.key]: values[def.key] ?? '' })}
                   className="w-full rounded-lg border px-3 py-2 text-[13px] outline-none"
                   style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
                 />
@@ -613,7 +623,8 @@ export default function SettingsMode(): React.JSX.Element {
                     llm_ctx_size: String(CTX_SIZE_PRESETS[Number(e.target.value)] ?? ctxSize)
                   }))
                 }
-                onMouseUp={() => void save({})}
+                onPointerUp={() => void save({ llm_ctx_size: String(ctxSize) })}
+                onKeyUp={() => void save({ llm_ctx_size: String(ctxSize) })}
               />
               <div className="settings-slider-labels">
                 {CTX_SIZE_PRESETS.map((p) => (
@@ -666,7 +677,7 @@ export default function SettingsMode(): React.JSX.Element {
                 value={values.generation_system_prompt ?? ''}
                 placeholder={genPromptDefault}
                 onChange={(e) => setValues((v) => ({ ...v, generation_system_prompt: e.target.value }))}
-                onBlur={() => void save({})}
+                onBlur={() => void save({ generation_system_prompt: values.generation_system_prompt ?? '' })}
                 className="w-full rounded-lg border px-3 py-2 text-[13px] leading-relaxed outline-none"
                 style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
               />
@@ -691,7 +702,7 @@ export default function SettingsMode(): React.JSX.Element {
                 value={values.proofread_custom_prompt ?? ''}
                 placeholder={'例: あなたはハードボイルド小説の編集者です。感傷的な表現を削り、\n短く乾いた文に整えてください。修正後の文章だけを返してください。'}
                 onChange={(e) => setValues((v) => ({ ...v, proofread_custom_prompt: e.target.value }))}
-                onBlur={() => void save({})}
+                onBlur={() => void save({ proofread_custom_prompt: values.proofread_custom_prompt ?? '' })}
                 className="w-full rounded-lg border px-3 py-2 text-[13px] leading-relaxed outline-none"
                 style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
               />
@@ -826,7 +837,8 @@ export default function SettingsMode(): React.JSX.Element {
                 step={0.1}
                 value={videoFade}
                 onChange={(e) => setValues((v) => ({ ...v, video_crossfade_seconds: e.target.value }))}
-                onMouseUp={() => void save({})}
+                onPointerUp={() => void save({ video_crossfade_seconds: String(videoFade) })}
+                onKeyUp={() => void save({ video_crossfade_seconds: String(videoFade) })}
               />
               <p className="settings-field-hint">
                 0 にするとクロスディゾルブなしの通常ループになります。フェード時間の2倍より短い動画は自動的に通常ループになります。

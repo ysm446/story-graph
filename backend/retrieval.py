@@ -49,8 +49,10 @@ def ensure_vectors(conn: sqlite3.Connection) -> None:
     ).fetchall()
     for r in rows:
         vector = embed.embed_document(r["content"])
+        # vec0 仮想テーブルは版によって UPSERT 非対応なので DELETE → INSERT にする
+        conn.execute("DELETE FROM memories_vec WHERE memory_id = ?", (r["id"],))
         conn.execute(
-            "INSERT OR REPLACE INTO memories_vec(memory_id, embedding) VALUES(?,?)",
+            "INSERT INTO memories_vec(memory_id, embedding) VALUES(?,?)",
             (r["id"], struct.pack(f"{len(vector)}f", *vector)),
         )
     if rows:
@@ -79,34 +81,39 @@ def search_memories(
 
     scores: dict[str, float] = {}
 
+    # LIMIT を DB 全体に掛けてから候補で絞ると、記憶が増えたとき候補が上位 N から
+    # 押し出されてスコアが付かなくなる。全順位を走査し、候補のヒットだけを数える
     terms = _fts_terms(query)
     if terms:
         match = " OR ".join(f'"{t}"' for t in terms)
-        try:
-            rows = conn.execute(
-                "SELECT id FROM memories_fts WHERE memories_fts MATCH ? ORDER BY rank LIMIT ?",
-                (match, CANDIDATE_LIMIT),
-            ).fetchall()
-        except sqlite3.OperationalError:
-            rows = []
         rank = 0
-        for r in rows:
-            if r["id"] in candidate_ids:
-                scores[r["id"]] = scores.get(r["id"], 0.0) + 1.0 / (RRF_K + rank + 1)
-                rank += 1
+        try:
+            for r in conn.execute(
+                "SELECT id FROM memories_fts WHERE memories_fts MATCH ? ORDER BY rank",
+                (match,),
+            ):
+                if r["id"] in candidate_ids:
+                    scores[r["id"]] = scores.get(r["id"], 0.0) + 1.0 / (RRF_K + rank + 1)
+                    rank += 1
+                    if rank >= CANDIDATE_LIMIT:
+                        break
+        except sqlite3.OperationalError:
+            pass
 
     if db.has_vec(conn) and embed.available():
         vector = embed.embed_query(query)
-        rows = conn.execute(
+        total = conn.execute("SELECT COUNT(*) FROM memories_vec").fetchone()[0]
+        rank = 0
+        for r in conn.execute(
             """SELECT memory_id, vec_distance_cosine(embedding, ?) AS distance
                FROM memories_vec ORDER BY distance ASC LIMIT ?""",
-            (struct.pack(f"{len(vector)}f", *vector), CANDIDATE_LIMIT),
-        ).fetchall()
-        rank = 0
-        for r in rows:
+            (struct.pack(f"{len(vector)}f", *vector), total),
+        ):
             if r["memory_id"] in candidate_ids:
                 scores[r["memory_id"]] = scores.get(r["memory_id"], 0.0) + 1.0 / (RRF_K + rank + 1)
                 rank += 1
+                if rank >= CANDIDATE_LIMIT:
+                    break
 
     if not scores:
         # 検索シグナルが無い場合は重要度×減衰のみで選ぶ(取りこぼし防止)

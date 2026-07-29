@@ -71,11 +71,15 @@ def list_models() -> list[dict[str, Any]]:
     for path in sorted(MODELS_DIR.rglob("*.gguf")):
         if path.name.lower().startswith("mmproj"):
             continue
+        try:
+            size = path.stat().st_size
+        except OSError:
+            continue  # 列挙後に消えたファイル(ダウンロード中断の削除等)
         models.append(
             {
                 "name": path.stem,
                 "path": str(path),
-                "size": path.stat().st_size,
+                "size": size,
             }
         )
     return models

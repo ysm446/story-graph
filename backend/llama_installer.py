@@ -227,6 +227,8 @@ async def _download(
     client: httpx.AsyncClient, url: str, dest: Path, label: str
 ) -> AsyncIterator[dict[str, Any]]:
     received = 0
+    last_percent = -1
+    last_emit = 0
     async with client.stream("GET", url, follow_redirects=True) as res:
         if res.status_code != 200:
             raise RuntimeError(f"{label} のダウンロードに失敗しました (HTTP {res.status_code})")
@@ -237,6 +239,16 @@ async def _download(
                 f.write(chunk)
                 received += len(chunk)
                 percent = round(received / total * 100) if total else None
+                # 64KB ごとに全部流すと SSE が数万件になるので、% が動いたときだけ
+                # (サイズ不明なら 4MB ごとに)送る
+                if percent is not None:
+                    if percent == last_percent:
+                        continue
+                    last_percent = percent
+                else:
+                    if received - last_emit < (1 << 22):
+                        continue
+                    last_emit = received
                 yield {
                     "phase": "download",
                     "file_label": label,
@@ -270,7 +282,9 @@ async def install_variant(variant: dict[str, Any]) -> AsyncIterator[dict[str, An
     cudart_zip = tmp_dir / f"story-graph-{uuid.uuid4().hex}-cudart.zip"
 
     try:
-        async with httpx.AsyncClient(timeout=None, headers={"User-Agent": USER_AGENT}) as client:
+        # 総時間は無制限(巨大 zip)だが、無通信ストールでは read タイムアウトで切る
+        timeout = httpx.Timeout(30.0, read=120.0)
+        async with httpx.AsyncClient(timeout=timeout, headers={"User-Agent": USER_AGENT}) as client:
             # サーバ本体
             async for p in _download(client, variant["asset_url"], server_zip, "llama-server"):
                 yield p
@@ -289,6 +303,14 @@ async def install_variant(variant: dict[str, Any]) -> AsyncIterator[dict[str, An
             raise RuntimeError("展開後に llama-server.exe が見つかりませんでした")
         build = _extract_build(asset_name)
         yield {"phase": "done", "build": build, "path": str(exe)}
+    except BaseException:
+        # 失敗・キャンセルで DLL 欠落などの不完全な展開先を残さない
+        # (find_server_installs は exe の存在しか見ないため、残すと壊れた
+        # サーバが自動選択されて原因不明の起動失敗になる)
+        import shutil
+
+        shutil.rmtree(dest_dir, ignore_errors=True)
+        raise
     finally:
         for z in (server_zip, cudart_zip):
             try:

@@ -141,6 +141,7 @@ async function startSidecar(): Promise<string> {
   const port = await findAvailablePort(DEFAULT_API_PORT)
   const libraryRoot = currentLibraryRoot()
   mkdirSync(libraryRoot, { recursive: true })
+  const baseUrl = `http://127.0.0.1:${port}`
   const proc = spawn(
     pythonPath,
     ['-m', 'uvicorn', 'app:app', '--host', '127.0.0.1', '--port', String(port)],
@@ -154,13 +155,18 @@ async function startSidecar(): Promise<string> {
   proc.stderr?.on('data', (chunk: Buffer) => console.log(`[sidecar] ${chunk.toString().trimEnd()}`))
   proc.on('exit', (code) => {
     console.log(`[sidecar] exited with code ${code}`)
+    // stopSidecar 経由(意図した停止)は sidecarProcess が先に null になっている。
+    // クラッシュ時は状態をリセットして、次の ensureSidecar() で再起動できるようにする
+    if (sidecarProcess !== proc) return
     sidecarProcess = null
+    sidecarPromise = null
+    if (apiBaseUrl === baseUrl) apiBaseUrl = null
   })
   sidecarProcess = proc
 
-  const baseUrl = `http://127.0.0.1:${port}`
   const healthy = await waitForHealthy(baseUrl, 30_000)
   if (!healthy) {
+    stopSidecar() // タイムアウトしたプロセスを孤児化させない
     throw new Error('sidecar のヘルスチェックがタイムアウトしました')
   }
   apiBaseUrl = baseUrl

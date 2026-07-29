@@ -312,8 +312,12 @@ export default function ChatDrawer({
   const [dynamicQuestions, setDynamicQuestions] = useState<string[]>([])
   // コンテキスト使用量(lm-chat のドーナツリング相当)
   const [usage, setUsage] = useState<{ tokens: number; ctx: number; estimated: boolean } | null>(null)
+  // 提案の挿入は連打防止(実行中フラグ)
+  const [inserting, setInserting] = useState(false)
   const abortRef = useRef<AbortController | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
+  // 自動スクロールは下端付近にいるときだけ追従する(過去ログを読んでいる最中に飛ばさない)
+  const stickToBottomRef = useRef(true)
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
   const panelRef = useRef<HTMLDivElement | null>(null) // 入力欄の高さの上限を決めるのに使う
   const rootRef = useRef<HTMLDivElement | null>(null) // 会話一覧の最大幅を決めるのに使う
@@ -475,8 +479,12 @@ export default function ChatDrawer({
 
   // 候補チップも会話の中(末尾)にあるので、チップが差し替わったときも下端へ寄せる
   useEffect(() => {
+    if (!stickToBottomRef.current) return
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
   }, [items, status, liveText, chipsKey])
+
+  // アンマウント時に進行中のストリーミングを中止する
+  useEffect(() => () => abortRef.current?.abort(), [])
 
   // サイドバーの見出し。会話名が無ければ冒頭の発言、それも無ければアンカー名
   const chatLabel = (h: ChatSummary | undefined): string => {
@@ -492,6 +500,7 @@ export default function ChatDrawer({
   }
 
   const startNewChat = (): void => {
+    if (busy) return
     setChatId(null)
     setItems([])
     setInsertedTitles(new Set())
@@ -516,7 +525,13 @@ export default function ChatDrawer({
   }
 
   const loadChat = async (id: string): Promise<void> => {
-    const chat = await chatApi.get(id)
+    let chat
+    try {
+      chat = await chatApi.get(id)
+    } catch {
+      setStatus('会話の読み込みに失敗しました')
+      return
+    }
     setChatId(chat.id)
     setAnchorNode(chat.anchor_node)
     setScope(chat.scope === 'all' ? 'all' : 'upto')
@@ -645,6 +660,7 @@ export default function ChatDrawer({
     try {
       setItems(buildDisplay((await chatApi.deleteTurn(chatId, turn, keepUser)).messages))
     } catch {
+      setStatus('削除に失敗しました')
       return
     }
     void refreshUsage(chatId, anchorNode)
@@ -683,21 +699,29 @@ export default function ChatDrawer({
   }
 
   const insertProposal = async (proposal: Proposal): Promise<void> => {
+    if (inserting) return
+    setInserting(true)
     // cast は ID or 名前で来る可能性があるため、登録キャラに解決できたものだけ使う
     const cast = (proposal.cast ?? [])
       .map((entry) => characters.find((c) => c.id === entry || c.name === entry)?.id)
       .filter((id): id is string => !!id)
-    await api.createNode({
-      title: proposal.title,
-      beat: proposal.beat,
-      emotional_core: proposal.emotional_core,
-      cast,
-      location: proposal.location,
-      parent_id: anchorNode ?? undefined,
-      draft: true
-    })
-    setInsertedTitles((prev) => new Set(prev).add(proposal.title))
-    onGraphChanged()
+    try {
+      await api.createNode({
+        title: proposal.title,
+        beat: proposal.beat,
+        emotional_core: proposal.emotional_core,
+        cast,
+        location: proposal.location,
+        parent_id: anchorNode ?? undefined,
+        draft: true
+      })
+      setInsertedTitles((prev) => new Set(prev).add(proposal.title))
+      onGraphChanged()
+    } catch {
+      setStatus('シーンの挿入に失敗しました')
+    } finally {
+      setInserting(false)
+    }
   }
 
   if (!open) return null
@@ -709,7 +733,8 @@ export default function ChatDrawer({
       <aside className="flex shrink-0 flex-col" style={{ width: sidebarWidth }}>
         <button
           onClick={startNewChat}
-          className="m-2 rounded-lg border px-2 py-1 text-[12px]"
+          disabled={busy}
+          className="m-2 rounded-lg border px-2 py-1 text-[12px] disabled:opacity-50"
           style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
           title="選択中のシーンをアンカーに新しい会話を始める"
         >
@@ -926,7 +951,14 @@ export default function ChatDrawer({
             </button>
           </div>
           {/* メッセージ */}
-          <div ref={scrollRef} className="inspector-scrollbar min-h-0 flex-1 overflow-y-auto pr-1">
+          <div
+            ref={scrollRef}
+            onScroll={(e) => {
+              const el = e.currentTarget
+              stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60
+            }}
+            className="inspector-scrollbar min-h-0 flex-1 overflow-y-auto pr-1"
+          >
             {items.length === 0 && (
               <div className="pt-6 text-center text-[12px]" style={{ color: 'var(--text-faint)' }}>
                 {activeChar ? (
@@ -1099,7 +1131,7 @@ export default function ChatDrawer({
                       )}
                       <button
                         onClick={() => void insertProposal(p)}
-                        disabled={insertedTitles.has(p.title)}
+                        disabled={inserting || insertedTitles.has(p.title)}
                         className="w-full rounded-md px-2 py-1 text-[11px] font-medium text-white disabled:opacity-50"
                         style={{ background: 'var(--accent)' }}
                       >
@@ -1144,7 +1176,7 @@ export default function ChatDrawer({
             <div className="mt-2 flex flex-col items-end gap-1.5">
               {chips.map((c) => (
                 <button
-                  key={c.text}
+                  key={`${c.dynamic ? 'dyn' : 'fix'}:${c.text}`}
                   onClick={() => void send(c.text)}
                   disabled={busy}
                   className="chat-suggest-chip flex max-w-full items-center gap-1 rounded-full border px-3 py-1 text-[11px] disabled:opacity-40"

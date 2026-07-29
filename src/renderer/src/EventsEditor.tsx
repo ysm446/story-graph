@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, isAbortError } from './api'
-import { enqueueTask, useTaskFor } from './tasks'
-import type { Character, EventInput, StoryNode } from './types'
+import { enqueueTask, notifyGraphChanged, useTaskFor } from './tasks'
+import type { Character, EventInput, StoryEvent, StoryNode } from './types'
 import { useElapsedSeconds } from './useElapsed'
 
 /** イベントの追加・編集・削除。
@@ -406,42 +406,62 @@ export default function EventsEditor({
     )
   )
 
-  const currentEvents = (): EventInput[] =>
-    node.events.map((e) => ({ type: e.type, payload: e.payload, source: e.source }))
+  // putEvents は全件置換なので、手元の node.events を土台にすると、直前の保存が
+  // reload 前だった場合にそのイベントが消える。保存前にサーバーの最新を取り直す
+  const latestEvents = async (): Promise<StoryEvent[]> => {
+    try {
+      const graph = await api.getGraph()
+      return graph.nodes.find((n) => n.id === node.id)?.events ?? node.events
+    } catch {
+      return node.events
+    }
+  }
 
-  const save = async (events: EventInput[]): Promise<void> => {
+  const toInputs = (events: StoryEvent[]): EventInput[] =>
+    events.map((e) => ({ type: e.type, payload: e.payload, source: e.source }))
+
+  // 成功したかを返す(失敗時はフォームを閉じず入力を残す)
+  const save = async (events: EventInput[]): Promise<boolean> => {
     setSaving(true)
     setError(null)
     try {
       const result = await api.putEvents(node.id, events)
       setValidation(result.validation)
       onChanged()
+      return true
     } catch (e) {
       setError(String(e))
+      return false
     } finally {
       setSaving(false)
     }
   }
 
   const handleDelete = (index: number): void => {
-    const events = currentEvents()
-    events.splice(index, 1)
+    const targetId = node.events[index]?.id
     setEditing(null)
-    void save(events)
+    void latestEvents().then((base) => save(toInputs(base.filter((e) => e.id !== targetId))))
   }
 
   const handleAdd = (): void => {
     if (!adding) return
-    void save([...currentEvents(), { type: adding.type, payload: adding.payload, source: 'user' }]).then(() =>
-      setAdding(null)
-    )
+    void latestEvents().then(async (base) => {
+      const ok = await save([...toInputs(base), { type: adding.type, payload: adding.payload, source: 'user' }])
+      if (ok) setAdding(null)
+    })
   }
 
   const handleUpdate = (): void => {
     if (!editing) return
-    const events = currentEvents()
-    events[editing.index] = { ...events[editing.index], payload: editing.payload, source: 'user' }
-    void save(events).then(() => setEditing(null))
+    const targetId = node.events[editing.index]?.id
+    const payload = editing.payload
+    void latestEvents().then(async (base) => {
+      const events = toInputs(base).map((e, i) =>
+        base[i].id === targetId ? { ...e, payload, source: 'user' as const } : e
+      )
+      const ok = await save(events)
+      if (ok) setEditing(null)
+    })
   }
 
   const runExtract = (): void => {
@@ -458,7 +478,9 @@ export default function EventsEditor({
           const r = await api.extractEvents(targetId, signal)
           // 別のシーンに移っていたら、そのシーンの検証結果として出さない
           if (shownNodeId.current === targetId) setValidation(r.validation)
-          onChanged()
+          // onChanged は積んだ時点のコンポーネントを握るので、再マウント後も
+          // 届くモジュールレベルの通知で反映する
+          notifyGraphChanged()
         } catch (e) {
           if (!isAbortError(e) && shownNodeId.current === targetId) setError(String(e))
         } finally {

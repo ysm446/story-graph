@@ -17,9 +17,14 @@ const MAX_EDGE = 576 // カード幅 288 の 2 倍あれば足りる
 const JPEG_QUALITY = 0.8
 const LOAD_TIMEOUT_MS = 15000
 
-// 生成できなかった動画(コーデック非対応など)を覚えて、開くたびの再試行を防ぐ
+// 生成できなかった動画(コーデック非対応など)を覚えて、開くたびの再試行を防ぐ。
+// キーは id + 動画パス(動画を差し替えたら再試行できるように)
 const failed = new Set<string>()
 let running = false
+
+function failKey(node: StoryNode): string {
+  return `${node.id}:${node.image_path ?? ''}`
+}
 
 function captureFrame(url: string): Promise<Blob | null> {
   return new Promise((resolve) => {
@@ -70,7 +75,7 @@ function captureFrame(url: string): Promise<Blob | null> {
 export async function backfillVideoThumbs(nodes: StoryNode[]): Promise<boolean> {
   if (running) return false
   const targets = nodes.filter(
-    (n) => isVideoAsset(n.image_path) && !n.thumb_path && !failed.has(n.id)
+    (n) => isVideoAsset(n.image_path) && !n.thumb_path && !failed.has(failKey(n))
   )
   if (targets.length === 0) return false
   running = true
@@ -81,7 +86,7 @@ export async function backfillVideoThumbs(nodes: StoryNode[]): Promise<boolean> 
       if (!url) continue
       const blob = await captureFrame(url)
       if (!blob) {
-        failed.add(node.id)
+        failed.add(failKey(node))
         continue
       }
       try {
@@ -90,7 +95,7 @@ export async function backfillVideoThumbs(nodes: StoryNode[]): Promise<boolean> 
         await api.setNodeThumb(node.id, path)
         created = true
       } catch {
-        failed.add(node.id) // 保存に失敗したら諦める(次回開いたときに再試行)
+        failed.add(failKey(node)) // 保存に失敗したら諦める(次回開いたときに再試行)
       }
     }
   } finally {

@@ -137,3 +137,48 @@ export function useTaskFor(kind: string, nodeId: string | null | undefined): Tas
   if (!nodeId) return null
   return tasks.find((t) => t.kind === kind && t.nodeId === nodeId) ?? null
 }
+
+// ---- グラフ変更通知と busy ノード集合(モジュールレベル) -------------
+// runner のクロージャは積んだ時点のコンポーネントの関数を握るため、モードを
+// 離れて戻る(再マウント)と旧インスタンスの reload や setState に届いてしまう。
+// 完了通知と busy 表示はここで持ち、マウント中のコンポーネントが購読する
+
+const graphChangeListeners = new Set<() => void>()
+
+/** グラフが変わったときの通知を購読する(戻り値で解除) */
+export function subscribeGraphChanged(listener: () => void): () => void {
+  graphChangeListeners.add(listener)
+  return () => {
+    graphChangeListeners.delete(listener)
+  }
+}
+
+/** runner がグラフを変えたときに呼ぶ(購読側が reload する) */
+export function notifyGraphChanged(): void {
+  for (const listener of graphChangeListeners) listener()
+}
+
+// LLM 処理中のノード(枠が時計まわりに光る)。再マウントしても復元される
+let busyNodeIds: ReadonlySet<string> = new Set<string>()
+const busyListeners = new Set<() => void>()
+
+export function setNodeBusy(nodeId: string | null, busy: boolean): void {
+  if (!nodeId) return
+  if (busy === busyNodeIds.has(nodeId)) return
+  const next = new Set(busyNodeIds)
+  if (busy) next.add(nodeId)
+  else next.delete(nodeId)
+  busyNodeIds = next
+  for (const listener of busyListeners) listener()
+}
+
+export function useBusyNodeIds(): ReadonlySet<string> {
+  return useSyncExternalStore(
+    (listener) => {
+      busyListeners.add(listener)
+      return () => busyListeners.delete(listener)
+    },
+    () => busyNodeIds,
+    () => busyNodeIds
+  )
+}

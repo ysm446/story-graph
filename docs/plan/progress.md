@@ -1,7 +1,7 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-07-24 22:38
-更新日時: 2026-07-29 22:05
+更新日時: 2026-07-29 22:39
 
 ## 現在の状態
 
@@ -9,7 +9,7 @@
 - **ライブラリ方式を導入**(lm-graph 踏襲): ストーリーごとのフォルダに `story-graph.db` を置く。現在のライブラリと最近使ったライブラリは `%APPDATA%/story-graph/app.json`(Electron userData)に保存。ヘッダー右のドロップダウンで切替(切替時はレンダラをリロード)。デフォルトはリポジトリ内 `data/`。
 - `npm run dev` で Electron が起動し、FastAPI sidecar(ポート 8765〜自動探索)が自動 spawn される。
 - バックエンドは単体でも起動可能: `cd backend && ../.venv/Scripts/python.exe -m uvicorn app:app --port 8765`
-- テスト: `cd backend && ../.venv/Scripts/python.exe -m pytest tests/ -q`(113件、全て成功)
+- テスト: `cd backend && ../.venv/Scripts/python.exe -m pytest tests/ -q`(118件、全て成功)
 
 ## 完了済み
 
@@ -98,8 +98,30 @@
   同じ見た目(スピナー + リング + モデル名)にする。ポーリングは自己再帰の `setTimeout` にして
   読み込み中だけ 1.5 秒間隔に詰める
 
+- [x] **全体コードレビューと不具合修正**(2026-07-29): バックエンド 22 件 + フロント 31 件を修正
+  (詳細は [changelog](../changelog.md))。主なもの: 分岐の根の削除で正史エッジが二重になる /
+  エラー応答時に半端な書き込みが残る(app.py にロールバックハンドラ追加)/ 場所編集で清書が
+  stale にならない / チャット履歴の途中保存 / putEvents 全件置換のレース / タスク完了通知の
+  stale closure(tasks.ts の `notifyGraphChanged` / `setNodeBusy` に集約)/ llama-server の
+  二重起動・停止漏れ / embed ロード中の全 API フリーズ / 検索候補の押し出し。
+  回帰テスト 5 件追加(pytest 118 件)
+
 ## 未完了
 
+- [ ] **レビューで見送った既知の課題**(2026-07-29。いずれも設計判断が要るため未着手):
+  - **イベント ID が置換で再発行される**: `EventIn` に id が無く、編集・正規化・再抽出のたびに
+    全イベント ID が変わる。`memory_compress.replaces` や関係の reasons のノード間参照が
+    宙に浮く(memory_compress は Phase 6 で本格導入予定なので、その設計時に id 引き継ぎを入れる)
+  - **正史の根が「created_at 最古のルート」で決まる**: 本編の根を削除・切り離ししたとき、
+    より古い島の根があると正史がそちらへ飛ぶ(`canon_path`)。正史の根を明示的に持つか要検討
+  - **sidecar が強制 kill されたときの llama-server 孤児化**: shutdown が走らない経路では
+    VRAM を掴んだまま残る。Windows Job Object で紐付けるのが本筋
+  - **SSE ストリーム進行中のライブラリ切替**: 清書・再抽出の途中で切り替えると、以降の書き込みが
+    新しいライブラリの DB に落ちる(store.conn 参照経由)。ストリーム開始時の root を控えて
+    不一致なら中断するのが安い
+  - **埋め込み encode は依然イベントループ上**: ロード中のフリーズは解消済み(trylock)だが、
+    ロード後も 1 クエリごとに数十〜数百 ms ブロックする。to_thread 化は SQLite 接続の
+    スレッド越えと「書き込みはループ上で直列」の前提に触るので、遅さが気になったら設計して入れる
 - [ ] **Phase 6 — スケール対応**: memory_compress(記憶の自動要約圧縮)、LLM 検証パス(感情の一貫性、温度0.1)、faction フォールバック + factions UI、2ノード間差分表示、エクスポート強化
 - [ ] **フル版の関係図**(2026-07-25 ユーザー発案): インスペクタ内のコンパクト版とは別に、
   しっかりしたバージョンを作る。

@@ -60,6 +60,9 @@ export default function ProofreadTextarea({
       .catch(() => setPresets([]))
   }, [])
 
+  // アンマウント時に進行中のストリーミングを中止する
+  useEffect(() => () => abortRef.current?.abort(), [])
+
   const autosize = useCallback((): void => {
     const el = areaRef.current
     if (!el) return

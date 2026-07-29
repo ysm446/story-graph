@@ -28,28 +28,45 @@ _load_failed = False
 _lock = threading.Lock()
 
 
-def _get_model():
+def _load_model_locked():
+    """_lock を保持した状態で呼ぶこと。"""
     global _model, _load_failed
     if _model is not None or _load_failed:
         return _model
-    with _lock:
-        if _model is not None or _load_failed:
-            return _model
-        try:
-            from sentence_transformers import SentenceTransformer
+    try:
+        from sentence_transformers import SentenceTransformer
 
-            log.info("loading embedding model: %s", MODEL_NAME)
-            _model = SentenceTransformer(
-                MODEL_NAME, cache_folder=str(CACHE_DIR), device="cpu"
-            )
-        except Exception:  # noqa: BLE001
-            log.exception("埋め込みモデルのロードに失敗。ベクトル検索なしで続行します")
-            _load_failed = True
+        log.info("loading embedding model: %s", MODEL_NAME)
+        _model = SentenceTransformer(
+            MODEL_NAME, cache_folder=str(CACHE_DIR), device="cpu"
+        )
+    except Exception:  # noqa: BLE001
+        log.exception("埋め込みモデルのロードに失敗。ベクトル検索なしで続行します")
+        _load_failed = True
     return _model
 
 
+def _get_model():
+    if _model is not None or _load_failed:
+        return _model
+    with _lock:
+        return _load_model_locked()
+
+
 def available() -> bool:
-    return _get_model() is not None
+    """検索経路から呼ばれる。warmup がロード中(初回はダウンロードで分単位)の
+    ときにロック待ちするとイベントループごと固まるため、待たずに False を返して
+    FTS のみで続行する(ロード完了後の検索からベクトルが効く)。"""
+    if _model is not None:
+        return True
+    if _load_failed:
+        return False
+    if not _lock.acquire(blocking=False):
+        return False
+    try:
+        return _load_model_locked() is not None
+    finally:
+        _lock.release()
 
 
 def is_ready() -> bool:

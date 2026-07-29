@@ -101,11 +101,13 @@ export const api = {
     }),
   setNodeImage: (id: string, imagePath: string | null) =>
     request<unknown>(`/nodes/${id}/image`, { method: 'POST', body: JSON.stringify({ image_path: imagePath }) }),
-  // このシーンだけの清書の目安の字数(null / 0 で共通の設定に従う)
-  setNodeTargetChars: (id: string, targetChars: number | null) =>
+  // このシーンだけの清書の目安の字数(null / 0 で共通の設定に従う)。
+  // signal は清書タスクの中止用(保存待ちで固まらないように)
+  setNodeTargetChars: (id: string, targetChars: number | null, signal?: AbortSignal) =>
     request<unknown>(`/nodes/${id}/target_chars`, {
       method: 'POST',
-      body: JSON.stringify({ target_chars: targetChars })
+      body: JSON.stringify({ target_chars: targetChars }),
+      signal
     }),
   // 動画挿絵のサムネイル(videoThumb.ts が生成して保存する)
   setNodeThumb: (id: string, thumbPath: string | null) =>
@@ -232,18 +234,23 @@ export async function proofreadStream(
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
-    const parts = buffer.split('\n\n')
-    buffer = parts.pop() ?? ''
-    for (const part of parts) {
-      const line = part.trim()
-      if (line.startsWith('data: ')) {
-        onEvent(JSON.parse(line.slice(6)) as ProofreadStreamEvent)
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const parts = buffer.split('\n\n')
+      buffer = parts.pop() ?? ''
+      for (const part of parts) {
+        const line = part.trim()
+        if (line.startsWith('data: ')) {
+          onEvent(JSON.parse(line.slice(6)) as ProofreadStreamEvent)
+        }
       }
     }
+  } finally {
+    // 中断時もストリームを閉じて、接続とリーダーのロックを残さない
+    void reader.cancel().catch(() => undefined)
   }
 }
 
@@ -293,16 +300,20 @@ async function reextractStream(
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
-    const parts = buffer.split('\n\n')
-    buffer = parts.pop() ?? ''
-    for (const part of parts) {
-      const line = part.trim()
-      if (line.startsWith('data: ')) onEvent(JSON.parse(line.slice(6)) as ReextractStreamEvent)
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const parts = buffer.split('\n\n')
+      buffer = parts.pop() ?? ''
+      for (const part of parts) {
+        const line = part.trim()
+        if (line.startsWith('data: ')) onEvent(JSON.parse(line.slice(6)) as ReextractStreamEvent)
+      }
     }
+  } finally {
+    void reader.cancel().catch(() => undefined)
   }
 }
 
@@ -389,18 +400,22 @@ export async function llamaInstallStream(
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
-    const parts = buffer.split('\n\n')
-    buffer = parts.pop() ?? ''
-    for (const part of parts) {
-      const line = part.trim()
-      if (line.startsWith('data: ')) {
-        onProgress(JSON.parse(line.slice(6)) as LlamaInstallProgress)
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const parts = buffer.split('\n\n')
+      buffer = parts.pop() ?? ''
+      for (const part of parts) {
+        const line = part.trim()
+        if (line.startsWith('data: ')) {
+          onProgress(JSON.parse(line.slice(6)) as LlamaInstallProgress)
+        }
       }
     }
+  } finally {
+    void reader.cancel().catch(() => undefined)
   }
 }
 
@@ -448,18 +463,22 @@ export async function renderStream(
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
-    const parts = buffer.split('\n\n')
-    buffer = parts.pop() ?? ''
-    for (const part of parts) {
-      const line = part.trim()
-      if (line.startsWith('data: ')) {
-        onEvent(JSON.parse(line.slice(6)) as RenderStreamEvent)
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const parts = buffer.split('\n\n')
+      buffer = parts.pop() ?? ''
+      for (const part of parts) {
+        const line = part.trim()
+        if (line.startsWith('data: ')) {
+          onEvent(JSON.parse(line.slice(6)) as RenderStreamEvent)
+        }
       }
     }
+  } finally {
+    void reader.cancel().catch(() => undefined)
   }
 }
 
@@ -568,18 +587,22 @@ export async function chatSendStream(
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
-    const parts = buffer.split('\n\n')
-    buffer = parts.pop() ?? ''
-    for (const part of parts) {
-      const line = part.trim()
-      if (line.startsWith('data: ')) {
-        onEvent(JSON.parse(line.slice(6)) as ChatStreamEvent)
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const parts = buffer.split('\n\n')
+      buffer = parts.pop() ?? ''
+      for (const part of parts) {
+        const line = part.trim()
+        if (line.startsWith('data: ')) {
+          onEvent(JSON.parse(line.slice(6)) as ChatStreamEvent)
+        }
       }
     }
+  } finally {
+    void reader.cancel().catch(() => undefined)
   }
 }
 
@@ -612,17 +635,21 @@ export async function generateBeatStream(
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
-    const parts = buffer.split('\n\n')
-    buffer = parts.pop() ?? ''
-    for (const part of parts) {
-      const line = part.trim()
-      if (line.startsWith('data: ')) {
-        onEvent(JSON.parse(line.slice(6)) as GenerationEvent)
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const parts = buffer.split('\n\n')
+      buffer = parts.pop() ?? ''
+      for (const part of parts) {
+        const line = part.trim()
+        if (line.startsWith('data: ')) {
+          onEvent(JSON.parse(line.slice(6)) as GenerationEvent)
+        }
       }
     }
+  } finally {
+    void reader.cancel().catch(() => undefined)
   }
 }

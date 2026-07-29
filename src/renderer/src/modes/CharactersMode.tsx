@@ -75,21 +75,29 @@ export default function CharactersMode(): React.JSX.Element {
 
   const handleCropped = async (blob: Blob, state: CropState): Promise<void> => {
     const target = cropTarget
-    setCropTarget(null)
-    if (!target || !selectedId) return
-    const sourcePath = target.isNewFile
-      ? (await uploadAsset(target.source as File)).path
-      : draft.portrait_source_path
-    const cropped = new File([blob], 'portrait.png', { type: 'image/png' })
-    const { path } = await uploadAsset(cropped)
-    const patch = {
-      portrait_path: path,
-      portrait_source_path: sourcePath,
-      portrait_crop: JSON.stringify(state)
+    if (!target || !selectedId) {
+      setCropTarget(null)
+      return
     }
-    await api.updateCharacter(selectedId, patch)
-    setDraft((d) => ({ ...d, ...patch }))
-    await reload()
+    // 失敗時はモーダルを残す(切り抜き結果を黙って捨てない)
+    try {
+      const sourcePath = target.isNewFile
+        ? (await uploadAsset(target.source as File)).path
+        : draft.portrait_source_path
+      const cropped = new File([blob], 'portrait.png', { type: 'image/png' })
+      const { path } = await uploadAsset(cropped)
+      const patch = {
+        portrait_path: path,
+        portrait_source_path: sourcePath,
+        portrait_crop: JSON.stringify(state)
+      }
+      await api.updateCharacter(selectedId, patch)
+      setCropTarget(null)
+      setDraft((d) => ({ ...d, ...patch }))
+      await reload()
+    } catch (e) {
+      window.alert(`画像の保存に失敗しました: ${String(e)}`)
+    }
   }
 
   const selected = characters.find((c) => c.id === selectedId) ?? null
