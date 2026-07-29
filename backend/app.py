@@ -810,6 +810,15 @@ async def list_renders(preset_id: str, pov_char: str | None = None) -> list[dict
     return store.list_renders(preset_id, pov_char)
 
 
+@app.get("/renders/{node_id}")
+async def get_render(node_id: str, preset_id: str, pov_char: str | None = None) -> dict[str, Any]:
+    """単一シーンの最新清書(構造モードの清書タブ用)。
+
+    /renders と違って正史パスに限らないので、分岐や島のシーンでも取れる。
+    """
+    return {"render": store.latest_render(node_id, preset_id, pov_char or None)}
+
+
 @app.post("/render")
 async def render(body: RenderIn) -> StreamingResponse:
     canon = store.canon_path()

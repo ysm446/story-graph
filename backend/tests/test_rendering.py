@@ -97,6 +97,27 @@ def test_render_pov_filters_state(store, monkeypatch):
     assert "実は王子" not in user
 
 
+def test_branch_node_render_is_retrievable(store, monkeypatch):
+    """分岐(正史パス外)のシーンも清書して取り出せる。
+
+    構造モードの清書タブは正史に限らず選択中のシーンを映すので、
+    list_renders(正史のみ)ではなく latest_render で引ける必要がある。
+    """
+    async def fake_stream(messages, **kwargs):
+        yield "分岐の本文"
+
+    monkeypatch.setattr(llm_mod, "chat_stream", fake_stream)
+    preset = store.list_presets()[0]
+    branch = store.append_node(
+        {"beat": "もし橋を渡らなかったら", "cast": ["aya"], "status": "draft"},
+        [],
+        parent_id=store.canon_path()[0],
+    )
+    assert branch["id"] not in store.canon_path()
+    collect_sse(rendering.render_stream(store, "http://fake", [branch["id"]], preset["id"], None))
+    assert store.latest_render(branch["id"], preset["id"], None)["prose"] == "分岐の本文"
+
+
 def test_stale_marked_on_upstream_edit(store, monkeypatch):
     async def fake_stream(messages, **kwargs):
         yield "本文"

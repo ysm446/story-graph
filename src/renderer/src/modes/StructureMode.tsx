@@ -32,10 +32,19 @@ import FactTimeline from '../FactTimeline'
 import { Icon } from '../icons'
 import ProofreadTextarea from '../ProofreadTextarea'
 import RelationGraph from '../RelationGraph'
-import { cancelTask, enqueueTask } from '../tasks'
+import { RenderStyleControls, useRenderStyle, type RenderStyleState } from '../RenderStyle'
+import { cancelTask, enqueueTask, useTaskFor } from '../tasks'
 import { useElapsedSeconds } from '../useElapsed'
 import { backfillVideoThumbs } from '../videoThumb'
-import type { Character, GraphEdge, Place, StateSnapshot, StoryEvent, StoryNode } from '../types'
+import type {
+  Character,
+  GraphEdge,
+  Place,
+  RenderResult,
+  StateSnapshot,
+  StoryEvent,
+  StoryNode
+} from '../types'
 
 const COLUMN_GAP_X = 344 // カード幅(w-72 = 288)+ 余白
 const LANE_GAP_Y = 56 // レーン間の余白
@@ -1128,6 +1137,199 @@ function CharTab({
   )
 }
 
+// ---- 清書タブ --------------------------------------------------------
+
+/** 選択シーンの清書(散文)を見て、その場で書き直せるプレビュー。
+ *
+ *  鑑賞モードと同じ `renders` を見ている(スタイルプリセット / POV も
+ *  `RenderStyle` 経由で共通)。ここで書いたものはそのまま鑑賞モードに出る。
+ */
+function RenderTab({
+  node,
+  style,
+  isCanon,
+  onNodeBusyChange
+}: {
+  node: StoryNode
+  style: RenderStyleState
+  /** 正史パス上のシーンか(分岐・島は直前シーンの文体接続が効かない) */
+  isCanon: boolean
+  onNodeBusyChange: (nodeId: string, busy: boolean) => void
+}): React.JSX.Element {
+  const { presetId, povChar, proseFont, fontSize } = style
+  const [render, setRender] = useState<RenderResult | null>(null)
+  const [loading, setLoading] = useState(true)
+  // 生成中の文字列。どのシーンのものかを持つ(生成中に別のシーンへ移れる)
+  const [live, setLive] = useState<{ nodeId: string; text: string } | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const task = useTaskFor('render', node.id)
+  const running = task?.status === 'running'
+  const elapsed = useElapsedSeconds(running)
+  const bodyRef = useRef<HTMLDivElement | null>(null)
+
+  // いま何を映しているか。生成完了時に「まだ同じ条件を見ているか」の判定に使う
+  const shownRef = useRef({ nodeId: node.id, presetId, povChar })
+  useEffect(() => {
+    shownRef.current = { nodeId: node.id, presetId, povChar }
+  }, [node.id, presetId, povChar])
+
+  useEffect(() => {
+    if (!presetId) {
+      setRender(null)
+      setLoading(false)
+      return
+    }
+    let ignore = false
+    setLoading(true)
+    setError(null)
+    void api
+      .getRender(node.id, presetId, povChar)
+      .then((r) => {
+        if (!ignore) setRender(r.render)
+      })
+      .catch((e) => {
+        if (!ignore) setError(String(e))
+      })
+      .finally(() => {
+        if (!ignore) setLoading(false)
+      })
+    return () => {
+      ignore = true
+    }
+  }, [node.id, presetId, povChar])
+
+  // 生成中は末尾に追従する
+  const liveText = live?.nodeId === node.id ? live.text : null
+  useEffect(() => {
+    if (liveText === null) return
+    const el = bodyRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [liveText])
+
+  const runRender = (): void => {
+    if (!presetId) return
+    const targetId = node.id // 実行までに別のシーンへ移っても対象は変えない
+    const preset = presetId
+    const pov = povChar
+    setError(null)
+    enqueueTask({
+      label: '清書',
+      detail: node.title || '(無題)',
+      kind: 'render',
+      nodeId: targetId,
+      runner: async ({ signal }) => {
+        onNodeBusyChange(targetId, true)
+        setLive({ nodeId: targetId, text: '' })
+        try {
+          await renderStream(
+            { preset_id: preset, pov_char: pov, node_ids: [targetId], skip_existing: false },
+            (e) => {
+              if (e.delta) setLive((l) => (l && l.nodeId === targetId ? { ...l, text: l.text + e.delta } : l))
+              if (e.scene_done && e.render) {
+                const shown = shownRef.current
+                if (shown.nodeId === targetId && shown.presetId === preset && shown.povChar === pov) {
+                  setRender(e.render)
+                }
+              }
+              if (e.error) setError(e.error)
+            },
+            signal
+          )
+        } catch (err) {
+          setError(isAbortError(err) ? '清書を中止しました(書きかけは保存されません)' : String(err))
+        } finally {
+          onNodeBusyChange(targetId, false)
+          setLive(null)
+        }
+      }
+    })
+  }
+
+  const proseStyle = { color: 'var(--text)', fontFamily: proseFont, fontSize, lineHeight: 1.9 }
+  const stale = render?.stale === 1
+
+  return (
+    <div className="flex h-full min-h-0 flex-col gap-2">
+      {/* 条件(鑑賞モードと共通。ここで変えると鑑賞モードにも効く) */}
+      <div className="flex flex-wrap items-center gap-1.5">
+        <RenderStyleControls style={style} variant="compact" onStatus={setError} />
+      </div>
+      <div className="flex items-center gap-1.5">
+        {running || task ? (
+          <button
+            onClick={() => task && cancelTask(task.id)}
+            className="rounded-lg border px-2.5 py-1 text-[12px]"
+            style={{ borderColor: 'rgba(239,68,68,0.5)', color: 'var(--danger)' }}
+          >
+            ■ {running ? `清書中… (${elapsed}s)` : '待機中… 取り消す'}
+          </button>
+        ) : (
+          <button
+            onClick={runRender}
+            disabled={!presetId}
+            className="rounded-lg px-2.5 py-1 text-[12px] font-medium text-white disabled:opacity-40"
+            style={{ background: 'var(--accent)' }}
+            title={render ? '同じ条件で書き直す(前の清書は履歴として残る)' : 'このシーンを散文にする'}
+          >
+            {render ? '⟳ 清書し直す' : '▶ このシーンを清書'}
+          </button>
+        )}
+        {stale && (
+          <span
+            className="rounded px-1.5 py-px text-[10px] uppercase"
+            style={{ background: 'rgba(239,68,68,0.12)', color: '#f2a3a3' }}
+            title="このシーンか上流が編集されたので、清書が古くなっています"
+          >
+            stale
+          </span>
+        )}
+        {render && !liveText && (
+          <span className="ml-auto text-[11px] tabular-nums" style={{ color: 'var(--text-faint)' }}>
+            {render.prose.length} 字
+          </span>
+        )}
+      </div>
+      {!isCanon && (
+        <p className="text-[11px] leading-relaxed" style={{ color: 'var(--text-faint)' }}>
+          正史パス外のシーンです。直前シーンの文末に接続する処理は効きません(単独で書かれます)。
+        </p>
+      )}
+      {error && (
+        <p className="text-[11px] leading-relaxed" style={{ color: 'var(--danger)' }}>
+          {error}
+        </p>
+      )}
+      <div ref={bodyRef} className="inspector-scrollbar min-h-0 flex-1 overflow-y-auto">
+        {liveText !== null ? (
+          <div className="whitespace-pre-wrap" style={proseStyle}>
+            {liveText}
+            <span
+              className="node-generating-border ml-0.5 inline-block h-4 w-1.5 align-middle"
+              style={{ background: 'var(--accent)' }}
+            />
+          </div>
+        ) : render ? (
+          <div className="whitespace-pre-wrap" style={{ ...proseStyle, opacity: stale ? 0.6 : 1 }}>
+            {render.prose}
+          </div>
+        ) : loading ? (
+          <div className="pt-6 text-center text-[12px]" style={{ color: 'var(--text-faint)' }}>
+            読み込み中…
+          </div>
+        ) : (
+          <div
+            className="rounded-xl border border-dashed px-4 py-6 text-center text-[12px]"
+            style={{ borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }}
+          >
+            {presetId ? 'このシーンはまだ清書されていません' : 'スタイルプリセットがありません'}
+            <div className="mt-1 text-[11px]">{node.beat}</div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ---- 構造モード本体 --------------------------------------------------
 
 function StructureModeInner({
@@ -1146,7 +1348,7 @@ function StructureModeInner({
   const [characters, setCharacters] = useState<Character[]>([])
   const [places, setPlaces] = useState<Place[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [inspectorTab, setInspectorTab] = useState<'beat' | 'char' | 'graph' | 'facts'>('beat')
+  const [inspectorTab, setInspectorTab] = useState<'beat' | 'render' | 'char' | 'graph' | 'facts'>('beat')
   const [validation, setValidation] = useState<string[]>([])
   const [instruction, setInstruction] = useState('')
   const [generating, setGenerating] = useState(false)
@@ -1162,12 +1364,9 @@ function StructureModeInner({
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null)
   // 右クリックメニュー(範囲選択した複数ノードへの一括操作)
   const [menu, setMenu] = useState<{ x: number; y: number; targets: string[] } | null>(null)
-  // 一括清書に使う条件(鑑賞モードで選んだプリセットと POV。settings に保存済み)
-  const [readerSetting, setReaderSetting] = useState<{
-    presetId: string | null
-    presetName: string
-    povChar: string | null
-  }>({ presetId: null, presetName: '未設定', povChar: null })
+  // 清書の条件(スタイルプリセット / POV)。清書タブと右クリックの一括清書で共用し、
+  // 鑑賞モードとも settings 経由で共通(RenderStyle.tsx)
+  const renderStyle = useRenderStyle()
   // LLM 処理中のノード(枠が時計まわりに光る)。生成・抽出・再抽出で共用
   const [busyNodeIds, setBusyNodeIds] = useState<Set<string>>(new Set())
   const markNodeBusy = useCallback((nodeId: string | null, busy: boolean): void => {
@@ -1286,20 +1485,6 @@ function StructureModeInner({
       .then((s) => {
         setMinimapVisible(s.minimap_visible !== '0')
         setChatDynamicSuggestions(s.chat_dynamic_suggestions !== '0')
-        // 一括清書は鑑賞モードで選んだ条件をそのまま使う
-        const presetId = s.reader_preset_id || null
-        const povChar = s.reader_pov_char || null
-        void api
-          .listPresets()
-          .then((presets) => {
-            const preset = presets.find((p) => p.id === presetId) ?? presets[0] ?? null
-            setReaderSetting({
-              presetId: preset?.id ?? null,
-              presetName: preset?.name ?? '未設定',
-              povChar
-            })
-          })
-          .catch(() => setReaderSetting({ presetId, presetName: '未設定', povChar }))
       })
       .catch(() => undefined)
   }, [settingsVersion])
@@ -1702,7 +1887,7 @@ function StructureModeInner({
   // 選択したシーンを一括清書(条件は鑑賞モードの選択をそのまま使う)
   const runRenderNodes = useCallback(
     (nodeIds: string[], skipExisting: boolean, includeDownstream = false): void => {
-      const presetId = readerSetting.presetId
+      const presetId = renderStyle.presetId
       if (!presetId || nodeIds.length === 0) return
       let targets = nodeIds
       if (includeDownstream) {
@@ -1719,7 +1904,7 @@ function StructureModeInner({
         }
         targets = [...seen]
       }
-      const pov = readerSetting.povChar
+      const pov = renderStyle.povChar
       enqueueTask({
         label: '清書',
         total: targets.length,
@@ -1758,7 +1943,7 @@ function StructureModeInner({
         }
       })
     },
-    [markNodeBusy, readerSetting, graphEdges]
+    [markNodeBusy, renderStyle.presetId, renderStyle.povChar, graphEdges]
   )
 
   // 選択したシーンをまとめて切り離す / 削除する
@@ -2449,28 +2634,28 @@ function StructureModeInner({
                   },
                   {
                     label: `清書(未清書のみ)`,
-                    hint: `${readerSetting.presetName}${
-                      readerSetting.povChar ? ` / POV: ${nameOfChar(readerSetting.povChar)}` : ''
+                    hint: `${renderStyle.preset?.name ?? '未設定'}${
+                      renderStyle.povChar ? ` / POV: ${nameOfChar(renderStyle.povChar)}` : ''
                     }`,
-                    disabled: !readerSetting.presetId,
+                    disabled: !renderStyle.presetId,
                     run: () => void runRenderNodes(menu.targets, true)
                   },
                   {
                     label: '清書し直す(上書き)',
                     hint: '清書済みのシーンも作り直す',
-                    disabled: !readerSetting.presetId,
+                    disabled: !renderStyle.presetId,
                     run: () => void runRenderNodes(menu.targets, false)
                   },
                   {
                     label: '清書(この先も / 未清書のみ)',
                     hint: '選択したシーンと下流の、未清書か要更新のもの',
-                    disabled: !readerSetting.presetId,
+                    disabled: !renderStyle.presetId,
                     run: () => void runRenderNodes(menu.targets, true, true)
                   },
                   {
                     label: '清書し直す(この先も / 上書き)',
                     hint: '選択したシーンと、その下流すべて',
-                    disabled: !readerSetting.presetId,
+                    disabled: !renderStyle.presetId,
                     run: () => void runRenderNodes(menu.targets, false, true)
                   },
                   {
@@ -2554,6 +2739,7 @@ function StructureModeInner({
             {(
               [
                 { id: 'beat', label: 'シーン' },
+                { id: 'render', label: '清書' },
                 { id: 'char', label: 'キャラ' },
                 { id: 'graph', label: '関係図' },
                 { id: 'facts', label: '事実' }
@@ -2589,7 +2775,14 @@ function StructureModeInner({
                 onSelectNode={(nodeId) => setSelectedId(nodeId)}
               />
             ) : selectedNode ? (
-              inspectorTab === 'beat' ? (
+              inspectorTab === 'render' ? (
+                <RenderTab
+                  node={selectedNode}
+                  style={renderStyle}
+                  isCanon={canonPath.some((n) => n.id === selectedNode.id)}
+                  onNodeBusyChange={markNodeBusy}
+                />
+              ) : inspectorTab === 'beat' ? (
                 <BeatTab
                   node={selectedNode}
                   characters={characters}

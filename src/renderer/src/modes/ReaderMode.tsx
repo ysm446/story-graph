@@ -1,24 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { api, assetUrl, isAbortError, isVideoAsset, renderStream } from '../api'
 import { CrossfadeLoopVideo, DEFAULT_VIDEO_CROSSFADE_SECONDS } from '../CrossfadeLoopVideo'
+import { FONT_OPTIONS, FONT_SIZES, RenderStyleControls, useRenderStyle } from '../RenderStyle'
 import { cancelTask, enqueueTask } from '../tasks'
 import { useElapsedSeconds } from '../useElapsed'
-import type { Character, SceneEntry, StylePreset } from '../types'
-
-// 本文フォント(ローカルにインストール済みのものが使われる。無ければ後続へフォールバック)
-const FONT_OPTIONS = [
-  { id: 'sans', label: 'ゴシック(標準)', stack: '"Inter", "Segoe UI", "Noto Sans JP", system-ui, sans-serif' },
-  {
-    id: 'mincho',
-    label: 'しっぽり明朝 / 明朝',
-    stack: '"Shippori Mincho", "しっぽり明朝", "Yu Mincho", "游明朝", "Hiragino Mincho ProN", "MS PMincho", serif'
-  },
-  {
-    id: 'serif',
-    label: 'Reading Serif',
-    stack: 'Georgia, "Times New Roman", "Yu Mincho", "游明朝", serif'
-  }
-] as const
+import type { SceneEntry } from '../types'
 
 type ViewMode = 'scroll' | 'split' | 'page'
 
@@ -30,154 +16,10 @@ const VIEW_MODES: Array<{ id: ViewMode; label: string; title: string }> = [
 
 const TYPEWRITER_CHARS_PER_TICK = 4
 
-const FONT_SIZES = [
-  { value: 13, label: '小' },
-  { value: 14, label: '標準' },
-  { value: 16, label: '中' },
-  { value: 18, label: '大' },
-  { value: 20, label: '特大' }
-]
-
 /** ページモードの1ページ。text=null は未清書シーンのプレースホルダ */
 interface PageChunk {
   sceneIndex: number
   text: string | null
-}
-
-interface PresetDraft {
-  id?: string
-  name: string
-  person: string
-  tone: string
-}
-
-function PresetEditorModal({
-  draft,
-  onClose,
-  onSaved,
-  onDeleted
-}: {
-  draft: PresetDraft
-  onClose: () => void
-  onSaved: (id: string) => void
-  onDeleted: () => void
-}): React.JSX.Element {
-  const [form, setForm] = useState<PresetDraft>(draft)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const inputStyle = { background: 'var(--bg-input)', borderColor: 'var(--border)' }
-
-  const handleSave = async (): Promise<void> => {
-    if (!form.name.trim()) {
-      setError('名前を入力してください')
-      return
-    }
-    setBusy(true)
-    setError(null)
-    try {
-      const saved = await api.upsertPreset({
-        id: form.id,
-        name: form.name.trim(),
-        person: form.person,
-        tone: form.tone
-      })
-      onSaved(saved.id)
-    } catch (e) {
-      setError(String(e))
-      setBusy(false)
-    }
-  }
-
-  const handleDelete = async (): Promise<void> => {
-    if (!form.id) return
-    if (!window.confirm(`プリセット「${form.name}」を削除しますか?`)) return
-    setBusy(true)
-    try {
-      await api.deletePreset(form.id)
-      onDeleted()
-    } catch (e) {
-      setError(String(e))
-      setBusy(false)
-    }
-  }
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center"
-      style={{ background: 'rgba(0,0,0,0.55)' }}
-      onClick={onClose}
-    >
-      <div
-        className="w-[560px] max-w-[92vw] rounded-2xl border p-5"
-        style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)' }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h3 className="mb-3 text-[14px] font-semibold" style={{ color: 'var(--text)' }}>
-          {form.id ? 'スタイルプリセットを編集' : 'スタイルプリセットを新規作成'}
-        </h3>
-        <div className="mb-3 flex gap-2">
-          <input
-            value={form.name}
-            onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-            placeholder="プリセット名"
-            className="min-w-0 flex-1 rounded-lg border px-3 py-1.5 text-[13px] outline-none"
-            style={inputStyle}
-          />
-          <select
-            value={form.person}
-            onChange={(e) => setForm((f) => ({ ...f, person: e.target.value }))}
-            className="rounded-lg border px-2 py-1.5 text-[13px]"
-            style={inputStyle}
-          >
-            <option value="third">三人称</option>
-            <option value="first">一人称(POV必須)</option>
-          </select>
-        </div>
-        <label className="mb-1 block text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
-          システムプロンプト
-        </label>
-        <textarea
-          rows={10}
-          value={form.tone}
-          onChange={(e) => setForm((f) => ({ ...f, tone: e.target.value }))}
-          placeholder={
-            'あなたはプロの小説家です。与えられたシーン(出来事の仕様書)を散文に仕上げます。\n背景や空気感の描写、人物の仕草と表情、会話の間を丁寧に肉付けしてください。\n硬質で乾いた文体。短いセンテンスを重ね、比喩は最小限に。'
-          }
-          className="mb-2 w-full rounded-lg border px-3 py-2 text-[13px] leading-relaxed outline-none"
-          style={inputStyle}
-        />
-        <p className="mb-3 text-[11px] leading-relaxed" style={{ color: 'var(--text-faint)' }}>
-          ここに書いた全文がそのままシステムプロンプトになります。末尾に「人称(POV 指定)」と厳守事項
-          (シーンにある出来事以外を発生させない / POV キャラが知らない情報を書かない 等)だけが自動で追加されます。
-        </p>
-        {error && (
-          <p className="mb-2 text-[12px]" style={{ color: 'var(--danger)' }}>
-            {error}
-          </p>
-        )}
-        <div className="flex items-center gap-2">
-          {form.id && (
-            <button onClick={() => void handleDelete()} disabled={busy} className="text-[12px]" style={{ color: 'var(--danger)' }}>
-              削除
-            </button>
-          )}
-          <div className="ml-auto flex gap-2">
-            <button onClick={onClose} className="px-3 py-1.5 text-[13px]" style={{ color: 'var(--text-dim)' }}>
-              キャンセル
-            </button>
-            <button
-              onClick={() => void handleSave()}
-              disabled={busy}
-              className="rounded-lg px-4 py-1.5 text-[13px] font-medium text-white disabled:opacity-50"
-              style={{ background: 'var(--accent)' }}
-            >
-              保存
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  )
 }
 
 export default function ReaderMode({
@@ -186,19 +28,15 @@ export default function ReaderMode({
   /** 構造モードで選んでいたシーン。開いたときにここへ飛ぶ */
   focusNodeId?: string | null
 } = {}): React.JSX.Element {
-  const [presets, setPresets] = useState<StylePreset[]>([])
-  const [presetId, setPresetId] = useState<string | null>(null)
-  const [characters, setCharacters] = useState<Character[]>([])
-  const [povChar, setPovChar] = useState<string | null>(null)
+  // スタイルプリセット / POV / 本文フォントは構造モードの清書タブと共有する
+  const style = useRenderStyle()
+  const { presetId, povChar, fontSize, proseFont } = style
   const [scenes, setScenes] = useState<SceneEntry[]>([])
   const [rendering, setRendering] = useState(false)
   const [liveNodeId, setLiveNodeId] = useState<string | null>(null)
   const [liveText, setLiveText] = useState('')
   const [status, setStatus] = useState<string | null>(null)
-  const [presetEditor, setPresetEditor] = useState<PresetDraft | null>(null)
   const [viewMode, setViewMode] = useState<ViewMode>('scroll')
-  const [fontId, setFontId] = useState<string>('sans')
-  const [fontSize, setFontSize] = useState<number>(14)
   const [videoFade, setVideoFade] = useState<number>(DEFAULT_VIDEO_CROSSFADE_SECONDS)
   const [pageIndex, setPageIndex] = useState(0)
   const [typedLen, setTypedLen] = useState(0)
@@ -209,40 +47,17 @@ export default function ReaderMode({
   const pageAreaRef = useRef<HTMLDivElement | null>(null) // 本文エリア全体(挿絵の有無に依らず全高・全幅)
   const measurerRef = useRef<HTMLDivElement | null>(null)
 
-  const proseFont = FONT_OPTIONS.find((f) => f.id === fontId)?.stack ?? FONT_OPTIONS[0].stack
   const renderElapsed = useElapsedSeconds(rendering)
 
-  const reloadPresets = useCallback(async (selectId?: string): Promise<void> => {
-    const p = await api.listPresets()
-    setPresets(p)
-    if (selectId) {
-      setPresetId(selectId)
-      void api.putSettings({ reader_preset_id: selectId })
-    } else {
-      setPresetId((prev) => (prev && p.some((x) => x.id === prev) ? prev : p[0]?.id ?? null))
-    }
-  }, [])
-
+  // 鑑賞モードだけの表示設定(共有しないもの)
   useEffect(() => {
-    void Promise.all([api.listPresets(), api.listCharacters(), api.getSettings()]).then(
-      ([p, chars, settings]) => {
-        setPresets(p)
-        setCharacters(chars)
-        // 前回の選択を復元(ライブラリごとの settings に保存)
-        const savedPreset = settings.reader_preset_id
-        setPresetId(savedPreset && p.some((x) => x.id === savedPreset) ? savedPreset : p[0]?.id ?? null)
-        const savedPov = settings.reader_pov_char
-        if (savedPov && chars.some((c) => c.id === savedPov)) setPovChar(savedPov)
-        if (settings.reader_view === 'split' || settings.reader_view === 'page') {
-          setViewMode(settings.reader_view)
-        }
-        if (FONT_OPTIONS.some((f) => f.id === settings.reader_font)) setFontId(settings.reader_font)
-        const savedSize = Number(settings.reader_font_size)
-        if (FONT_SIZES.some((s) => s.value === savedSize)) setFontSize(savedSize)
-        const savedFade = Number(settings.video_crossfade_seconds)
-        if (Number.isFinite(savedFade) && savedFade >= 0) setVideoFade(Math.min(savedFade, 5))
+    void api.getSettings().then((settings) => {
+      if (settings.reader_view === 'split' || settings.reader_view === 'page') {
+        setViewMode(settings.reader_view)
       }
-    )
+      const savedFade = Number(settings.video_crossfade_seconds)
+      if (Number.isFinite(savedFade) && savedFade >= 0) setVideoFade(Math.min(savedFade, 5))
+    })
   }, [])
 
   // ---- ページモード: 画面に収まる分量でページ分割する ----------------
@@ -321,7 +136,7 @@ export default function ReaderMode({
     measurer.textContent = ''
     setPages(result)
     setPageIndex((i) => Math.min(i, Math.max(result.length - 1, 0)))
-  }, [viewMode, scenesSig, fontId, fontSize, pageBoxSize])
+  }, [viewMode, scenesSig, proseFont, fontSize, pageBoxSize])
 
   // タイプライター表示(ページ単位)。リセットを描画前に行わないと、
   // ページ切替の瞬間に前ページの typedLen 分だけ次ページの文章が見えてしまう
@@ -454,57 +269,6 @@ export default function ReaderMode({
     URL.revokeObjectURL(url)
   }
 
-  // ---- スタイルプリセット(=散文用システムプロンプト)の入出力 --------
-  const presetImportRef = useRef<HTMLInputElement | null>(null)
-
-  const exportPresets = (): void => {
-    const custom = presets.filter((p) => !p.builtin)
-    if (custom.length === 0) {
-      setStatus('書き出せるカスタムプリセットがありません(組み込みは対象外)')
-      return
-    }
-    const payload = {
-      kind: 'story-graph-style-presets',
-      version: 1,
-      presets: custom.map((p) => ({ name: p.name, person: p.person, tone: p.tone }))
-    }
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = 'style-presets.json'
-    a.click()
-    URL.revokeObjectURL(url)
-    setStatus(`${custom.length} 件のプリセットを書き出しました`)
-  }
-
-  const importPresets = async (file: File): Promise<void> => {
-    try {
-      const data = JSON.parse(await file.text())
-      const list: unknown = Array.isArray(data) ? data : data?.presets
-      if (!Array.isArray(list)) throw new Error('プリセット配列が見つかりません')
-      let imported = 0
-      let lastId: string | undefined
-      for (const item of list as Array<Record<string, unknown>>) {
-        const name = String(item?.name ?? '').trim()
-        if (!name) continue
-        // id は付けない(常に新規プリセットとして取り込み、既存・組み込みを壊さない)
-        const saved = await api.upsertPreset({
-          name,
-          person: item?.person === 'first' ? 'first' : 'third',
-          tone: String(item?.tone ?? '')
-        })
-        lastId = saved.id
-        imported += 1
-      }
-      if (imported === 0) throw new Error('取り込めるプリセットがありませんでした')
-      await reloadPresets(lastId)
-      setStatus(`${imported} 件のプリセットを取り込みました`)
-    } catch (e) {
-      setStatus(`インポート失敗: ${String(e)}`)
-    }
-  }
-
   const hasAnyRender = scenes.some((s) => s.render)
   const selectStyle = { background: 'var(--bg-input)', borderColor: 'var(--border)' }
 
@@ -588,94 +352,8 @@ export default function ReaderMode({
         className="flex shrink-0 flex-wrap items-center gap-2 border-b px-4 py-2"
         style={{ background: 'var(--bg-sidebar)', borderColor: 'var(--border)' }}
       >
-        <select
-          value={presetId ?? ''}
-          onChange={(e) => {
-            setPresetId(e.target.value)
-            void api.putSettings({ reader_preset_id: e.target.value })
-          }}
-          className="rounded-lg border px-2 py-1 text-[12px]"
-          style={selectStyle}
-        >
-          {presets.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </select>
-        <button
-          onClick={() => {
-            const current = presets.find((p) => p.id === presetId)
-            if (!current) return
-            if (current.builtin) {
-              // 組み込みは編集不可 → 複製して新規プリセットとして開く
-              setPresetEditor({ name: `${current.name} のコピー`, person: current.person, tone: current.tone })
-            } else {
-              setPresetEditor({ id: current.id, name: current.name, person: current.person, tone: current.tone })
-            }
-          }}
-          disabled={!presetId}
-          className="rounded-lg border px-2 py-1 text-[12px] disabled:opacity-40"
-          style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-          title={
-            presets.find((p) => p.id === presetId)?.builtin
-              ? '組み込みプリセットは編集できません。複製して新規作成します'
-              : '選択中のプリセットを編集'
-          }
-        >
-          {presets.find((p) => p.id === presetId)?.builtin ? '⧉ 複製して編集' : '✎ 編集'}
-        </button>
-        <button
-          onClick={() => setPresetEditor({ name: '', person: 'third', tone: '' })}
-          className="rounded-lg border px-2 py-1 text-[12px]"
-          style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-          title="スタイルプリセットを新規作成"
-        >
-          + 新規
-        </button>
-        <button
-          onClick={exportPresets}
-          className="rounded-lg border px-2 py-1 text-[12px]"
-          style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-          title="カスタムのスタイルプリセット(散文用システムプロンプト)を JSON に書き出す"
-        >
-          ⬆ 書き出し
-        </button>
-        <button
-          onClick={() => presetImportRef.current?.click()}
-          className="rounded-lg border px-2 py-1 text-[12px]"
-          style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-          title="JSON からスタイルプリセットを取り込む(新規プリセットとして追加)"
-        >
-          ⬇ 読み込み
-        </button>
-        <input
-          ref={presetImportRef}
-          type="file"
-          accept="application/json,.json"
-          className="hidden"
-          onChange={(e) => {
-            const file = e.target.files?.[0]
-            e.target.value = ''
-            if (file) void importPresets(file)
-          }}
-        />
-        <select
-          value={povChar ?? ''}
-          onChange={(e) => {
-            setPovChar(e.target.value || null)
-            void api.putSettings({ reader_pov_char: e.target.value })
-          }}
-          className="rounded-lg border px-2 py-1 text-[12px]"
-          style={selectStyle}
-        >
-          <option value="">三人称(POVなし)</option>
-          {characters.map((c) => (
-            <option key={c.id} value={c.id}>
-              POV: {c.name}
-            </option>
-          ))}
-        </select>
+        {/* スタイルプリセット / POV(構造モードの清書タブと共通) */}
+        <RenderStyleControls style={style} onStatus={setStatus} />
         {rendering ? (
           <button
             onClick={() => renderTaskIdRef.current && cancelTask(renderTaskIdRef.current)}
@@ -723,11 +401,8 @@ export default function ReaderMode({
           ))}
         </div>
         <select
-          value={fontId}
-          onChange={(e) => {
-            setFontId(e.target.value)
-            void api.putSettings({ reader_font: e.target.value })
-          }}
+          value={style.fontId}
+          onChange={(e) => style.setFontId(e.target.value)}
           className="rounded-lg border px-2 py-1 text-[12px]"
           style={selectStyle}
           title="本文フォント(ローカルにインストールされているものが使われます)"
@@ -740,10 +415,7 @@ export default function ReaderMode({
         </select>
         <select
           value={fontSize}
-          onChange={(e) => {
-            setFontSize(Number(e.target.value))
-            void api.putSettings({ reader_font_size: e.target.value })
-          }}
+          onChange={(e) => style.setFontSize(Number(e.target.value))}
           className="rounded-lg border px-2 py-1 text-[12px]"
           style={selectStyle}
           title="本文の文字サイズ"
@@ -909,23 +581,6 @@ export default function ReaderMode({
         </div>
       </div>
       )}
-
-      {/* プリセットエディタ */}
-      {presetEditor && (
-        <PresetEditorModal
-          draft={presetEditor}
-          onClose={() => setPresetEditor(null)}
-          onSaved={(id) => {
-            setPresetEditor(null)
-            void reloadPresets(id)
-          }}
-          onDeleted={() => {
-            setPresetEditor(null)
-            void reloadPresets()
-          }}
-        />
-      )}
-
     </div>
   )
 }

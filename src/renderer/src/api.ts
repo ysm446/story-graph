@@ -2,6 +2,7 @@ import type {
   Character,
   EventInput,
   Place,
+  RenderResult,
   SceneEntry,
   StateSnapshot,
   StoryEvent,
@@ -123,6 +124,13 @@ export const api = {
   listRenders: (presetId: string, povChar: string | null) =>
     request<SceneEntry[]>(
       `/renders?preset_id=${encodeURIComponent(presetId)}${povChar ? `&pov_char=${encodeURIComponent(povChar)}` : ''}`
+    ),
+  // 単一シーンの最新清書(構造モードの清書タブ。分岐・島のシーンも取れる)
+  getRender: (nodeId: string, presetId: string, povChar: string | null) =>
+    request<{ render: RenderResult | null }>(
+      `/renders/${nodeId}?preset_id=${encodeURIComponent(presetId)}${
+        povChar ? `&pov_char=${encodeURIComponent(povChar)}` : ''
+      }`
     ),
   listProofreadPresets: () => request<Array<{ id: string; name: string; prompt: string }>>('/proofread/presets'),
   proofread: (text: string, presetId: string, context?: { before: string; after: string }) =>
