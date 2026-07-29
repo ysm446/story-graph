@@ -108,6 +108,10 @@ class LlamaManager:
             "--flash-attn", "on",
             "--n-gpu-layers", "999",
             "--jinja",  # tool calling(相談チャット)に必要
+            # 前リクエストと共通する接頭辞(システムプロンプト+キャラ+状態)の
+            # KV キャッシュを 256 トークン以上の塊で再利用する。連続清書や
+            # チャットの継続ターンでプロンプト処理(prefill)を大きく削れる
+            "--cache-reuse", "256",
         ]
         log.info("spawning llama-server: %s", model_path)
         self.proc = subprocess.Popen(
