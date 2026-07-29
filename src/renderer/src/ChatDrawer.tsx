@@ -226,6 +226,7 @@ const TEMPLATE_WINDOW = 5 // 同時に見せる件数
 const MAX_DYNAMIC = 3 // うち、内容から生成された質問に使う枠(生成側の上限も 3 件)
 const SIDEBAR_MIN = 140 // 会話一覧の最小幅(見出しが読める下限)
 const SIDEBAR_MAX = 420 // 同・最大幅。会話エリアを潰さない上限
+const SIDEBAR_DEFAULT = 264 // 会話名 + キャラ名 / シーン名の 2 行が切れにくい幅
 const RING_RADIUS = 10 // コンテキスト使用量リング(26px の SVG 内)
 const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS
 
@@ -299,7 +300,7 @@ export default function ChatDrawer({
   // 切り替えるとこのコンポーネントは破棄されるので localStorage に覚えておく
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     const saved = Number(localStorage.getItem('chatSidebarWidth'))
-    return saved >= SIDEBAR_MIN && saved <= SIDEBAR_MAX ? saved : 208 // 208px = 旧 w-52
+    return saved >= SIDEBAR_MIN && saved <= SIDEBAR_MAX ? saved : SIDEBAR_DEFAULT
   })
   // 左サイドバー(会話一覧)の ⋯ メニューと会話名の編集
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null)
