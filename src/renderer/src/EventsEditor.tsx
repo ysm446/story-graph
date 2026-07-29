@@ -410,8 +410,7 @@ export default function EventsEditor({
   // reload 前だった場合にそのイベントが消える。保存前にサーバーの最新を取り直す
   const latestEvents = async (): Promise<StoryEvent[]> => {
     try {
-      const graph = await api.getGraph()
-      return graph.nodes.find((n) => n.id === node.id)?.events ?? node.events
+      return (await api.getNode(node.id)).events ?? node.events
     } catch {
       return node.events
     }

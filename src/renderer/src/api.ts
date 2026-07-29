@@ -53,6 +53,7 @@ export const api = {
 
   timeline: () => request<StoryNode[]>('/timeline'),
   getGraph: () => request<StoryGraph>('/graph'),
+  getNode: (id: string) => request<StoryNode>(`/nodes/${id}`),
   makeCanon: (nodeId: string) =>
     request<{ canon_path: string[] }>(`/nodes/${nodeId}/make_canon`, { method: 'POST' }),
   // 親エッジを切って、このシーン以下を独立した島にする

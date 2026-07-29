@@ -248,8 +248,7 @@ const beatDraftCache = new Map<string, Partial<StoryNode>>()
 async function latestEventInputs(nodeId: string, fallback: StoryEvent[]): Promise<EventInput[]> {
   let events = fallback
   try {
-    const graph = await api.getGraph()
-    events = graph.nodes.find((n) => n.id === nodeId)?.events ?? fallback
+    events = (await api.getNode(nodeId)).events ?? fallback
   } catch {
     /* 取れなければ手元の値で続行 */
   }
