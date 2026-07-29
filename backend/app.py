@@ -573,7 +573,15 @@ async def llm_status() -> dict[str, Any]:
     settings = store.get_settings()
     base_url = settings.get("llm_base_url") or llm.DEFAULT_BASE_URL
     healthy = await llm.health(base_url)
-    return {"base_url": base_url, "healthy": healthy, **llama.status()}
+    info = llama.status()
+    # spawn 済みだがまだ応答しない = モデルの読み込み中。生成の自動ロード
+    # (ensure_running)でもここが立つので、モデル選択バーが状態を映せる
+    return {
+        "base_url": base_url,
+        "healthy": healthy,
+        "loading": bool(info["spawned"]) and not healthy,
+        **info,
+    }
 
 
 @app.post("/llm/start")

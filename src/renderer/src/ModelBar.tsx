@@ -183,6 +183,9 @@ export default function ModelBar({ refreshKey }: { refreshKey: number }): React.
   const [models, setModels] = useState<ModelEntry[]>([])
   const [selected, setSelected] = useState<string>('') // path
   const [healthy, setHealthy] = useState<boolean | null>(null)
+  // バックエンドが読み込み中(生成の自動ロードを含む。このバー以外がきっかけでも映す)
+  const [autoLoading, setAutoLoading] = useState(false)
+  const [autoLoadingPath, setAutoLoadingPath] = useState<string | null>(null)
   const [open, setOpen] = useState(false)
   const [loadingPath, setLoadingPath] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -201,26 +204,47 @@ export default function ModelBar({ refreshKey }: { refreshKey: number }): React.
     void load()
   }, [load, refreshKey])
 
+  // llama-server の状態を見張る。生成の自動ロード(ensure_running)で始まった
+  // 読み込みもここで拾うので、このバーを操作していなくても状態が映る。
+  // 読み込み中は動きが見たいので間隔を詰める
   useEffect(() => {
     let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | null = null
     const poll = async (): Promise<void> => {
+      let interval = 4000
       try {
         const s = await api.llmStatus()
-        if (!cancelled) setHealthy(s.healthy)
+        if (!cancelled) {
+          setHealthy(s.healthy)
+          setAutoLoading(s.loading)
+          setAutoLoadingPath(s.model_path)
+          // 読み込みが終わったら、実際にロードされたモデルに表示を合わせる
+          // (自動ロードは settings の llm_model_path を使うので通常は一致する)
+          if (s.healthy && s.model_path) setSelected(s.model_path)
+        }
+        if (s.loading) interval = 1500
       } catch {
-        if (!cancelled) setHealthy(false)
+        if (!cancelled) {
+          setHealthy(false)
+          setAutoLoading(false)
+        }
       }
+      if (!cancelled) timer = setTimeout(() => void poll(), interval)
     }
     void poll()
-    const timer = setInterval(() => void poll(), 4000)
     return () => {
       cancelled = true
-      clearInterval(timer)
+      if (timer) clearTimeout(timer)
     }
   }, [])
 
-  const currentName = models.find((m) => m.path === selected)?.name ?? (selected ? selected.split(/[\\/]/).pop() ?? '' : '')
-  const switching = loadingPath !== null
+  // 読み込み中は「実際に読み込まれているモデル」を出す(自動ロードは設定値を使うので
+  // 通常は selected と同じだが、外から変えられていてもバーが嘘をつかないようにする)
+  const shownPath = (loadingPath ?? (autoLoading ? autoLoadingPath : null)) || selected
+  const currentName =
+    models.find((m) => m.path === shownPath)?.name ?? (shownPath ? shownPath.split(/[\\/]/).pop() ?? '' : '')
+  // 自分で選んだロード(loadingPath)と、生成が引き起こした自動ロードを同じ見た目で扱う
+  const switching = loadingPath !== null || autoLoading
 
   const handleSelect = async (path: string): Promise<void> => {
     // 即モーダルを閉じ、バー上でバックグラウンドにロードする(他の作業を続けられる)
@@ -278,7 +302,13 @@ export default function ModelBar({ refreshKey }: { refreshKey: number }): React.
                 } as React.CSSProperties)
               : null)
           }}
-          title={hasError ? error! : 'モデルを選択'}
+          title={
+            hasError
+              ? error!
+              : switching
+                ? `モデルを読み込んでいます${autoLoading && loadingPath === null ? '(生成のため自動で開始しました)' : ''}`
+                : 'モデルを選択'
+          }
         >
           <span className="shrink-0" style={{ color: active ? 'var(--accent)' : 'var(--text-faint)' }}>
             {switching ? <SpinnerIcon /> : <CpuIcon />}

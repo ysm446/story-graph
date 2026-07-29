@@ -185,7 +185,14 @@ export const api = {
     request<{ models: Array<{ name: string; path: string; size: number }>; current: string }>('/models'),
 
   llmStatus: () =>
-    request<{ base_url: string; healthy: boolean; spawned: boolean; model_path: string | null }>('/llm/status'),
+    request<{
+      base_url: string
+      healthy: boolean
+      /** spawn 済みだがまだ応答しない = モデルの読み込み中(生成の自動ロードを含む) */
+      loading: boolean
+      spawned: boolean
+      model_path: string | null
+    }>('/llm/status'),
   llmStart: () => request<{ base_url: string; healthy: boolean }>('/llm/start', { method: 'POST' }),
   llmStop: () => request<{ stopped: boolean }>('/llm/stop', { method: 'POST' }),
   llmLoad: () =>
