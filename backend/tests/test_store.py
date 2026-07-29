@@ -328,3 +328,18 @@ def test_delete_node_removes_renders(store):
     store.delete_node(n1["id"])
     rows = store.conn.execute("SELECT * FROM renders WHERE node_id = ?", (n1["id"],)).fetchall()
     assert rows == []
+
+
+def test_graph_matches_get_node_shape(store):
+    """graph() の一括組み立てが get_node のノード形と一致し続けること(N+1 解消の回帰)。"""
+    _setup_chars(store)
+    n1 = store.append_node({"beat": "b1", "cast": ["aya"]}, [
+        {"type": "memory_add", "payload": {"char": "aya", "content": "記憶1", "importance": 0.5}},
+        {"type": "fact_set", "payload": {"scope": "char", "char": "aya", "key": "goal", "value": "旅"}},
+    ])
+    store.append_node({"beat": "b2", "cast": ["aya", "ken"]})
+    graph = store.graph()
+    assert [n["id"] for n in graph["nodes"]] == store.canon_path()
+    for node in graph["nodes"]:
+        assert node == store.get_node(node["id"])
+    assert graph["nodes"][0]["events"] == store.list_events(n1["id"])

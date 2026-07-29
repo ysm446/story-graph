@@ -347,9 +347,19 @@ class Store:
         return list(reversed(path))
 
     def graph(self) -> dict[str, Any]:
-        node_ids = [r["id"] for r in self.conn.execute("SELECT id FROM nodes ORDER BY created_at")]
+        # 構造モードは操作のたびにここを引くので、ノードごとの get_node
+        # (SELECT×2 の N+1)ではなく全ノード+全イベントの 2 クエリで組み立てる
+        nodes = [dict(r) for r in self.conn.execute("SELECT * FROM nodes ORDER BY created_at")]
+        events_by_node: dict[str, list[dict[str, Any]]] = {}
+        for r in self.conn.execute("SELECT * FROM events ORDER BY node_id, seq"):
+            e = dict(r)
+            e["payload"] = json.loads(e["payload"])
+            events_by_node.setdefault(e["node_id"], []).append(e)
+        for node in nodes:
+            node["cast"] = json.loads(node["cast"])
+            node["events"] = events_by_node.get(node["id"], [])
         edges = [dict(r) for r in self.conn.execute("SELECT * FROM edges")]
-        return {"nodes": [self.get_node(nid) for nid in node_ids], "edges": edges}
+        return {"nodes": nodes, "edges": edges}
 
     def append_node(self, data: dict[str, Any], events: list[dict[str, Any]] | None = None,
                     source: str = "user", parent_id: str | None = None,
