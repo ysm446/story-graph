@@ -31,6 +31,15 @@ def _new_id() -> str:
 # 内部指示も user ロールで積まれるので、それは区切りに数えない
 TOOL_LIMIT_MARKER = "(これ以上ツールは使えません"
 
+# 画像・動画アセットを参照する列(gc_assets とスナップショットの参照保護で共用)
+ASSET_REF_SQLS = (
+    "SELECT image_path FROM nodes WHERE image_path IS NOT NULL",
+    "SELECT thumb_path FROM nodes WHERE thumb_path IS NOT NULL",
+    "SELECT portrait_path FROM characters WHERE portrait_path IS NOT NULL",
+    "SELECT portrait_source_path FROM characters WHERE portrait_source_path IS NOT NULL",
+    "SELECT image_path FROM places WHERE image_path IS NOT NULL",
+)
+
 
 def _is_turn_start(message: dict[str, Any]) -> bool:
     if message.get("role") != "user":
@@ -683,17 +692,16 @@ class Store:
         if assets is None:
             return 0
         referenced: set[str] = set()
-        for sql in (
-            "SELECT image_path FROM nodes WHERE image_path IS NOT NULL",
-            "SELECT thumb_path FROM nodes WHERE thumb_path IS NOT NULL",
-            "SELECT portrait_path FROM characters WHERE portrait_path IS NOT NULL",
-            "SELECT portrait_source_path FROM characters WHERE portrait_source_path IS NOT NULL",
-            "SELECT image_path FROM places WHERE image_path IS NOT NULL",
-        ):
+        for sql in ASSET_REF_SQLS:
             for row in self.conn.execute(sql).fetchall():
                 value = row[0]
                 if value:
                     referenced.add(Path(value).name)
+        # スナップショットが参照するファイルも守る(復元後に挿絵が消えないように)
+        if self.root:
+            import snapshots
+
+            referenced |= snapshots.collect_asset_references(self.root, ASSET_REF_SQLS)
         removed = 0
         grace_limit = time.time() - 3600
         for f in Path(assets).iterdir():

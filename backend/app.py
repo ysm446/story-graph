@@ -25,6 +25,7 @@ import db
 import generation
 import llm
 import rendering
+import snapshots
 from llama_manager import LlamaManager
 from store import Store
 
@@ -339,6 +340,7 @@ async def insert_node_after(node_id: str, body: NodeIn) -> dict[str, Any]:
 
 @app.post("/nodes/{node_id}/make_canon")
 async def make_canon(node_id: str) -> dict[str, Any]:
+    snapshots.auto(store, "正史切替の前", 0)
     try:
         store.make_canon(node_id)
     except KeyError:
@@ -355,6 +357,7 @@ class AttachIn(BaseModel):
 @app.post("/nodes/{node_id}/detach")
 async def detach_node(node_id: str) -> dict[str, Any]:
     """親エッジを切って、このシーン以下を独立した島にする。"""
+    snapshots.auto(store, "つなぎ替えの前", 60)
     try:
         detached = store.detach_node(node_id)
     except KeyError:
@@ -374,6 +377,7 @@ async def normalize_chain(node_id: str) -> dict[str, Any]:
 @app.post("/edges")
 async def create_edge(body: AttachIn) -> dict[str, Any]:
     """島の根を他のシーンの子として繋ぐ。"""
+    snapshots.auto(store, "つなぎ替えの前", 60)
     try:
         store.attach_node(body.parent_id, body.child_id, body.canon)
     except KeyError:
@@ -393,6 +397,7 @@ async def get_node(node_id: str) -> dict[str, Any]:
 
 @app.patch("/nodes/{node_id}")
 async def update_node(node_id: str, body: NodePatch) -> dict[str, Any]:
+    snapshots.auto(store, "シーン編集の前", 600)
     node = store.update_node(node_id, body.model_dump(exclude_unset=True))
     if node is None:
         raise HTTPException(404, "node not found")
@@ -402,6 +407,7 @@ async def update_node(node_id: str, body: NodePatch) -> dict[str, Any]:
 
 @app.delete("/nodes/{node_id}")
 async def delete_node(node_id: str) -> dict[str, str]:
+    snapshots.auto(store, "シーン削除の前", 30)
     if not store.delete_node(node_id):
         raise HTTPException(404, "node not found")
     return {"status": "deleted"}
@@ -533,6 +539,7 @@ async def reset_layout() -> dict[str, str]:
 async def put_events(node_id: str, body: EventsPut) -> dict[str, Any]:
     if store.get_node(node_id) is None:
         raise HTTPException(404, "node not found")
+    snapshots.auto(store, "イベント編集の前", 600)
     events = store.replace_events(node_id, [e.model_dump() for e in body.events])
     return {"events": events, "validation": store.validate(node_id)}
 
@@ -764,6 +771,7 @@ async def suggest_scene_meta(body: SuggestFieldIn) -> dict[str, str]:
 async def extract_events(node_id: str) -> dict[str, Any]:
     if store.get_node(node_id) is None:
         raise HTTPException(404, "node not found")
+    snapshots.auto(store, "イベント作り直しの前", 60)
     try:
         base_url = await llama.ensure_running(store.get_settings())
         events = await generation.extract_events(store, base_url, node_id)
@@ -783,6 +791,7 @@ async def reextract_nodes(body: ReextractIn) -> StreamingResponse:
     """選択した複数シーンのイベントを抽出し直す(親から順に逐次、SSE)。"""
     if not body.node_ids:
         raise HTTPException(400, "node_ids が空です")
+    snapshots.auto(store, "イベント作り直しの前", 60)
     try:
         base_url = await llama.ensure_running(store.get_settings())
     except RuntimeError as e:
@@ -801,6 +810,7 @@ async def reextract_chain(node_id: str, keep_user_events: bool = True) -> Stream
     島を繋いだ直後など、上流の状態が変わったときに使う。"""
     if store.get_node(node_id) is None:
         raise HTTPException(404, "node not found")
+    snapshots.auto(store, "イベント作り直しの前", 60)
     try:
         base_url = await llama.ensure_running(store.get_settings())
     except RuntimeError as e:
@@ -1036,6 +1046,44 @@ async def chat_suggest_questions(body: ChatSuggestIn) -> dict[str, Any]:
     except Exception:  # noqa: BLE001
         return {"questions": []}
     return {"questions": questions}
+
+
+# ---- スナップショット(バックアップ) --------------------------------
+
+class SnapshotIn(BaseModel):
+    label: str = ""
+
+
+@app.get("/snapshots")
+async def list_snapshots() -> dict[str, Any]:
+    return {"snapshots": snapshots.list_snapshots(store)}
+
+
+@app.post("/snapshots")
+async def create_snapshot(body: SnapshotIn) -> dict[str, Any]:
+    try:
+        return snapshots.create(store, body.label, kind="manual")
+    except RuntimeError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/snapshots/{snap_id}/restore")
+async def restore_snapshot(snap_id: str) -> dict[str, Any]:
+    """スナップショットの時点に戻す。成功したらフロントはリロードする。"""
+    try:
+        snapshots.restore(store, snap_id)
+    except KeyError:
+        raise HTTPException(404, "snapshot not found")
+    except RuntimeError as e:
+        raise HTTPException(400, str(e))
+    return {"restored": snap_id, "root": store.root}
+
+
+@app.delete("/snapshots/{snap_id}")
+async def delete_snapshot(snap_id: str) -> dict[str, str]:
+    if not snapshots.delete(store, snap_id):
+        raise HTTPException(404, "snapshot not found")
+    return {"status": "deleted"}
 
 
 # ---- settings -------------------------------------------------------

@@ -119,3 +119,12 @@ export interface SceneEntry {
   render: RenderResult | null
 }
 
+
+// ライブラリ全体のスナップショット(docs/design/snapshots.md)
+export interface Snapshot {
+  id: string
+  label: string
+  kind: 'auto' | 'manual'
+  created_at: string
+  size: number
+}

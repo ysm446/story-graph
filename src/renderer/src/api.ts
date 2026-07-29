@@ -4,6 +4,7 @@ import type {
   Place,
   RenderResult,
   SceneEntry,
+  Snapshot,
   StateSnapshot,
   StoryEvent,
   StoryGraph,
@@ -157,6 +158,14 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ beat, field })
     }),
+  // スナップショット(ライブラリ全体のバックアップ。docs/design/snapshots.md)
+  listSnapshots: () => request<{ snapshots: Snapshot[] }>('/snapshots'),
+  createSnapshot: (label: string) =>
+    request<Snapshot>('/snapshots', { method: 'POST', body: JSON.stringify({ label }) }),
+  restoreSnapshot: (id: string) =>
+    request<{ restored: string }>(`/snapshots/${id}/restore`, { method: 'POST' }),
+  deleteSnapshot: (id: string) =>
+    request<{ status: string }>(`/snapshots/${id}`, { method: 'DELETE' }),
   debugPrompts: () =>
     request<
       Array<{
