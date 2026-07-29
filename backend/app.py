@@ -781,6 +781,9 @@ class RenderIn(BaseModel):
     # (順序は正史・深さ順に並べ替える。前のシーンの散文に接続するため)
     node_ids: list[str] | None = None
     skip_existing: bool = False  # 既に清書済み(stale でない)シーンを飛ばす
+    # 1 シーンあたりの目安の字数(None / 0 なら指定なし)。プロンプトの分量指示と
+    # max_tokens の両方に効く
+    target_chars: int | None = None
 
 
 @app.get("/presets")
@@ -852,7 +855,9 @@ async def render(body: RenderIn) -> StreamingResponse:
             yield rendering._sse({"error": str(e)})
         return StreamingResponse(error_stream(), media_type="text/event-stream")
     return StreamingResponse(
-        rendering.render_stream(store, base_url, node_ids, body.preset_id, body.pov_char),
+        rendering.render_stream(
+            store, base_url, node_ids, body.preset_id, body.pov_char, body.target_chars
+        ),
         media_type="text/event-stream",
     )
 

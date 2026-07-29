@@ -32,18 +32,32 @@ export const FONT_SIZES = [
   { value: 20, label: '特大' }
 ]
 
+/** 1 シーンあたりの目安の字数。0 = 指定なし(モデルに任せる)。
+ *  ここに無い値は「字数を指定」として数値入力で扱う */
+export const LENGTH_PRESETS = [
+  { value: 0, label: '分量: おまかせ' },
+  { value: 600, label: '分量: 短め(~600字)' },
+  { value: 1200, label: '分量: 標準(~1200字)' },
+  { value: 2000, label: '分量: 長め(~2000字)' }
+]
+const LENGTH_MIN = 100
+const LENGTH_MAX = 5000
+
 export interface RenderStyleState {
   presets: StylePreset[]
   preset: StylePreset | null
   presetId: string | null
   characters: Character[]
   povChar: string | null
+  /** 1 シーンあたりの目安の字数(0 = 指定なし) */
+  targetChars: number
   fontId: string
   fontSize: number
   /** fontId から解決した font-family */
   proseFont: string
   setPresetId: (id: string) => void
   setPovChar: (id: string | null) => void
+  setTargetChars: (chars: number) => void
   setFontId: (id: string) => void
   setFontSize: (size: number) => void
   /** プリセットを取り直す。selectId を渡すとそれを選択して保存する */
@@ -55,6 +69,7 @@ export function useRenderStyle(): RenderStyleState {
   const [presetId, setPresetIdState] = useState<string | null>(null)
   const [characters, setCharacters] = useState<Character[]>([])
   const [povChar, setPovCharState] = useState<string | null>(null)
+  const [targetChars, setTargetCharsState] = useState<number>(0)
   const [fontId, setFontIdState] = useState<string>('sans')
   const [fontSize, setFontSizeState] = useState<number>(14)
 
@@ -79,6 +94,8 @@ export function useRenderStyle(): RenderStyleState {
         setPresetIdState(savedPreset && p.some((x) => x.id === savedPreset) ? savedPreset : p[0]?.id ?? null)
         const savedPov = settings.reader_pov_char
         if (savedPov && chars.some((c) => c.id === savedPov)) setPovCharState(savedPov)
+        const savedChars = Number(settings.reader_target_chars)
+        if (Number.isFinite(savedChars) && savedChars > 0) setTargetCharsState(Math.round(savedChars))
         if (FONT_OPTIONS.some((f) => f.id === settings.reader_font)) setFontIdState(settings.reader_font)
         const savedSize = Number(settings.reader_font_size)
         if (FONT_SIZES.some((s) => s.value === savedSize)) setFontSizeState(savedSize)
@@ -94,6 +111,11 @@ export function useRenderStyle(): RenderStyleState {
   const setPovChar = useCallback((id: string | null): void => {
     setPovCharState(id)
     void api.putSettings({ reader_pov_char: id ?? '' })
+  }, [])
+
+  const setTargetChars = useCallback((chars: number): void => {
+    setTargetCharsState(chars)
+    void api.putSettings({ reader_target_chars: String(chars) })
   }, [])
 
   const setFontId = useCallback((id: string): void => {
@@ -112,11 +134,13 @@ export function useRenderStyle(): RenderStyleState {
     presetId,
     characters,
     povChar,
+    targetChars,
     fontId,
     fontSize,
     proseFont: FONT_OPTIONS.find((f) => f.id === fontId)?.stack ?? FONT_OPTIONS[0].stack,
     setPresetId,
     setPovChar,
+    setTargetChars,
     setFontId,
     setFontSize,
     reloadPresets
@@ -277,6 +301,24 @@ export function RenderStyleControls({
   const [editor, setEditor] = useState<PresetDraft | null>(null)
   const importRef = useRef<HTMLInputElement | null>(null)
   const compact = variant === 'compact'
+  // 目安の字数: プルダウンに無い値なら「字数を指定」として数値入力を出す。
+  // 入力中は文字列で持ち、確定(Enter / フォーカスアウト)のときだけ丸めて保存する
+  const isCustomLength = style.targetChars > 0 && !LENGTH_PRESETS.some((p) => p.value === style.targetChars)
+  const [customOpen, setCustomOpen] = useState(isCustomLength)
+  const [customText, setCustomText] = useState(String(style.targetChars || 1200))
+  const showCustom = customOpen || isCustomLength
+
+  const commitCustomLength = (): void => {
+    const parsed = Number(customText)
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      setCustomText(String(style.targetChars || 1200))
+      return
+    }
+    const clamped = Math.min(Math.max(Math.round(parsed), LENGTH_MIN), LENGTH_MAX)
+    setCustomText(String(clamped))
+    if (clamped !== style.targetChars) style.setTargetChars(clamped)
+  }
+
   const selectStyle = { background: 'var(--bg-input)', borderColor: 'var(--border)' }
   const buttonClass = 'shrink-0 rounded-lg border px-2 py-1 text-[12px] disabled:opacity-40'
   const buttonStyle = { borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }
@@ -408,7 +450,7 @@ export function RenderStyleControls({
       <select
         value={style.povChar ?? ''}
         onChange={(e) => style.setPovChar(e.target.value || null)}
-        className={`rounded-lg border px-2 py-1 text-[12px] ${compact ? 'w-full' : ''}`}
+        className={`rounded-lg border px-2 py-1 text-[12px] ${compact ? 'min-w-0 flex-1 basis-40' : ''}`}
         style={selectStyle}
         title="視点キャラクター(そのキャラが知らないことは書かれない)"
       >
@@ -419,6 +461,51 @@ export function RenderStyleControls({
           </option>
         ))}
       </select>
+      <select
+        value={showCustom ? 'custom' : String(style.targetChars)}
+        onChange={(e) => {
+          if (e.target.value === 'custom') {
+            setCustomOpen(true)
+            setCustomText(String(style.targetChars || 1200))
+            if (!style.targetChars) style.setTargetChars(1200)
+            return
+          }
+          setCustomOpen(false)
+          style.setTargetChars(Number(e.target.value))
+        }}
+        className={`rounded-lg border px-2 py-1 text-[12px] ${compact ? 'min-w-0 flex-1 basis-40' : ''}`}
+        style={selectStyle}
+        title="1 シーンあたりの目安の字数。プロンプトの分量指示と生成上限に効く(目安なので厳密ではない)"
+      >
+        {LENGTH_PRESETS.map((p) => (
+          <option key={p.value} value={p.value}>
+            {p.label}
+          </option>
+        ))}
+        <option value="custom">分量: 字数を指定…</option>
+      </select>
+      {showCustom && (
+        <span className="flex shrink-0 items-center gap-1">
+          <input
+            type="number"
+            value={customText}
+            min={LENGTH_MIN}
+            max={LENGTH_MAX}
+            step={100}
+            onChange={(e) => setCustomText(e.target.value)}
+            onBlur={commitCustomLength}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') e.currentTarget.blur()
+            }}
+            className="w-20 rounded-lg border px-2 py-1 text-[12px] tabular-nums outline-none"
+            style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
+            title={`${LENGTH_MIN}〜${LENGTH_MAX} 字`}
+          />
+          <span className="text-[11px]" style={{ color: 'var(--text-faint)' }}>
+            字
+          </span>
+        </span>
+      )}
       {editor && (
         <PresetEditorModal
           draft={editor}

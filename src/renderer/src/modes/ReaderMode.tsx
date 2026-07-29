@@ -209,6 +209,7 @@ export default function ReaderMode({
     if (!presetId) return
     const preset = presetId
     const pov = povChar
+    const chars = style.targetChars
     const taskId = enqueueTask({
       label: '清書',
       detail: mode === 'single' ? 'このシーンのみ' : 'ここから最後まで',
@@ -218,7 +219,7 @@ export default function ReaderMode({
         let doneCount = 0
         try {
           await renderStream(
-            { preset_id: preset, pov_char: pov, from_node: fromNode, mode },
+            { preset_id: preset, pov_char: pov, from_node: fromNode, mode, target_chars: chars },
             (e) => {
               if (e.stage === 'start') {
                 // 何シーン書くかはサーバー側で決まる(未清書のみ等の絞り込み後)

@@ -16,6 +16,26 @@ from store import Store
 RENDER_TEMPERATURE = 0.9
 PREV_TAIL_CHARS = 1400  # 直前散文の受け渡し量(~800 tokens 目安)
 MEMORY_LIMIT = 8
+DEFAULT_MAX_TOKENS = 4096
+# 字数指定時の生成上限。日本語は Gemma のトークナイザで 1 字 ≈ 1.0〜1.5 tokens
+# なので、指示より長めに書かれても途中で切れないよう 2.5 倍を取る
+TOKENS_PER_CHAR = 2.5
+MAX_TOKENS_CAP = 12288
+
+
+def length_instruction(target_chars: int | None) -> str | None:
+    """分量の指示文。目安の前後 ±25% を幅として示す(数値ぴったりは狙わせない)。"""
+    if not target_chars or target_chars <= 0:
+        return None
+    low = max(int(target_chars * 0.75) // 50 * 50, 50)
+    high = int(target_chars * 1.25) // 50 * 50
+    return f"分量: 日本語で {low}〜{high} 字程度(目安。話の切れ目を優先し、無理に埋めたり削ったりしない)"
+
+
+def _max_tokens(target_chars: int | None) -> int:
+    if not target_chars or target_chars <= 0:
+        return DEFAULT_MAX_TOKENS
+    return min(max(int(target_chars * TOKENS_PER_CHAR), 1024), MAX_TOKENS_CAP)
 
 
 def _sse(data: dict[str, Any]) -> str:
@@ -96,6 +116,7 @@ def build_render_messages(
     preset: dict[str, Any],
     pov_char: str | None,
     prev_tail: str | None,
+    target_chars: int | None = None,
 ) -> list[dict[str, str]]:
     pov_name = None
     if pov_char:
@@ -111,11 +132,13 @@ def build_render_messages(
     base_prompt = (preset.get("tone") or "").strip() or (
         "あなたはプロの小説家です。与えられたシーン(出来事の仕様書)を散文に仕上げます。"
     )
+    length_text = length_instruction(target_chars)
     system = "\n".join(
         [
             base_prompt,
             "",
             f"人称: {person_text}",
+            *([length_text] if length_text else []),
             "",
             "厳守事項:",
             "- シーンに書かれている出来事以外を発生させない(新しい事件・移動・関係の変化を起こさない)",
@@ -156,6 +179,7 @@ async def render_stream(
     node_ids: list[str],
     preset_id: str,
     pov_char: str | None,
+    target_chars: int | None = None,
 ) -> AsyncIterator[str]:
     """node_ids を順にレンダーする SSE ストリーム。"""
     try:
@@ -180,13 +204,13 @@ async def render_stream(
                     if prev:
                         prev_tail = prev["prose"][-PREV_TAIL_CHARS:]
             yield _sse({"scene_start": node_id, "title": node["title"]})
-            messages = build_render_messages(store, node, preset, pov_char, prev_tail)
+            messages = build_render_messages(store, node, preset, pov_char, prev_tail, target_chars)
             prose_parts: list[str] = []
             async for delta in llm.chat_stream(
                 messages,
                 base_url=base_url,
                 temperature=RENDER_TEMPERATURE,
-                max_tokens=4096,
+                max_tokens=_max_tokens(target_chars),
                 label=f"清書: {node['title'] or '(無題)'}",
             ):
                 prose_parts.append(delta)

@@ -1211,6 +1211,7 @@ function RenderTab({
     const targetId = node.id // 実行までに別のシーンへ移っても対象は変えない
     const preset = presetId
     const pov = povChar
+    const chars = style.targetChars
     setError(null)
     enqueueTask({
       label: '清書',
@@ -1222,7 +1223,13 @@ function RenderTab({
         setLive({ nodeId: targetId, text: '' })
         try {
           await renderStream(
-            { preset_id: preset, pov_char: pov, node_ids: [targetId], skip_existing: false },
+            {
+              preset_id: preset,
+              pov_char: pov,
+              node_ids: [targetId],
+              skip_existing: false,
+              target_chars: chars
+            },
             (e) => {
               if (e.delta) setLive((l) => (l && l.nodeId === targetId ? { ...l, text: l.text + e.delta } : l))
               if (e.scene_done && e.render) {
@@ -1284,8 +1291,12 @@ function RenderTab({
           </span>
         )}
         {render && !liveText && (
-          <span className="ml-auto text-[11px] tabular-nums" style={{ color: 'var(--text-faint)' }}>
-            {render.prose.length} 字
+          <span
+            className="ml-auto text-[11px] tabular-nums"
+            style={{ color: 'var(--text-faint)' }}
+            title={style.targetChars ? `目安は ${style.targetChars} 字` : undefined}
+          >
+            {render.prose.length} 字{style.targetChars ? ` / 目安 ${style.targetChars}` : ''}
           </span>
         )}
       </div>
@@ -1905,6 +1916,7 @@ function StructureModeInner({
         targets = [...seen]
       }
       const pov = renderStyle.povChar
+      const chars = renderStyle.targetChars
       enqueueTask({
         label: '清書',
         total: targets.length,
@@ -1914,7 +1926,13 @@ function StructureModeInner({
           let done = 0
           try {
             await renderStream(
-              { preset_id: presetId, pov_char: pov, node_ids: targets, skip_existing: skipExisting },
+              {
+                preset_id: presetId,
+                pov_char: pov,
+                node_ids: targets,
+                skip_existing: skipExisting,
+                target_chars: chars
+              },
               (e) => {
                 // 実際に書くシーン数(未清書のみの絞り込み後)はサーバーが返す
                 if (e.stage === 'start') update({ total: e.total })
@@ -1943,7 +1961,7 @@ function StructureModeInner({
         }
       })
     },
-    [markNodeBusy, renderStyle.presetId, renderStyle.povChar, graphEdges]
+    [markNodeBusy, renderStyle.presetId, renderStyle.povChar, renderStyle.targetChars, graphEdges]
   )
 
   // 選択したシーンをまとめて切り離す / 削除する

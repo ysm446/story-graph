@@ -97,6 +97,39 @@ def test_render_pov_filters_state(store, monkeypatch):
     assert "実は王子" not in user
 
 
+def test_target_chars_adds_length_instruction_and_raises_max_tokens(store, monkeypatch):
+    captured = []
+
+    async def fake_stream(messages, **kwargs):
+        captured.append((messages, kwargs))
+        yield "本文"
+
+    monkeypatch.setattr(llm_mod, "chat_stream", fake_stream)
+    preset = store.list_presets()[0]
+    node_id = store.canon_path()[0]
+    collect_sse(rendering.render_stream(store, "http://fake", [node_id], preset["id"], None, 2000))
+    system, kwargs = captured[0][0][0]["content"], captured[0][1]
+    # 目安の前後 ±25% を幅として示す(数値ぴったりは狙わせない)
+    assert "分量: 日本語で 1500〜2500 字程度" in system
+    # 長い指定でも途中で切れないよう max_tokens が上がる
+    assert kwargs["max_tokens"] == 5000
+
+
+def test_no_length_instruction_by_default(store, monkeypatch):
+    captured = []
+
+    async def fake_stream(messages, **kwargs):
+        captured.append((messages, kwargs))
+        yield "本文"
+
+    monkeypatch.setattr(llm_mod, "chat_stream", fake_stream)
+    preset = store.list_presets()[0]
+    node_id = store.canon_path()[0]
+    collect_sse(rendering.render_stream(store, "http://fake", [node_id], preset["id"], None))
+    assert "分量:" not in captured[0][0][0]["content"]
+    assert captured[0][1]["max_tokens"] == rendering.DEFAULT_MAX_TOKENS
+
+
 def test_branch_node_render_is_retrievable(store, monkeypatch):
     """分岐(正史パス外)のシーンも清書して取り出せる。
 

@@ -417,6 +417,7 @@ export async function renderStream(
     mode?: 'single' | 'to_end'
     node_ids?: string[] // 構造モードの一括清書(指定するとこのシーンだけが対象)
     skip_existing?: boolean // 清書済み(stale でない)シーンを飛ばす
+    target_chars?: number | null // 1 シーンあたりの目安の字数(0 / 未指定でおまかせ)
   },
   onEvent: (data: RenderStreamEvent) => void,
   signal?: AbortSignal
