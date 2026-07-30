@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { api } from './api'
 import type { Character, StylePreset } from './types'
 
@@ -386,77 +386,28 @@ function PresetEditorModal({
 /** スタイルプリセットと POV のプルダウン(+ プリセットの編集・新規)。
  *
  *  レイアウトは呼び出し側に任せるためフラグメントを返す。親は flex コンテナで包む。
- *  - `variant='full'`(鑑賞モード): プリセットの書き出し・読み込みも出す
- *  - `variant='compact'`(構造モードのインスペクタ): 幅が狭いので選択と編集だけ
+ *  - `variant='full'`(鑑賞モード): ボタンにラベルを付ける
+ *  - `variant='compact'`(構造モードのインスペクタ): 幅が狭いのでアイコンだけ
+ *  プリセットの書き出し・読み込みは設定画面「プロンプトの書き出し / 読み込み」にある
+ *  (シーン生成・校正のプロンプトとまとめて 1 ファイルで扱う)
  */
 export function RenderStyleControls({
   style,
   variant = 'full',
-  showLength = true,
-  onStatus
+  showLength = true
 }: {
   style: RenderStyleState
   variant?: 'full' | 'compact'
   /** 分量のプルダウンを出すか。構造モードの清書タブは**シーン個別**の分量を
    *  自前で出すので、共通のほうは畳む(同じ列に 2 つ並ぶと意味を取り違える) */
   showLength?: boolean
-  onStatus?: (message: string) => void
 }): React.JSX.Element {
   const [editor, setEditor] = useState<PresetDraft | null>(null)
-  const importRef = useRef<HTMLInputElement | null>(null)
   const compact = variant === 'compact'
 
   const selectStyle = { background: 'var(--bg-input)', borderColor: 'var(--border)' }
   const buttonClass = 'shrink-0 rounded-lg border px-2 py-1 text-[12px] disabled:opacity-40'
   const buttonStyle = { borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }
-
-  const exportPresets = (): void => {
-    const custom = style.presets.filter((p) => !p.builtin)
-    if (custom.length === 0) {
-      onStatus?.('書き出せるカスタムプリセットがありません(組み込みは対象外)')
-      return
-    }
-    const payload = {
-      kind: 'story-graph-style-presets',
-      version: 1,
-      presets: custom.map((p) => ({ name: p.name, person: p.person, tone: p.tone }))
-    }
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = 'style-presets.json'
-    a.click()
-    URL.revokeObjectURL(url)
-    onStatus?.(`${custom.length} 件のプリセットを書き出しました`)
-  }
-
-  const importPresets = async (file: File): Promise<void> => {
-    try {
-      const data = JSON.parse(await file.text())
-      const list: unknown = Array.isArray(data) ? data : data?.presets
-      if (!Array.isArray(list)) throw new Error('プリセット配列が見つかりません')
-      let imported = 0
-      let lastId: string | undefined
-      for (const item of list as Array<Record<string, unknown>>) {
-        const name = String(item?.name ?? '').trim()
-        if (!name) continue
-        // id は付けない(常に新規プリセットとして取り込み、既存・組み込みを壊さない)
-        const saved = await api.upsertPreset({
-          name,
-          person: item?.person === 'first' ? 'first' : 'third',
-          tone: String(item?.tone ?? '')
-        })
-        lastId = saved.id
-        imported += 1
-      }
-      if (imported === 0) throw new Error('取り込めるプリセットがありませんでした')
-      await style.reloadPresets(lastId)
-      onStatus?.(`${imported} 件のプリセットを取り込みました`)
-    } catch (e) {
-      onStatus?.(`インポート失敗: ${String(e)}`)
-    }
-  }
 
   return (
     <>
@@ -503,37 +454,6 @@ export function RenderStyleControls({
       >
         {compact ? '+' : '+ 新規'}
       </button>
-      {!compact && (
-        <>
-          <button
-            onClick={exportPresets}
-            className={buttonClass}
-            style={buttonStyle}
-            title="カスタムのスタイルプリセット(散文用システムプロンプト)を JSON に書き出す"
-          >
-            ⬆ 書き出し
-          </button>
-          <button
-            onClick={() => importRef.current?.click()}
-            className={buttonClass}
-            style={buttonStyle}
-            title="JSON からスタイルプリセットを取り込む(新規プリセットとして追加)"
-          >
-            ⬇ 読み込み
-          </button>
-          <input
-            ref={importRef}
-            type="file"
-            accept="application/json,.json"
-            className="hidden"
-            onChange={(e) => {
-              const file = e.target.files?.[0]
-              e.target.value = ''
-              if (file) void importPresets(file)
-            }}
-          />
-        </>
-      )}
       <select
         value={style.povChar ?? ''}
         onChange={(e) => style.setPovChar(e.target.value || null)}

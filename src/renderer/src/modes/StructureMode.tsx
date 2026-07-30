@@ -1332,7 +1332,7 @@ function RenderTab({
     <div className="flex h-full min-h-0 flex-col gap-2">
       {/* 条件。プリセットと POV は鑑賞モードと共通、分量はこのシーンだけの指定 */}
       <div className="flex flex-wrap items-center gap-1.5">
-        <RenderStyleControls style={style} variant="compact" showLength={false} onStatus={setError} />
+        <RenderStyleControls style={style} variant="compact" showLength={false} />
         <LengthSelect
           value={nodeChars}
           onChange={saveNodeChars}

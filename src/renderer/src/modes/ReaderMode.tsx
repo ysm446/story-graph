@@ -406,7 +406,7 @@ export default function ReaderMode({
         style={{ background: 'var(--bg-sidebar)', borderColor: 'var(--border)' }}
       >
         {/* スタイルプリセット / POV(構造モードの清書タブと共通) */}
-        <RenderStyleControls style={style} onStatus={setStatus} />
+        <RenderStyleControls style={style} />
         {rendering ? (
           <button
             onClick={() => renderTaskIdRef.current && cancelTask(renderTaskIdRef.current)}
