@@ -247,14 +247,16 @@ export function useRenderStyle(): RenderStyleState {
   }
 }
 
-interface PresetDraft {
+export interface PresetDraft {
   id?: string
   name: string
   person: string
   tone: string
 }
 
-function PresetEditorModal({
+/** 文体指示(散文用システムプロンプト)の編集モーダル。
+ *  鑑賞モード・清書タブの ✎ と、設定画面のスタイルプリセット一覧から使う */
+export function PresetEditorModal({
   draft,
   onClose,
   onSaved,
