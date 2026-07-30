@@ -14,7 +14,18 @@ const VIEW_MODES: Array<{ id: ViewMode; label: string; title: string }> = [
   { id: 'page', label: 'ページ', title: '1シーンずつ、めくって読む' }
 ]
 
-const TYPEWRITER_CHARS_PER_TICK = 4
+// ページモードで文字が流れる速さ(文字/秒)。cps=0 は演出なしで即座に全文表示
+const TYPING_TICK_MS = 16
+const TYPING_SPEEDS = [
+  { id: 'instant', label: '一気に表示', cps: 0 },
+  { id: 'fast', label: '速い', cps: 500 },
+  { id: 'normal', label: '標準', cps: 250 },
+  { id: 'slow', label: 'ゆっくり', cps: 110 },
+  { id: 'slowest', label: 'とてもゆっくり', cps: 45 }
+] as const
+
+type TypingSpeedId = (typeof TYPING_SPEEDS)[number]['id']
+const DEFAULT_TYPING_SPEED: TypingSpeedId = 'normal'
 
 /** ページモードの1ページ。text=null は未清書シーンのプレースホルダ */
 interface PageChunk {
@@ -38,6 +49,7 @@ export default function ReaderMode({
   const [status, setStatus] = useState<string | null>(null)
   const [viewMode, setViewMode] = useState<ViewMode>('scroll')
   const [videoFade, setVideoFade] = useState<number>(DEFAULT_VIDEO_CROSSFADE_SECONDS)
+  const [typingSpeed, setTypingSpeed] = useState<TypingSpeedId>(DEFAULT_TYPING_SPEED)
   const [pageIndex, setPageIndex] = useState(0)
   const [typedLen, setTypedLen] = useState(0)
   const [pages, setPages] = useState<PageChunk[]>([])
@@ -46,6 +58,7 @@ export default function ReaderMode({
   const renderTaskIdRef = useRef<string | null>(null) // 清書タスクの ID(中止ボタン用)
   const pageAreaRef = useRef<HTMLDivElement | null>(null) // 本文エリア全体(挿絵の有無に依らず全高・全幅)
   const measurerRef = useRef<HTMLDivElement | null>(null)
+  const typingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const renderElapsed = useElapsedSeconds(rendering)
   // キューに清書タスクが残っている間は多重投入させない
@@ -62,6 +75,10 @@ export default function ReaderMode({
         }
         const savedFade = Number(settings.video_crossfade_seconds)
         if (Number.isFinite(savedFade) && savedFade >= 0) setVideoFade(Math.min(savedFade, 5))
+        const savedSpeed = settings.reader_typing_speed
+        if (TYPING_SPEEDS.some((s) => s.id === savedSpeed)) {
+          setTypingSpeed(savedSpeed as TypingSpeedId)
+        }
       })
       .catch(() => {
         /* 取れなければ既定の表示設定のまま */
@@ -155,15 +172,38 @@ export default function ReaderMode({
       setTypedLen(0)
       return
     }
+    const cps = TYPING_SPEEDS.find((s) => s.id === typingSpeed)?.cps ?? 250
+    if (cps <= 0) {
+      setTypedLen(currentChunkText.length) // 「一気に表示」は演出なし
+      return
+    }
     setTypedLen(0)
+    // 遅い設定では 1 tick あたり 1 文字未満になるので、端数を持ち越して数える
     let count = 0
+    const perTick = (cps * TYPING_TICK_MS) / 1000
     const timer = setInterval(() => {
-      count += TYPEWRITER_CHARS_PER_TICK
-      setTypedLen(count)
-      if (count >= currentChunkText.length) clearInterval(timer)
-    }, 16)
-    return () => clearInterval(timer)
-  }, [viewMode, pageIndex, currentChunkText])
+      count += perTick
+      setTypedLen(Math.floor(count))
+      if (count >= currentChunkText.length) {
+        clearInterval(timer)
+        typingTimerRef.current = null
+      }
+    }, TYPING_TICK_MS)
+    typingTimerRef.current = timer
+    return () => {
+      clearInterval(timer)
+      typingTimerRef.current = null
+    }
+  }, [viewMode, pageIndex, currentChunkText, typingSpeed])
+
+  // クリックで全文表示。タイマーを止めないと次の tick で途中まで戻ってしまう
+  const skipTyping = useCallback((fullLength: number): void => {
+    if (typingTimerRef.current) {
+      clearInterval(typingTimerRef.current)
+      typingTimerRef.current = null
+    }
+    setTypedLen(fullLength)
+  }, [])
 
   // 矢印キーでページ移動
   useEffect(() => {
@@ -439,6 +479,26 @@ export default function ReaderMode({
             </option>
           ))}
         </select>
+        {/* 文字送りはページモードの演出なので、そのときだけ出す */}
+        {viewMode === 'page' && (
+          <select
+            value={typingSpeed}
+            onChange={(e) => {
+              const id = e.target.value as TypingSpeedId
+              setTypingSpeed(id)
+              void api.putSettings({ reader_typing_speed: id })
+            }}
+            className="rounded-lg border px-2 py-1 text-[12px]"
+            style={selectStyle}
+            title="ページを開いたときに文字が流れる速さ。クリックすればいつでも全文表示できます"
+          >
+            {TYPING_SPEEDS.map((s) => (
+              <option key={s.id} value={s.id}>
+                文字送り: {s.label}
+              </option>
+            ))}
+          </select>
+        )}
         {status && (
           <span className="text-[12px]" style={{ color: 'var(--text-dim)' }}>
             {status}
@@ -483,7 +543,7 @@ export default function ReaderMode({
                       )}
                       <div
                         className={`relative min-h-0 flex-1 overflow-hidden ${isLive ? 'overflow-y-auto' : ''}`}
-                        onClick={() => typing && text && setTypedLen(text.length)}
+                        onClick={() => typing && text && skipTyping(text.length)}
                         title={typing ? 'クリックで全文表示' : undefined}
                         style={typing ? { cursor: 'pointer' } : undefined}
                       >
