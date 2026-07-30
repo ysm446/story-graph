@@ -76,6 +76,43 @@ interface PromptLogEntry {
   error: string | null
 }
 
+// 左ナビの項目。id は表示するセクションの識別子(localStorage に覚える)
+const SECTIONS = [
+  { id: 'engine', label: '推論エンジン' },
+  { id: 'params', label: '推論パラメータ' },
+  { id: 'generation', label: 'シーン生成プロンプト' },
+  { id: 'proofread', label: '校正' },
+  { id: 'structure', label: '構造モード' },
+  { id: 'chat', label: '相談チャット' },
+  { id: 'reader', label: '鑑賞モード' },
+  { id: 'backup', label: 'バックアップ' },
+  { id: 'promptlog', label: 'プロンプトログ' }
+] as const
+
+type SectionId = (typeof SECTIONS)[number]['id']
+
+/** 選択中のセクションだけを描く(見出し + 中身)。
+ *  非表示のセクションはマウントしないので、一覧の取得も開いたときだけ走る */
+function Section({
+  id,
+  current,
+  title,
+  children
+}: {
+  id: SectionId
+  current: SectionId
+  title: string
+  children: React.ReactNode
+}): React.JSX.Element | null {
+  if (id !== current) return null
+  return (
+    <div className="flex flex-col gap-2.5">
+      <div className="settings-group-title">{title}</div>
+      {children}
+    </div>
+  )
+}
+
 function fmtSnapshotSize(bytes: number): string {
   if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(1)} MB`
   return `${Math.max(1, Math.round(bytes / 1024))} KB`
@@ -531,6 +568,11 @@ function LlamaInstaller(): React.JSX.Element {
 
 export default function SettingsMode(): React.JSX.Element {
   const [values, setValues] = useState<Record<string, string>>({})
+  // 左ナビで選んでいるセクション。開き直したときに同じ場所へ戻れるよう覚える
+  const [section, setSection] = useState<SectionId>(() => {
+    const saved = localStorage.getItem('settingsSection')
+    return SECTIONS.some((s) => s.id === saved) ? (saved as SectionId) : 'engine'
+  })
   const [savedMsg, setSavedMsg] = useState(false)
   const [status, setStatus] = useState<LlmStatus | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
@@ -616,404 +658,411 @@ export default function SettingsMode(): React.JSX.Element {
   }
 
   return (
-    <div className="inspector-scrollbar h-full overflow-y-auto p-6">
-      <div className="mx-auto flex max-w-2xl flex-col gap-6">
-        {/* 推論エンジン */}
-        <div className="flex flex-col gap-2.5">
-          <div className="settings-group-title">推論エンジン(llama.cpp)</div>
-          <div className="settings-card">
-            <div className="settings-field">
-              <div className="settings-field-header">
-                <span className="settings-field-label">llama-server</span>
-                <div className="settings-field-controls">
-                  <span
-                    className="inline-block h-2 w-2 rounded-full"
-                    style={{ background: status?.healthy ? '#3ecf8e' : 'var(--danger)' }}
-                  />
-                  <span className="text-[12px]" style={{ color: 'var(--text-dim)' }}>
-                    {status?.healthy ? '稼働中' : '停止'}
-                  </span>
-                </div>
-              </div>
-              {status?.model_path && (
-                <p className="settings-field-hint break-all">{status.model_path}</p>
-              )}
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => void handleLlmStart()}
-                  disabled={busy !== null || status?.healthy}
-                  className="rounded-lg px-3 py-1.5 text-[13px] font-medium text-white disabled:opacity-50"
-                  style={{ background: 'var(--accent)' }}
-                >
-                  起動
-                </button>
-                <button
-                  onClick={() => void handleLlmStop()}
-                  disabled={busy !== null || !status?.spawned}
-                  className="rounded-lg border px-3 py-1.5 text-[13px] disabled:opacity-40"
-                  style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-                >
-                  停止
-                </button>
-                {busy && (
-                  <span className="text-[12px]" style={{ color: 'var(--text-dim)' }}>
-                    {busy}
-                    <span className="ml-1 tabular-nums" style={{ color: 'var(--text-faint)' }}>
-                      ({busyElapsed}s)
-                    </span>
-                  </span>
-                )}
-              </div>
-              {llmError && (
-                <p className="text-[12px]" style={{ color: 'var(--danger)' }}>
-                  {llmError}
-                </p>
-              )}
-              <p className="settings-field-hint">
-                シーン生成・清書時に停止していれば自動起動します。外部で起動済みの llama-server があればそれを優先します。
-              </p>
-            </div>
-            <div className="settings-field">
-              <div className="settings-field-header">
-                <span className="settings-field-label">モデル (models/ フォルダから選択)</span>
-              </div>
-              <select
-                value={values.llm_model_path || currentModel}
-                onChange={(e) => void save({ llm_model_path: e.target.value })}
-                className="w-full rounded-lg border px-3 py-2 text-[13px] outline-none"
-                style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
-              >
-                {models.length === 0 && <option value="">models/ に GGUF がありません</option>}
-                {models.map((m) => (
-                  <option key={m.path} value={m.path}>
-                    {m.name}({fmtGb(m.size)})
-                  </option>
-                ))}
-                {(values.llm_model_path || currentModel) &&
-                  !models.some((m) => m.path === (values.llm_model_path || currentModel)) && (
-                    <option value={values.llm_model_path || currentModel}>
-                      {(values.llm_model_path || currentModel).split(/[\\/]/).pop()}(外部パス)
-                    </option>
-                  )}
-              </select>
-              <p className="settings-field-hint">変更は次回のサーバー起動から反映されます。mmproj は自動で除外しています。</p>
-            </div>
-            {TEXT_FIELDS.map((def) => (
-              <div key={def.key} className="settings-field">
-                <div className="settings-field-header">
-                  <span className="settings-field-label">{def.label}</span>
-                </div>
-                <input
-                  value={values[def.key] ?? ''}
-                  placeholder={def.placeholder}
-                  onChange={(e) => setValues((v) => ({ ...v, [def.key]: e.target.value }))}
-                  onBlur={() => void save({ [def.key]: values[def.key] ?? '' })}
-                  className="w-full rounded-lg border px-3 py-2 text-[13px] outline-none"
-                  style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
-                />
-              </div>
-            ))}
-            <p className="settings-field-hint">空欄はデフォルト値(プレースホルダの値)が使われます。欄外クリックで保存されます。</p>
-            <LlamaInstaller />
-          </div>
+    <div className="flex h-full min-h-0">
+      {/* 左: セクション一覧。右: 選んだセクションの設定 */}
+      <aside className="flex w-48 shrink-0 flex-col" style={{ background: 'var(--bg-sidebar)' }}>
+        <div className="inspector-scrollbar min-h-0 flex-1 overflow-y-auto p-2">
+          {SECTIONS.map(({ id, label }) => (
+            <button
+              key={id}
+              onClick={() => {
+                setSection(id)
+                localStorage.setItem('settingsSection', id)
+              }}
+              className="mb-0.5 block w-full rounded-md px-2.5 py-1.5 text-left text-[12px] transition-colors"
+              style={
+                section === id
+                  ? { background: 'var(--accent-soft)', color: 'var(--text)' }
+                  : { color: 'var(--text-faint)' }
+              }
+            >
+              {label}
+            </button>
+          ))}
         </div>
-
-        {/* 推論パラメータ */}
-        <div className="flex flex-col gap-2.5">
-          <div className="settings-group-title">推論パラメータ</div>
-          <div className="settings-card">
-            <div className="settings-field">
-              <div className="settings-field-header">
-                <span
-                  className="settings-field-label"
-                  title="一度に扱える最大トークン数です。大きいほど長いコンテキストを保持できますが、VRAM 使用量も増えます。"
-                >
-                  Context Length
-                </span>
-                <div className="settings-field-controls">
-                  {ctxSize !== DEFAULT_CTX_SIZE && (
-                    <button
-                      className="settings-reset-btn"
-                      title="デフォルトに戻す"
-                      onClick={() => void save({ llm_ctx_size: String(DEFAULT_CTX_SIZE) })}
-                    >
-                      <svg
-                        width="12"
-                        height="12"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <polyline points="3 6 5 6 21 6" />
-                        <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-                        <path d="M10 11v6" />
-                        <path d="M14 11v6" />
-                        <path d="M9 6V4h6v2" />
-                      </svg>
-                    </button>
-                  )}
-                  <span className="settings-value-badge">{formatCtxSizeLabel(ctxSize)}</span>
-                </div>
-              </div>
-              <input
-                className={`settings-slider${ctxSize !== DEFAULT_CTX_SIZE ? ' active' : ''}`}
-                type="range"
-                min={0}
-                max={CTX_SIZE_PRESETS.length - 1}
-                step={1}
-                value={ctxIndex}
-                onChange={(e) =>
-                  setValues((v) => ({
-                    ...v,
-                    llm_ctx_size: String(CTX_SIZE_PRESETS[Number(e.target.value)] ?? ctxSize)
-                  }))
-                }
-                onPointerUp={() => void save({ llm_ctx_size: String(ctxSize) })}
-                onKeyUp={() => void save({ llm_ctx_size: String(ctxSize) })}
-              />
-              <div className="settings-slider-labels">
-                {CTX_SIZE_PRESETS.map((p) => (
-                  <span key={p}>{formatCtxSizeLabel(p)}</span>
-                ))}
-              </div>
-              <p className="settings-field-hint">
-                llama-server の <code>--ctx-size</code>。変更は次回のサーバー起動から反映されます。
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* シーン生成プロンプト */}
-        <div className="flex flex-col gap-2.5">
-          <div className="settings-group-title">シーン生成プロンプト</div>
-          <div className="settings-card">
-            <div className="settings-field">
-              <div className="settings-field-header">
-                <span className="settings-field-label">システムプロンプト(構成作家の指示)</span>
-                <div className="settings-field-controls">
-                  {(values.generation_system_prompt ?? '') !== '' && (
-                    <button
-                      className="settings-reset-btn"
-                      title="デフォルトに戻す"
-                      onClick={() => void save({ generation_system_prompt: '' })}
-                    >
-                      <svg
-                        width="12"
-                        height="12"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <polyline points="3 6 5 6 21 6" />
-                        <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-                        <path d="M10 11v6" />
-                        <path d="M14 11v6" />
-                        <path d="M9 6V4h6v2" />
-                      </svg>
-                    </button>
-                  )}
-                </div>
-              </div>
-              <textarea
-                rows={6}
-                value={values.generation_system_prompt ?? ''}
-                placeholder={genPromptDefault}
-                onChange={(e) => setValues((v) => ({ ...v, generation_system_prompt: e.target.value }))}
-                onBlur={() => void save({ generation_system_prompt: values.generation_system_prompt ?? '' })}
-                className="w-full rounded-lg border px-3 py-2 text-[13px] leading-relaxed outline-none"
-                style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
-              />
-              <p className="settings-field-hint">
-                空欄ならプレースホルダのデフォルトが使われます。末尾に JSON 形式の指定と
-                イベント発行ルール(char_introduce 必須 / delta 範囲 等)が自動で追加されます。
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* 校正 */}
-        <div className="flex flex-col gap-2.5">
-          <div className="settings-group-title">校正</div>
-          <div className="settings-card">
-            <div className="settings-field">
-              <div className="settings-field-header">
-                <span className="settings-field-label">カスタム校正プロンプト</span>
-              </div>
-              <textarea
-                rows={4}
-                value={values.proofread_custom_prompt ?? ''}
-                placeholder={'例: あなたはハードボイルド小説の編集者です。感傷的な表現を削り、\n短く乾いた文に整えてください。修正後の文章だけを返してください。'}
-                onChange={(e) => setValues((v) => ({ ...v, proofread_custom_prompt: e.target.value }))}
-                onBlur={() => void save({ proofread_custom_prompt: values.proofread_custom_prompt ?? '' })}
-                className="w-full rounded-lg border px-3 py-2 text-[13px] leading-relaxed outline-none"
-                style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
-              />
-              <p className="settings-field-hint">
-                入力すると、シーンタブの校正プリセットに「カスタム」が追加されます(組み込み: 軽く / 標準 / 積極的)。
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* 構造モード */}
-        <div className="flex flex-col gap-2.5">
-          <div className="settings-group-title">構造モード</div>
-          <div className="settings-card">
-            <div className="settings-field">
-              <div className="settings-field-header">
-                <span className="settings-field-label">ミニマップ</span>
-                <div className="settings-field-controls">
-                  <div className="flex overflow-hidden rounded-md border" style={{ borderColor: 'var(--border-strong)' }}>
-                    {(
-                      [
-                        ['1', '表示'],
-                        ['0', '非表示']
-                      ] as const
-                    ).map(([value, label]) => (
-                      <button
-                        key={value}
-                        onClick={() => void save({ minimap_visible: value })}
-                        className="px-2.5 py-0.5 text-[12px]"
-                        style={
-                          minimapVisible === (value === '1')
-                            ? { background: 'var(--accent-soft)', color: 'var(--text)' }
-                            : { color: 'var(--text-faint)' }
-                        }
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-              <p className="settings-field-hint">ノードエリアの右下に表示される全体図です。</p>
-            </div>
-          </div>
-        </div>
-
-        {/* 相談チャット */}
-        <div className="flex flex-col gap-2.5">
-          <div className="settings-group-title">相談チャット</div>
-          <div className="settings-card">
-            <div className="settings-field">
-              <div className="settings-field-header">
-                <span className="settings-field-label">内容から質問候補を作る</span>
-                <div className="settings-field-controls">
-                  <div className="flex overflow-hidden rounded-md border" style={{ borderColor: 'var(--border-strong)' }}>
-                    {(
-                      [
-                        ['1', 'オン'],
-                        ['0', 'オフ']
-                      ] as const
-                    ).map(([value, label]) => (
-                      <button
-                        key={value}
-                        onClick={() => void save({ chat_dynamic_suggestions: value })}
-                        className="px-2.5 py-0.5 text-[12px]"
-                        style={
-                          chatDynamicSuggestions === (value === '1')
-                            ? { background: 'var(--accent-soft)', color: 'var(--text)' }
-                            : { color: 'var(--text-faint)' }
-                        }
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-              <p className="settings-field-hint">
-                オンにすると、チャットを開いたときと回答のあとに、LLM が物語の内容から質問候補を作って
-                候補チップの下段に ✨ 付きで並べます(最大2件。固定の候補は常に残ります)。
-                生成は軽い1回の呼び出しですが、回答直後に少し待ち時間が増えます。LLM 未起動時は何もしません。
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* 鑑賞モード */}
-        <div className="flex flex-col gap-2.5">
-          <div className="settings-group-title">鑑賞モード</div>
-          <div className="settings-card">
-            <div className="settings-field">
-              <div className="settings-field-header">
-                <span
-                  className="settings-field-label"
-                  title="動画の挿絵をループ再生するとき、終端と先頭をクロスディゾルブで重ねて継ぎ目を目立たなくします。"
-                >
-                  動画ループのつなぎ(クロスディゾルブ)
-                </span>
-                <div className="settings-field-controls">
-                  {videoFade !== DEFAULT_VIDEO_CROSSFADE_SECONDS && (
-                    <button
-                      className="settings-reset-btn"
-                      title="デフォルトに戻す"
-                      onClick={() => void save({ video_crossfade_seconds: String(DEFAULT_VIDEO_CROSSFADE_SECONDS) })}
-                    >
-                      <svg
-                        width="12"
-                        height="12"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <polyline points="3 6 5 6 21 6" />
-                        <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-                        <path d="M10 11v6" />
-                        <path d="M14 11v6" />
-                        <path d="M9 6V4h6v2" />
-                      </svg>
-                    </button>
-                  )}
-                  <span className="settings-value-badge">{videoFade === 0 ? 'なし' : `${videoFade.toFixed(1)}秒`}</span>
-                </div>
-              </div>
-              <input
-                className={`settings-slider${videoFade !== DEFAULT_VIDEO_CROSSFADE_SECONDS ? ' active' : ''}`}
-                type="range"
-                min={0}
-                max={2}
-                step={0.1}
-                value={videoFade}
-                onChange={(e) => setValues((v) => ({ ...v, video_crossfade_seconds: e.target.value }))}
-                onPointerUp={() => void save({ video_crossfade_seconds: String(videoFade) })}
-                onKeyUp={() => void save({ video_crossfade_seconds: String(videoFade) })}
-              />
-              <p className="settings-field-hint">
-                0 にするとクロスディゾルブなしの通常ループになります。フェード時間の2倍より短い動画は自動的に通常ループになります。
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* バックアップ(スナップショット) */}
-        <div className="flex flex-col gap-2.5">
-          <div className="settings-group-title">バックアップ</div>
-          <div className="settings-card">
-            <SnapshotsSection />
-          </div>
-        </div>
-
-        {/* プロンプトログ */}
-        <div className="flex flex-col gap-2.5">
-          <div className="settings-group-title">プロンプトログ</div>
-          <div className="settings-card">
-            <PromptLogViewer />
-          </div>
-        </div>
-
-        <p className="h-4 text-[11px]" style={{ color: 'var(--accent)' }}>
+        {/* 保存の合図はどのセクションでも同じ場所に出す */}
+        <p className="h-5 px-3 pb-2 text-[11px]" style={{ color: 'var(--accent)' }}>
           {savedMsg ? '保存しました' : ''}
         </p>
+      </aside>
+      <div className="w-px shrink-0" style={{ background: 'var(--border)' }} />
+      <div className="inspector-scrollbar min-h-0 flex-1 overflow-y-auto p-6">
+        <div className="mx-auto flex max-w-2xl flex-col gap-6">
+          <Section id="engine" current={section} title="推論エンジン(llama.cpp)">
+            <div className="settings-card">
+              <div className="settings-field">
+                <div className="settings-field-header">
+                  <span className="settings-field-label">llama-server</span>
+                  <div className="settings-field-controls">
+                    <span
+                      className="inline-block h-2 w-2 rounded-full"
+                      style={{ background: status?.healthy ? '#3ecf8e' : 'var(--danger)' }}
+                    />
+                    <span className="text-[12px]" style={{ color: 'var(--text-dim)' }}>
+                      {status?.healthy ? '稼働中' : '停止'}
+                    </span>
+                  </div>
+                </div>
+                {status?.model_path && (
+                  <p className="settings-field-hint break-all">{status.model_path}</p>
+                )}
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => void handleLlmStart()}
+                    disabled={busy !== null || status?.healthy}
+                    className="rounded-lg px-3 py-1.5 text-[13px] font-medium text-white disabled:opacity-50"
+                    style={{ background: 'var(--accent)' }}
+                  >
+                    起動
+                  </button>
+                  <button
+                    onClick={() => void handleLlmStop()}
+                    disabled={busy !== null || !status?.spawned}
+                    className="rounded-lg border px-3 py-1.5 text-[13px] disabled:opacity-40"
+                    style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+                  >
+                    停止
+                  </button>
+                  {busy && (
+                    <span className="text-[12px]" style={{ color: 'var(--text-dim)' }}>
+                      {busy}
+                      <span className="ml-1 tabular-nums" style={{ color: 'var(--text-faint)' }}>
+                        ({busyElapsed}s)
+                      </span>
+                    </span>
+                  )}
+                </div>
+                {llmError && (
+                  <p className="text-[12px]" style={{ color: 'var(--danger)' }}>
+                    {llmError}
+                  </p>
+                )}
+                <p className="settings-field-hint">
+                  シーン生成・清書時に停止していれば自動起動します。外部で起動済みの llama-server があればそれを優先します。
+                </p>
+              </div>
+              <div className="settings-field">
+                <div className="settings-field-header">
+                  <span className="settings-field-label">モデル (models/ フォルダから選択)</span>
+                </div>
+                <select
+                  value={values.llm_model_path || currentModel}
+                  onChange={(e) => void save({ llm_model_path: e.target.value })}
+                  className="w-full rounded-lg border px-3 py-2 text-[13px] outline-none"
+                  style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
+                >
+                  {models.length === 0 && <option value="">models/ に GGUF がありません</option>}
+                  {models.map((m) => (
+                    <option key={m.path} value={m.path}>
+                      {m.name}({fmtGb(m.size)})
+                    </option>
+                  ))}
+                  {(values.llm_model_path || currentModel) &&
+                    !models.some((m) => m.path === (values.llm_model_path || currentModel)) && (
+                      <option value={values.llm_model_path || currentModel}>
+                        {(values.llm_model_path || currentModel).split(/[\\/]/).pop()}(外部パス)
+                      </option>
+                    )}
+                </select>
+                <p className="settings-field-hint">変更は次回のサーバー起動から反映されます。mmproj は自動で除外しています。</p>
+              </div>
+              {TEXT_FIELDS.map((def) => (
+                <div key={def.key} className="settings-field">
+                  <div className="settings-field-header">
+                    <span className="settings-field-label">{def.label}</span>
+                  </div>
+                  <input
+                    value={values[def.key] ?? ''}
+                    placeholder={def.placeholder}
+                    onChange={(e) => setValues((v) => ({ ...v, [def.key]: e.target.value }))}
+                    onBlur={() => void save({ [def.key]: values[def.key] ?? '' })}
+                    className="w-full rounded-lg border px-3 py-2 text-[13px] outline-none"
+                    style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
+                  />
+                </div>
+              ))}
+              <p className="settings-field-hint">空欄はデフォルト値(プレースホルダの値)が使われます。欄外クリックで保存されます。</p>
+              <LlamaInstaller />
+            </div>
+          </Section>
+
+          <Section id="params" current={section} title="推論パラメータ">
+            <div className="settings-card">
+              <div className="settings-field">
+                <div className="settings-field-header">
+                  <span
+                    className="settings-field-label"
+                    title="一度に扱える最大トークン数です。大きいほど長いコンテキストを保持できますが、VRAM 使用量も増えます。"
+                  >
+                    Context Length
+                  </span>
+                  <div className="settings-field-controls">
+                    {ctxSize !== DEFAULT_CTX_SIZE && (
+                      <button
+                        className="settings-reset-btn"
+                        title="デフォルトに戻す"
+                        onClick={() => void save({ llm_ctx_size: String(DEFAULT_CTX_SIZE) })}
+                      >
+                        <svg
+                          width="12"
+                          height="12"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
+                          <polyline points="3 6 5 6 21 6" />
+                          <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                          <path d="M10 11v6" />
+                          <path d="M14 11v6" />
+                          <path d="M9 6V4h6v2" />
+                        </svg>
+                      </button>
+                    )}
+                    <span className="settings-value-badge">{formatCtxSizeLabel(ctxSize)}</span>
+                  </div>
+                </div>
+                <input
+                  className={`settings-slider${ctxSize !== DEFAULT_CTX_SIZE ? ' active' : ''}`}
+                  type="range"
+                  min={0}
+                  max={CTX_SIZE_PRESETS.length - 1}
+                  step={1}
+                  value={ctxIndex}
+                  onChange={(e) =>
+                    setValues((v) => ({
+                      ...v,
+                      llm_ctx_size: String(CTX_SIZE_PRESETS[Number(e.target.value)] ?? ctxSize)
+                    }))
+                  }
+                  onPointerUp={() => void save({ llm_ctx_size: String(ctxSize) })}
+                  onKeyUp={() => void save({ llm_ctx_size: String(ctxSize) })}
+                />
+                <div className="settings-slider-labels">
+                  {CTX_SIZE_PRESETS.map((p) => (
+                    <span key={p}>{formatCtxSizeLabel(p)}</span>
+                  ))}
+                </div>
+                <p className="settings-field-hint">
+                  llama-server の <code>--ctx-size</code>。変更は次回のサーバー起動から反映されます。
+                </p>
+              </div>
+            </div>
+          </Section>
+
+          <Section id="generation" current={section} title="シーン生成プロンプト">
+            <div className="settings-card">
+              <div className="settings-field">
+                <div className="settings-field-header">
+                  <span className="settings-field-label">システムプロンプト(構成作家の指示)</span>
+                  <div className="settings-field-controls">
+                    {(values.generation_system_prompt ?? '') !== '' && (
+                      <button
+                        className="settings-reset-btn"
+                        title="デフォルトに戻す"
+                        onClick={() => void save({ generation_system_prompt: '' })}
+                      >
+                        <svg
+                          width="12"
+                          height="12"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
+                          <polyline points="3 6 5 6 21 6" />
+                          <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                          <path d="M10 11v6" />
+                          <path d="M14 11v6" />
+                          <path d="M9 6V4h6v2" />
+                        </svg>
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <textarea
+                  rows={6}
+                  value={values.generation_system_prompt ?? ''}
+                  placeholder={genPromptDefault}
+                  onChange={(e) => setValues((v) => ({ ...v, generation_system_prompt: e.target.value }))}
+                  onBlur={() => void save({ generation_system_prompt: values.generation_system_prompt ?? '' })}
+                  className="w-full rounded-lg border px-3 py-2 text-[13px] leading-relaxed outline-none"
+                  style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
+                />
+                <p className="settings-field-hint">
+                  空欄ならプレースホルダのデフォルトが使われます。末尾に JSON 形式の指定と
+                  イベント発行ルール(char_introduce 必須 / delta 範囲 等)が自動で追加されます。
+                </p>
+              </div>
+            </div>
+          </Section>
+
+          <Section id="proofread" current={section} title="校正">
+            <div className="settings-card">
+              <div className="settings-field">
+                <div className="settings-field-header">
+                  <span className="settings-field-label">カスタム校正プロンプト</span>
+                </div>
+                <textarea
+                  rows={4}
+                  value={values.proofread_custom_prompt ?? ''}
+                  placeholder={'例: あなたはハードボイルド小説の編集者です。感傷的な表現を削り、\n短く乾いた文に整えてください。修正後の文章だけを返してください。'}
+                  onChange={(e) => setValues((v) => ({ ...v, proofread_custom_prompt: e.target.value }))}
+                  onBlur={() => void save({ proofread_custom_prompt: values.proofread_custom_prompt ?? '' })}
+                  className="w-full rounded-lg border px-3 py-2 text-[13px] leading-relaxed outline-none"
+                  style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
+                />
+                <p className="settings-field-hint">
+                  入力すると、シーンタブの校正プリセットに「カスタム」が追加されます(組み込み: 軽く / 標準 / 積極的)。
+                </p>
+              </div>
+            </div>
+          </Section>
+
+          <Section id="structure" current={section} title="構造モード">
+            <div className="settings-card">
+              <div className="settings-field">
+                <div className="settings-field-header">
+                  <span className="settings-field-label">ミニマップ</span>
+                  <div className="settings-field-controls">
+                    <div className="flex overflow-hidden rounded-md border" style={{ borderColor: 'var(--border-strong)' }}>
+                      {(
+                        [
+                          ['1', '表示'],
+                          ['0', '非表示']
+                        ] as const
+                      ).map(([value, label]) => (
+                        <button
+                          key={value}
+                          onClick={() => void save({ minimap_visible: value })}
+                          className="px-2.5 py-0.5 text-[12px]"
+                          style={
+                            minimapVisible === (value === '1')
+                              ? { background: 'var(--accent-soft)', color: 'var(--text)' }
+                              : { color: 'var(--text-faint)' }
+                          }
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                <p className="settings-field-hint">ノードエリアの右下に表示される全体図です。</p>
+              </div>
+            </div>
+          </Section>
+
+          <Section id="chat" current={section} title="相談チャット">
+            <div className="settings-card">
+              <div className="settings-field">
+                <div className="settings-field-header">
+                  <span className="settings-field-label">内容から質問候補を作る</span>
+                  <div className="settings-field-controls">
+                    <div className="flex overflow-hidden rounded-md border" style={{ borderColor: 'var(--border-strong)' }}>
+                      {(
+                        [
+                          ['1', 'オン'],
+                          ['0', 'オフ']
+                        ] as const
+                      ).map(([value, label]) => (
+                        <button
+                          key={value}
+                          onClick={() => void save({ chat_dynamic_suggestions: value })}
+                          className="px-2.5 py-0.5 text-[12px]"
+                          style={
+                            chatDynamicSuggestions === (value === '1')
+                              ? { background: 'var(--accent-soft)', color: 'var(--text)' }
+                              : { color: 'var(--text-faint)' }
+                          }
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                <p className="settings-field-hint">
+                  オンにすると、チャットを開いたときと回答のあとに、LLM が物語の内容から質問候補を作って
+                  候補チップの下段に ✨ 付きで並べます(最大2件。固定の候補は常に残ります)。
+                  生成は軽い1回の呼び出しですが、回答直後に少し待ち時間が増えます。LLM 未起動時は何もしません。
+                </p>
+              </div>
+            </div>
+          </Section>
+
+          <Section id="reader" current={section} title="鑑賞モード">
+            <div className="settings-card">
+              <div className="settings-field">
+                <div className="settings-field-header">
+                  <span
+                    className="settings-field-label"
+                    title="動画の挿絵をループ再生するとき、終端と先頭をクロスディゾルブで重ねて継ぎ目を目立たなくします。"
+                  >
+                    動画ループのつなぎ(クロスディゾルブ)
+                  </span>
+                  <div className="settings-field-controls">
+                    {videoFade !== DEFAULT_VIDEO_CROSSFADE_SECONDS && (
+                      <button
+                        className="settings-reset-btn"
+                        title="デフォルトに戻す"
+                        onClick={() => void save({ video_crossfade_seconds: String(DEFAULT_VIDEO_CROSSFADE_SECONDS) })}
+                      >
+                        <svg
+                          width="12"
+                          height="12"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
+                          <polyline points="3 6 5 6 21 6" />
+                          <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                          <path d="M10 11v6" />
+                          <path d="M14 11v6" />
+                          <path d="M9 6V4h6v2" />
+                        </svg>
+                      </button>
+                    )}
+                    <span className="settings-value-badge">{videoFade === 0 ? 'なし' : `${videoFade.toFixed(1)}秒`}</span>
+                  </div>
+                </div>
+                <input
+                  className={`settings-slider${videoFade !== DEFAULT_VIDEO_CROSSFADE_SECONDS ? ' active' : ''}`}
+                  type="range"
+                  min={0}
+                  max={2}
+                  step={0.1}
+                  value={videoFade}
+                  onChange={(e) => setValues((v) => ({ ...v, video_crossfade_seconds: e.target.value }))}
+                  onPointerUp={() => void save({ video_crossfade_seconds: String(videoFade) })}
+                  onKeyUp={() => void save({ video_crossfade_seconds: String(videoFade) })}
+                />
+                <p className="settings-field-hint">
+                  0 にするとクロスディゾルブなしの通常ループになります。フェード時間の2倍より短い動画は自動的に通常ループになります。
+                </p>
+              </div>
+            </div>
+          </Section>
+
+          <Section id="backup" current={section} title="バックアップ">
+            <div className="settings-card">
+              <SnapshotsSection />
+            </div>
+          </Section>
+
+          <Section id="promptlog" current={section} title="プロンプトログ">
+            <div className="settings-card">
+              <PromptLogViewer />
+            </div>
+          </Section>
+        </div>
       </div>
     </div>
   )
