@@ -1,6 +1,7 @@
 import type {
   Character,
   EventInput,
+  Group,
   Place,
   RenderResult,
   SceneEntry,
@@ -122,6 +123,18 @@ export const api = {
     }),
   getState: (nodeId: string) => request<StateSnapshot>(`/nodes/${nodeId}/state`),
   validateNode: (nodeId: string) => request<{ errors: string[] }>(`/nodes/${nodeId}/validate`),
+
+  // ---- 章グループ(docs/design/chapters.md) ----
+  listGroups: () => request<Group[]>('/groups'),
+  createGroup: (title: string, nodeIds: string[]) =>
+    request<Group>('/groups', { method: 'POST', body: JSON.stringify({ title, node_ids: nodeIds }) }),
+  updateGroup: (groupId: string, data: { title?: string; color?: string }) =>
+    request<Group>(`/groups/${groupId}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  // 章の解散(シーンは残る)
+  deleteGroup: (groupId: string) => request<unknown>(`/groups/${groupId}`, { method: 'DELETE' }),
+  // シーンを章から外す(端のシーンのみ)
+  removeNodeFromGroup: (groupId: string, nodeId: string) =>
+    request<{ groups: Group[] }>(`/groups/${groupId}/nodes/${nodeId}`, { method: 'DELETE' }),
 
   getSettings: () => request<Record<string, string>>('/settings'),
   putSettings: (values: Record<string, string>) =>

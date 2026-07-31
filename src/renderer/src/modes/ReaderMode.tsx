@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { api, assetUrl, isAbortError, isVideoAsset, renderStream } from '../api'
 import { CrossfadeLoopVideo, DEFAULT_VIDEO_CROSSFADE_SECONDS } from '../CrossfadeLoopVideo'
 import { FONT_OPTIONS, FONT_SIZES, RenderStyleControls, useRenderStyle } from '../RenderStyle'
 import { cancelTask, enqueueTask, useTasks } from '../tasks'
 import { useElapsedSeconds } from '../useElapsed'
-import type { SceneEntry } from '../types'
+import type { Group, SceneEntry } from '../types'
 
 type ViewMode = 'scroll' | 'split' | 'page'
 
@@ -31,6 +31,8 @@ const DEFAULT_TYPING_SPEED: TypingSpeedId = 'normal'
 interface PageChunk {
   sceneIndex: number
   text: string | null
+  /** 章の扉ページ(タイトルのみ)。設定時は text を使わない */
+  chapter?: { id: string; title: string; number: number }
 }
 
 export default function ReaderMode({
@@ -43,6 +45,7 @@ export default function ReaderMode({
   const style = useRenderStyle()
   const { presetId, povChar, fontSize, proseFont } = style
   const [scenes, setScenes] = useState<SceneEntry[]>([])
+  const [groups, setGroups] = useState<Group[]>([])
   const [rendering, setRendering] = useState(false)
   const [liveNodeId, setLiveNodeId] = useState<string | null>(null)
   const [liveText, setLiveText] = useState('')
@@ -107,7 +110,10 @@ export default function ReaderMode({
   // ページ分割の計算: 実測(隠し要素)で「高さに収まる最大文字数」を二分探索し、
   // 句点・改行のきりの良い位置で区切る。挿絵ありシーンは上部 42% を挿絵に
   // 使うため、本文の高さがその分小さくなる
-  const scenesSig = scenes.map((s) => `${s.render?.id ?? 'x'}-${s.node.image_path ?? ''}`).join(',')
+  const scenesSig =
+    scenes.map((s) => `${s.render?.id ?? 'x'}-${s.node.image_path ?? ''}`).join(',') +
+    '|' +
+    groups.map((g) => `${g.id}:${g.title}:${g.node_ids[0]}`).join(',')
   useEffect(() => {
     if (viewMode !== 'page') return
     const measurer = measurerRef.current
@@ -117,6 +123,9 @@ export default function ReaderMode({
     measurer.style.width = `${Math.floor(areaWidth)}px`
     const result: PageChunk[] = []
     for (let si = 0; si < scenes.length; si += 1) {
+      // 章の先頭シーンの前に扉ページ(章タイトルのみ)を差し込む
+      const chapter = chapterByFirstScene.get(scenes[si].node.id)
+      if (chapter) result.push({ sceneIndex: si, text: null, chapter })
       const prose = scenes[si].render?.prose
       if (!prose) {
         result.push({ sceneIndex: si, text: null })
@@ -221,11 +230,22 @@ export default function ReaderMode({
   const reloadScenes = useCallback(async (): Promise<void> => {
     if (!presetId) return
     try {
-      setScenes(await api.listRenders(presetId, povChar))
+      const [sceneList, groupList] = await Promise.all([api.listRenders(presetId, povChar), api.listGroups()])
+      setScenes(sceneList)
+      setGroups(groupList)
     } catch (e) {
       setStatus(`シーン一覧の取得に失敗しました: ${String(e)}`)
     }
   }, [presetId, povChar])
+
+  // 章の先頭シーン → 章情報。縦読みの見出し・ページモードの扉・エクスポートに使う
+  const chapterByFirstScene = useMemo(() => {
+    const map = new Map<string, { id: string; title: string; number: number }>()
+    groups.forEach((g, i) => {
+      if (g.node_ids.length > 0) map.set(g.node_ids[0], { id: g.id, title: g.title, number: i + 1 })
+    })
+    return map
+  }, [groups])
 
   useEffect(() => {
     void reloadScenes()
@@ -310,9 +330,14 @@ export default function ReaderMode({
   }
 
   const exportMarkdown = (): void => {
+    // 章に属すシーンは `# 章 / ## シーン` の階層で書き出す(未分類は ## のまま)
     const parts = scenes
       .filter((s) => s.render)
-      .map((s) => `## ${s.node.title || '(無題)'}\n\n${s.render!.prose}`)
+      .map((s) => {
+        const chapter = chapterByFirstScene.get(s.node.id)
+        const head = chapter ? `# 第${chapter.number}章 ${chapter.title}\n\n` : ''
+        return `${head}## ${s.node.title || '(無題)'}\n\n${s.render!.prose}`
+      })
     const blob = new Blob([parts.join('\n\n---\n\n')], { type: 'text/markdown;charset=utf-8' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
@@ -479,6 +504,32 @@ export default function ReaderMode({
             </option>
           ))}
         </select>
+        {/* 目次: 章があるときだけ出す。選ぶとその章の先頭へ移動 */}
+        {groups.length > 0 && (
+          <select
+            value=""
+            onChange={(e) => {
+              const groupId = e.target.value
+              if (!groupId) return
+              if (viewMode === 'page') {
+                const page = pages.findIndex((p) => p.chapter?.id === groupId)
+                if (page >= 0) setPageIndex(page)
+              } else {
+                document.getElementById(`reader-chapter-${groupId}`)?.scrollIntoView({ block: 'start' })
+              }
+            }}
+            className="rounded-lg border px-2 py-1 text-[12px]"
+            style={selectStyle}
+            title="章の先頭へ移動"
+          >
+            <option value="">目次</option>
+            {groups.map((g, i) => (
+              <option key={g.id} value={g.id}>
+                第{i + 1}章 {g.title}
+              </option>
+            ))}
+          </select>
+        )}
         {/* 文字送りはページモードの演出なので、そのときだけ出す */}
         {viewMode === 'page' && (
           <select
@@ -530,34 +581,59 @@ export default function ReaderMode({
               return (
                 <>
                   <div className="mx-auto flex min-h-0 w-full max-w-5xl flex-1 flex-col overflow-hidden px-8 pt-6">
-                    {renderSceneHeader(scene)}
-                    <div ref={pageAreaRef} className="flex min-h-0 flex-1 flex-col overflow-hidden">
-                      {img && (
-                        <div className="mb-4 flex min-h-0 shrink-0 justify-center" style={{ flexBasis: '42%' }}>
-                          {isVideoAsset(scene.node.image_path) ? (
-                            <CrossfadeLoopVideo src={img} fadeSeconds={videoFade} fill videoClassName="rounded-2xl" />
-                          ) : (
-                            <img src={img} className="max-h-full max-w-full rounded-2xl object-contain" />
-                          )}
-                        </div>
-                      )}
-                      <div
-                        className={`relative min-h-0 flex-1 overflow-hidden ${isLive ? 'overflow-y-auto' : ''}`}
-                        onClick={() => typing && text && skipTyping(text.length)}
-                        title={typing ? 'クリックで全文表示' : undefined}
-                        style={typing ? { cursor: 'pointer' } : undefined}
-                      >
-                        {/* ページ分割の実測用(不可視。本文と同じ幅・書式) */}
-                        <div
-                          ref={measurerRef}
-                          aria-hidden
-                          className="invisible absolute left-0 top-0 whitespace-pre-wrap"
-                          style={{ fontFamily: proseFont, fontSize, lineHeight: 1.9 }}
-                        />
-                        {isLive || text === null
-                          ? renderProse(scene)
-                          : renderProse(scene, typing ? text.slice(0, typedLen) : text, typing)}
+                    {/* 扉ページでも見出し行の高さを保つ(消すと本文エリアの実測が
+                        ページごとに変わり、ページ分割が揺れてしまう) */}
+                    {chunk?.chapter ? (
+                      <div aria-hidden style={{ visibility: 'hidden' }}>
+                        {renderSceneHeader(scene)}
                       </div>
+                    ) : (
+                      renderSceneHeader(scene)
+                    )}
+                    <div ref={pageAreaRef} className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+                      {/* ページ分割の実測用(不可視。扉ページの間も測れるよう常時マウント) */}
+                      <div
+                        ref={measurerRef}
+                        aria-hidden
+                        className="invisible absolute left-0 top-0 whitespace-pre-wrap"
+                        style={{ fontFamily: proseFont, fontSize, lineHeight: 1.9 }}
+                      />
+                      {chunk?.chapter ? (
+                        // 章の扉ページ(タイトルのみ)
+                        <div className="flex min-h-0 flex-1 flex-col items-center justify-center pb-16">
+                          <div className="text-[12px] uppercase tracking-[0.35em]" style={{ color: 'var(--text-faint)' }}>
+                            第{chunk.chapter.number}章
+                          </div>
+                          <h1
+                            className="mt-3 text-center text-[26px] font-semibold"
+                            style={{ color: 'var(--text)', fontFamily: proseFont }}
+                          >
+                            {chunk.chapter.title}
+                          </h1>
+                        </div>
+                      ) : (
+                        <>
+                          {img && (
+                            <div className="mb-4 flex min-h-0 shrink-0 justify-center" style={{ flexBasis: '42%' }}>
+                              {isVideoAsset(scene.node.image_path) ? (
+                                <CrossfadeLoopVideo src={img} fadeSeconds={videoFade} fill videoClassName="rounded-2xl" />
+                              ) : (
+                                <img src={img} className="max-h-full max-w-full rounded-2xl object-contain" />
+                              )}
+                            </div>
+                          )}
+                          <div
+                            className={`relative min-h-0 flex-1 overflow-hidden ${isLive ? 'overflow-y-auto' : ''}`}
+                            onClick={() => typing && text && skipTyping(text.length)}
+                            title={typing ? 'クリックで全文表示' : undefined}
+                            style={typing ? { cursor: 'pointer' } : undefined}
+                          >
+                            {isLive || text === null
+                              ? renderProse(scene)
+                              : renderProse(scene, typing ? text.slice(0, typedLen) : text, typing)}
+                          </div>
+                        </>
+                      )}
                     </div>
                   </div>
                   {/* ページ送り + シークバー */}
@@ -612,8 +688,24 @@ export default function ReaderMode({
           {scenes.map((scene) => {
                 const img = assetUrl(scene.node.image_path)
                 const split = viewMode === 'split' && img
+                const chapter = chapterByFirstScene.get(scene.node.id)
                 return (
-                  <section key={scene.node.id} id={`reader-scene-${scene.node.id}`} className="mb-12">
+                  <div key={scene.node.id}>
+                  {/* 章の先頭シーンの前に章見出しを挟む */}
+                  {chapter && (
+                    <div id={`reader-chapter-${chapter.id}`} className="mb-10 pt-2 text-center">
+                      <div className="text-[11px] uppercase tracking-[0.35em]" style={{ color: 'var(--text-faint)' }}>
+                        第{chapter.number}章
+                      </div>
+                      <h1
+                        className="mt-1.5 text-[22px] font-semibold"
+                        style={{ color: 'var(--text)', fontFamily: proseFont }}
+                      >
+                        {chapter.title}
+                      </h1>
+                    </div>
+                  )}
+                  <section id={`reader-scene-${scene.node.id}`} className="mb-12">
                     {renderSceneHeader(scene)}
                     {split ? (
                       <div className="gap-8 md:grid md:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
@@ -649,6 +741,7 @@ export default function ReaderMode({
                       </>
                     )}
                   </section>
+                  </div>
                 )
               })}
         </div>

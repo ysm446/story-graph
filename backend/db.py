@@ -73,6 +73,18 @@ CREATE TABLE IF NOT EXISTS edges(
   is_canon INTEGER DEFAULT 0
 );
 
+-- 章グループ(docs/design/chapters.md)。章は正史パス上の連続区間へのラベルで、
+-- 実体ノードではない(メンバーは nodes.group_id で持つ)。
+-- digest_* はフェーズ C(章じまいのまとめ)用に先に用意しておく
+CREATE TABLE IF NOT EXISTS groups(
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  color TEXT,
+  digest_events TEXT,
+  digest_stale INTEGER DEFAULT 0,
+  created_at TEXT
+);
+
 CREATE TABLE IF NOT EXISTS events(
   id TEXT PRIMARY KEY,
   node_id TEXT NOT NULL,
@@ -196,6 +208,7 @@ def init_schema(conn: sqlite3.Connection) -> None:
         "ALTER TABLE chats ADD COLUMN char_id TEXT",  # NULL = 相談チャット。設定時はキャラとの会話
         "ALTER TABLE chats ADD COLUMN mode TEXT",  # キャラチャットの枠組み: interview | roleplay
         "ALTER TABLE chats ADD COLUMN title TEXT",  # 会話名(NULL = 冒頭の発言を見出しに使う)
+        "ALTER TABLE nodes ADD COLUMN group_id TEXT",  # 章グループ(NULL = 未分類。docs/design/chapters.md)
         "ALTER TABLE renders ADD COLUMN meta TEXT",  # 生成統計(JSON。tokens / elapsed_sec など)
         # 生成時に LLM へ送った messages の控え(JSON。UI の閲覧用。チャットの prompt_messages と同趣旨)
         "ALTER TABLE renders ADD COLUMN prompt_messages TEXT",

@@ -387,6 +387,60 @@ async def create_edge(body: AttachIn) -> dict[str, Any]:
     return {"canon_path": store.canon_path()}
 
 
+# ---- 章グループ(docs/design/chapters.md) ---------------------------
+
+
+class GroupCreateIn(BaseModel):
+    title: str
+    node_ids: list[str]
+
+
+class GroupPatch(BaseModel):
+    title: str | None = None
+    color: str | None = None
+
+
+@app.get("/groups")
+async def list_groups() -> list[dict[str, Any]]:
+    return store.list_groups()
+
+
+@app.post("/groups")
+async def create_group(body: GroupCreateIn) -> dict[str, Any]:
+    """正史パス上の連続区間を章にする。"""
+    try:
+        return store.create_group(body.title, body.node_ids)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.patch("/groups/{group_id}")
+async def update_group(group_id: str, body: GroupPatch) -> dict[str, Any]:
+    group = store.update_group(group_id, body.model_dump(exclude_unset=True))
+    if group is None:
+        raise HTTPException(404, "group not found")
+    return group
+
+
+@app.delete("/groups/{group_id}")
+async def delete_group(group_id: str) -> dict[str, str]:
+    """章を解散する(シーンはそのまま残る)。"""
+    store.delete_group(group_id)
+    return {"status": "deleted"}
+
+
+@app.delete("/groups/{group_id}/nodes/{node_id}")
+async def remove_node_from_group(group_id: str, node_id: str) -> dict[str, Any]:
+    """シーンを章から外す(端のシーンのみ)。"""
+    try:
+        store.remove_node_from_group(node_id)
+    except KeyError:
+        raise HTTPException(404, "node not found")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"groups": store.list_groups()}
+
+
 @app.get("/nodes/{node_id}")
 async def get_node(node_id: str) -> dict[str, Any]:
     node = store.get_node(node_id)

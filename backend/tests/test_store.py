@@ -153,6 +153,71 @@ def test_cast_edit_that_changes_state_stales_downstream(store):
     assert "mio" in store.get_state(n2["id"])["chars"]
 
 
+# ---- 章グループ(docs/design/chapters.md) ---------------------------
+
+
+def _three_scenes(store):
+    _setup_chars(store)
+    n1 = store.append_node({"beat": "b1", "cast": ["aya"]})
+    n2 = store.append_node({"beat": "b2", "cast": ["aya"]})
+    n3 = store.append_node({"beat": "b3", "cast": ["aya"]})
+    return n1, n2, n3
+
+
+def test_group_create_and_list(store):
+    n1, n2, n3 = _three_scenes(store)
+    g = store.create_group("第一章", [n2["id"], n1["id"]])  # 順不同でも正史順に整う
+    assert g["title"] == "第一章"
+    assert g["node_ids"] == [n1["id"], n2["id"]]
+    assert store.get_node(n1["id"])["group_id"] == g["id"]
+    assert store.get_node(n3["id"])["group_id"] is None
+    groups = store.list_groups()
+    assert [x["id"] for x in groups] == [g["id"]]
+
+
+def test_group_requires_contiguous_canon_range(store):
+    n1, n2, n3 = _three_scenes(store)
+    with pytest.raises(ValueError):
+        store.create_group("飛び章", [n1["id"], n3["id"]])  # n2 を飛ばした非連続
+    branch = store.append_node({"beat": "if", "cast": ["aya"]}, parent_id=n1["id"], force_draft=True)
+    with pytest.raises(ValueError):
+        store.create_group("分岐章", [branch["id"]])  # 正史外は不可
+    store.create_group("第一章", [n1["id"], n2["id"]])
+    with pytest.raises(ValueError):
+        store.create_group("重複章", [n2["id"], n3["id"]])  # 他章のノードを含む
+
+
+def test_group_dissolve_and_remove_edge_only(store):
+    n1, n2, n3 = _three_scenes(store)
+    g = store.create_group("第一章", [n1["id"], n2["id"], n3["id"]])
+    with pytest.raises(ValueError):
+        store.remove_node_from_group(n2["id"])  # 途中は外せない(章が分断される)
+    store.remove_node_from_group(n3["id"])  # 端は外せる
+    assert store.list_groups()[0]["node_ids"] == [n1["id"], n2["id"]]
+    store.delete_group(g["id"])
+    assert store.list_groups() == []
+    assert store.get_node(n1["id"])["group_id"] is None  # シーンは残る
+
+
+def test_group_insert_inherits_when_inside(store):
+    n1, n2, n3 = _three_scenes(store)
+    g = store.create_group("第一章", [n1["id"], n2["id"]])
+    mid = store.insert_node_after(n1["id"], {"beat": "間", "cast": ["aya"]})
+    assert store.get_node(mid["id"])["group_id"] == g["id"]  # 章の真ん中 → 引き継ぐ
+    tail = store.insert_node_after(n2["id"], {"beat": "章の後", "cast": ["aya"]})
+    assert store.get_node(tail["id"])["group_id"] is None  # 章末尾の後 → 未分類
+    # 章は連続のまま保たれている
+    assert store.list_groups()[0]["node_ids"] == [n1["id"], mid["id"], n2["id"]]
+
+
+def test_group_pruned_when_detached(store):
+    n1, n2, n3 = _three_scenes(store)
+    store.create_group("第一章", [n1["id"], n2["id"], n3["id"]])
+    store.detach_node(n3["id"])  # n3 は島になる → 章から外れる
+    assert store.get_node(n3["id"])["group_id"] is None
+    assert store.list_groups()[0]["node_ids"] == [n1["id"], n2["id"]]
+
+
 def test_validation_rejects_retired_and_unintroduced(store):
     _setup_chars(store)
     store.append_node({"beat": "b1", "cast": ["aya", "ken"]}, _intro_events("aya", "ken"))

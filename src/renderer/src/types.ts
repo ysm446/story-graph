@@ -57,10 +57,23 @@ export interface StoryNode {
   thumb_path: string | null
   /** このシーンだけの清書の目安の字数(null / 0 = 共通の設定に従う) */
   target_chars: number | null
+  /** 章グループ(null = 未分類。docs/design/chapters.md) */
+  group_id: string | null
   created_at: string
   updated_at: string
   events: StoryEvent[]
   validation?: string[]
+}
+
+/** 章グループ。正史パス上の連続区間へのラベル(実体ノードではない) */
+export interface Group {
+  id: string
+  title: string
+  color: string | null
+  /** 章内が編集されてまとめが古い(フェーズ C で使用) */
+  digest_stale: number
+  /** メンバーのシーン ID(正史順) */
+  node_ids: string[]
 }
 
 export interface Relationship {

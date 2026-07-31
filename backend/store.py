@@ -443,7 +443,7 @@ class Store:
         if self.get_node(parent_id) is None:
             raise KeyError(f"parent not found: {parent_id}")
         chain_edge = self.conn.execute(
-            "SELECT id FROM edges WHERE from_node = ? AND is_canon = 1", (parent_id,)
+            "SELECT id, to_node FROM edges WHERE from_node = ? AND is_canon = 1", (parent_id,)
         ).fetchone()
         if chain_edge is None:
             # 後続が無いので通常の追加と同じ
@@ -452,10 +452,19 @@ class Store:
         node_id = data.get("id") or _new_id()
         now = _now()
         on_canon_path = parent_id in self.canon_path()
+        # 章の真ん中(前後が同じ章)への挿入は、その章を引き継ぐ。引き継がないと
+        # 章が非連続になって _prune_groups に解散されてしまう(docs/design/chapters.md)
+        neighbors = self.conn.execute(
+            "SELECT id, group_id FROM nodes WHERE id IN (?, ?)",
+            (parent_id, chain_edge["to_node"]),
+        ).fetchall()
+        neighbor_groups = {r["id"]: r["group_id"] for r in neighbors}
+        parent_group = neighbor_groups.get(parent_id)
+        group_id = parent_group if parent_group and parent_group == neighbor_groups.get(chain_edge["to_node"]) else None
         self.conn.execute(
             """INSERT INTO nodes(id, title, beat, emotional_core, cast, location, story_time,
-                                 status, created_at, updated_at)
-               VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                                 status, group_id, created_at, updated_at)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 node_id,
                 data.get("title"),
@@ -465,6 +474,7 @@ class Store:
                 data.get("location"),
                 data.get("story_time"),
                 "canon" if on_canon_path else "draft",
+                group_id,
                 now,
                 now,
             ),
@@ -553,6 +563,7 @@ class Store:
         self.mark_dirty_downstream(node_id, commit=False)
         self._resync_status()
         self._resync_memory_orders(commit=False)
+        self._prune_groups()  # 島になったシーンは章から外れる
         self.conn.commit()
         return True
 
@@ -584,6 +595,7 @@ class Store:
         self.mark_dirty_downstream(child_id, commit=False)
         self._resync_status()
         self._resync_memory_orders(commit=False)
+        self._prune_groups()  # 正史が変わった場合、前提の崩れた章を整える
         self.conn.commit()
 
     def make_canon(self, node_id: str) -> None:
@@ -609,6 +621,7 @@ class Store:
                 ("canon" if row["id"] in canon else "draft", row["id"]),
             )
         self._resync_memory_orders(commit=False)
+        self._prune_groups()  # 正史から外れた・非連続になった章の割り当てを外す
         self.conn.commit()
 
     # 状態(fold)に効くノードフィールドは cast のみ(fold の入力は
@@ -957,6 +970,124 @@ class Store:
             )
         if commit:
             self.conn.commit()
+
+    # ---- 章グループ(docs/design/chapters.md) -----------------------
+    #
+    # 章は「正史パス上の連続区間」へのラベル。実体ノードではなく、状態(fold)にも
+    # 影響しないので、章の操作では dirty / stale を立てない。章ビューは表示のための
+    # 導出で、真実はシーンノード + エッジ + nodes.group_id のまま。
+
+    def list_groups(self) -> list[dict[str, Any]]:
+        """章の一覧を正史パス順で返す。node_ids はメンバー(正史順)。"""
+        path = self.canon_path()
+        order = {nid: i for i, nid in enumerate(path)}
+        members: dict[str, list[str]] = {}
+        for row in self.conn.execute("SELECT id, group_id FROM nodes WHERE group_id IS NOT NULL"):
+            members.setdefault(row["group_id"], []).append(row["id"])
+        result = []
+        for row in self.conn.execute("SELECT * FROM groups"):
+            ids = sorted((n for n in members.get(row["id"], []) if n in order), key=lambda n: order[n])
+            if not ids:
+                continue  # メンバーの居ない章は出さない(行だけ残っていても無害)
+            result.append(
+                {
+                    "id": row["id"],
+                    "title": row["title"],
+                    "color": row["color"],
+                    "digest_stale": row["digest_stale"],
+                    "node_ids": ids,
+                }
+            )
+        result.sort(key=lambda g: order[g["node_ids"][0]])
+        return result
+
+    def create_group(self, title: str, node_ids: list[str]) -> dict[str, Any]:
+        """正史パス上の連続区間を章にする。分岐・島・他章所属のシーンは不可。"""
+        title = (title or "").strip()
+        if not title:
+            raise ValueError("章の名前を入力してください")
+        if not node_ids:
+            raise ValueError("章に入れるシーンがありません")
+        path = self.canon_path()
+        order = {nid: i for i, nid in enumerate(path)}
+        unique_ids = list(dict.fromkeys(node_ids))
+        if any(n not in order for n in unique_ids):
+            raise ValueError("章にできるのは正史パス上のシーンだけです(分岐・島は入れられません)")
+        idxs = sorted(order[n] for n in unique_ids)
+        if idxs != list(range(idxs[0], idxs[-1] + 1)):
+            raise ValueError("章は正史パス上で連続したシーンの並びにしてください")
+        placeholders = ",".join("?" for _ in unique_ids)
+        taken = self.conn.execute(
+            f"SELECT id FROM nodes WHERE id IN ({placeholders}) AND group_id IS NOT NULL",
+            unique_ids,
+        ).fetchall()
+        if taken:
+            raise ValueError("既に別の章に属すシーンがあります(先に章から外してください)")
+        group_id = _new_id()
+        self.conn.execute(
+            "INSERT INTO groups(id, title, color, created_at) VALUES(?,?,?,?)",
+            (group_id, title, None, _now()),
+        )
+        self.conn.executemany(
+            "UPDATE nodes SET group_id = ? WHERE id = ?", [(group_id, n) for n in unique_ids]
+        )
+        self.conn.commit()
+        return next(g for g in self.list_groups() if g["id"] == group_id)
+
+    def update_group(self, group_id: str, data: dict[str, Any]) -> dict[str, Any] | None:
+        row = self.conn.execute("SELECT * FROM groups WHERE id = ?", (group_id,)).fetchone()
+        if row is None:
+            return None
+        title = data.get("title", row["title"])
+        if isinstance(title, str):
+            title = title.strip() or row["title"]
+        self.conn.execute(
+            "UPDATE groups SET title = ?, color = ? WHERE id = ?",
+            (title, data.get("color", row["color"]), group_id),
+        )
+        self.conn.commit()
+        return next((g for g in self.list_groups() if g["id"] == group_id), None)
+
+    def delete_group(self, group_id: str) -> None:
+        """章を解散する(シーン自体はそのまま残る)。"""
+        self.conn.execute("UPDATE nodes SET group_id = NULL WHERE group_id = ?", (group_id,))
+        self.conn.execute("DELETE FROM groups WHERE id = ?", (group_id,))
+        self.conn.commit()
+
+    def remove_node_from_group(self, node_id: str) -> None:
+        """シーンを章から外す。途中を外すと章が非連続になるので、端(先頭か末尾)のみ。"""
+        node = self.get_node(node_id)
+        if node is None:
+            raise KeyError(f"node not found: {node_id}")
+        group_id = node.get("group_id")
+        if not group_id:
+            return
+        group = next((g for g in self.list_groups() if g["id"] == group_id), None)
+        if group and node_id not in (group["node_ids"][0], group["node_ids"][-1]):
+            raise ValueError("章の途中のシーンは外せません(章が分断されます)。端から外してください")
+        self.conn.execute("UPDATE nodes SET group_id = NULL WHERE id = ?", (node_id,))
+        self.conn.commit()
+
+    def _prune_groups(self) -> None:
+        """正史の変化(切替・切り離しなど)で章の前提が崩れたときの後始末。
+        正史から外れたメンバーは章から出し、残りが非連続になった章は割り当てを全部外す
+        (データを壊さない最小対応。docs/design/chapters.md §8)。commit は呼び出し側。"""
+        path = self.canon_path()
+        order = {nid: i for i, nid in enumerate(path)}
+        members: dict[str, list[str]] = {}
+        for row in self.conn.execute("SELECT id, group_id FROM nodes WHERE group_id IS NOT NULL"):
+            members.setdefault(row["group_id"], []).append(row["id"])
+        for group_id, ids in members.items():
+            on_canon = [n for n in ids if n in order]
+            off_canon = [n for n in ids if n not in order]
+            self.conn.executemany(
+                "UPDATE nodes SET group_id = NULL WHERE id = ?", [(n,) for n in off_canon]
+            )
+            idxs = sorted(order[n] for n in on_canon)
+            if idxs and idxs != list(range(idxs[0], idxs[-1] + 1)):
+                self.conn.executemany(
+                    "UPDATE nodes SET group_id = NULL WHERE id = ?", [(n,) for n in on_canon]
+                )
 
     # ---- state cache / fold -----------------------------------------
 

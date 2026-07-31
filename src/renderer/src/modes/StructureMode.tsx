@@ -55,6 +55,7 @@ import type {
   Character,
   EventInput,
   GraphEdge,
+  Group,
   Place,
   RenderResult,
   StateSnapshot,
@@ -235,7 +236,43 @@ function BeatNodeCard({ data, selected }: NodeProps<BeatFlowNode>): React.JSX.El
   )
 }
 
-const nodeTypes = { beatNode: BeatNodeCard }
+// ---- 章ノード(章ビュー専用の導出表示。docs/design/chapters.md) ------
+//
+// 実体ノードではない。データモデルはシーンノード + エッジ + nodes.group_id の
+// ままで、章ビューは canon パスの「章に属す区間」を 1 枚のカードに圧縮して見せる。
+
+type ChapterNodeData = { group: Group; number: number }
+type ChapterFlowNode = Node<ChapterNodeData, 'chapterNode'>
+type AppFlowNode = BeatFlowNode | ChapterFlowNode
+
+function ChapterNodeCard({ data, selected }: NodeProps<ChapterFlowNode>): React.JSX.Element {
+  const { group, number } = data
+  return (
+    <div
+      className={`w-64 rounded-3xl border-2 px-5 py-5 shadow-lg shadow-black/30 ${selected ? 'ring-4' : ''}`}
+      style={{
+        background: 'var(--bg-card)',
+        borderColor: group.color || 'var(--border-strong)',
+        ['--tw-ring-color' as string]: 'var(--accent-border)'
+      }}
+      title="ダブルクリックで章の中を開く"
+    >
+      <Handle type="target" position={Position.Left} />
+      <div className="text-[10px] uppercase tracking-[0.25em]" style={{ color: 'var(--text-faint)' }}>
+        第{number}章
+      </div>
+      <div className="mt-1 truncate text-[15px] font-semibold" style={{ color: 'var(--text)' }}>
+        {group.title}
+      </div>
+      <div className="mt-2 text-[11px]" style={{ color: 'var(--text-dim)' }}>
+        {group.node_ids.length} シーン
+      </div>
+      <Handle type="source" position={Position.Right} />
+    </div>
+  )
+}
+
+const nodeTypes = { beatNode: BeatNodeCard, chapterNode: ChapterNodeCard }
 
 // ---- ビートタブ ------------------------------------------------------
 
@@ -1460,6 +1497,10 @@ function StructureModeInner({
   const [chatDynamicSuggestions, setChatDynamicSuggestions] = useState(true)
   const [graphNodes, setGraphNodes] = useState<StoryNode[]>([])
   const [graphEdges, setGraphEdges] = useState<GraphEdge[]>([])
+  const [groups, setGroups] = useState<Group[]>([])
+  // 章の表示状態: 'flat' = 全シーン、'chapters' = 章ビュー、それ以外 = 章 ID(章内ビュー)。
+  // 章がひとつも無い間は常に flat(書き始めの体験を変えない)
+  const [chapterView, setChapterView] = useState<string>('chapters')
   const [characters, setCharacters] = useState<Character[]>([])
   const [places, setPlaces] = useState<Place[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -1559,15 +1600,17 @@ function StructureModeInner({
   )
 
   const reload = useCallback(async (): Promise<void> => {
-    const [graph, chars, placeList] = await Promise.all([
+    const [graph, chars, placeList, groupList] = await Promise.all([
       api.getGraph(),
       api.listCharacters(),
-      api.listPlaces()
+      api.listPlaces(),
+      api.listGroups()
     ])
     setGraphNodes(graph.nodes)
     setGraphEdges(graph.edges)
     setCharacters(chars)
     setPlaces(placeList)
+    setGroups(groupList)
   }, [])
 
   // 選択シーンを親に伝える(鑑賞モードを開いたときにそのシーンへ飛ばすため)
@@ -1796,8 +1839,9 @@ function StructureModeInner({
     flowNodesRef.current = flowNodes
   }, [flowNodes])
 
-  const handleNodesChange = useCallback((changes: NodeChange<BeatFlowNode>[]): void => {
-    setFlowNodes((nds) => applyNodeChanges(changes, nds))
+  const handleNodesChange = useCallback((changes: NodeChange<AppFlowNode>[]): void => {
+    // 章ノード(章ビューの導出表示)は flowNodes に居ないので、applyNodeChanges が単に無視する
+    setFlowNodes((nds) => applyNodeChanges(changes as NodeChange<BeatFlowNode>[], nds))
   }, [])
 
   /** ⟲ の中身。
@@ -2388,6 +2432,158 @@ function StructureModeInner({
     [graphEdges, selectedEdgeId]
   )
 
+  // ---- 章ビュー ⇄ 章内ビュー(docs/design/chapters.md §6) ------------
+  // データモデルは変えない。章ビューは flowNodes / graphEdges からの導出表示
+
+  const focusedGroup = useMemo(() => groups.find((g) => g.id === chapterView) ?? null, [groups, chapterView])
+  const effectiveView: 'flat' | 'chapters' | 'focused' =
+    groups.length === 0 ? 'flat' : focusedGroup ? 'focused' : chapterView === 'chapters' ? 'chapters' : 'flat'
+
+  // 章内ビューで見せるノード: 章のメンバー + そこから生える分岐(draft・未分類)の部分木
+  const visibleIds = useMemo(() => {
+    if (effectiveView !== 'focused' || !focusedGroup) return null
+    const set = new Set(focusedGroup.node_ids)
+    const children: Record<string, string[]> = {}
+    for (const e of graphEdges) (children[e.from_node] ??= []).push(e.to_node)
+    const byId = new Map(graphNodes.map((n) => [n.id, n]))
+    const queue = [...focusedGroup.node_ids]
+    while (queue.length > 0) {
+      const current = queue.pop()!
+      for (const child of children[current] ?? []) {
+        if (set.has(child)) continue
+        const node = byId.get(child)
+        // 正史の続き(次章側)へは踏み込まない。分岐(draft)だけを連れてくる
+        if (node && node.status === 'draft' && !node.group_id) {
+          set.add(child)
+          queue.push(child)
+        }
+      }
+    }
+    return set
+  }, [effectiveView, focusedGroup, graphNodes, graphEdges])
+
+  // 章ビュー: 章を 1 枚のカードに圧縮した正史の並び + 未分類のシーン
+  const chapterFlow = useMemo(() => {
+    if (effectiveView !== 'chapters') return null
+    const groupByNode = new Map<string, string>()
+    groups.forEach((g) => g.node_ids.forEach((n) => groupByNode.set(n, g.id)))
+    // 正史順の並び(章に属す区間は 1 項目に圧縮)で x を決める
+    const seq: string[] = [] // 'chapter:ID' か ノード ID
+    for (const n of canonPath) {
+      const gid = groupByNode.get(n.id)
+      const key = gid ? `chapter:${gid}` : n.id
+      if (seq[seq.length - 1] !== key) seq.push(key)
+    }
+    const orderOf = new Map(seq.map((key, i) => [key, i]))
+    const nodes: AppFlowNode[] = groups.map((g, gi) => ({
+      id: `chapter:${g.id}`,
+      type: 'chapterNode' as const,
+      position: { x: (orderOf.get(`chapter:${g.id}`) ?? gi) * COLUMN_GAP_X, y: 0 },
+      draggable: false,
+      data: { group: g, number: gi + 1 }
+    }))
+    // 未分類のシーン: 正史上のものは並び順の位置、分岐・島は自分の位置のまま
+    for (const fn of flowNodes) {
+      if (groupByNode.has(fn.id)) continue
+      const order = orderOf.get(fn.id)
+      nodes.push({
+        ...fn,
+        position: order !== undefined ? { x: order * COLUMN_GAP_X, y: 0 } : fn.position,
+        draggable: false
+      })
+    }
+    // エッジ: 端点を章カードへ写像し、章の内部エッジは落とす(重複もまとめる)
+    const rep = (id: string): string => {
+      const gid = groupByNode.get(id)
+      return gid ? `chapter:${gid}` : id
+    }
+    const seen = new Set<string>()
+    const edges: Edge[] = []
+    for (const e of graphEdges) {
+      const source = rep(e.from_node)
+      const target = rep(e.to_node)
+      if (source === target) continue
+      const key = `${source}->${target}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      edges.push({
+        id: key,
+        source,
+        target,
+        interactionWidth: 18,
+        style: e.is_canon
+          ? { stroke: '#8a8fb8', strokeWidth: 2.5 }
+          : { stroke: '#4a4f66', strokeWidth: 1.5, strokeDasharray: '7 5' }
+      })
+    }
+    return { nodes, edges }
+  }, [effectiveView, groups, canonPath, flowNodes, graphEdges])
+
+  const displayNodes: AppFlowNode[] =
+    effectiveView === 'chapters' && chapterFlow
+      ? chapterFlow.nodes
+      : visibleIds
+        ? flowNodes.filter((n) => visibleIds.has(n.id))
+        : flowNodes
+  const displayEdges: Edge[] =
+    effectiveView === 'chapters' && chapterFlow
+      ? chapterFlow.edges
+      : visibleIds
+        ? flowEdges.filter((e) => visibleIds.has(e.source) && visibleIds.has(e.target))
+        : flowEdges
+
+  // ビューを切り替えたらノード構成が大きく変わるので、全体が見える位置へ
+  useEffect(() => {
+    const timer = setTimeout(() => void reactFlow.fitView({ duration: 300, maxZoom: 1 }), 60)
+    return () => clearTimeout(timer)
+  }, [effectiveView, chapterView, reactFlow])
+
+  // ---- 章の操作 -------------------------------------------------------
+
+  const createChapter = async (targets: string[]): Promise<void> => {
+    const title = window.prompt('章の名前', `第${groups.length + 1}章`)
+    if (!title?.trim()) return
+    try {
+      await api.createGroup(title.trim(), targets)
+      await reload()
+    } catch (e) {
+      setGenStatus(`章にできません: ${String(e)}`)
+    }
+  }
+
+  const removeFromChapter = async (nodeId: string): Promise<void> => {
+    const node = graphNodes.find((n) => n.id === nodeId)
+    if (!node?.group_id) return
+    try {
+      await api.removeNodeFromGroup(node.group_id, nodeId)
+      await reload()
+    } catch (e) {
+      setGenStatus(`章から外せません: ${String(e)}`)
+    }
+  }
+
+  const renameChapter = async (group: Group): Promise<void> => {
+    const title = window.prompt('章の名前', group.title)
+    if (!title?.trim() || title.trim() === group.title) return
+    try {
+      await api.updateGroup(group.id, { title: title.trim() })
+      await reload()
+    } catch (e) {
+      setGenStatus(`名前を変更できません: ${String(e)}`)
+    }
+  }
+
+  const dissolveChapter = async (group: Group): Promise<void> => {
+    if (!window.confirm(`「${group.title}」を解散しますか?(シーンはそのまま残ります)`)) return
+    try {
+      await api.deleteGroup(group.id)
+      setChapterView('chapters')
+      await reload()
+    } catch (e) {
+      setGenStatus(`章を解散できません: ${String(e)}`)
+    }
+  }
+
   const selectedNode = graphNodes.find((n) => n.id === selectedId) ?? null
   const selectedCount = flowNodes.filter((n) => n.selected).length // ⟲ の対象(2 つ以上で部分整列)
 
@@ -2544,8 +2740,8 @@ function StructureModeInner({
         <div ref={canvasColumnRef} className="flex min-w-0 flex-1 flex-col">
         <main ref={canvasRef} className="relative min-h-0 flex-1" style={{ background: 'var(--bg-canvas)' }}>
           <ReactFlow
-            nodes={flowNodes}
-            edges={flowEdges}
+            nodes={displayNodes}
+            edges={displayEdges}
             nodeTypes={nodeTypes}
             // 既定の Backspace 削除は API を通さず画面だけ消えてしまうため無効化し、
             // 削除は Delete キー(下の keydown ハンドラ)に集約する
@@ -2556,12 +2752,18 @@ function StructureModeInner({
             onNodesChange={handleNodesChange}
             // ノードを選んだらエッジ選択は解く(残すと Delete がエッジ切断に化ける)
             onNodeClick={() => setSelectedEdgeId(null)}
+            // 章ノードのダブルクリックで章の中へ(章ビューのドリルダウン)
+            onNodeDoubleClick={(_, node) => {
+              if (node.type === 'chapterNode') setChapterView((node.data as ChapterNodeData).group.id)
+            }}
             onSelectionChange={({ nodes }) => {
               if (nodes.length > 0) setSelectedEdgeId(null)
+              // 章ノードはインスペクタの対象にしない(実体ノードではないため)
+              const beats = nodes.filter((n) => n.type !== 'chapterNode')
               setSelectedId((prev) => {
-                if (nodes.length === 0) return null
+                if (beats.length === 0) return null
                 // 複数選択中は先頭をインスペクタ対象にする
-                return nodes.some((n) => n.id === prev) ? prev : nodes[0].id
+                return beats.some((n) => n.id === prev) ? prev : beats[0].id
               })
             }}
             onConnect={(connection) => void handleConnect(connection)}
@@ -2576,13 +2778,17 @@ function StructureModeInner({
             // 右クリック: 選択中のノード群(右クリックしたノードを含む)に対する一括操作
             onNodeContextMenu={(event, node) => {
               event.preventDefault()
+              if (node.type === 'chapterNode') return // 章ノードの操作は章内ビュー側で
               const selected = flowNodes.filter((n) => n.selected).map((n) => n.id)
               const targets = selected.includes(node.id) ? selected : [node.id]
               setMenu({ x: event.clientX, y: event.clientY, targets })
             }}
             onSelectionContextMenu={(event, nodes) => {
               event.preventDefault()
-              setMenu({ x: event.clientX, y: event.clientY, targets: nodes.map((n) => n.id) })
+              // 章ノード(導出表示)は一括操作の対象にしない
+              const targets = nodes.filter((n) => n.type !== 'chapterNode').map((n) => n.id)
+              if (targets.length === 0) return
+              setMenu({ x: event.clientX, y: event.clientY, targets })
             }}
             onPaneContextMenu={(event) => {
               event.preventDefault()
@@ -2610,8 +2816,9 @@ function StructureModeInner({
             panOnDrag={[1]}
             selectionOnDrag
             selectionMode={SelectionMode.Partial}
-            // ハンドルのドラッグで親子を繋げる(妥当性は isValidConnection で判定)
-            nodesConnectable
+            // ハンドルのドラッグで親子を繋げる(妥当性は isValidConnection で判定)。
+            // 章ビューは俯瞰専用なので繋ぎ替えは章の中かフラット表示で行う
+            nodesConnectable={effectiveView !== 'chapters'}
             proOptions={{ hideAttribution: true }}
           >
             <Background gap={20} size={1.4} color="#394154" />
@@ -2619,8 +2826,62 @@ function StructureModeInner({
             <Panel position="top-left">
               {/* 畳んでいるときは幅を詰める(パネルの領域はキャンバスのクリックを奪うため) */}
               <div className={`flex flex-col gap-2 ${genPanelOpen || genStatus ? 'w-72' : 'w-fit'}`}>
+                {/* 章内ビューのパンくず(章名 / 名前の変更 / 解散) */}
+                {effectiveView === 'focused' && focusedGroup && (
+                  <div
+                    className="flex w-fit items-center gap-1.5 rounded-xl border px-2 py-1.5 text-[12px] shadow-lg shadow-black/30"
+                    style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)' }}
+                  >
+                    <button
+                      onClick={() => setChapterView('chapters')}
+                      className="rounded-md px-1.5 py-0.5 hover:bg-[var(--accent-soft)]"
+                      style={{ color: 'var(--text-dim)' }}
+                      title="章ビューへ戻る"
+                    >
+                      ← 章一覧
+                    </button>
+                    <span className="max-w-56 truncate font-medium" style={{ color: 'var(--text)' }}>
+                      第{groups.indexOf(focusedGroup) + 1}章 {focusedGroup.title}
+                    </span>
+                    <button
+                      onClick={() => void renameChapter(focusedGroup)}
+                      className="rounded-md px-1 py-0.5 hover:bg-[var(--accent-soft)]"
+                      style={{ color: 'var(--text-faint)' }}
+                      title="章の名前を変更"
+                    >
+                      ✎
+                    </button>
+                    <button
+                      onClick={() => void dissolveChapter(focusedGroup)}
+                      className="rounded-md px-1 py-0.5 hover:bg-[var(--accent-soft)]"
+                      style={{ color: 'var(--text-faint)' }}
+                      title="章を解散する(シーンは残る)"
+                    >
+                      解散
+                    </button>
+                  </div>
+                )}
                 {/* ツールバー: 補助操作はアイコンだけにして面積を詰める */}
                 <div className="flex gap-1.5">
+                  {/* 章がある間だけ、章ビュー ⇄ 全シーンの切替を出す */}
+                  {groups.length > 0 && effectiveView !== 'focused' && (
+                    <button
+                      onClick={() => setChapterView((v) => (v === 'chapters' ? 'flat' : 'chapters'))}
+                      className="rounded-lg border px-2.5 py-1.5 text-[13px] shadow-lg shadow-black/30"
+                      style={{
+                        background: effectiveView === 'chapters' ? 'var(--accent-soft)' : 'var(--bg-card)',
+                        borderColor: effectiveView === 'chapters' ? 'var(--accent-border)' : 'var(--border-strong)',
+                        color: 'var(--text-dim)'
+                      }}
+                      title={
+                        effectiveView === 'chapters'
+                          ? '全シーンのフラット表示に切り替える'
+                          : '章ビュー(章単位の俯瞰)に切り替える'
+                      }
+                    >
+                      {effectiveView === 'chapters' ? '⊞ 全シーン' : '📖 章ビュー'}
+                    </button>
+                  )}
                   <button
                     onClick={() => void handleAddBeat()}
                     className="rounded-lg px-3 py-1.5 text-[13px] font-medium text-white shadow-lg shadow-black/30"
@@ -2815,6 +3076,25 @@ function StructureModeInner({
               </div>
               {(
                 [
+                  // 章にまとめる: 未分類のシーンだけを選んでいるときに出す(重複所属は不可)
+                  ...(menu.targets.every((t) => !graphNodes.find((n) => n.id === t)?.group_id)
+                    ? [
+                        {
+                          label: '📖 章にまとめる',
+                          hint: '正史上で連続したシーンを章にする',
+                          run: () => void createChapter(menu.targets)
+                        }
+                      ]
+                    : []),
+                  ...(menu.targets.length === 1 && graphNodes.find((n) => n.id === menu.targets[0])?.group_id
+                    ? [
+                        {
+                          label: '章から外す',
+                          hint: '章の端(先頭・末尾)のシーンだけ外せます',
+                          run: () => void removeFromChapter(menu.targets[0])
+                        }
+                      ]
+                    : []),
                   {
                     label: '整合を取る(LLM なし)',
                     hint: '重複した登場イベントを掃除して検証',
@@ -2866,7 +3146,7 @@ function StructureModeInner({
                     hint: '後続シーンは前のシーンに繋がる',
                     run: () => void deleteNodes(menu.targets)
                   }
-                ] as const
+                ] as Array<{ label: string; hint: string; disabled?: boolean; run: () => void }>
               ).map((item) => (
                 <button
                   key={item.label}
@@ -2874,7 +3154,7 @@ function StructureModeInner({
                     setMenu(null)
                     item.run()
                   }}
-                  disabled={'disabled' in item ? item.disabled : false}
+                  disabled={item.disabled ?? false}
                   className="block w-full px-3 py-1.5 text-left hover:bg-[var(--accent-soft)] disabled:opacity-40"
                   style={{ color: 'var(--text-dim)' }}
                 >
