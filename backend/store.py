@@ -611,12 +611,26 @@ class Store:
         self._resync_memory_orders(commit=False)
         self.conn.commit()
 
+    # 状態(fold)に効くノードフィールドは cast のみ(fold の入力は
+    # parent_state / events / cast)。下記はプロンプト文面にしか効かないので、
+    # 編集しても自ノードの清書が古くなるだけで、下流の状態・清書には影響しない。
+    # status / target_chars はどちらにも効かない(status は canon 導出の表示、
+    # target_chars は set_node_target_chars と同じ扱い)
+    _PROMPT_ONLY_FIELDS = ("title", "beat", "emotional_core", "location", "story_time")
+
     def update_node(self, node_id: str, data: dict[str, Any]) -> dict[str, Any] | None:
         row = self.conn.execute("SELECT * FROM nodes WHERE id = ?", (node_id,)).fetchone()
         if not row:
             return None
         current = dict(row)
         cast = data.get("cast")
+        new_cast = json.dumps(cast, ensure_ascii=False) if cast is not None else current["cast"]
+        cast_changed = new_cast != current["cast"]
+        prompt_changed = any(
+            data.get(f, current[f]) != current[f] for f in self._PROMPT_ONLY_FIELDS
+        )
+        # cast は状態に効くので、編集前の状態ハッシュを控えて early cutoff の比較に使う
+        old_hash = fold_mod.state_hash(self.get_state(node_id)) if cast_changed else None
         self.conn.execute(
             """UPDATE nodes SET title = ?, beat = ?, emotional_core = ?, cast = ?,
                location = ?, story_time = ?, status = ?, target_chars = ?, updated_at = ?
@@ -625,7 +639,7 @@ class Store:
                 data.get("title", current["title"]),
                 data.get("beat", current["beat"]),
                 data.get("emotional_core", current["emotional_core"]),
-                json.dumps(cast, ensure_ascii=False) if cast is not None else current["cast"],
+                new_cast,
                 data.get("location", current["location"]),
                 data.get("story_time", current["story_time"]),
                 data.get("status", current["status"]),
@@ -634,7 +648,20 @@ class Store:
                 node_id,
             ),
         )
-        self.mark_dirty_downstream(node_id, commit=False)
+        if cast_changed:
+            # 再 fold して状態が実際に変わったときだけ下流へ波及させる(early cutoff。
+            # docs/design/chapters.md フェーズ A)。並べ替えや登場済みキャラの追加は
+            # 状態が同じなので下流の清書を保てる。cast はプロンプトにも出るので
+            # 自ノードの清書は常に stale
+            new_hash = fold_mod.state_hash(self.get_state(node_id))
+            if new_hash == old_hash:
+                self.conn.execute("UPDATE renders SET stale = 1 WHERE node_id = ?", (node_id,))
+            else:
+                self.mark_dirty_downstream(node_id, commit=False)
+        elif prompt_changed:
+            # 状態は変わらない。下流の清書は状態と直前散文にしか依存しないので保ち、
+            # 自ノードの清書だけ古くなる(beat の誤字修正で全編 stale を防ぐ)
+            self.conn.execute("UPDATE renders SET stale = 1 WHERE node_id = ?", (node_id,))
         self.conn.commit()
         return self.get_node(node_id)
 

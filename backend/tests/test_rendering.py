@@ -237,8 +237,14 @@ def test_stale_marked_on_upstream_edit(store, monkeypatch):
     path = store.canon_path()
     collect_sse(rendering.render_stream(store, "http://fake", path, preset["id"], None))
     assert store.latest_render(path[1], preset["id"], None)["stale"] == 0
-    # 上流ビートを編集 → 下流のレンダーが stale になる
+    # ビート編集はプロンプト文面のみ → 自シーンだけ stale(フェーズ A で変更。
+    # 下流の清書は状態と直前散文にしか依存しないので保たれる)
     store.update_node(path[0], {"beat": "編集後のビート"})
     assert store.latest_render(path[0], preset["id"], None)["stale"] == 1
+    assert store.latest_render(path[1], preset["id"], None)["stale"] == 0
+    # 状態に効く編集(イベント書き換え)は従来どおり下流の清書も stale になる
+    store.replace_events(path[0], [
+        {"type": "fact_set", "payload": {"scope": "char", "char": "aya", "key": "goal", "value": "旅"}},
+    ])
     assert store.latest_render(path[1], preset["id"], None)["stale"] == 1
 

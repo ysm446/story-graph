@@ -107,6 +107,52 @@ def test_state_cache_dirty_propagation(store):
     assert store.get_state(n2["id"])["chars"]["aya"]["facts"]["location"] == "城"
 
 
+def test_prompt_only_edit_keeps_downstream_fresh(store):
+    """beat の誤字修正のようなプロンプト文面だけの編集では、
+    自ノードの清書だけが古くなり、下流の状態・清書は保たれる(フェーズ A)。"""
+    _setup_chars(store)
+    n1 = store.append_node({"beat": "b1", "cast": ["aya"]})
+    n2 = store.append_node({"beat": "b2", "cast": ["aya"]})
+    store.get_state(n2["id"])  # キャッシュを温める
+    store.seed_presets()
+    store.save_render(n1["id"], "default-third", None, "散文1")
+    store.save_render(n2["id"], "default-third", None, "散文2")
+    store.update_node(n1["id"], {"beat": "b1(誤字修正)", "title": "改題"})
+    assert store.latest_render(n1["id"], "default-third", None)["stale"] == 1
+    assert store.latest_render(n2["id"], "default-third", None)["stale"] == 0
+    cached = store.conn.execute("SELECT dirty FROM state_cache WHERE node_id = ?", (n2["id"],)).fetchone()
+    assert cached["dirty"] == 0
+
+
+def test_cast_edit_with_unchanged_state_keeps_downstream(store):
+    """cast の並べ替えなど、再 fold しても状態が同じ編集は下流へ波及しない(early cutoff)。
+    cast はプロンプトに出るので自ノードの清書だけは stale になる。"""
+    _setup_chars(store)
+    n1 = store.append_node({"beat": "b1", "cast": ["aya", "ken"]})
+    n2 = store.append_node({"beat": "b2", "cast": ["aya"]})
+    store.get_state(n2["id"])
+    store.seed_presets()
+    store.save_render(n1["id"], "default-third", None, "散文1")
+    store.save_render(n2["id"], "default-third", None, "散文2")
+    store.update_node(n1["id"], {"cast": ["ken", "aya"]})  # 並べ替え(状態は不変)
+    assert store.latest_render(n1["id"], "default-third", None)["stale"] == 1
+    assert store.latest_render(n2["id"], "default-third", None)["stale"] == 0
+
+
+def test_cast_edit_that_changes_state_stales_downstream(store):
+    """cast への新キャラ追加は状態が変わるので、従来どおり下流まで波及する。"""
+    _setup_chars(store)
+    store.create_character({"name": "ミオ", "id": "mio"})
+    n1 = store.append_node({"beat": "b1", "cast": ["aya"]})
+    n2 = store.append_node({"beat": "b2", "cast": ["aya"]})
+    store.get_state(n2["id"])
+    store.seed_presets()
+    store.save_render(n2["id"], "default-third", None, "散文2")
+    store.update_node(n1["id"], {"cast": ["aya", "mio"]})
+    assert store.latest_render(n2["id"], "default-third", None)["stale"] == 1
+    assert "mio" in store.get_state(n2["id"])["chars"]
+
+
 def test_validation_rejects_retired_and_unintroduced(store):
     _setup_chars(store)
     store.append_node({"beat": "b1", "cast": ["aya", "ken"]}, _intro_events("aya", "ken"))
