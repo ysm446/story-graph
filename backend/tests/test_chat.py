@@ -98,6 +98,38 @@ def test_tool_loop_and_persistence(store, monkeypatch):
     assert chat["scope"] == "upto"
 
 
+def test_prompt_messages_saved_but_not_sent(store, monkeypatch):
+    # 返事には生成時に LLM へ送った内容(system + 履歴)の控えを保存する(UI の閲覧用)。
+    # ただし次ターン以降の LLM 送信メッセージには混ぜない
+    sent = []
+
+    def capture(messages, **kwargs):
+        sent.append([dict(m) for m in messages])
+
+        async def gen():
+            yield ("content", "回答")
+            yield ("done", {"content": "回答", "tool_calls": None,
+                            "message": {"role": "assistant", "content": "回答"}})
+
+        return gen()
+
+    monkeypatch.setattr(llm_mod, "chat_stream_tools", capture)
+    anchor = store.canon_path()[1]
+    events = collect_sse(chat_agent.chat_stream(store, "http://fake", None, anchor, "upto", "1回目"))
+    chat_id = events[-1]["chat_id"]
+    saved = store.get_chat(chat_id)["messages"]
+    assert saved[-1]["role"] == "assistant"
+    # 控えは実際の送信内容と一致する(system が先頭、その後にそれまでの履歴)
+    assert saved[-1]["prompt_messages"] == sent[-1]
+    assert saved[-1]["prompt_messages"][0]["role"] == "system"
+    collect_sse(chat_agent.chat_stream(store, "http://fake", chat_id, None, "upto", "2回目"))
+    assert sent[-1][0]["role"] == "system"
+    # 控え(と旧形式の system_prompt)は送信から除外され、入れ子にもならない
+    assert all("prompt_messages" not in m and "system_prompt" not in m for m in sent[-1])
+    saved = store.get_chat(chat_id)["messages"]
+    assert all("prompt_messages" not in m for m in saved[-1]["prompt_messages"])
+
+
 def test_proposals_are_emitted(store, monkeypatch):
     proposals = [
         {"title": "決裂", "beat": "アヤはケンを追放する。", "cast": ["aya", "ken"]},

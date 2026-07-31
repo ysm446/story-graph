@@ -404,10 +404,12 @@ async def _chat_impl(
         tools = build_tools()
 
     def messages() -> list[dict[str, Any]]:
-        # meta(生成統計)と ts(発言時刻)は保存用の付加情報なので LLM には渡さない
+        # meta(生成統計)・ts(発言時刻)・prompt_messages(生成時に送った内容の
+        # 控え)は保存用の付加情報なので LLM には渡さない。system_prompt は
+        # prompt_messages の旧形式(控えを system だけにしていた頃)の名残
         return [
             {"role": "system", "content": system},
-            *({k: v for k, v in m.items() if k not in ("meta", "ts")} for m in history),
+            *({k: v for k, v in m.items() if k not in ("meta", "ts", "system_prompt", "prompt_messages")} for m in history),
         ]
 
     # ツールステップをまたいだ合計。ツール呼び出しの分も含めて「この返事にかかった量」
@@ -457,11 +459,21 @@ async def _chat_impl(
             if not tool_calls:
                 final_answer = result["content"]
                 stats = final_stats()
+                # prompt_messages はこの返事を作った LLM 呼び出しに実際に送った内容の
+                # 控え(system + それまでの履歴 + ツール結果)。UI の閲覧用で、履歴が
+                # 長くなると返事ごとに全文が積まれて嵩むが、正確さを優先して許容する
                 history.append(
-                    {"role": "assistant", "content": final_answer, "ts": _now(), **({"meta": stats} if stats else {})}
+                    {
+                        "role": "assistant",
+                        "content": final_answer,
+                        "ts": _now(),
+                        "prompt_messages": messages(),
+                        **({"meta": stats} if stats else {}),
+                    }
                 )
                 break
-            history.append(result["message"])
+            # ツール呼び出し途中の発言にも控えを付ける(content 付きなら吹き出しになる)
+            history.append({**result["message"], "prompt_messages": messages()})
             for tc in tool_calls:
                 name = tc.get("function", {}).get("name", "")
                 try:
@@ -521,7 +533,13 @@ async def _chat_impl(
             final_answer = result.get("content") or ""
             stats = final_stats()
             history.append(
-                {"role": "assistant", "content": final_answer, "ts": _now(), **({"meta": stats} if stats else {})}
+                {
+                    "role": "assistant",
+                    "content": final_answer,
+                    "ts": _now(),
+                    "prompt_messages": messages(),
+                    **({"meta": stats} if stats else {}),
+                }
             )
     finally:
         # 途中失敗・切断でも、ここまでの往復(ユーザー発言・ツール結果)は保存する

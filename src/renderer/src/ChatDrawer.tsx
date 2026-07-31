@@ -27,7 +27,15 @@ interface Proposal {
 // ストリーミング中に増えた項目は位置が未確定なので undefined。
 type DisplayItem =
   | { kind: 'user'; text: string; turn?: number; ts?: string }
-  | { kind: 'assistant'; text: string; stats?: ChatStats | null; turn?: number; ts?: string }
+  | {
+      kind: 'assistant'
+      text: string
+      stats?: ChatStats | null
+      turn?: number
+      ts?: string
+      /** この返事の生成時に LLM へ実際に送った内容の控え(system + 履歴 + ツール結果) */
+      promptMessages?: Array<Record<string, unknown>>
+    }
   | { kind: 'tool'; name: string; turn?: number }
   | { kind: 'proposals'; proposals: Proposal[]; turn?: number }
 
@@ -89,13 +97,19 @@ function buildDisplay(messages: Array<Record<string, unknown>>): DisplayItem[] {
       }
     }
     if (m.content) {
-      // meta は保存時に付けた生成統計(LLM には渡していない)
+      // meta は保存時に付けた生成統計、prompt_messages は生成時に送った内容の
+      // 控え(どちらも LLM には渡していない)。system_prompt は控えを system
+      // だけにしていた旧形式で、その頃の履歴も見られるようにしておく
+      const promptMessages =
+        (m.prompt_messages as Array<Record<string, unknown>> | undefined) ??
+        (m.system_prompt ? [{ role: 'system', content: m.system_prompt }] : undefined)
       display.push({
         kind: 'assistant',
         text: String(m.content),
         stats: (m.meta as ChatStats | undefined) ?? null,
         turn,
-        ts: m.ts as string | undefined
+        ts: m.ts as string | undefined,
+        promptMessages
       })
     }
   })
@@ -108,7 +122,7 @@ function MsgActionButton({
   title,
   onClick
 }: {
-  kind: 'edit' | 'regenerate' | 'delete'
+  kind: 'edit' | 'regenerate' | 'delete' | 'prompt'
   title: string
   onClick: () => void
 }): React.JSX.Element {
@@ -152,6 +166,15 @@ function MsgActionButton({
             <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
           </>
         )}
+        {kind === 'prompt' && (
+          <>
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+            <polyline points="14 2 14 8 20 8" />
+            <line x1="16" y1="13" x2="8" y2="13" />
+            <line x1="16" y1="17" x2="8" y2="17" />
+            <polyline points="10 9 9 9 8 9" />
+          </>
+        )}
       </svg>
     </button>
   )
@@ -190,6 +213,75 @@ function StatsLine({ stats }: { stats: ChatStats }): React.JSX.Element {
           {part}
         </span>
       ))}
+    </div>
+  )
+}
+
+/** 返事の生成時に LLM へ実際に送った内容(システムプロンプト + それまでの履歴 +
+ *  ツール結果)を見るモーダル(読み取り専用)。設定画面の「プロンプトログ」と同じ
+ *  role ごとの表示で、その返事から直接開けるようにする */
+function SystemPromptModal({
+  messages,
+  onClose
+}: {
+  messages: Array<Record<string, unknown>>
+  onClose: () => void
+}): React.JSX.Element {
+  useEffect(() => {
+    const onKey = (ev: KeyboardEvent): void => {
+      if (ev.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center"
+      style={{ background: 'rgba(0,0,0,0.55)' }}
+      onClick={onClose}
+    >
+      <div
+        className="flex max-h-[85vh] w-[720px] max-w-[92vw] flex-col rounded-2xl border p-5"
+        style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)' }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 className="mb-3 text-[14px] font-semibold" style={{ color: 'var(--text)' }}>
+          この返事の生成に送った内容
+        </h3>
+        <div className="inspector-scrollbar min-h-0 flex-1 overflow-y-auto">
+          {messages.map((m, i) => {
+            // assistant のツール呼び出しは content が無いことがあるので、呼び出し内容を行にして見せる
+            const toolCalls =
+              (m.tool_calls as Array<{ function?: { name?: string; arguments?: string } }> | undefined) ?? []
+            const lines = [
+              ...(m.content ? [String(m.content)] : []),
+              ...toolCalls.map((tc) => `→ ${tc.function?.name ?? ''}(${tc.function?.arguments ?? ''})`)
+            ]
+            return (
+              <div key={i} className="mb-2">
+                <div className="mb-0.5 text-[10px] uppercase tracking-[0.14em]" style={{ color: 'var(--accent)' }}>
+                  {String(m.role ?? '')}
+                </div>
+                <pre
+                  className="whitespace-pre-wrap rounded-md border p-2 font-mono text-[11px] leading-relaxed"
+                  style={{ background: 'var(--bg-input)', borderColor: 'var(--border)', color: 'var(--text-dim)' }}
+                >
+                  {lines.join('\n')}
+                </pre>
+              </div>
+            )
+          })}
+        </div>
+        <div className="mt-3 flex justify-end">
+          <button
+            onClick={onClose}
+            className="rounded-lg border px-3 py-1 text-[12px]"
+            style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+          >
+            閉じる
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
@@ -309,6 +401,8 @@ export default function ChatDrawer({
   // 発言の編集(ホバーアクションの ✎)。turn = messages 上の位置
   const [editingTurn, setEditingTurn] = useState<number | null>(null)
   const [editText, setEditText] = useState('')
+  // 返事の生成に送った内容をモーダルで見る(null = 閉じている)
+  const [promptView, setPromptView] = useState<Array<Record<string, unknown>> | null>(null)
   // 内容から作られた質問(最大 2 件。固定の候補の下=入力欄側に出す)
   const [dynamicQuestions, setDynamicQuestions] = useState<string[]>([])
   // コンテキスト使用量(lm-chat のドーナツリング相当)
@@ -1089,13 +1183,22 @@ export default function ChatDrawer({
                         </div>
                         <div className="flex items-center gap-2">
                           {item.stats && <StatsLine stats={item.stats} />}
-                          {item.turn !== undefined && !busy && (
+                          {(item.promptMessages || (item.turn !== undefined && !busy)) && (
                             <div className="mt-0.5 flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
-                              <MsgActionButton
-                                kind="delete"
-                                title="この返事を削除(発言は残す)"
-                                onClick={() => void deleteTurn(item.turn!, true)}
-                              />
+                              {item.promptMessages && (
+                                <MsgActionButton
+                                  kind="prompt"
+                                  title="この返事の生成に送った内容(システムプロンプトと履歴)を見る"
+                                  onClick={() => setPromptView(item.promptMessages!)}
+                                />
+                              )}
+                              {item.turn !== undefined && !busy && (
+                                <MsgActionButton
+                                  kind="delete"
+                                  title="この返事を削除(発言は残す)"
+                                  onClick={() => void deleteTurn(item.turn!, true)}
+                                />
+                              )}
                             </div>
                           )}
                         </div>
@@ -1290,6 +1393,7 @@ export default function ChatDrawer({
           </div>
         </div>
       </div>
+      {promptView !== null && <SystemPromptModal messages={promptView} onClose={() => setPromptView(null)} />}
     </div>
   )
 }
