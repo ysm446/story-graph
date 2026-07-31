@@ -53,6 +53,43 @@ def test_render_stream_sequential(store, monkeypatch):
     assert "むかしむかし" in second_user
 
 
+def test_render_saves_meta_and_prompt_messages(store, monkeypatch):
+    # 清書には生成統計(meta)と、生成時に LLM へ送った messages の控え
+    # (prompt_messages)を保存する(UI の閲覧用)
+    captured = []
+
+    async def fake_stream(messages, *, stats_out=None, **kwargs):
+        captured.append(messages)
+        if stats_out is not None:
+            stats_out.update({"tokens": 100, "prompt_tokens": 500, "elapsed_sec": 2.5,
+                              "tokens_per_sec": 40.0, "finish_reason": "stop"})
+        yield "本文"
+
+    monkeypatch.setattr(llm_mod, "chat_stream", fake_stream)
+    preset = store.list_presets()[0]
+    node_id = store.canon_path()[0]
+    events = collect_sse(rendering.render_stream(store, "http://fake", [node_id], preset["id"], None))
+    emitted = next(e["render"] for e in events if "scene_done" in e)
+    saved = store.latest_render(node_id, preset["id"], None)
+    for r in (emitted, saved):
+        assert r["meta"] == {"tokens": 100, "elapsed_sec": 2.5, "tokens_per_sec": 40.0, "finish_reason": "stop"}
+        assert r["prompt_messages"] == captured[0]
+
+
+def test_render_meta_is_null_when_stats_unavailable(store, monkeypatch):
+    # サーバーが timings / usage を返さないときは meta を残さない(控えは残す)
+    async def fake_stream(messages, **kwargs):
+        yield "本文"
+
+    monkeypatch.setattr(llm_mod, "chat_stream", fake_stream)
+    preset = store.list_presets()[0]
+    node_id = store.canon_path()[0]
+    collect_sse(rendering.render_stream(store, "http://fake", [node_id], preset["id"], None))
+    saved = store.latest_render(node_id, preset["id"], None)
+    assert saved["meta"] is None
+    assert saved["prompt_messages"] is not None
+
+
 def test_system_prompt_is_preset_text_plus_constraints(store, monkeypatch):
     captured = []
 

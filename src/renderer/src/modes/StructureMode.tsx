@@ -29,6 +29,7 @@ import {
 import ChatDrawer from '../ChatDrawer'
 import EventsEditor from '../EventsEditor'
 import FactTimeline from '../FactTimeline'
+import { MsgActionButton, StatsLine, SystemPromptModal } from '../GenMeta'
 import { Icon } from '../icons'
 import ProofreadTextarea from '../ProofreadTextarea'
 import RelationGraph from '../RelationGraph'
@@ -1195,9 +1196,11 @@ function RenderTab({
   /** シーン個別の分量を変えたとき(グラフの node を取り直す) */
   onNodeChanged: () => void
 }): React.JSX.Element {
-  const { presetId, povChar, proseFont, fontSize } = style
+  const { presetId, povChar } = style
   const [render, setRender] = useState<RenderResult | null>(null)
   const [loading, setLoading] = useState(true)
+  // この清書の生成に送った内容(プロンプト)をモーダルで見る(null = 閉じている)
+  const [promptView, setPromptView] = useState<Array<Record<string, unknown>> | null>(null)
   // 生成中の文字列。どのシーンのものかを持つ(生成中に別のシーンへ移れる)
   const [live, setLive] = useState<{ nodeId: string; text: string } | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -1325,7 +1328,9 @@ function RenderTab({
     })
   }
 
-  const proseStyle = { color: 'var(--text)', fontFamily: proseFont, fontSize, lineHeight: 1.9 }
+  // 本文はシーンタブと同じ UI フォント・サイズで出す(鑑賞用の proseFont / fontSize は
+  // 鑑賞モード側だけに使う。インスペクタ内は他タブと見た目を揃える方針。2026-07-31)
+  const proseClass = 'whitespace-pre-wrap text-[13px] leading-relaxed'
   const stale = render?.stale === 1
 
   return (
@@ -1396,7 +1401,7 @@ function RenderTab({
       )}
       <div ref={bodyRef} className="inspector-scrollbar min-h-0 flex-1 overflow-y-auto">
         {liveText !== null ? (
-          <div className="whitespace-pre-wrap" style={proseStyle}>
+          <div className={proseClass} style={{ color: 'var(--text)' }}>
             {liveText}
             <span
               className="node-generating-border ml-0.5 inline-block h-4 w-1.5 align-middle"
@@ -1404,7 +1409,7 @@ function RenderTab({
             />
           </div>
         ) : render ? (
-          <div className="whitespace-pre-wrap" style={{ ...proseStyle, opacity: stale ? 0.6 : 1 }}>
+          <div className={proseClass} style={{ color: 'var(--text)', opacity: stale ? 0.6 : 1 }}>
             {render.prose}
           </div>
         ) : loading ? (
@@ -1421,6 +1426,21 @@ function RenderTab({
           </div>
         )}
       </div>
+      {/* 生成統計と、生成に送った内容(プロンプト)の確認。チャットの返事と同じ部品。
+          列追加(2026-07-31)以前の清書には残っていないので、その場合は出さない */}
+      {render && !liveText && (render.meta || render.prompt_messages) && (
+        <div className="flex items-center gap-1.5">
+          {render.meta && <StatsLine stats={render.meta} />}
+          {render.prompt_messages && (
+            <MsgActionButton
+              kind="prompt"
+              title="この清書の生成に送った内容(システムプロンプトなど)を見る"
+              onClick={() => setPromptView(render.prompt_messages!)}
+            />
+          )}
+        </div>
+      )}
+      {promptView !== null && <SystemPromptModal messages={promptView} onClose={() => setPromptView(null)} />}
     </div>
   )
 }

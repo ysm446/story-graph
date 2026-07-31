@@ -178,8 +178,12 @@ async def chat_stream(
     temperature: float = 0.9,
     timeout: float = 600.0,
     label: str = "stream",
+    stats_out: dict[str, Any] | None = None,
 ):
-    """ストリーミング chat completion。content の delta 文字列を逐次 yield する。"""
+    """ストリーミング chat completion。content の delta 文字列を逐次 yield する。
+
+    stats_out に dict を渡すと、最終チャンクの生成統計(_extract_stats の形)を
+    そこへ書き込む(async generator は return で値を返せないため受け口方式)。"""
     payload: dict[str, Any] = {
         "messages": messages,
         "max_tokens": max_tokens,
@@ -216,9 +220,20 @@ async def chat_stream(
                                 f"llama-server ストリームエラー: {json.dumps(obj['error'], ensure_ascii=False)[:300]}"
                             )
                         choices = obj.get("choices") or []
+                        choice = choices[0] if choices else {}
+                        # 統計は timings / usage を含むチャンクから取る。finish_reason は
+                        # 統計より前のチャンクに乗ることがあるので、上書きで消さない
+                        if stats_out is not None:
+                            if choice.get("finish_reason"):
+                                stats_out["finish_reason"] = choice["finish_reason"]
+                            if obj.get("timings") or obj.get("usage"):
+                                finish = stats_out.get("finish_reason")
+                                stats_out.update(_extract_stats(obj, choice))
+                                if stats_out.get("finish_reason") is None:
+                                    stats_out["finish_reason"] = finish
                         if not choices:
                             continue
-                        delta = choices[0].get("delta", {}).get("content")
+                        delta = choice.get("delta", {}).get("content")
                         if delta:
                             collected.append(delta)
                             yield delta

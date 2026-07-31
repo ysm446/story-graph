@@ -184,6 +184,21 @@ def build_render_messages(
     ]
 
 
+def _render_stats(raw: dict[str, Any]) -> dict[str, Any] | None:
+    """llm.chat_stream の stats_out をチャットの meta と同じ形に整える。
+    統計が取れなかったとき(サーバーが timings / usage を返さない等)は None。"""
+    if not raw.get("tokens"):
+        return None
+    elapsed = raw.get("elapsed_sec")
+    per_sec = raw.get("tokens_per_sec")
+    return {
+        "tokens": raw["tokens"],
+        "elapsed_sec": round(elapsed, 2) if elapsed else None,
+        "tokens_per_sec": round(per_sec, 1) if per_sec else None,
+        "finish_reason": raw.get("finish_reason"),
+    }
+
+
 async def render_stream(
     store: Store,
     base_url: str,
@@ -221,17 +236,22 @@ async def render_stream(
             chars = effective_target_chars(node, target_chars)
             messages = build_render_messages(store, node, preset, pov_char, prev_tail, chars)
             prose_parts: list[str] = []
+            raw_stats: dict[str, Any] = {}
             async for delta in llm.chat_stream(
                 messages,
                 base_url=base_url,
                 temperature=RENDER_TEMPERATURE,
                 max_tokens=_max_tokens(chars),
                 label=f"清書: {node['title'] or '(無題)'}",
+                stats_out=raw_stats,
             ):
                 prose_parts.append(delta)
                 yield _sse({"delta": delta})
             prose = "".join(prose_parts).strip()
-            render = store.save_render(node_id, preset_id, pov_char, prose)
+            # 統計はチャットの meta と同じ形に整えて保存する(UI の StatsLine を共用)。
+            # 送った messages も控えとして丸ごと保存し、清書タブから確認できるようにする
+            meta = _render_stats(raw_stats)
+            render = store.save_render(node_id, preset_id, pov_char, prose, meta=meta, prompt_messages=messages)
             yield _sse({"scene_done": node_id, "render": render})
         yield _sse({"done": True})
     except Exception as e:  # noqa: BLE001

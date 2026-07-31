@@ -1081,22 +1081,55 @@ class Store:
 
     # ---- renders ----------------------------------------------------
 
+    @staticmethod
+    def _render_row(row: sqlite3.Row | None) -> dict[str, Any] | None:
+        """renders の行を dict にする。meta / prompt_messages(JSON 文字列)は
+        オブジェクトに戻して返す(API からそのままフロントへ渡すため)。"""
+        if row is None:
+            return None
+        render = dict(row)
+        for key in ("meta", "prompt_messages"):
+            if render.get(key):
+                try:
+                    render[key] = json.loads(render[key])
+                except (TypeError, json.JSONDecodeError):
+                    render[key] = None
+        return render
+
     def latest_render(self, node_id: str, preset_id: str, pov_char: str | None) -> dict[str, Any] | None:
         row = self.conn.execute(
             """SELECT * FROM renders WHERE node_id = ? AND preset_id = ? AND pov_char IS ?
                ORDER BY created_at DESC LIMIT 1""",
             (node_id, preset_id, pov_char),
         ).fetchone()
-        return dict(row) if row else None
+        return self._render_row(row)
 
-    def save_render(self, node_id: str, preset_id: str, pov_char: str | None, prose: str) -> dict[str, Any]:
+    def save_render(
+        self,
+        node_id: str,
+        preset_id: str,
+        pov_char: str | None,
+        prose: str,
+        meta: dict[str, Any] | None = None,
+        prompt_messages: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         render_id = _new_id()
         self.conn.execute(
-            "INSERT INTO renders(id, node_id, preset_id, pov_char, prose, stale, created_at) VALUES(?,?,?,?,?,0,?)",
-            (render_id, node_id, preset_id, pov_char, prose, _now()),
+            "INSERT INTO renders(id, node_id, preset_id, pov_char, prose, stale, created_at, meta, prompt_messages)"
+            " VALUES(?,?,?,?,?,0,?,?,?)",
+            (
+                render_id,
+                node_id,
+                preset_id,
+                pov_char,
+                prose,
+                _now(),
+                json.dumps(meta, ensure_ascii=False) if meta else None,
+                json.dumps(prompt_messages, ensure_ascii=False) if prompt_messages else None,
+            ),
         )
         self.conn.commit()
-        return dict(self.conn.execute("SELECT * FROM renders WHERE id = ?", (render_id,)).fetchone())
+        return self._render_row(self.conn.execute("SELECT * FROM renders WHERE id = ?", (render_id,)).fetchone())
 
     def list_renders(self, preset_id: str, pov_char: str | None) -> list[dict[str, Any]]:
         """正史パス順に各ノードの最新レンダーを返す(無ければ render: None)。"""

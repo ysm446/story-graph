@@ -196,6 +196,9 @@ def init_schema(conn: sqlite3.Connection) -> None:
         "ALTER TABLE chats ADD COLUMN char_id TEXT",  # NULL = 相談チャット。設定時はキャラとの会話
         "ALTER TABLE chats ADD COLUMN mode TEXT",  # キャラチャットの枠組み: interview | roleplay
         "ALTER TABLE chats ADD COLUMN title TEXT",  # 会話名(NULL = 冒頭の発言を見出しに使う)
+        "ALTER TABLE renders ADD COLUMN meta TEXT",  # 生成統計(JSON。tokens / elapsed_sec など)
+        # 生成時に LLM へ送った messages の控え(JSON。UI の閲覧用。チャットの prompt_messages と同趣旨)
+        "ALTER TABLE renders ADD COLUMN prompt_messages TEXT",
     ):
         try:
             conn.execute(ddl)

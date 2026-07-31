@@ -112,6 +112,10 @@ export interface RenderResult {
   prose: string
   stale: number
   created_at: string
+  /** 生成統計(api.ts の ChatStats と同形)。列追加(2026-07-31)以前の清書は null */
+  meta?: { tokens: number; elapsed_sec: number | null; tokens_per_sec: number | null; finish_reason: string | null } | null
+  /** 生成時に LLM へ送った messages の控え。列追加以前の清書は null */
+  prompt_messages?: Array<Record<string, unknown>> | null
 }
 
 export interface SceneEntry {

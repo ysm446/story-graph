@@ -514,13 +514,14 @@ export interface ChatRecord {
   messages: Array<Record<string, unknown>>
 }
 
-/** 1 回の返事の生成統計(llama-server の timings / usage 由来) */
+/** 1 回の生成の統計(llama-server の timings / usage 由来)。
+ *  チャットの返事と清書で共用する。steps はツールループのあるチャットのみ */
 export interface ChatStats {
   tokens: number
   elapsed_sec: number | null
   tokens_per_sec: number | null
   finish_reason: string | null
-  steps: number
+  steps?: number
 }
 
 export interface ChatStreamEvent {
