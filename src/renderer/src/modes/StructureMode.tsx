@@ -77,9 +77,11 @@ const snapped = (value: number): number => Math.round(value / GRID_SIZE) * GRID_
 // カード幅は固定なので x は深さで決まる。y はレーンごとに、そのレーンの
 // 実測最大高さを積み上げて決める(カード高さは画像や本文量で変わるため)
 
+// 章ビューの整列では「章カードを 1 枚のノードに畳んだ導出グラフ」を渡すので、
+// 引数は id と端点だけを見る形にしてある(実ノードでなくても並べられる)
 function layoutDag(
-  nodes: StoryNode[],
-  edges: GraphEdge[],
+  nodes: Array<{ id: string }>,
+  edges: Array<Pick<GraphEdge, 'from_node' | 'to_node' | 'is_canon'>>,
   heights: Record<string, number>
 ): Record<string, { x: number; y: number }> {
   const childrenMap: Record<string, Array<{ id: string; canon: boolean }>> = {}
@@ -2341,62 +2343,6 @@ function StructureModeInner({
     setChapterNodes((nds) => applyNodeChanges(changes as NodeChange<ChapterFlowNode>[], nds))
   }, [])
 
-  /** ⟲ の中身。
-   *
-   * - 2 つ以上のノードを選択中: **選択したノードだけ**を整列する。選択範囲の
-   *   左上を動かさないよう、部分 DAG のレイアウト結果を今の左上へ寄せる
-   *   (選択の外にあるノードとの重なりは作者に任せる)
-   * - それ以外: 手動配置をすべて捨てて全体を自動レイアウトに戻す
-   */
-  const realignLayout = useCallback(async (): Promise<void> => {
-    try {
-      const selected = flowNodes.filter((n) => n.selected)
-      if (selected.length < 2) {
-        await api.resetLayout()
-        pinnedRef.current.clear()
-        setFlowNodes([]) // 保存座標を消した上でドラッグ中間状態も破棄して再構築する
-        await reload()
-        return
-      }
-      const ids = new Set(selected.map((n) => n.id))
-      const heights: Record<string, number> = {}
-      for (const n of selected) {
-        if (n.measured?.height) heights[n.id] = n.measured.height
-      }
-      const computed = layoutDag(
-        graphNodes.filter((n) => ids.has(n.id)),
-        graphEdges.filter((e) => ids.has(e.from_node) && ids.has(e.to_node)),
-        heights
-      )
-      const minX = Math.min(...selected.map((n) => n.position.x))
-      const minY = Math.min(...selected.map((n) => n.position.y))
-      const positions = selected.map((n) => ({
-        id: n.id,
-        x: Math.round(minX + (computed[n.id]?.x ?? 0)),
-        y: Math.round(minY + (computed[n.id]?.y ?? 0))
-      }))
-      const byId = new Map(positions.map((p) => [p.id, p]))
-      setFlowNodes((prev) =>
-        prev.map((n) => {
-          const p = byId.get(n.id)
-          return p ? { ...n, position: { x: p.x, y: p.y } } : n
-        })
-      )
-      for (const p of positions) pinnedRef.current.add(p.id)
-      try {
-        await api.setNodePositions(positions)
-      } catch (e) {
-        // 保存できなかったら焼き付け済み扱いにしない(次の測定で保存し直せるように)
-        for (const p of positions) pinnedRef.current.delete(p.id)
-        throw e
-      }
-      setGenStatus(`${positions.length} シーンを整列しました`)
-      await reload()
-    } catch (e) {
-      setGenStatus(`整列できません: ${String(e)}`)
-    }
-  }, [flowNodes, graphNodes, graphEdges, reload])
-
   // 選択ノードの削除(削除ボタンと Delete キーの共通処理)。子を持つノードは削除できない
   const deleteNodeById = useCallback(
     async (nodeId: string): Promise<void> => {
@@ -2946,6 +2892,8 @@ function StructureModeInner({
     }
     const seen = new Set<string>()
     const edges: Edge[] = []
+    // 整列にも同じ畳み方が要るので、端点を写像したグラフも一緒に返す
+    const derived: GraphEdge[] = []
     for (const e of graphEdges) {
       const source = rep(e.from_node)
       const target = rep(e.to_node)
@@ -2953,6 +2901,7 @@ function StructureModeInner({
       const key = `${source}->${target}`
       if (seen.has(key)) continue
       seen.add(key)
+      derived.push({ id: key, from_node: source, to_node: target, is_canon: e.is_canon })
       edges.push({
         id: key,
         source,
@@ -2963,8 +2912,120 @@ function StructureModeInner({
           : { stroke: '#4a4f66', strokeWidth: 1.5, strokeDasharray: '7 5' }
       })
     }
-    return { nodes, edges }
+    return { nodes, edges, derived }
   }, [effectiveView, chapterSeq, chapterNodes, flowNodes, graphEdges])
+
+  /** ⟲ の中身。**いま見えている範囲だけ**を整列する。
+   *
+   * - **章内ビュー**: その章に見えているシーン(章のメンバー + そこから生える分岐)
+   *   だけを並べ直す。章の外のノードには触らない
+   * - **章ビュー**: 章カードと未分類のノードだけを、**章カードを 1 枚のノードに
+   *   畳んだ導出グラフ**で並べる。**章の中のシーンには触らない**(章カードの位置は
+   *   groups.pos_x/pos_y に焼き付ける)
+   * - **フラット表示**: 2 つ以上選択していれば選択分だけ、そうでなければ
+   *   手動配置をすべて捨てて全体を自動レイアウトに戻す
+   *
+   * 全体リセット以外は、範囲の左上を動かさないようレイアウト結果を今の左上へ
+   * 寄せる(範囲の外にあるノードとの重なりは作者に任せる)。
+   */
+  const realignLayout = useCallback(async (): Promise<void> => {
+    /** 実測高さを id → 高さの辞書に。無ければ layoutDag の既定値が使われる */
+    const heightsOf = (nodes: AppFlowNode[]): Record<string, number> => {
+      const heights: Record<string, number> = {}
+      for (const n of nodes) if (n.measured?.height) heights[n.id] = n.measured.height
+      return heights
+    }
+    try {
+      // ---- 章ビュー: 章カード + 未分類ノードだけ(章の中は触らない)
+      if (effectiveView === 'chapters' && chapterFlow) {
+        const targets = chapterFlow.nodes
+        if (targets.length < 2) {
+          setGenStatus('整列するものがありません')
+          return
+        }
+        const computed = layoutDag(targets, chapterFlow.derived, heightsOf(targets))
+        const minX = Math.min(...targets.map((n) => n.position.x))
+        const minY = Math.min(...targets.map((n) => n.position.y))
+        const placed = targets.map((n) => ({
+          id: n.id,
+          x: Math.round(minX + (computed[n.id]?.x ?? 0)),
+          y: Math.round(minY + (computed[n.id]?.y ?? 0))
+        }))
+        const byId = new Map(placed.map((p) => [p.id, p]))
+        const move = <T extends AppFlowNode>(n: T): T => {
+          const p = byId.get(n.id)
+          return p ? { ...n, position: { x: p.x, y: p.y } } : n
+        }
+        setChapterNodes((prev) => prev.map(move))
+        setFlowNodes((prev) => prev.map(move))
+        const scenes = placed.filter((p) => !p.id.startsWith('chapter:'))
+        for (const p of scenes) pinnedRef.current.add(p.id)
+        try {
+          await Promise.all([
+            ...placed
+              .filter((p) => p.id.startsWith('chapter:'))
+              .map((p) => api.setGroupPosition(p.id.slice('chapter:'.length), p.x, p.y)),
+            scenes.length > 0 ? api.setNodePositions(scenes) : Promise.resolve()
+          ])
+        } catch (e) {
+          for (const p of scenes) pinnedRef.current.delete(p.id)
+          throw e
+        }
+        setGenStatus(`${placed.length} 件を整列しました(章の中は変えていません)`)
+        await reload()
+        return
+      }
+
+      const selected = flowNodes.filter((n) => n.selected)
+      // 章内ビューでは、選択していなければ「その章に見えているシーン」が対象。
+      // 全体リセット(手動配置の破棄)はフラット表示のときだけ
+      const targets =
+        selected.length >= 2 ? selected : visibleIds ? flowNodes.filter((n) => visibleIds.has(n.id)) : []
+      if (targets.length < 2) {
+        if (effectiveView !== 'flat') {
+          setGenStatus('整列するシーンがありません')
+          return
+        }
+        await api.resetLayout()
+        pinnedRef.current.clear()
+        setFlowNodes([]) // 保存座標を消した上でドラッグ中間状態も破棄して再構築する
+        await reload()
+        return
+      }
+      const ids = new Set(targets.map((n) => n.id))
+      const computed = layoutDag(
+        graphNodes.filter((n) => ids.has(n.id)),
+        graphEdges.filter((e) => ids.has(e.from_node) && ids.has(e.to_node)),
+        heightsOf(targets)
+      )
+      const minX = Math.min(...targets.map((n) => n.position.x))
+      const minY = Math.min(...targets.map((n) => n.position.y))
+      const positions = targets.map((n) => ({
+        id: n.id,
+        x: Math.round(minX + (computed[n.id]?.x ?? 0)),
+        y: Math.round(minY + (computed[n.id]?.y ?? 0))
+      }))
+      const byId = new Map(positions.map((p) => [p.id, p]))
+      setFlowNodes((prev) =>
+        prev.map((n) => {
+          const p = byId.get(n.id)
+          return p ? { ...n, position: { x: p.x, y: p.y } } : n
+        })
+      )
+      for (const p of positions) pinnedRef.current.add(p.id)
+      try {
+        await api.setNodePositions(positions)
+      } catch (e) {
+        // 保存できなかったら焼き付け済み扱いにしない(次の測定で保存し直せるように)
+        for (const p of positions) pinnedRef.current.delete(p.id)
+        throw e
+      }
+      setGenStatus(`${positions.length} シーンを整列しました`)
+      await reload()
+    } catch (e) {
+      setGenStatus(`整列できません: ${String(e)}`)
+    }
+  }, [effectiveView, chapterFlow, visibleIds, flowNodes, graphNodes, graphEdges, reload])
 
   // 矢印キーの移動もこの 2 つを見るので、参照が毎レンダー変わらないよう memo する
   const displayNodes: AppFlowNode[] = useMemo(
@@ -3737,9 +3798,15 @@ function StructureModeInner({
                     className="rounded-lg border px-2.5 py-1.5 text-[13px] shadow-lg shadow-black/30"
                     style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
                     title={
-                      selectedCount >= 2
-                        ? `選択中の ${selectedCount} シーンだけを整列する`
-                        : '手動配置をリセットして全体を自動レイアウトに戻す(複数選択中なら選択分だけ整列)'
+                      effectiveView === 'chapters'
+                        ? '章カードと未分類のノードだけを整列する(章の中は変えません)'
+                        : effectiveView === 'focused'
+                          ? selectedCount >= 2
+                            ? `選択中の ${selectedCount} シーンだけを整列する`
+                            : 'この章に見えているシーンだけを整列する(章の外は変えません)'
+                          : selectedCount >= 2
+                            ? `選択中の ${selectedCount} シーンだけを整列する`
+                            : '手動配置をリセットして全体を自動レイアウトに戻す(複数選択中なら選択分だけ整列)'
                     }
                   >
                     ⟲
