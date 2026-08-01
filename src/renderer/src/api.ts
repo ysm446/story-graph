@@ -141,6 +141,9 @@ export const api = {
     request<Group>(`/groups/${groupId}`, { method: 'PATCH', body: JSON.stringify(data) }),
   // 章の解除(シーンは残る)
   deleteGroup: (groupId: string) => request<unknown>(`/groups/${groupId}`, { method: 'DELETE' }),
+  // 章ビューでの章カードの配置(並べ替えではなく表示位置)
+  setGroupPosition: (groupId: string, x: number, y: number) =>
+    request<unknown>(`/groups/${groupId}/position`, { method: 'POST', body: JSON.stringify({ x, y }) }),
   // 章の並べ替え: 別の章の後ろへつなぎ替える(after=null は先頭へ)
   moveGroup: (groupId: string, after: string | null) =>
     request<Group[]>(`/groups/${groupId}/move`, { method: 'POST', body: JSON.stringify({ after }) }),

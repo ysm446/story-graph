@@ -2921,9 +2921,6 @@ function StructureModeInner({
   // カードが不可視のままになる(選択状態の保持も同じ理由)
   const [chapterNodes, setChapterNodes] = useState<ChapterFlowNode[]>([])
   const openChapter = useCallback((groupId: string): void => setChapterView(groupId), [])
-  // ドラッグ開始時の位置。島章カードの移動量は「開始位置との差」で計算する
-  // (保存座標基準だと、整列直後(座標が全消去された状態)に基準が無くて動かせない)
-  const dragStartPosRef = useRef(new Map<string, { x: number; y: number }>())
   useEffect(() => {
     setChapterNodes((prev) => {
       const prevById = new Map(prev.map((n) => [n.id, n]))
@@ -2933,10 +2930,13 @@ function StructureModeInner({
         const id = `chapter:${g.id}`
         const existing = prevById.get(id)
         const order = chapterSeq.orderOf.get(id)
-        // 正史ルート上の章はシーン面の上の専用レーンに並べる。島・分岐の章は
-        // 先頭シーンの位置に置く
+        // 章カードは一度動かしたらその位置のまま(groups.pos_x/pos_y)。
+        // まだ動かしていない章だけ導出位置に置く: 正史ルート上の章はシーン面の
+        // 上の専用レーンへ、島・分岐の章は先頭シーンの位置へ
         let position: { x: number; y: number }
-        if (order !== undefined) {
+        if (g.pos_x != null && g.pos_y != null) {
+          position = { x: g.pos_x, y: g.pos_y }
+        } else if (order !== undefined) {
           position = { x: order * COLUMN_GAP_X, y: CHAPTER_ROW_Y }
         } else {
           const first = nodeById.get(g.node_ids[0])
@@ -2950,10 +2950,10 @@ function StructureModeInner({
         return {
           id,
           type: 'chapterNode' as const,
-          position,
-          // 正史章のドラッグ = 並べ替え、島・分岐の章のドラッグ = 章ごと位置の移動
-          // (どちらも onNodeDragStop で確定)
+          // ドラッグ中に再構築が走っても位置を巻き戻さない(シーンノードと同じ扱い)
+          position: existing?.dragging ? existing.position : position,
           draggable: true,
+          dragging: existing?.dragging,
           selected: existing?.selected ?? false,
           measured: existing?.measured,
           data: { group: g, number: gi + 1, onOpen: openChapter }
@@ -3404,88 +3404,35 @@ function StructureModeInner({
               const flow = reactFlow.screenToFlowPosition({ x: event.clientX, y: event.clientY })
               setMenu({ x: event.clientX, y: event.clientY, targets: [], pane: flow })
             }}
-            onNodeDragStart={(_, node) => {
-              dragStartPosRef.current.set(node.id, { x: node.position.x, y: node.position.y })
-            }}
             onNodeDragStop={(_, __, draggedNodes) => {
-              const chapterDrag = draggedNodes.find((n) => n.type === 'chapterNode')
-              if (chapterDrag) {
-                const dragged = (chapterDrag.data as ChapterNodeData).group
-                if (!dragged.on_canon) {
-                  // 別ルートの章カードのドラッグ = 章のシーン(と分岐)ごと位置を移動
-                  const origin = dragStartPosRef.current.get(chapterDrag.id)
-                  if (!origin) {
-                    void reload() // 開始位置が取れなかったら諦めて戻す
-                    return
-                  }
-                  const dx = chapterDrag.position.x - origin.x
-                  const dy = chapterDrag.position.y - origin.y
-                  // 章内ビューと同じ集合(メンバー + そこから生える分岐)を一緒に動かす
-                  const moveSet = new Set(dragged.node_ids)
-                  const childrenMap: Record<string, string[]> = {}
-                  for (const e of graphEdges) (childrenMap[e.from_node] ??= []).push(e.to_node)
-                  const byId = new Map(graphNodes.map((n) => [n.id, n]))
-                  const queue = [...dragged.node_ids]
-                  while (queue.length > 0) {
-                    const current = queue.pop()!
-                    for (const child of childrenMap[current] ?? []) {
-                      if (moveSet.has(child)) continue
-                      const node = byId.get(child)
-                      if (node && node.status === 'draft' && !node.group_id) {
-                        moveSet.add(child)
-                        queue.push(child)
-                      }
-                    }
-                  }
-                  const positions = flowNodesRef.current
-                    .filter((n) => moveSet.has(n.id))
-                    .map((n) => ({
-                      id: n.id,
-                      x: Math.round(n.position.x + dx),
-                      y: Math.round(n.position.y + dy)
-                    }))
-                  const posById = new Map(positions.map((p) => [p.id, p]))
-                  setGraphNodes((prev) =>
-                    prev.map((n) => {
-                      const p = posById.get(n.id)
-                      return p ? { ...n, pos_x: p.x, pos_y: p.y } : n
-                    })
-                  )
-                  setFlowNodes((prev) =>
-                    prev.map((n) => {
-                      const p = posById.get(n.id)
-                      return p ? { ...n, position: { x: p.x, y: p.y } } : n
-                    })
-                  )
-                  void api
-                    .setNodePositions(positions)
-                    .catch((e) => setGenStatus(`位置を保存できません: ${String(e)}`))
-                  return
-                }
-                // 正史章のドラッグ = 並べ替え。落とした x 位置から「どの章の後ろか」を決める
-                const before = chapterNodes
-                  .filter((n) => n.id !== chapterDrag.id && n.position.x < chapterDrag.position.x)
-                  .sort((a, b) => a.position.x - b.position.x)
-                const after = before.length > 0 ? before[before.length - 1].data.group.id : null
-                const gi = groups.findIndex((g) => g.id === dragged.id)
-                const currentAfter = gi > 0 ? groups[gi - 1].id : null
-                if (after === currentAfter) {
-                  void reload() // 並びは変わらない。カードを導出位置へ戻すだけ
-                } else {
-                  void moveChapter(dragged.id, after)
-                }
-                return
+              // 章カードのドラッグ = 置いた場所にそのまま置く(groups.pos_x/pos_y に保存)。
+              // 章の並べ替えは右クリックの「← 前へ / → 後ろへ」で行う(ドラッグと
+              // 兼ねると位置が導出に戻ってしまうため。docs/design/chapters.md §6)
+              const chapters = draggedNodes.filter((n) => n.type === 'chapterNode')
+              for (const card of chapters) {
+                const groupId = (card.data as ChapterNodeData).group.id
+                const x = Math.round(card.position.x)
+                const y = Math.round(card.position.y)
+                // 再構築で導出位置へ戻らないよう groups にも先に反映しておく(楽観更新)
+                setGroups((prev) =>
+                  prev.map((g) => (g.id === groupId ? { ...g, pos_x: x, pos_y: y } : g))
+                )
+                void api
+                  .setGroupPosition(groupId, x, y)
+                  .catch((e) => setGenStatus(`位置を保存できません: ${String(e)}`))
               }
+              const beats = draggedNodes.filter((n) => n.type !== 'chapterNode')
+              if (beats.length === 0) return
               // busyNodeIds の変化などでノード配列が再構築されても座標が戻らないよう、
               // サーバー由来の graphNodes にも先に反映しておく(楽観更新)
-              const moved = new Map(draggedNodes.map((n) => [n.id, n.position]))
+              const moved = new Map(beats.map((n) => [n.id, n.position]))
               setGraphNodes((prev) =>
                 prev.map((n) => {
                   const p = moved.get(n.id)
                   return p ? { ...n, pos_x: p.x, pos_y: p.y } : n
                 })
               )
-              for (const dragged of draggedNodes) {
+              for (const dragged of beats) {
                 void api
                   .setNodePosition(dragged.id, dragged.position.x, dragged.position.y)
                   .catch((e) => setGenStatus(`位置を保存できません: ${String(e)}`))
@@ -3802,13 +3749,13 @@ function StructureModeInner({
                           ? [
                               {
                                 label: '← 前へ移動',
-                                hint: '一つ前の章と入れ替える(ドラッグでも可)',
+                                hint: '一つ前の章と入れ替える(物語の順番が変わります)',
                                 disabled: ci <= 0,
                                 run: () => void moveChapter(group.id, ci <= 1 ? null : canonGroups[ci - 2].id)
                               },
                               {
                                 label: '→ 後ろへ移動',
-                                hint: '一つ後ろの章と入れ替える(ドラッグでも可)',
+                                hint: '一つ後ろの章と入れ替える(物語の順番が変わります)',
                                 disabled: ci >= canonGroups.length - 1,
                                 run: () => void moveChapter(group.id, canonGroups[ci + 1]?.id ?? null)
                               }

@@ -1009,6 +1009,8 @@ class Store:
 
     def reset_positions(self) -> None:
         self.conn.execute("UPDATE nodes SET pos_x = NULL, pos_y = NULL")
+        # 章カードの手動配置も一緒に捨てる(⟲ は「導出の配置に戻す」操作)
+        self.conn.execute("UPDATE groups SET pos_x = NULL, pos_y = NULL")
         self.conn.commit()
 
     def delete_node(self, node_id: str) -> bool:
@@ -1259,6 +1261,8 @@ class Store:
                     "has_digest": bool(row["digest_events"]),
                     "warning": warning,
                     "on_canon": on_canon,
+                    "pos_x": row["pos_x"],
+                    "pos_y": row["pos_y"],
                     "node_ids": ordered,
                     "_created": gi,
                 }
@@ -1318,6 +1322,14 @@ class Store:
         )
         self.conn.commit()
         return next((g for g in self.list_groups() if g["id"] == group_id), None)
+
+    def set_group_position(self, group_id: str, x: float | None, y: float | None) -> bool:
+        """章ビューでの章カードの配置を保存する(表示だけの情報。state には影響しない)。"""
+        cur = self.conn.execute(
+            "UPDATE groups SET pos_x = ?, pos_y = ? WHERE id = ?", (x, y, group_id)
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
 
     def delete_group(self, group_id: str) -> None:
         """章を解除する(シーン自体はそのまま残る)。"""

@@ -82,6 +82,9 @@ export interface Group {
   warning: string | null
   /** 正史ルート上の章か(false = 島・分岐の章。並べ替え・鑑賞の見出し対象外) */
   on_canon: boolean
+  /** 章ビューでの章カードの手動配置(null = 導出位置) */
+  pos_x: number | null
+  pos_y: number | null
   /** メンバーのシーン ID(鎖の順) */
   node_ids: string[]
 }

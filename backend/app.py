@@ -675,6 +675,18 @@ async def set_node_position(node_id: str, body: PositionIn) -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.post("/groups/{group_id}/position")
+async def set_group_position(group_id: str, body: PositionIn) -> dict[str, str]:
+    """章ビューでの章カードの配置を保存する(並べ替えではなく表示位置)。
+
+    章カードは導出表示なので、位置は nodes ではなく groups に持つ
+    (docs/design/chapters.md §6)。並べ替えは /groups/{id}/move。
+    """
+    if not store.set_group_position(group_id, body.x, body.y):
+        raise HTTPException(404, "group not found")
+    return {"status": "ok"}
+
+
 @app.post("/layout/positions")
 async def set_node_positions(body: PositionsIn) -> dict[str, int]:
     """複数ノードの配置をまとめて保存する。
