@@ -2828,16 +2828,30 @@ function StructureModeInner({
   }, [effectiveView, chapterView, reactFlow])
 
   // ---- 章の操作 -------------------------------------------------------
+  // Electron は window.prompt を使えない(呼ぶと例外)ので、名前の入力は
+  // 自前のモーダル(namePrompt)で行う
 
-  const createChapter = async (targets: string[]): Promise<void> => {
-    const title = window.prompt('章の名前', `第${groups.length + 1}章`)
-    if (!title?.trim()) return
-    try {
-      await api.createGroup(title.trim(), targets)
-      await reload()
-    } catch (e) {
-      setGenStatus(`章にできません: ${String(e)}`)
-    }
+  const [namePrompt, setNamePrompt] = useState<{
+    label: string
+    value: string
+    onSubmit: (value: string) => void
+  } | null>(null)
+
+  const createChapter = (targets: string[]): void => {
+    setNamePrompt({
+      label: '章の名前',
+      value: `第${groups.length + 1}章`,
+      onSubmit: (title) => {
+        void (async () => {
+          try {
+            await api.createGroup(title, targets)
+            await reload()
+          } catch (e) {
+            setGenStatus(`章にできません: ${String(e)}`)
+          }
+        })()
+      }
+    })
   }
 
   const removeFromChapter = async (nodeId: string): Promise<void> => {
@@ -2851,15 +2865,22 @@ function StructureModeInner({
     }
   }
 
-  const renameChapter = async (group: Group): Promise<void> => {
-    const title = window.prompt('章の名前', group.title)
-    if (!title?.trim() || title.trim() === group.title) return
-    try {
-      await api.updateGroup(group.id, { title: title.trim() })
-      await reload()
-    } catch (e) {
-      setGenStatus(`名前を変更できません: ${String(e)}`)
-    }
+  const renameChapter = (group: Group): void => {
+    setNamePrompt({
+      label: '章の名前を変更',
+      value: group.title,
+      onSubmit: (title) => {
+        if (title === group.title) return
+        void (async () => {
+          try {
+            await api.updateGroup(group.id, { title })
+            await reload()
+          } catch (e) {
+            setGenStatus(`名前を変更できません: ${String(e)}`)
+          }
+        })()
+      }
+    })
   }
 
   const dissolveChapter = async (group: Group): Promise<void> => {
@@ -3462,6 +3483,59 @@ function StructureModeInner({
                   </span>
                 </button>
               ))}
+            </div>
+          )}
+          {/* 名前の入力モーダル(章の作成・名前変更。Electron では window.prompt が使えない) */}
+          {namePrompt && (
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center"
+              style={{ background: 'rgba(0,0,0,0.55)' }}
+              onClick={() => setNamePrompt(null)}
+            >
+              <div
+                className="w-[360px] max-w-[92vw] rounded-2xl border p-4"
+                style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)' }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <h3 className="mb-2 text-[13px] font-semibold" style={{ color: 'var(--text)' }}>
+                  {namePrompt.label}
+                </h3>
+                <input
+                  autoFocus
+                  value={namePrompt.value}
+                  onChange={(e) => setNamePrompt((p) => (p ? { ...p, value: e.target.value } : p))}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+                      e.preventDefault()
+                      const value = namePrompt.value.trim()
+                      if (!value) return
+                      setNamePrompt(null)
+                      namePrompt.onSubmit(value)
+                    }
+                    if (e.key === 'Escape') setNamePrompt(null)
+                  }}
+                  className="w-full rounded-lg border px-2 py-1.5 text-[13px] outline-none"
+                  style={{ background: 'var(--bg-input)', borderColor: 'var(--accent-border)', color: 'var(--text)' }}
+                />
+                <div className="mt-3 flex justify-end gap-2 text-[12px]">
+                  <button onClick={() => setNamePrompt(null)} style={{ color: 'var(--text-faint)' }}>
+                    取消
+                  </button>
+                  <button
+                    onClick={() => {
+                      const value = namePrompt.value.trim()
+                      if (!value) return
+                      setNamePrompt(null)
+                      namePrompt.onSubmit(value)
+                    }}
+                    disabled={!namePrompt.value.trim()}
+                    className="rounded-md px-3 py-1 font-medium text-white disabled:opacity-40"
+                    style={{ background: 'var(--accent)' }}
+                  >
+                    OK
+                  </button>
+                </div>
+              </div>
             </div>
           )}
         </main>
