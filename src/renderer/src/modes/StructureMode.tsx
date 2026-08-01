@@ -2314,10 +2314,24 @@ function StructureModeInner({
     [graphEdges, graphNodes, reload]
   )
 
+  // 章カードのピンは、章の実シーンに読み替える(出 = 末尾シーン、入 = 先頭シーン)。
+  // 章カードは表示上の導出ノードなので、接続は中身のシーンに対して行う
+  const resolveEndpoint = useCallback(
+    (id: string | null | undefined, role: 'source' | 'target'): string | null => {
+      if (!id) return null
+      if (!id.startsWith('chapter:')) return id
+      const group = groups.find((g) => g.id === id.slice('chapter:'.length))
+      if (!group || group.node_ids.length === 0) return null
+      return role === 'source' ? group.node_ids[group.node_ids.length - 1] : group.node_ids[0]
+    },
+    [groups]
+  )
+
   // 繋げるのは「島の根(親がいないノード)」だけ。循環と多重親を防ぐ
   const isValidConnection = useCallback(
     (connection: { source?: string | null; target?: string | null }): boolean => {
-      const { source, target } = connection
+      const source = resolveEndpoint(connection.source, 'source')
+      const target = resolveEndpoint(connection.target, 'target')
       if (!source || !target || source === target) return false
       if (graphEdges.some((e) => e.to_node === target)) return false // 既に親がいる
       // 自分の下流には繋げない(循環)
@@ -2334,12 +2348,13 @@ function StructureModeInner({
       }
       return !descendants.has(source)
     },
-    [graphEdges]
+    [graphEdges, resolveEndpoint]
   )
 
   const handleConnect = useCallback(
     async (connection: { source?: string | null; target?: string | null }): Promise<void> => {
-      const { source, target } = connection
+      const source = resolveEndpoint(connection.source, 'source')
+      const target = resolveEndpoint(connection.target, 'target')
       if (!source || !target || !isValidConnection(connection)) return
       try {
         await api.connectNodes(source, target)
@@ -2368,7 +2383,7 @@ function StructureModeInner({
     },
     // graphEdges / graphNodes は本体では使わないが、繋いだ結果の再評価に合わせて更新する
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [isValidConnection, reload, graphEdges, graphNodes]
+    [isValidConnection, resolveEndpoint, reload, graphEdges, graphNodes]
   )
 
   const nameOfChar = useCallback(
@@ -3436,8 +3451,8 @@ function StructureModeInner({
             selectionOnDrag
             selectionMode={SelectionMode.Partial}
             // ハンドルのドラッグで親子を繋げる(妥当性は isValidConnection で判定)。
-            // 章ビューは俯瞰専用なので繋ぎ替えは章の中かフラット表示で行う
-            nodesConnectable={effectiveView !== 'chapters'}
+            // 章カードのピンは章の先頭 / 末尾シーンに読み替える(resolveEndpoint)
+            nodesConnectable
             proOptions={{ hideAttribution: true }}
           >
             <Background gap={20} size={1.4} color="#394154" />
