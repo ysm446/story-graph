@@ -2129,8 +2129,11 @@ function StructureModeInner({
   }, [flowNodes])
 
   const handleNodesChange = useCallback((changes: NodeChange<AppFlowNode>[]): void => {
-    // 章ノード(章ビューの導出表示)は flowNodes に居ないので、applyNodeChanges が単に無視する
+    // シーンノードと章カードは別 state。applyNodeChanges は知らない id の変更を
+    // 無視するので、同じ変更列を両方に流すだけでよい。章カードにも流さないと
+    // 実測サイズ(measured)が確定せず、React Flow v12 がカードを描画しない
     setFlowNodes((nds) => applyNodeChanges(changes as NodeChange<BeatFlowNode>[], nds))
+    setChapterNodes((nds) => applyNodeChanges(changes as NodeChange<ChapterFlowNode>[], nds))
   }, [])
 
   /** ⟲ の中身。
@@ -2751,26 +2754,47 @@ function StructureModeInner({
     return set
   }, [effectiveView, focusedGroup, graphNodes, graphEdges])
 
-  // 章ビュー: 章を 1 枚のカードに圧縮した正史の並び + 未分類のシーン
-  const chapterFlow = useMemo(() => {
-    if (effectiveView !== 'chapters') return null
+  // 章ビューの並び: 正史順で、章に属す区間は 'chapter:ID' の 1 項目に圧縮
+  const chapterSeq = useMemo(() => {
     const groupByNode = new Map<string, string>()
     groups.forEach((g) => g.node_ids.forEach((n) => groupByNode.set(n, g.id)))
-    // 正史順の並び(章に属す区間は 1 項目に圧縮)で x を決める
     const seq: string[] = [] // 'chapter:ID' か ノード ID
     for (const n of canonPath) {
       const gid = groupByNode.get(n.id)
       const key = gid ? `chapter:${gid}` : n.id
       if (seq[seq.length - 1] !== key) seq.push(key)
     }
-    const orderOf = new Map(seq.map((key, i) => [key, i]))
-    const nodes: AppFlowNode[] = groups.map((g, gi) => ({
-      id: `chapter:${g.id}`,
-      type: 'chapterNode' as const,
-      position: { x: (orderOf.get(`chapter:${g.id}`) ?? gi) * COLUMN_GAP_X, y: 0 },
-      draggable: false,
-      data: { group: g, number: gi + 1 }
-    }))
+    return { groupByNode, orderOf: new Map(seq.map((key, i) => [key, i])) }
+  }, [groups, canonPath])
+
+  // 章カードは state で持つ。毎レンダー作り直すと React Flow の実測サイズ
+  // (measured)が失われ、v12 は実測が確定するまでノードを描画しないため、
+  // カードが不可視のままになる(選択状態の保持も同じ理由)
+  const [chapterNodes, setChapterNodes] = useState<ChapterFlowNode[]>([])
+  useEffect(() => {
+    setChapterNodes((prev) => {
+      const prevById = new Map(prev.map((n) => [n.id, n]))
+      return groups.map((g, gi) => {
+        const id = `chapter:${g.id}`
+        const existing = prevById.get(id)
+        return {
+          id,
+          type: 'chapterNode' as const,
+          position: { x: (chapterSeq.orderOf.get(id) ?? gi) * COLUMN_GAP_X, y: 0 },
+          draggable: false,
+          selected: existing?.selected ?? false,
+          measured: existing?.measured,
+          data: { group: g, number: gi + 1 }
+        }
+      })
+    })
+  }, [groups, chapterSeq])
+
+  // 章ビュー: 章カード + 未分類のシーン
+  const chapterFlow = useMemo(() => {
+    if (effectiveView !== 'chapters') return null
+    const { groupByNode, orderOf } = chapterSeq
+    const nodes: AppFlowNode[] = [...chapterNodes]
     // 未分類のシーン: 正史上のものは並び順の位置、分岐・島は自分の位置のまま
     for (const fn of flowNodes) {
       if (groupByNode.has(fn.id)) continue
@@ -2806,7 +2830,7 @@ function StructureModeInner({
       })
     }
     return { nodes, edges }
-  }, [effectiveView, groups, canonPath, flowNodes, graphEdges])
+  }, [effectiveView, chapterSeq, chapterNodes, flowNodes, graphEdges])
 
   const displayNodes: AppFlowNode[] =
     effectiveView === 'chapters' && chapterFlow
@@ -2846,6 +2870,7 @@ function StructureModeInner({
           try {
             await api.createGroup(title, targets)
             await reload()
+            setChapterView('chapters') // 作った章がすぐ見えるように章ビューへ
           } catch (e) {
             setGenStatus(`章にできません: ${String(e)}`)
           }
