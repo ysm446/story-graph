@@ -828,6 +828,7 @@ export default function SettingsMode(): React.JSX.Element {
     ? Math.min(Math.max(Number(values.video_crossfade_seconds) || 0, 0), 2)
     : DEFAULT_VIDEO_CROSSFADE_SECONDS
   const minimapVisible = values.minimap_visible !== '0' // 既定は表示
+  const gridSnap = values.grid_snap !== '0' // 既定はスナップする
   const chatDynamicSuggestions = values.chat_dynamic_suggestions !== '0' // 既定は生成する
 
   const refreshStatus = async (): Promise<void> => {
@@ -1203,6 +1204,38 @@ export default function SettingsMode(): React.JSX.Element {
                   </div>
                 </div>
                 <p className="settings-field-hint">ノードエリアの右下に表示される全体図です。</p>
+              </div>
+              <div className="settings-field">
+                <div className="settings-field-header">
+                  <span className="settings-field-label">グリッドにスナップ</span>
+                  <div className="settings-field-controls">
+                    <div className="flex overflow-hidden rounded-md border" style={{ borderColor: 'var(--border-strong)' }}>
+                      {(
+                        [
+                          ['1', 'オン'],
+                          ['0', 'オフ']
+                        ] as const
+                      ).map(([value, label]) => (
+                        <button
+                          key={value}
+                          onClick={() => void save({ grid_snap: value })}
+                          className="px-2.5 py-0.5 text-[12px]"
+                          style={
+                            gridSnap === (value === '1')
+                              ? { background: 'var(--accent-soft)', color: 'var(--text)' }
+                              : { color: 'var(--text-faint)' }
+                          }
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                <p className="settings-field-hint">
+                  ノードをドラッグしたとき、背景のドットと同じ 20px の目に合わせて置きます。
+                  整列(⟲)や新しいシーンの自動配置も同じ目に乗ります。
+                </p>
               </div>
             </div>
           </Section>

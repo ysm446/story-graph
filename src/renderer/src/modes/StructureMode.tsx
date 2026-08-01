@@ -64,9 +64,14 @@ import type {
   StoryNode
 } from '../types'
 
-const COLUMN_GAP_X = 344 // カード幅(w-72 = 288)+ 余白
-const LANE_GAP_Y = 56 // レーン間の余白
+// 配置のグリッド。背景のドットの間隔と同じにして、スナップ先が目で見える状態にする
+const GRID_SIZE = 20
+const COLUMN_GAP_X = 340 // カード幅(w-72 = 288)+ 余白。グリッドの倍数にする
+const LANE_GAP_Y = 60 // レーン間の余白(同上)
 const FALLBACK_NODE_HEIGHT = 160
+
+/** グリッドに合わせた座標。整列や自動配置の結果も、手で動かしたときと同じ目に乗せる */
+const snapped = (value: number): number => Math.round(value / GRID_SIZE) * GRID_SIZE
 
 // ---- DAG レイアウト(正史は左から右へ一直線、分岐は下のレーンへ) ------
 // カード幅は固定なので x は深さで決まる。y はレーンごとに、そのレーンの
@@ -113,7 +118,8 @@ function layoutDag(
   let y = 0
   for (let lane = 0; lane <= laneCounter; lane += 1) {
     laneY[lane] = y
-    y += (laneHeights[lane] ?? FALLBACK_NODE_HEIGHT) + LANE_GAP_Y
+    // カードの高さは実測(グリッドの倍数とは限らない)なので、次のレーンの頭で乗せ直す
+    y = snapped(y + (laneHeights[lane] ?? FALLBACK_NODE_HEIGHT) + LANE_GAP_Y)
   }
 
   const positions: Record<string, { x: number; y: number }> = {}
@@ -1965,6 +1971,7 @@ function StructureModeInner({
   onSelectionCountChange?: (count: number) => void
 }): React.JSX.Element {
   const [minimapVisible, setMinimapVisible] = useState(true)
+  const [gridSnap, setGridSnap] = useState(true) // ドラッグを背景のグリッドに合わせる
   const [chatDynamicSuggestions, setChatDynamicSuggestions] = useState(true)
   const [graphNodes, setGraphNodes] = useState<StoryNode[]>([])
   const [graphEdges, setGraphEdges] = useState<GraphEdge[]>([])
@@ -2134,6 +2141,7 @@ function StructureModeInner({
       .getSettings()
       .then((s) => {
         setMinimapVisible(s.minimap_visible !== '0')
+        setGridSnap(s.grid_snap !== '0')
         setChatDynamicSuggestions(s.chat_dynamic_suggestions !== '0')
       })
       .catch(() => undefined)
@@ -3343,6 +3351,13 @@ function StructureModeInner({
     ? null
     : (groups.find((g) => g.id === selectedChapterId) ?? focusedGroup)
 
+  // 相談チャットのアンカー候補。章カードを選ぶと selectedId は null になる
+  // (章カードはシーンではない)ので、そのままだと正史の末尾に落ちてしまう。
+  // 章を選んでいるときは**その章の末尾シーン**を候補にする
+  // (ヘッダーの「アンカー: ○○ まで」= その章の終わりまで、と読める)
+  const chatAnchorId =
+    selectedId ?? (chapterForPanel ? (chapterForPanel.node_ids.at(-1) ?? null) : null)
+
   /** 新しいシーンを親の右隣に手動配置する(**親が手動配置のときだけ**)。
    *
    * 自動レイアウトの座標は「原点からの深さ」で決まるので、ドラッグで動かした
@@ -3362,8 +3377,8 @@ function StructureModeInner({
         .filter((e) => e.source === parentId && e.target !== newNodeId).length
       await api.setNodePosition(
         newNodeId,
-        Math.round(parent.position.x + COLUMN_GAP_X),
-        Math.round(parent.position.y + (siblings + extraLanes) * (height + LANE_GAP_Y))
+        snapped(parent.position.x + COLUMN_GAP_X),
+        snapped(parent.position.y + (siblings + extraLanes) * (height + LANE_GAP_Y))
       )
     },
     [reactFlow]
@@ -3624,9 +3639,12 @@ function StructureModeInner({
             // ハンドルのドラッグで親子を繋げる(妥当性は isValidConnection で判定)。
             // 章カードのピンは章の先頭 / 末尾シーンに読み替える(resolveEndpoint)
             nodesConnectable
+            // ドラッグを背景のドットと同じグリッドに合わせる(設定でオフにできる)
+            snapToGrid={gridSnap}
+            snapGrid={[GRID_SIZE, GRID_SIZE]}
             proOptions={{ hideAttribution: true }}
           >
-            <Background gap={20} size={1.4} color="#394154" />
+            <Background gap={GRID_SIZE} size={1.4} color="#394154" />
             {minimapVisible && <MiniMap pannable zoomable nodeColor={() => '#2e3140'} />}
             <Panel position="top-left">
               {/* 畳んでいるときは幅を詰める(パネルの領域はキャンバスのクリックを奪うため) */}
@@ -4173,7 +4191,7 @@ function StructureModeInner({
               <ChatDrawer
                 open
                 onClose={toggleChat}
-                selectedId={selectedId}
+                anchorCandidateId={chatAnchorId}
                 canonTailId={canonPath.length > 0 ? canonPath[canonPath.length - 1].id : null}
                 nodesById={Object.fromEntries(graphNodes.map((n) => [n.id, n]))}
                 characters={characters}

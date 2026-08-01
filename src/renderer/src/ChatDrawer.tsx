@@ -182,7 +182,7 @@ function CharAvatar({ char, size }: { char: Character; size: number }): React.JS
 }
 
 export default function ChatDrawer({
-  selectedId,
+  anchorCandidateId,
   canonTailId,
   nodesById,
   characters,
@@ -191,7 +191,9 @@ export default function ChatDrawer({
   onClose,
   dynamicSuggestions
 }: {
-  selectedId: string | null
+  /** 新しい会話のアンカーにするシーン(構造モードの選択。章カードを選んでいる
+   *  ときはその章の末尾シーン)。会話が始まるまではこれに追従する */
+  anchorCandidateId: string | null
   canonTailId: string | null
   nodesById: Record<string, StoryNode>
   characters: Character[]
@@ -206,6 +208,11 @@ export default function ChatDrawer({
   const [chatId, setChatId] = useState<string | null>(null)
   const [anchorNode, setAnchorNode] = useState<string | null>(null)
   const [scope, setScope] = useState<'upto' | 'all'>('upto')
+  // いま効いているアンカー。**会話が始まるまでは構造モードの選択に追従**し、
+  // 始まったら(chats に保存されたら)そこで固定される — スコープと同じ扱い。
+  // 会話を始める前に anchorNode を先に埋めていた頃は、シーンを選び直しても
+  // ヘッダーのアンカー表示が変わらなかった
+  const liveAnchor = chatId ? anchorNode : (anchorNode ?? anchorCandidateId ?? canonTailId)
   // キャラモード: charId 設定時は「その時系列のキャラ本人」と話す(null = 相談)
   const [charId, setCharId] = useState<string | null>(null)
   const [roleplay, setRoleplay] = useState(false) // false = インタビュー
@@ -397,9 +404,8 @@ export default function ChatDrawer({
   // 開いたタイミング(と設定変更時)に候補と使用量を取っておく
   useEffect(() => {
     if (!open) return
-    const anchor = anchorNode ?? selectedId ?? canonTailId
-    void refreshUsage(chatId, anchor)
-    if (dynamicSuggestions) void refreshSuggestions(chatId, anchor)
+    void refreshUsage(chatId, liveAnchor)
+    if (dynamicSuggestions) void refreshSuggestions(chatId, liveAnchor)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, dynamicSuggestions])
 
@@ -430,8 +436,10 @@ export default function ChatDrawer({
     setChatId(null)
     setItems([])
     setInsertedTitles(new Set())
-    const anchor = selectedId ?? canonTailId
-    setAnchorNode(anchor)
+    // アンカーは空に戻す(= 選択に追従する)。ここで埋めてしまうと、会話を
+    // 始める前にシーンを選び直してもアンカーが動かなくなる
+    setAnchorNode(null)
+    const anchor = anchorCandidateId ?? canonTailId
     setDynamicQuestions([]) // 新しいアンカーの候補を取り直す
     void refreshSuggestions(null, anchor)
     void refreshUsage(null, anchor)
@@ -445,9 +453,11 @@ export default function ChatDrawer({
     setInsertedTitles(new Set())
     setDynamicQuestions([])
     setTemplateOffset(0)
-    const anchor = anchorNode ?? selectedId ?? canonTailId
-    setAnchorNode(anchor)
-    void refreshUsage(null, anchor, nextCharId)
+    // 会話の途中で相手を変えたときは、その会話の時点(アンカー)を引き継ぐ。
+    // まだ会話が始まっていなければ空に戻して選択に追従させる
+    const carried = chatId ? anchorNode : null
+    setAnchorNode(carried)
+    void refreshUsage(null, carried ?? anchorCandidateId ?? canonTailId, nextCharId)
   }
 
   const loadChat = async (id: string): Promise<void> => {
@@ -496,7 +506,8 @@ export default function ChatDrawer({
     // 再読み込み後はサーバーが付けた ts に置き換わる
     setItems((prev) => [...prev, { kind: 'user', text: message, ts: new Date().toISOString() }])
     setStatus('考え中…')
-    const effectiveAnchor = chatId ? anchorNode : anchorNode ?? selectedId ?? canonTailId
+    // 会話が始まる = ここでアンカーが確定する(以後は選択に追従しない)
+    const effectiveAnchor = liveAnchor
     if (!chatId) setAnchorNode(effectiveAnchor)
     // ストリーミング中のテキストは closure 変数で持ち、確定時に items へ移す
     let live = ''
@@ -833,7 +844,7 @@ export default function ChatDrawer({
               ))}
             </select>
             <span>
-              アンカー: <span style={{ color: 'var(--text-dim)' }}>{anchorTitle(chatId ? anchorNode : anchorNode ?? selectedId ?? canonTailId)}</span> まで
+              アンカー: <span style={{ color: 'var(--text-dim)' }}>{anchorTitle(liveAnchor)}</span> まで
             </span>
             {charId ? (
               <div className="flex overflow-hidden rounded-md border" style={{ borderColor: 'var(--border-strong)' }}>
