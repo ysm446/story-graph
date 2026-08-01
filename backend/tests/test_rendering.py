@@ -207,6 +207,29 @@ def test_no_length_instruction_by_default(store, monkeypatch):
     assert captured[0][1]["max_tokens"] == rendering.DEFAULT_MAX_TOKENS
 
 
+def test_list_renders_scoped_to_group(store):
+    """鑑賞モードのスコープ: group_id を渡すとその章のシーンだけを鎖の順に返す。
+
+    島の章(正史パス外)でも読めることが要点。存在しない章 ID は空。
+    """
+    preset = store.list_presets()[0]
+    canon = store.canon_path()
+    chapter = store.create_group("第一章", [canon[0]])
+    i1 = store.append_node({"beat": "島1", "cast": ["aya"], "title": "島の1"}, [], detached=True)
+    i2 = store.append_node({"beat": "島2", "cast": ["aya"], "title": "島の2"}, [], parent_id=i1["id"])
+    island = store.create_group("作り置きの章", [i2["id"], i1["id"]])
+    assert island["on_canon"] is False
+
+    assert [e["node"]["id"] for e in store.list_renders(preset["id"], None)] == canon
+    assert [e["node"]["id"] for e in store.list_renders(preset["id"], None, chapter["id"])] == [canon[0]]
+    # 島の章も鎖の順で読める(正史パスには 1 つも入っていない)
+    assert [e["node"]["id"] for e in store.list_renders(preset["id"], None, island["id"])] == [
+        i1["id"],
+        i2["id"],
+    ]
+    assert store.list_renders(preset["id"], None, "no-such-group") == []
+
+
 def test_branch_node_render_is_retrievable(store, monkeypatch):
     """分岐(正史パス外)のシーンも清書して取り出せる。
 

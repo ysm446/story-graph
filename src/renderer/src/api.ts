@@ -178,9 +178,12 @@ export const api = {
   upsertPreset: (data: { id?: string; name: string; person: string; tone: string }) =>
     request<StylePreset>('/presets', { method: 'POST', body: JSON.stringify(data) }),
   deletePreset: (presetId: string) => request<unknown>(`/presets/${presetId}`, { method: 'DELETE' }),
-  listRenders: (presetId: string, povChar: string | null) =>
+  // groupId を渡すとその章のシーンだけ(鑑賞モードのスコープ。島・分岐の章でも読める)
+  listRenders: (presetId: string, povChar: string | null, groupId?: string | null) =>
     request<SceneEntry[]>(
-      `/renders?preset_id=${encodeURIComponent(presetId)}${povChar ? `&pov_char=${encodeURIComponent(povChar)}` : ''}`
+      `/renders?preset_id=${encodeURIComponent(presetId)}${
+        povChar ? `&pov_char=${encodeURIComponent(povChar)}` : ''
+      }${groupId ? `&group_id=${encodeURIComponent(groupId)}` : ''}`
     ),
   // 単一シーンの最新清書(構造モードの清書タブ。分岐・島のシーンも取れる)
   getRender: (nodeId: string, presetId: string, povChar: string | null) =>

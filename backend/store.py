@@ -1805,10 +1805,22 @@ class Store:
         self.conn.commit()
         return self._render_row(self.conn.execute("SELECT * FROM renders WHERE id = ?", (render_id,)).fetchone())
 
-    def list_renders(self, preset_id: str, pov_char: str | None) -> list[dict[str, Any]]:
-        """正史パス順に各ノードの最新レンダーを返す(無ければ render: None)。"""
+    def list_renders(
+        self, preset_id: str, pov_char: str | None, group_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        """正史パス順に各ノードの最新レンダーを返す(無ければ render: None)。
+
+        group_id を渡すと**その章のシーンだけ**を鎖の順に返す(鑑賞モードの
+        スコープ。docs/design/chapters.md §6)。島・分岐の章でも読めるように、
+        正史パスではなく章のメンバーをそのまま使う。存在しない章 ID は空。
+        """
+        if group_id is not None:
+            group = next((g for g in self.list_groups() if g["id"] == group_id), None)
+            node_ids = group["node_ids"] if group else []
+        else:
+            node_ids = self.canon_path()
         result = []
-        for nid in self.canon_path():
+        for nid in node_ids:
             node = self.get_node(nid)
             result.append({"node": node, "render": self.latest_render(nid, preset_id, pov_char)})
         return result

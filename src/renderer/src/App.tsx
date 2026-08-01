@@ -153,6 +153,8 @@ export default function App(): React.JSX.Element {
   const [mode, setMode] = useState<Mode>('structure')
   // 構造モードで選んでいたシーン。鑑賞モードを開いたときにそこへ飛ぶ
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
+  // 構造モードで見ていた章。鑑賞モードを開いたときのスコープになる(null = 全体)
+  const [readerScopeGroupId, setReaderScopeGroupId] = useState<string | null>(null)
   // 構造モードで範囲選択している数。ステータスバーに出す(2 件以上のときだけ)
   const [selectedCount, setSelectedCount] = useState(0)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -317,9 +319,12 @@ export default function App(): React.JSX.Element {
                 settingsVersion={settingsVersion}
                 onSelectedNodeChange={setSelectedNodeId}
                 onSelectionCountChange={setSelectedCount}
+                onReaderScopeChange={setReaderScopeGroupId}
               />
             )}
-            {mode === 'reader' && <ReaderMode focusNodeId={selectedNodeId} />}
+            {mode === 'reader' && (
+              <ReaderMode focusNodeId={selectedNodeId} initialGroupId={readerScopeGroupId} />
+            )}
             {mode === 'characters' && <CharactersMode />}
           </>
         )}

@@ -1966,11 +1966,13 @@ function RenderTab({
 function StructureModeInner({
   settingsVersion,
   onSelectedNodeChange,
-  onSelectionCountChange
+  onSelectionCountChange,
+  onReaderScopeChange
 }: {
   settingsVersion: number
   onSelectedNodeChange?: (nodeId: string | null) => void
   onSelectionCountChange?: (count: number) => void
+  onReaderScopeChange?: (groupId: string | null) => void
 }): React.JSX.Element {
   const [minimapVisible, setMinimapVisible] = useState(true)
   const [gridSnap, setGridSnap] = useState(true) // ドラッグを背景のグリッドに合わせる
@@ -3412,6 +3414,14 @@ function StructureModeInner({
     ? null
     : (groups.find((g) => g.id === selectedChapterId) ?? focusedGroup)
 
+  // 鑑賞モードのスコープ。章の中にいる間はその章、章ビューで章カードを選んで
+  // いればその章(島・分岐の章でもよい)。null = 全体(正史)
+  const readerScopeGroupId =
+    focusedGroup?.id ?? groups.find((g) => g.id === selectedChapterId)?.id ?? null
+  useEffect(() => {
+    onReaderScopeChange?.(readerScopeGroupId)
+  }, [readerScopeGroupId, onReaderScopeChange])
+
   // 相談チャットのアンカー候補。章カードを選ぶと selectedId は null になる
   // (章カードはシーンではない)ので、そのままだと正史の末尾に落ちてしまう。
   // 章を選んでいるときは**その章の末尾シーン**を候補にする
@@ -4422,13 +4432,16 @@ function StructureModeInner({
 export default function StructureMode({
   settingsVersion = 0,
   onSelectedNodeChange,
-  onSelectionCountChange
+  onSelectionCountChange,
+  onReaderScopeChange
 }: {
   settingsVersion?: number
   /** 選択シーンを親に伝える(鑑賞モードを開いたときにそこへ飛ぶため) */
   onSelectedNodeChange?: (nodeId: string | null) => void
   /** 範囲選択しているシーン数を親に伝える(ステータスバーの表示用) */
   onSelectionCountChange?: (count: number) => void
+  /** いま見ている章を親に伝える(鑑賞モードを開いたときのスコープ。null = 全体) */
+  onReaderScopeChange?: (groupId: string | null) => void
 }): React.JSX.Element {
   return (
     <ReactFlowProvider>
@@ -4436,6 +4449,7 @@ export default function StructureMode({
         settingsVersion={settingsVersion}
         onSelectedNodeChange={onSelectedNodeChange}
         onSelectionCountChange={onSelectionCountChange}
+        onReaderScopeChange={onReaderScopeChange}
       />
     </ReactFlowProvider>
   )

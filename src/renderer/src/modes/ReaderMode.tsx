@@ -8,6 +8,9 @@ import type { Group, SceneEntry } from '../types'
 
 type ViewMode = 'scroll' | 'split' | 'page'
 
+/** 章の肩書き。number=0 は正史ルート上にない章(島・分岐の章を単独で読むとき) */
+const chapterLabel = (number: number): string => (number > 0 ? `第${number}章` : '別ルートの章')
+
 const VIEW_MODES: Array<{ id: ViewMode; label: string; title: string }> = [
   { id: 'scroll', label: '縦読み', title: 'ウェブ風の縦スクロール' },
   { id: 'split', label: '挿絵分割', title: '挿絵を左に固定し、右で文章をスクロール' },
@@ -36,16 +39,23 @@ interface PageChunk {
 }
 
 export default function ReaderMode({
-  focusNodeId
+  focusNodeId,
+  initialGroupId
 }: {
   /** 構造モードで選んでいたシーン。開いたときにここへ飛ぶ */
   focusNodeId?: string | null
+  /** 構造モードで見ていた章。開いたときのスコープになる(null = 全体) */
+  initialGroupId?: string | null
 } = {}): React.JSX.Element {
   // スタイルプリセット / POV / 本文フォントは構造モードの清書タブと共有する
   const style = useRenderStyle()
   const { presetId, povChar, fontSize, proseFont } = style
   const [scenes, setScenes] = useState<SceneEntry[]>([])
   const [groups, setGroups] = useState<Group[]>([])
+  // 読む範囲。null = 全体(正史)。章を選ぶとその章だけを流す(島・分岐の章でも可)。
+  // モードを離れるとこのコンポーネントは破棄されるので、初期値は構造モードの
+  // スコープをそのまま受ける
+  const [scopeGroupId, setScopeGroupId] = useState<string | null>(initialGroupId ?? null)
   const [rendering, setRendering] = useState(false)
   const [liveNodeId, setLiveNodeId] = useState<string | null>(null)
   const [liveText, setLiveText] = useState('')
@@ -110,10 +120,12 @@ export default function ReaderMode({
   // ページ分割の計算: 実測(隠し要素)で「高さに収まる最大文字数」を二分探索し、
   // 句点・改行のきりの良い位置で区切る。挿絵ありシーンは上部 42% を挿絵に
   // 使うため、本文の高さがその分小さくなる
+  // 章の見出し(扉ページ)も分割結果に混ざるので、章とスコープの変化も署名に含める
   const scenesSig =
     scenes.map((s) => `${s.render?.id ?? 'x'}-${s.node.image_path ?? ''}`).join(',') +
     '|' +
-    groups.map((g) => `${g.id}:${g.title}:${g.node_ids[0]}`).join(',')
+    groups.map((g) => `${g.id}:${g.title}:${g.node_ids[0]}`).join(',') +
+    `|${scopeGroupId ?? ''}`
   useEffect(() => {
     if (viewMode !== 'page') return
     const measurer = measurerRef.current
@@ -230,23 +242,45 @@ export default function ReaderMode({
   const reloadScenes = useCallback(async (): Promise<void> => {
     if (!presetId) return
     try {
-      const [sceneList, groupList] = await Promise.all([api.listRenders(presetId, povChar), api.listGroups()])
+      const [sceneList, groupList] = await Promise.all([
+        api.listRenders(presetId, povChar, scopeGroupId),
+        api.listGroups()
+      ])
       setScenes(sceneList)
-      // 鑑賞モードで見出し・目次になるのは正史ルート上の章だけ(島・分岐の章は対象外)
-      setGroups(groupList.filter((g) => g.on_canon))
+      setGroups(groupList)
+      // 章を解除された等でスコープの章が無くなっていたら全体に戻す
+      if (scopeGroupId && !groupList.some((g) => g.id === scopeGroupId)) setScopeGroupId(null)
     } catch (e) {
       setStatus(`シーン一覧の取得に失敗しました: ${String(e)}`)
     }
-  }, [presetId, povChar])
+  }, [presetId, povChar, scopeGroupId])
 
-  // 章の先頭シーン → 章情報。縦読みの見出し・ページモードの扉・エクスポートに使う
+  /** いま読んでいる章(スコープ)。null = 全体 */
+  const scopeGroup = useMemo(
+    () => (scopeGroupId ? (groups.find((g) => g.id === scopeGroupId) ?? null) : null),
+    [groups, scopeGroupId]
+  )
+
+  // 見出し・目次・扉ページの対象になる章。
+  // 全体では正史ルート上の章だけ(島・分岐の章は正史に出てこない)、
+  // 章スコープではその章そのもの(島の章でも見出しは出す)
+  const headingGroups = useMemo(
+    () => (scopeGroup ? [scopeGroup] : groups.filter((g) => g.on_canon)),
+    [groups, scopeGroup]
+  )
+
+  // 章の先頭シーン → 章情報。縦読みの見出し・ページモードの扉・エクスポートに使う。
+  // 章番号は全体の並び(正史章の順)で数えるので、章スコープでも第N章がずれない
   const chapterByFirstScene = useMemo(() => {
+    const canonOrder = groups.filter((g) => g.on_canon)
     const map = new Map<string, { id: string; title: string; number: number }>()
-    groups.forEach((g, i) => {
-      if (g.node_ids.length > 0) map.set(g.node_ids[0], { id: g.id, title: g.title, number: i + 1 })
+    headingGroups.forEach((g) => {
+      if (g.node_ids.length === 0) return
+      const index = canonOrder.findIndex((c) => c.id === g.id)
+      map.set(g.node_ids[0], { id: g.id, title: g.title, number: index >= 0 ? index + 1 : 0 })
     })
     return map
-  }, [groups])
+  }, [groups, headingGroups])
 
   useEffect(() => {
     void reloadScenes()
@@ -283,16 +317,28 @@ export default function ReaderMode({
     const preset = presetId
     const pov = povChar
     const chars = style.targetChars
+    // 章スコープでは from_node + mode を使えない(サーバー側は正史パスを歩くので、
+    // 島の章だと 404 になる)。読んでいる範囲のシーン ID を明示して渡す
+    const scopedIds = ((): string[] | null => {
+      if (!scopeGroup) return null
+      const ids = scenes.map((s) => s.node.id)
+      if (!fromNode) return ids
+      if (mode === 'single') return [fromNode]
+      const from = ids.indexOf(fromNode)
+      return from >= 0 ? ids.slice(from) : ids
+    })()
     const taskId = enqueueTask({
       label: '清書',
-      detail: mode === 'single' ? 'このシーンのみ' : 'ここから最後まで',
+      detail: mode === 'single' ? 'このシーンのみ' : scopeGroup ? scopeGroup.title : 'ここから最後まで',
       runner: async ({ update, signal }) => {
         setRendering(true)
         setStatus('LLM 準備中…')
         let doneCount = 0
         try {
           await renderStream(
-            { preset_id: preset, pov_char: pov, from_node: fromNode, mode, target_chars: chars },
+            scopedIds
+              ? { preset_id: preset, pov_char: pov, node_ids: scopedIds, target_chars: chars }
+              : { preset_id: preset, pov_char: pov, from_node: fromNode, mode, target_chars: chars },
             (e) => {
               if (e.stage === 'start') {
                 // 何シーン書くかはサーバー側で決まる(未清書のみ等の絞り込み後)
@@ -336,7 +382,7 @@ export default function ReaderMode({
       .filter((s) => s.render)
       .map((s) => {
         const chapter = chapterByFirstScene.get(s.node.id)
-        const head = chapter ? `# 第${chapter.number}章 ${chapter.title}\n\n` : ''
+        const head = chapter ? `# ${chapterLabel(chapter.number)} ${chapter.title}\n\n` : ''
         return `${head}## ${s.node.title || '(無題)'}\n\n${s.render!.prose}`
       })
     const blob = new Blob([parts.join('\n\n---\n\n')], { type: 'text/markdown;charset=utf-8' })
@@ -448,7 +494,7 @@ export default function ReaderMode({
             className="rounded-lg px-3 py-1 text-[12px] font-medium text-white disabled:opacity-50"
             style={{ background: 'var(--accent)' }}
           >
-            ▶ 全編を清書
+            {scopeGroup ? '▶ この章を清書' : '▶ 全編を清書'}
           </button>
         )}
         <button
@@ -505,8 +551,31 @@ export default function ReaderMode({
             </option>
           ))}
         </select>
-        {/* 目次: 章があるときだけ出す。選ぶとその章の先頭へ移動 */}
+        {/* 読む範囲: 全体(正史)か、章ひとつ。島・分岐の章も単独で読める */}
         {groups.length > 0 && (
+          <select
+            value={scopeGroupId ?? ''}
+            onChange={(e) => {
+              setScopeGroupId(e.target.value || null)
+              setPageIndex(0)
+            }}
+            className="rounded-lg border px-2 py-1 text-[12px]"
+            style={selectStyle}
+            title="読む範囲。章を選ぶとその章だけを流します(別ルートの章も読めます)"
+          >
+            <option value="">全体(正史)</option>
+            {groups.map((g) => {
+              const index = groups.filter((x) => x.on_canon).findIndex((x) => x.id === g.id)
+              return (
+                <option key={g.id} value={g.id}>
+                  {g.on_canon ? `第${index + 1}章 ${g.title}` : `別ルート: ${g.title}`}
+                </option>
+              )
+            })}
+          </select>
+        )}
+        {/* 目次: 全体を読んでいて章があるときだけ。選ぶとその章の先頭へ移動 */}
+        {!scopeGroup && headingGroups.length > 0 && (
           <select
             value=""
             onChange={(e) => {
@@ -524,7 +593,7 @@ export default function ReaderMode({
             title="章の先頭へ移動"
           >
             <option value="">目次</option>
-            {groups.map((g, i) => (
+            {headingGroups.map((g, i) => (
               <option key={g.id} value={g.id}>
                 第{i + 1}章 {g.title}
               </option>
@@ -603,7 +672,7 @@ export default function ReaderMode({
                         // 章の扉ページ(タイトルのみ)
                         <div className="flex min-h-0 flex-1 flex-col items-center justify-center pb-16">
                           <div className="text-[12px] uppercase tracking-[0.35em]" style={{ color: 'var(--text-faint)' }}>
-                            第{chunk.chapter.number}章
+                            {chapterLabel(chunk.chapter.number)}
                           </div>
                           <h1
                             className="mt-3 text-center text-[26px] font-semibold"
@@ -683,7 +752,9 @@ export default function ReaderMode({
         <div className={`mx-auto px-6 py-8 ${viewMode === 'scroll' ? 'max-w-2xl' : 'max-w-5xl'}`}>
           {scenes.length === 0 && (
             <div className="pt-16 text-center text-[13px]" style={{ color: 'var(--text-faint)' }}>
-              正史パスにシーンがありません。構造モードで物語を作成してください。
+              {scopeGroup
+                ? `「${scopeGroup.title}」にシーンがありません。`
+                : '正史パスにシーンがありません。構造モードで物語を作成してください。'}
             </div>
           )}
           {scenes.map((scene) => {
@@ -696,7 +767,7 @@ export default function ReaderMode({
                   {chapter && (
                     <div id={`reader-chapter-${chapter.id}`} className="mb-10 pt-2 text-center">
                       <div className="text-[11px] uppercase tracking-[0.35em]" style={{ color: 'var(--text-faint)' }}>
-                        第{chapter.number}章
+                        {chapterLabel(chapter.number)}
                       </div>
                       <h1
                         className="mt-1.5 text-[22px] font-semibold"

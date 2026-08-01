@@ -1044,8 +1044,11 @@ async def delete_preset(preset_id: str) -> dict[str, str]:
 
 
 @app.get("/renders")
-async def list_renders(preset_id: str, pov_char: str | None = None) -> list[dict[str, Any]]:
-    return store.list_renders(preset_id, pov_char)
+async def list_renders(
+    preset_id: str, pov_char: str | None = None, group_id: str | None = None
+) -> list[dict[str, Any]]:
+    """正史パスのシーン一覧。group_id を渡すとその章だけ(島・分岐の章でも読める)。"""
+    return store.list_renders(preset_id, pov_char, group_id)
 
 
 @app.get("/renders/{node_id}")
