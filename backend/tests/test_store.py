@@ -210,6 +210,97 @@ def test_group_insert_inherits_when_inside(store):
     assert store.list_groups()[0]["node_ids"] == [n1["id"], mid["id"], n2["id"]]
 
 
+def test_event_ids_preserved_on_replace(store):
+    """id 付きで置換すればイベント ID が引き継がれる(参照が壊れない)。"""
+    _setup_chars(store)
+    n1 = store.append_node({"beat": "b1", "cast": ["aya"]}, [
+        {"type": "memory_add", "payload": {"char": "aya", "content": "記憶1", "importance": 0.5}},
+    ])
+    old_id = n1["events"][0]["id"]
+    events = store.list_events(n1["id"])
+    events[0]["payload"] = {**events[0]["payload"], "content": "記憶1(修正)"}
+    new_events = store.replace_events(n1["id"], [
+        {"id": e["id"], "type": e["type"], "payload": e["payload"], "source": e["source"]} for e in events
+    ])
+    assert new_events[0]["id"] == old_id
+    assert new_events[0]["payload"]["content"] == "記憶1(修正)"
+
+
+def _chapter_with_digest(store):
+    """第一章(2 シーン + 記憶)+ 後続 1 シーンと、保存済みまとめを用意する。"""
+    _setup_chars(store)
+    n1 = store.append_node({"beat": "b1", "cast": ["aya"]}, [
+        {"type": "memory_add", "payload": {"char": "aya", "content": "石橋で誓った", "importance": 0.8}},
+    ])
+    n2 = store.append_node({"beat": "b2", "cast": ["aya"]}, [
+        {"type": "memory_add", "payload": {"char": "aya", "content": "ケンと決別した", "importance": 0.9}},
+    ])
+    n3 = store.append_node({"beat": "b3", "cast": ["aya"]})
+    g = store.create_group("第一章", [n1["id"], n2["id"]])
+    mem_ids = [e["id"] for nid in (n1["id"], n2["id"]) for e in store.list_events(nid) if e["type"] == "memory_add"]
+    g = store.save_group_digest(g["id"], [
+        {"type": "memory_compress",
+         "payload": {"char": "aya", "replaces": mem_ids, "summary": "第一章で誓いと決別を経た", "importance": 0.9}},
+    ])
+    return n1, n2, n3, g
+
+
+def test_digest_applies_at_chapter_boundary(store):
+    n1, n2, n3, g = _chapter_with_digest(store)
+    digest_id = g["digest_events"][0]["id"]
+    # 章の中(末尾)は生の記憶のまま
+    s2 = store.get_state(n2["id"])
+    assert len(s2["chars"]["aya"]["memories"]) == 2
+    # 境界の先では要約 1 件に置き換わる
+    s3 = store.get_state(n3["id"])
+    assert s3["chars"]["aya"]["memories"] == [digest_id]
+    # まとめは memories 行にもなる(検索・表示用)
+    row = store.conn.execute("SELECT content FROM memories WHERE id = ?", (digest_id,)).fetchone()
+    assert row["content"] == "第一章で誓いと決別を経た"
+
+
+def test_digest_isolates_in_chapter_edit(store):
+    """まとめ済みの章の中で記憶の文面だけ直しても(ID 引き継ぎ)、章の外へは波及しない。"""
+    n1, n2, n3, g = _chapter_with_digest(store)
+    store.seed_presets()
+    for nid in (n1["id"], n2["id"], n3["id"]):
+        store.save_render(nid, "default-third", None, f"散文-{nid}")
+    events = store.list_events(n1["id"])
+    events[0]["payload"] = {**events[0]["payload"], "content": "石橋で誓った(修正)"}
+    store.replace_events(n1["id"], [
+        {"id": e["id"], "type": e["type"], "payload": e["payload"], "source": e["source"]} for e in events
+    ])
+    # 章内の清書は stale、章の外(次章側)は保たれる
+    assert store.latest_render(n1["id"], "default-third", None)["stale"] == 1
+    assert store.latest_render(n2["id"], "default-third", None)["stale"] == 1
+    assert store.latest_render(n3["id"], "default-third", None)["stale"] == 0
+    # まとめには「要更新」が立つ
+    assert store.get_group(g["id"])["digest_stale"] == 1
+
+
+def test_digest_update_propagates_only_when_changed(store):
+    n1, n2, n3, g = _chapter_with_digest(store)
+    store.seed_presets()
+    store.save_render(n3["id"], "default-third", None, "散文3")
+    # 同じ内容で保存し直しても波及しない
+    store.save_group_digest(g["id"], g["digest_events"])
+    assert store.latest_render(n3["id"], "default-third", None)["stale"] == 0
+    # 内容を変えると境界の先だけ波及する
+    changed = [{**g["digest_events"][0],
+                "payload": {**g["digest_events"][0]["payload"], "summary": "書き直したまとめ"}}]
+    store.save_group_digest(g["id"], changed)
+    assert store.latest_render(n3["id"], "default-third", None)["stale"] == 1
+    assert store.get_state(n3["id"])["chars"]["aya"]["memories"] == [g["digest_events"][0]["id"]]
+
+
+def test_digest_delete_restores_raw_state(store):
+    n1, n2, n3, g = _chapter_with_digest(store)
+    assert len(store.get_state(n3["id"])["chars"]["aya"]["memories"]) == 1
+    store.delete_group_digest(g["id"])
+    assert len(store.get_state(n3["id"])["chars"]["aya"]["memories"]) == 2  # 生に戻る
+    assert store.get_group(g["id"])["digest_events"] is None
+
+
 def test_group_pruned_when_detached(store):
     n1, n2, n3 = _three_scenes(store)
     store.create_group("第一章", [n1["id"], n2["id"], n3["id"]])

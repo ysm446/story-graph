@@ -488,6 +488,8 @@ class Store:
         if events:
             self.replace_events(node_id, events, source=source, commit=False)
         self.mark_dirty_downstream(node_id, commit=False)
+        if group_id:
+            self._mark_digest_stale(node_id)  # 章の中に増えたシーンはまとめの材料が変わる
         self._resync_memory_orders(commit=False)
         self.conn.commit()
         return self.get_node(node_id)  # type: ignore[return-value]
@@ -542,7 +544,8 @@ class Store:
                 changed.append(nid)
                 self.replace_events(
                     nid,
-                    [{"type": e["type"], "payload": e["payload"], "source": e["source"]} for e in kept],
+                    # id を引き継ぐ(掃除で残るイベントの参照を壊さない)
+                    [{"id": e["id"], "type": e["type"], "payload": e["payload"], "source": e["source"]} for e in kept],
                 )
             errors = self.validate(nid)
             if errors:
@@ -671,10 +674,13 @@ class Store:
                 self.conn.execute("UPDATE renders SET stale = 1 WHERE node_id = ?", (node_id,))
             else:
                 self.mark_dirty_downstream(node_id, commit=False)
+            self._mark_digest_stale(node_id)
         elif prompt_changed:
             # 状態は変わらない。下流の清書は状態と直前散文にしか依存しないので保ち、
             # 自ノードの清書だけ古くなる(beat の誤字修正で全編 stale を防ぐ)
             self.conn.execute("UPDATE renders SET stale = 1 WHERE node_id = ?", (node_id,))
+            # beat はまとめの生成材料なので、章のまとめには「要更新」を立てる
+            self._mark_digest_stale(node_id)
         self.conn.commit()
         return self.get_node(node_id)
 
@@ -793,6 +799,7 @@ class Store:
         """
         if self.get_node(node_id) is None:
             return False
+        self._mark_digest_stale(node_id)  # 章のメンバーを消すならまとめの材料が変わる(削除前に)
         parent_id = self.parent_of(node_id)
         parent_edge = self.conn.execute(
             "SELECT is_canon FROM edges WHERE to_node = ?", (node_id,)
@@ -862,7 +869,10 @@ class Store:
 
     def replace_events(self, node_id: str, events: list[dict[str, Any]],
                        source: str = "user", commit: bool = True) -> list[dict[str, Any]]:
-        """ノードのイベント列を置換する。events の要素は {type, payload, source?}。"""
+        """ノードのイベント列を置換する。events の要素は {id?, type, payload, source?}。
+        id を渡すと引き継ぐ(memory_compress.replaces / reasons の参照を壊さない)。"""
+        # 章境界の cutoff 用に、編集前の章末尾の状態ハッシュを控える
+        boundary = self._digest_boundary_for(node_id)
         old_memory_ids = [
             r["id"]
             for r in self.conn.execute(
@@ -892,7 +902,14 @@ class Store:
                 ),
             )
         self._sync_memories(node_id, commit=False)
-        self.mark_dirty_downstream(node_id, commit=False)
+        self._mark_digest_stale(node_id)
+        # 章境界の early cutoff: まとめ済みの章の中の編集で、章末尾の状態が
+        # 変わらないなら(記憶の文面修正など。ID 引き継ぎが前提)、境界の先の
+        # 入力は凍結された digest ごと変わらないので、清書の stale を章内に閉じる
+        if boundary is not None and fold_mod.state_hash(self.get_state(boundary[0])) == boundary[1]:
+            self._stale_renders_within_group(node_id)
+        else:
+            self.mark_dirty_downstream(node_id, commit=False)
         if commit:
             self.conn.commit()
         return self.list_events(node_id)
@@ -995,6 +1012,7 @@ class Store:
                     "title": row["title"],
                     "color": row["color"],
                     "digest_stale": row["digest_stale"],
+                    "has_digest": bool(row["digest_events"]),
                     "node_ids": ids,
                 }
             )
@@ -1068,6 +1086,154 @@ class Store:
         self.conn.execute("UPDATE nodes SET group_id = NULL WHERE id = ?", (node_id,))
         self.conn.commit()
 
+    # ---- 章じまいのまとめ(digest。docs/design/chapters.md §3-4) -----
+    #
+    # digest は章末尾の「境界」で適用される memory_compress / fact_set のイベント列。
+    # ノードの events とは別に groups.digest_events に持つ(「イベント作り直し」で
+    # 消えないように)。fold へは get_state が章境界で合流させる。
+
+    def get_group(self, group_id: str) -> dict[str, Any] | None:
+        """list_groups のエントリ + digest_events(パース済み。無ければ None)。"""
+        entry = next((g for g in self.list_groups() if g["id"] == group_id), None)
+        if entry is None:
+            return None
+        row = self.conn.execute("SELECT digest_events FROM groups WHERE id = ?", (group_id,)).fetchone()
+        entry["digest_events"] = json.loads(row["digest_events"]) if row and row["digest_events"] else None
+        return entry
+
+    def _digest_by_tail(self) -> dict[str, list[dict[str, Any]]]:
+        """章末尾ノード ID → digest イベント列。get_state が章境界で適用する。"""
+        rows = self.conn.execute(
+            "SELECT id, digest_events FROM groups WHERE digest_events IS NOT NULL"
+        ).fetchall()
+        if not rows:
+            return {}
+        digests = {r["id"]: json.loads(r["digest_events"]) for r in rows}
+        result: dict[str, list[dict[str, Any]]] = {}
+        for g in self.list_groups():
+            if g["id"] in digests and g["node_ids"]:
+                result[g["node_ids"][-1]] = digests[g["id"]]
+        return result
+
+    def _mark_digest_stale(self, node_id: str) -> None:
+        """章のメンバーが編集されたとき、その章のまとめに「要更新」を立てる
+        (まとめが作られている章のみ)。commit は呼び出し側。"""
+        row = self.conn.execute("SELECT group_id FROM nodes WHERE id = ?", (node_id,)).fetchone()
+        if row and row["group_id"]:
+            self.conn.execute(
+                "UPDATE groups SET digest_stale = 1 WHERE id = ? AND digest_events IS NOT NULL",
+                (row["group_id"],),
+            )
+
+    def _digest_boundary_for(self, node_id: str) -> tuple[str, str] | None:
+        """node_id が「まとめ済みの章」のメンバーなら(章末尾ノード, 現在の末尾状態ハッシュ)。
+        編集の前に控えておき、編集後のハッシュと比較する(章境界の early cutoff)。"""
+        node_row = self.conn.execute("SELECT group_id FROM nodes WHERE id = ?", (node_id,)).fetchone()
+        if not node_row or not node_row["group_id"]:
+            return None
+        group = self.get_group(node_row["group_id"])
+        if not group or not group.get("digest_events") or not group["node_ids"]:
+            return None
+        tail = group["node_ids"][-1]
+        try:
+            return tail, fold_mod.state_hash(self.get_state(tail))
+        except KeyError:
+            return None
+
+    def _stale_renders_within_group(self, node_id: str) -> None:
+        """章内に閉じた編集の清書 stale(編集シーンから章末尾まで)。commit は呼び出し側。"""
+        row = self.conn.execute("SELECT group_id FROM nodes WHERE id = ?", (node_id,)).fetchone()
+        group = self.get_group(row["group_id"]) if row and row["group_id"] else None
+        if group is None:
+            return
+        ids = group["node_ids"]
+        start = ids.index(node_id) if node_id in ids else 0
+        self.conn.executemany(
+            "UPDATE renders SET stale = 1 WHERE node_id = ?", [(n,) for n in ids[start:]]
+        )
+
+    def save_group_digest(self, group_id: str, events: list[dict[str, Any]]) -> dict[str, Any]:
+        """章のまとめを保存する。内容が実際に変わったときだけ下流(次章側)へ波及する。"""
+        group = self.get_group(group_id)
+        if group is None:
+            raise KeyError(f"group not found: {group_id}")
+        prepared: list[dict[str, Any]] = []
+        for e in events:
+            if e.get("type") not in ("memory_compress", "fact_set"):
+                raise ValueError(f"まとめに使えるイベント型ではありません: {e.get('type')}")
+            prepared.append({"id": e.get("id") or _new_id(), "type": e["type"], "payload": e["payload"]})
+        old = group.get("digest_events") or []
+        changed = fold_mod.canonical_json(prepared) != fold_mod.canonical_json(old)
+        self.conn.execute(
+            "UPDATE groups SET digest_events = ?, digest_stale = 0 WHERE id = ?",
+            (json.dumps(prepared, ensure_ascii=False) if prepared else None, group_id),
+        )
+        self._sync_digest_memories(group, old, prepared)
+        if changed:
+            self._propagate_from_boundary(group)
+        self.conn.commit()
+        return self.get_group(group_id)  # type: ignore[return-value]
+
+    def delete_group_digest(self, group_id: str) -> dict[str, Any]:
+        """まとめを削除する(章は残る)。下流は生の状態に戻るので波及する。"""
+        group = self.get_group(group_id)
+        if group is None:
+            raise KeyError(f"group not found: {group_id}")
+        old = group.get("digest_events") or []
+        if old:
+            self.conn.execute(
+                "UPDATE groups SET digest_events = NULL, digest_stale = 0 WHERE id = ?", (group_id,)
+            )
+            self._sync_digest_memories(group, old, [])
+            self._propagate_from_boundary(group)
+            self.conn.commit()
+        return self.get_group(group_id)  # type: ignore[return-value]
+
+    def _sync_digest_memories(
+        self,
+        group: dict[str, Any],
+        old_events: list[dict[str, Any]],
+        new_events: list[dict[str, Any]],
+    ) -> None:
+        """digest の memory_compress を memories 行 + 索引に同期する(検索・表示用)。
+        digest はノードの events に居ないので _sync_memories とは別に面倒を見る。"""
+        old_ids = [e["id"] for e in old_events if e.get("type") == "memory_compress"]
+        if old_ids:
+            self.conn.executemany("DELETE FROM memories WHERE id = ?", [(i,) for i in old_ids])
+            self._remove_memory_index(old_ids)
+        path = self.canon_path()
+        tail = group["node_ids"][-1] if group["node_ids"] else None
+        story_order = path.index(tail) if tail in path else -1
+        for e in new_events:
+            if e.get("type") != "memory_compress":
+                continue
+            p = e["payload"]
+            if not p.get("char") or not p.get("summary"):
+                continue
+            self.conn.execute(
+                """INSERT OR REPLACE INTO memories(id, event_id, char_id, content, emotion, importance, story_order)
+                   VALUES(?,?,?,?,?,?,?)""",
+                (e["id"], e["id"], p["char"], p["summary"], p.get("emotion"), p.get("importance"), story_order),
+            )
+            self._index_memory(e["id"], p["summary"])
+
+    def _propagate_from_boundary(self, group: dict[str, Any]) -> None:
+        """まとめの変更を、章の次のノード(境界の先)から下流へ波及させる。
+        章の中は生の状態のままなので触らない。commit は呼び出し側。"""
+        if not group["node_ids"]:
+            return
+        tail = group["node_ids"][-1]
+        path = self.canon_path()
+        if tail in path:
+            idx = path.index(tail)
+            if idx + 1 < len(path):
+                self.mark_dirty_downstream(path[idx + 1], commit=False)
+        # 章末尾から生える分岐(draft)にも digest は効くので、そちらへも波及させる
+        for row in self.conn.execute(
+            "SELECT to_node FROM edges WHERE from_node = ? AND is_canon = 0", (tail,)
+        ):
+            self.mark_dirty_downstream(row["to_node"], commit=False)
+
     def _prune_groups(self) -> None:
         """正史の変化(切替・切り離しなど)で章の前提が崩れたときの後始末。
         正史から外れたメンバーは章から出し、残りが非連続になった章は割り当てを全部外す
@@ -1122,10 +1288,19 @@ class Store:
         if self.get_node(node_id) is None:
             raise KeyError(f"node not found: {node_id}")
         path = self.path_to(node_id)
+        digests = self._digest_by_tail()
         state = fold_mod.empty_state()
         parent_hash = fold_mod.state_hash(state)
+        prev: str | None = None
         for nid in path:
             events = self.list_events(nid)
+            # 章境界: 直前のノードが「まとめ済みの章」の末尾なら、その章のまとめ
+            # (digest)をこのノードのイベントの前に合流させる。章の中は生のまま、
+            # 境界の先から記憶が要約に置き換わる(docs/design/chapters.md §4)。
+            # events_hash に含まれるので、まとめが変われば下流は自然に再 fold される
+            digest = digests.get(prev) if prev is not None else None
+            if digest:
+                events = [*digest, *events]
             node = self.get_node(nid)
             cast = node["cast"] if node else []
             ihash = fold_mod.input_hash(parent_hash, fold_mod.events_hash(events), cast)
@@ -1141,6 +1316,7 @@ class Store:
                     (nid, fold_mod.canonical_json(state), ihash),
                 )
             parent_hash = fold_mod.state_hash(state)
+            prev = nid
             if nid == node_id:
                 break
         self.conn.commit()

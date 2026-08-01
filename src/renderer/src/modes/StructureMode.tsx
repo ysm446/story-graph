@@ -44,6 +44,7 @@ import {
   cancelTask,
   enqueueTask,
   notifyGraphChanged,
+  useTasks,
   setNodeBusy,
   subscribeGraphChanged,
   useBusyNodeIds,
@@ -264,8 +265,25 @@ function ChapterNodeCard({ data, selected }: NodeProps<ChapterFlowNode>): React.
       <div className="mt-1 truncate text-[15px] font-semibold" style={{ color: 'var(--text)' }}>
         {group.title}
       </div>
-      <div className="mt-2 text-[11px]" style={{ color: 'var(--text-dim)' }}>
+      <div className="mt-2 flex items-center gap-1.5 text-[11px]" style={{ color: 'var(--text-dim)' }}>
         {group.node_ids.length} シーン
+        {group.has_digest &&
+          (group.digest_stale ? (
+            <span
+              className="rounded px-1.5 py-px text-[10px]"
+              style={{ background: 'rgba(239,68,68,0.12)', color: '#f2a3a3' }}
+              title="章の中が編集されたので、まとめが古くなっている可能性があります"
+            >
+              まとめ要更新
+            </span>
+          ) : (
+            <span
+              className="rounded px-1.5 py-px text-[10px]"
+              style={{ background: 'var(--accent-soft)', color: 'var(--text-dim)' }}
+            >
+              まとめ済
+            </span>
+          ))}
       </div>
       <Handle type="source" position={Position.Right} />
     </div>
@@ -290,7 +308,8 @@ async function latestEventInputs(nodeId: string, fallback: StoryEvent[]): Promis
   } catch {
     /* 取れなければ手元の値で続行 */
   }
-  return events.map((e) => ({ type: e.type, payload: e.payload, source: e.source }))
+  // id を引き継ぐ(編集で ID が変わると replaces / reasons の参照が壊れる)
+  return events.map((e) => ({ id: e.id, type: e.type, payload: e.payload, source: e.source }))
 }
 
 function BeatTab({
@@ -1218,6 +1237,274 @@ function CharTab({
  *  鑑賞モードと同じ `renders` を見ている(スタイルプリセット / POV も
  *  `RenderStyle` 経由で共通)。ここで書いたものはそのまま鑑賞モードに出る。
  */
+// ---- 章タブ(章ノードを選択したときのインスペクタ。docs/design/chapters.md §6) ----
+
+function ChapterTab({
+  group,
+  number,
+  nodes,
+  characters,
+  onSelectScene,
+  onChanged,
+  onRename,
+  onDissolve
+}: {
+  group: Group
+  number: number
+  nodes: StoryNode[]
+  characters: Character[]
+  onSelectScene: (nodeId: string) => void
+  onChanged: () => void
+  onRename: () => void
+  onDissolve: () => void
+}): React.JSX.Element {
+  const [digest, setDigest] = useState<EventInput[]>([])
+  const [hasDigest, setHasDigest] = useState(false)
+  const [digestStale, setDigestStale] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [dirty, setDirty] = useState(false) // ローカル編集が未保存
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  // まとめの生成は LLM キューに積む(他の生成と同じ 1 件ずつの逐次実行)
+  const generateQueued = useTasks().some((t) => t.label === '章のまとめ')
+
+  const nameOf = (charId: string): string => characters.find((c) => c.id === charId)?.name ?? charId
+  const nodeTitle = (id: string): string => nodes.find((n) => n.id === id)?.title || '(無題)'
+
+  const refetch = useCallback(async (): Promise<void> => {
+    setLoading(true)
+    setError(null)
+    try {
+      const d = await api.getGroupDigest(group.id)
+      setDigest(d.digest_events ?? [])
+      setHasDigest(d.digest_events !== null)
+      setDigestStale(d.digest_stale === 1)
+      setDirty(false)
+    } catch (e) {
+      setError(String(e))
+    } finally {
+      setLoading(false)
+    }
+  }, [group.id])
+
+  // 生成タスクの完了は notifyGraphChanged → reload → groups の変化で伝わるので、
+  // has_digest / digest_stale が動いたときも取り直す
+  useEffect(() => {
+    void refetch()
+  }, [refetch, group.has_digest, group.digest_stale])
+
+  const generate = (): void => {
+    enqueueTask({
+      label: '章のまとめ',
+      detail: group.title,
+      runner: async () => {
+        await api.generateGroupDigest(group.id)
+        notifyGraphChanged()
+      }
+    })
+  }
+
+  const save = async (): Promise<void> => {
+    setBusy(true)
+    setError(null)
+    try {
+      await api.putGroupDigest(group.id, digest)
+      await refetch()
+      onChanged()
+    } catch (e) {
+      setError(String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const removeDigest = async (): Promise<void> => {
+    if (!window.confirm('まとめを削除しますか?(次の章からは生の記憶に戻ります)')) return
+    setBusy(true)
+    setError(null)
+    try {
+      await api.deleteGroupDigest(group.id)
+      await refetch()
+      onChanged()
+    } catch (e) {
+      setError(String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const updateEntry = (index: number, patch: Record<string, unknown>): void => {
+    setDigest((prev) => prev.map((e, i) => (i === index ? { ...e, payload: { ...e.payload, ...patch } } : e)))
+    setDirty(true)
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex items-center gap-2">
+        <span className="shrink-0 text-[10px] uppercase tracking-[0.2em]" style={{ color: 'var(--text-faint)' }}>
+          第{number}章
+        </span>
+        <span className="min-w-0 flex-1 truncate text-[14px] font-semibold" style={{ color: 'var(--text)' }}>
+          {group.title}
+        </span>
+        <button
+          onClick={onRename}
+          title="章の名前を変更"
+          className="rounded p-0.5 hover:bg-[var(--accent-soft)]"
+          style={{ color: 'var(--text-faint)' }}
+        >
+          ✎
+        </button>
+        <button
+          onClick={onDissolve}
+          title="章を解散する(シーンは残る)"
+          className="rounded p-0.5 text-[11px] hover:bg-[var(--accent-soft)]"
+          style={{ color: 'var(--text-faint)' }}
+        >
+          解散
+        </button>
+      </div>
+      <div>
+        <span className="mb-1 block text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
+          シーン({group.node_ids.length})
+        </span>
+        <div className="flex flex-col">
+          {group.node_ids.map((id, i) => (
+            <button
+              key={id}
+              onClick={() => onSelectScene(id)}
+              className="rounded-md px-2 py-1 text-left text-[12px] hover:bg-[var(--accent-soft)]"
+              style={{ color: 'var(--text-dim)' }}
+            >
+              {i + 1}. {nodeTitle(id)}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div>
+        <div className="mb-1 flex items-center gap-2">
+          <span className="text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
+            章のまとめ
+          </span>
+          {hasDigest &&
+            (digestStale ? (
+              <span
+                className="rounded px-1.5 py-px text-[10px]"
+                style={{ background: 'rgba(239,68,68,0.12)', color: '#f2a3a3' }}
+                title="章の中が編集されたので、まとめが古くなっている可能性があります"
+              >
+                要更新
+              </span>
+            ) : (
+              <span
+                className="rounded px-1.5 py-px text-[10px]"
+                style={{ background: 'var(--accent-soft)', color: 'var(--text-dim)' }}
+              >
+                最新
+              </span>
+            ))}
+        </div>
+        <p className="mb-2 text-[11px] leading-relaxed" style={{ color: 'var(--text-faint)' }}>
+          章を閉じたときのキャラごとの要約記憶。次の章からは、この章の生の記憶の代わりに
+          このまとめが引き継がれます(生の記憶は清書時の検索などで引き続き参照されます)。
+          まとめを更新しない限り、章の中の記憶の編集は次の章へ波及しません。
+        </p>
+        <div className="mb-2 flex gap-1.5">
+          <button
+            onClick={generate}
+            disabled={generateQueued}
+            className="rounded-lg px-2.5 py-1 text-[12px] font-medium text-white disabled:opacity-50"
+            style={{ background: 'var(--accent)' }}
+            title="LLM で章のまとめを作る(既存のまとめは置き換え)"
+          >
+            {generateQueued ? '生成待ち…' : hasDigest ? '⟳ まとめを作り直す' : '▶ まとめを作る'}
+          </button>
+          {hasDigest && (
+            <button
+              onClick={() => void removeDigest()}
+              disabled={busy}
+              className="rounded-lg border px-2 py-1 text-[12px] disabled:opacity-50"
+              style={{ borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }}
+            >
+              削除
+            </button>
+          )}
+        </div>
+        {error && (
+          <p className="mb-2 text-[11px]" style={{ color: 'var(--danger)' }}>
+            {error}
+          </p>
+        )}
+        {loading ? (
+          <p className="text-[11px]" style={{ color: 'var(--text-faint)' }}>
+            読み込み中…
+          </p>
+        ) : digest.length === 0 ? (
+          <p className="text-[11px]" style={{ color: 'var(--text-faint)' }}>
+            まだまとめはありません
+          </p>
+        ) : (
+          <div className="flex flex-col gap-2">
+            {digest.map((e, i) =>
+              e.type === 'memory_compress' ? (
+                <div
+                  key={e.id ?? i}
+                  className="rounded-xl border p-2"
+                  style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}
+                >
+                  <div className="mb-1 flex items-center gap-2 text-[11px]" style={{ color: 'var(--text-dim)' }}>
+                    <span className="font-medium" style={{ color: 'var(--text)' }}>
+                      {nameOf(String(e.payload.char ?? ''))}
+                    </span>
+                    <span className="ml-auto" style={{ color: 'var(--text-faint)' }}>
+                      重要度
+                    </span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={1}
+                      step={0.1}
+                      value={Number(e.payload.importance ?? 0.6)}
+                      onChange={(ev) => updateEntry(i, { importance: Number(ev.target.value) })}
+                      className="w-16 rounded-md border px-1.5 py-0.5 text-[11px]"
+                      style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
+                    />
+                  </div>
+                  <textarea
+                    rows={3}
+                    value={String(e.payload.summary ?? '')}
+                    onChange={(ev) => updateEntry(i, { summary: ev.target.value })}
+                    className="w-full resize-y rounded-md border px-2 py-1 text-[12px] leading-relaxed outline-none"
+                    style={{ background: 'var(--bg-input)', borderColor: 'var(--border)', color: 'var(--text)' }}
+                  />
+                </div>
+              ) : (
+                <div
+                  key={e.id ?? i}
+                  className="rounded-xl border p-2 text-[11px]"
+                  style={{ borderColor: 'var(--border)', color: 'var(--text-dim)' }}
+                >
+                  {e.type}: {JSON.stringify(e.payload)}
+                </div>
+              )
+            )}
+            {dirty && (
+              <button
+                onClick={() => void save()}
+                disabled={busy}
+                className="self-end rounded-lg px-3 py-1 text-[12px] font-medium text-white disabled:opacity-50"
+                style={{ background: 'var(--accent)' }}
+              >
+                まとめを保存
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function RenderTab({
   node,
   style,
@@ -1501,6 +1788,8 @@ function StructureModeInner({
   // 章の表示状態: 'flat' = 全シーン、'chapters' = 章ビュー、それ以外 = 章 ID(章内ビュー)。
   // 章がひとつも無い間は常に flat(書き始めの体験を変えない)
   const [chapterView, setChapterView] = useState<string>('chapters')
+  // 章ノードを選択中(インスペクタに章パネルを出す)
+  const [selectedChapterId, setSelectedChapterId] = useState<string | null>(null)
   const [characters, setCharacters] = useState<Character[]>([])
   const [places, setPlaces] = useState<Place[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -2586,6 +2875,11 @@ function StructureModeInner({
 
   const selectedNode = graphNodes.find((n) => n.id === selectedId) ?? null
   const selectedCount = flowNodes.filter((n) => n.selected).length // ⟲ の対象(2 つ以上で部分整列)
+  // インスペクタに章パネルを出す章。シーンを選んでいるときはシーン優先。
+  // 章内ビューで何も選んでいないときは、その章のパネルを出しておく
+  const chapterForPanel = selectedNode
+    ? null
+    : (groups.find((g) => g.id === selectedChapterId) ?? focusedGroup)
 
   /** 新しいシーンを親の右隣に手動配置する(**親が手動配置のときだけ**)。
    *
@@ -2758,8 +3052,11 @@ function StructureModeInner({
             }}
             onSelectionChange={({ nodes }) => {
               if (nodes.length > 0) setSelectedEdgeId(null)
-              // 章ノードはインスペクタの対象にしない(実体ノードではないため)
+              const chapter = nodes.find((n) => n.type === 'chapterNode')
               const beats = nodes.filter((n) => n.type !== 'chapterNode')
+              // 章ノードの選択はインスペクタの章パネルへ。シーン選択・選択解除で閉じる
+              if (chapter) setSelectedChapterId((chapter.data as ChapterNodeData).group.id)
+              else setSelectedChapterId(null)
               setSelectedId((prev) => {
                 if (beats.length === 0) return null
                 // 複数選択中は先頭をインスペクタ対象にする
@@ -3251,6 +3548,21 @@ function StructureModeInner({
                 characters={characters}
                 selectedNodeId={selectedId}
                 onSelectNode={(nodeId) => setSelectedId(nodeId)}
+              />
+            ) : chapterForPanel ? (
+              <ChapterTab
+                group={chapterForPanel}
+                number={groups.indexOf(chapterForPanel) + 1}
+                nodes={graphNodes}
+                characters={characters}
+                onSelectScene={(nodeId) => {
+                  // 章ビューから選んだ場合は章の中に入ってから選択する
+                  if (effectiveView === 'chapters') setChapterView(chapterForPanel.id)
+                  setSelectedId(nodeId)
+                }}
+                onChanged={() => void reload()}
+                onRename={() => void renameChapter(chapterForPanel)}
+                onDissolve={() => void dissolveChapter(chapterForPanel)}
               />
             ) : selectedNode ? (
               inspectorTab === 'render' ? (

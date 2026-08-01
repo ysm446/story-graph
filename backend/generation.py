@@ -671,7 +671,8 @@ async def extract_events(
     extracted_keys = {(e["type"], json.dumps(e["payload"], sort_keys=True)) for e in extracted}
     kept = (
         [
-            {"type": e["type"], "payload": e["payload"], "source": "user"}
+            # id を引き継ぐ(消すと再抽出のたびに参照(replaces / reasons)が宙に浮く)
+            {"id": e["id"], "type": e["type"], "payload": e["payload"], "source": "user"}
             for e in node["events"]
             if e["source"] == "user"
             and e["type"] != "char_introduce"
@@ -738,3 +739,124 @@ async def _reextract(
         except Exception as e:  # noqa: BLE001
             failed.append({"node_id": nid, "title": title, "error": f"{type(e).__name__}: {e}"})
     yield _sse({"stage": "done", "total": len(order), "failed": failed})
+
+
+# ---- 章のまとめ(digest)生成(docs/design/chapters.md §3) ------------
+
+DIGEST_TEMPERATURE = 0.3
+
+DIGEST_PROMPT = """あなたは物語の編集者です。章の内容から、各キャラクターの「章のまとめの記憶」を作ります。
+
+ルール:
+- キャラクターごとに、この章で経験したこと・変わったことを 1〜3 文で要約する
+- 内容は章を正しく代表する要約にする(曖昧にぼかさない。固有名詞・約束・秘密など、決定的な事実は残す)
+- このまとめは後の章の執筆でそのキャラの記憶として参照される。後で効く事実を優先する
+- importance は 0.0〜1.0(その章でそのキャラに起きた最も重い出来事に合わせる)
+- この章に出番も記憶も無いキャラクターは出力しない"""
+
+
+def _digest_schema(char_ids: list[str]) -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "summaries": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "char": {"type": "string", "enum": char_ids},
+                        "summary": {"type": "string"},
+                        "importance": {"type": "number"},
+                    },
+                    "required": ["char", "summary", "importance"],
+                },
+            }
+        },
+        "required": ["summaries"],
+    }
+
+
+async def generate_group_digest(store: Store, base_url: str, group_id: str) -> list[dict[str, Any]]:
+    """章のまとめ(キャラごとの memory_compress)を生成して返す。保存は呼び出し側。
+
+    replaces には章内で発行された記憶イベントの ID を全部入れる(章境界で
+    生の記憶が要約 1 件に置き換わる)。生の記憶は memories テーブルに残り、
+    清書時の検索やチャットの「圧縮前も含める」で引き続き参照できる。
+    """
+    group = store.get_group(group_id)
+    if group is None:
+        raise KeyError(f"group not found: {group_id}")
+    beats: list[str] = []
+    memories_by_char: dict[str, list[tuple[str, str]]] = {}
+    cast: set[str] = set()
+    for i, nid in enumerate(group["node_ids"]):
+        node = store.get_node(nid)
+        if node is None:
+            continue
+        beats.append(f"{i + 1}. {node['title'] or '(無題)'}: {node['beat']}")
+        cast.update(node["cast"])
+        for e in node["events"]:
+            if e["type"] not in ("memory_add", "memory_compress"):
+                continue
+            p = e["payload"]
+            content = p.get("content") if e["type"] == "memory_add" else p.get("summary")
+            if p.get("char") and content:
+                memories_by_char.setdefault(p["char"], []).append((e["id"], content))
+    char_ids = sorted(c for c in (cast | set(memories_by_char)) if store.get_character(c) is not None)
+    if not char_ids:
+        raise ValueError("この章には要約できる内容がありません(登録キャラクターの出番が無い)")
+    mem_lines: list[str] = []
+    for cid in char_ids:
+        char = store.get_character(cid)
+        mem_lines.append(f"### {char['name'] if char else cid}({cid})")
+        entries = memories_by_char.get(cid, [])
+        mem_lines += [f"- {content}" for _, content in entries] or ["- (この章での記憶イベントは無し)"]
+    messages = [
+        {"role": "system", "content": DIGEST_PROMPT},
+        {
+            "role": "user",
+            "content": "\n".join(
+                [
+                    f"## 章: {group['title']}",
+                    "",
+                    "## 章のシーン(ビート)",
+                    *beats,
+                    "",
+                    "## キャラクターごとの、この章の記憶",
+                    *mem_lines,
+                    "",
+                    "この章のまとめを作ってください。",
+                ]
+            ),
+        },
+    ]
+    result = await llm.chat_json(
+        messages,
+        base_url=base_url,
+        schema=_digest_schema(char_ids),
+        temperature=DIGEST_TEMPERATURE,
+        max_tokens=2048,
+        label=f"章のまとめ: {group['title']}",
+    )
+    events: list[dict[str, Any]] = []
+    for s in result.get("summaries", []):
+        cid = s.get("char")
+        if cid not in char_ids or not (s.get("summary") or "").strip():
+            continue
+        importance = s.get("importance")
+        events.append(
+            {
+                "type": "memory_compress",
+                "payload": {
+                    "char": cid,
+                    "replaces": [eid for eid, _ in memories_by_char.get(cid, [])],
+                    "summary": str(s["summary"]).strip(),
+                    "importance": max(0.0, min(1.0, float(importance)))
+                    if isinstance(importance, (int, float))
+                    else 0.6,
+                },
+            }
+        )
+    if not events:
+        raise ValueError("まとめを生成できませんでした(LLM の出力が空)")
+    return events

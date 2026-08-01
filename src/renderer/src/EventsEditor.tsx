@@ -417,7 +417,8 @@ export default function EventsEditor({
   }
 
   const toInputs = (events: StoryEvent[]): EventInput[] =>
-    events.map((e) => ({ type: e.type, payload: e.payload, source: e.source }))
+    // id を引き継ぐ(編集で ID が変わると replaces / reasons の参照が壊れる)
+    events.map((e) => ({ id: e.id, type: e.type, payload: e.payload, source: e.source }))
 
   // 成功したかを返す(失敗時はフォームを閉じず入力を残す)
   const save = async (events: EventInput[]): Promise<boolean> => {

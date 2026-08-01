@@ -142,6 +142,9 @@ class FactionPatch(BaseModel):
 
 
 class EventIn(BaseModel):
+    # id は既存イベントの編集時に引き継ぐ(無ければ新規発行)。ID を保つことで
+    # memory_compress.replaces や関係の reasons のイベント参照が編集で壊れない
+    id: str | None = None
     type: str
     payload: dict[str, Any]
     source: str = "user"
@@ -427,6 +430,59 @@ async def delete_group(group_id: str) -> dict[str, str]:
     """章を解散する(シーンはそのまま残る)。"""
     store.delete_group(group_id)
     return {"status": "deleted"}
+
+
+class DigestIn(BaseModel):
+    events: list[EventIn]
+
+
+@app.get("/groups/{group_id}/digest")
+async def get_group_digest(group_id: str) -> dict[str, Any]:
+    """章のまとめ(digest)。無ければ digest_events は null。"""
+    group = store.get_group(group_id)
+    if group is None:
+        raise HTTPException(404, "group not found")
+    return {"digest_events": group["digest_events"], "digest_stale": group["digest_stale"]}
+
+
+@app.post("/groups/{group_id}/digest/generate")
+async def generate_group_digest(group_id: str) -> dict[str, Any]:
+    """LLM で章のまとめを生成してそのまま保存する(内容は後から編集できる)。"""
+    snapshots.auto(store, "章のまとめ更新の前", 60)
+    try:
+        base_url = await llama.ensure_running(store.get_settings())
+        events = await generation.generate_group_digest(store, base_url, group_id)
+        return store.save_group_digest(group_id, events)
+    except KeyError:
+        raise HTTPException(404, "group not found")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except RuntimeError as e:
+        raise HTTPException(500, str(e))
+
+
+@app.put("/groups/{group_id}/digest")
+async def put_group_digest(group_id: str, body: DigestIn) -> dict[str, Any]:
+    """手直ししたまとめを保存する。内容が変わったときだけ下流(次章側)へ波及する。"""
+    snapshots.auto(store, "章のまとめ更新の前", 60)
+    try:
+        return store.save_group_digest(
+            group_id, [e.model_dump(exclude={"source"}) for e in body.events]
+        )
+    except KeyError:
+        raise HTTPException(404, "group not found")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.delete("/groups/{group_id}/digest")
+async def delete_group_digest(group_id: str) -> dict[str, Any]:
+    """まとめを削除する(章は残る。下流は生の状態に戻る)。"""
+    snapshots.auto(store, "章のまとめ更新の前", 60)
+    try:
+        return store.delete_group_digest(group_id)
+    except KeyError:
+        raise HTTPException(404, "group not found")
 
 
 @app.delete("/groups/{group_id}/nodes/{node_id}")

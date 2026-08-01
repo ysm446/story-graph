@@ -135,6 +135,16 @@ export const api = {
   // シーンを章から外す(端のシーンのみ)
   removeNodeFromGroup: (groupId: string, nodeId: string) =>
     request<{ groups: Group[] }>(`/groups/${groupId}/nodes/${nodeId}`, { method: 'DELETE' }),
+  // 章じまいのまとめ(digest)。無ければ digest_events は null
+  getGroupDigest: (groupId: string) =>
+    request<{ digest_events: EventInput[] | null; digest_stale: number }>(`/groups/${groupId}/digest`),
+  // LLM でまとめを生成してそのまま保存する(あとから編集できる)
+  generateGroupDigest: (groupId: string) =>
+    request<Group>(`/groups/${groupId}/digest/generate`, { method: 'POST' }),
+  putGroupDigest: (groupId: string, events: EventInput[]) =>
+    request<Group>(`/groups/${groupId}/digest`, { method: 'PUT', body: JSON.stringify({ events }) }),
+  deleteGroupDigest: (groupId: string) =>
+    request<Group>(`/groups/${groupId}/digest`, { method: 'DELETE' }),
 
   getSettings: () => request<Record<string, string>>('/settings'),
   putSettings: (values: Record<string, string>) =>

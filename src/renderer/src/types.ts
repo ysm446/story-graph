@@ -36,6 +36,8 @@ export interface StoryEvent {
 }
 
 export interface EventInput {
+  /** 既存イベントの編集時は id を引き継ぐ(参照(replaces / reasons)を壊さない)。新規は省略 */
+  id?: string
   type: string
   payload: Record<string, unknown>
   source?: 'llm' | 'user'
@@ -70,8 +72,10 @@ export interface Group {
   id: string
   title: string
   color: string | null
-  /** 章内が編集されてまとめが古い(フェーズ C で使用) */
+  /** 章内が編集されてまとめが古い(要更新バッジ) */
   digest_stale: number
+  /** 章じまいのまとめ(digest)が保存されているか */
+  has_digest: boolean
   /** メンバーのシーン ID(正史順) */
   node_ids: string[]
 }
