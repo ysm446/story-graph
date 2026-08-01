@@ -380,7 +380,12 @@ class Store:
         ending = self.active_ending()
         if ending is None:
             return
-        chain = self.path_to(ending)  # はじまり〜結末のマーカー込みチェーン
+        # 結末が浮いている間(付け替え中)は、はじまりから辿れる canon 連鎖を正史とする
+        chain = (
+            self.path_to(ending)  # はじまり〜結末のマーカー込みチェーン
+            if self._ending_is_rooted(ending)
+            else self._canon_chain_from_start()
+        )
         chain_set = set(chain)
         pairs = set(zip(chain, chain[1:]))
         for e in self.conn.execute("SELECT id, from_node, to_node, is_canon FROM edges").fetchall():
@@ -401,28 +406,52 @@ class Store:
             return
         if self.path_to(ending)[0] == start["id"]:
             return
+        # アクティブな結末が「はじまり」から辿れない(切り離した等): 他に本編側の
+        # 結末があればそれへ。無ければ何もしない — 勝手に結末を作らず、付け直すまで
+        # 直前の正史(is_canon フラグ)をそのまま使う(canon_path のフォールバック)
         for r in self.conn.execute("SELECT id FROM nodes WHERE kind = 'ending' ORDER BY created_at"):
             if self.path_to(r["id"])[0] == start["id"]:
                 self.set_settings({"active_ending": r["id"]})
                 return
-        # はじまりの木に結末が無くなった: canon 連鎖の末端に作って正史を守る
-        current = start["id"]
+
+    def _ending_is_rooted(self, ending_id: str) -> bool:
+        """結末が「はじまり」から辿れるか(切り離されて浮いていないか)。"""
+        start = self.conn.execute("SELECT id FROM nodes WHERE kind = 'start'").fetchone()
+        if start is None:
+            return True  # はじまりが無いライブラリでは判定しない
+        return self.path_to(ending_id)[0] == start["id"]
+
+    def _canon_chain_from_start(self) -> list[str]:
+        """「はじまり」から canon エッジを辿れるところまでの列(マーカー込み)。
+
+        アクティブな結末が浮いている間(切り離して付け替えている最中)の
+        正史はこれ。結末を付け直せば結末からの逆引きに戻る。
+        """
+        start = self.conn.execute("SELECT id FROM nodes WHERE kind = 'start'").fetchone()
+        if start is None:
+            return self._legacy_canon_path()  # 移行前のライブラリ
+        chain = [start["id"]]
+        seen = {start["id"]}
         while True:
             row = self.conn.execute(
-                "SELECT to_node FROM edges WHERE from_node = ? AND is_canon = 1", (current,)
+                "SELECT to_node FROM edges WHERE from_node = ? AND is_canon = 1", (chain[-1],)
             ).fetchone()
-            if row is None:
-                break
-            current = row["to_node"]
-        self.set_settings({"active_ending": self._insert_ending(current, "結末")})
+            if row is None or row["to_node"] in seen:
+                return chain
+            chain.append(row["to_node"])
+            seen.add(row["to_node"])
 
     def canon_path(self) -> list[str]:
-        """正史パスのシーン ID 列(アクティブな結末から根へさかのぼる。マーカーは除く)。"""
+        """正史パスのシーン ID 列(アクティブな結末から根へさかのぼる。マーカーは除く)。
+
+        結末を切り離して付け替えている最中(浮いている)は、直前の正史
+        (is_canon フラグ)をそのまま使う。付け直せば結末からの導出に戻る。
+        """
         ending = self.active_ending()
-        if ending is None:
-            # 移行前(結末なし)の互換: 旧方式で辿る
-            return [nid for nid in self._legacy_canon_path() if self._node_kind(nid) is None]
         kinds = {r["id"]: r["kind"] for r in self.conn.execute("SELECT id, kind FROM nodes")}
+        if ending is None or not self._ending_is_rooted(ending):
+            # 移行前(結末なし)/ 結末が浮いている間: はじまりからの canon 連鎖
+            return [nid for nid in self._canon_chain_from_start() if kinds.get(nid) is None]
         return [nid for nid in self.path_to(ending) if kinds.get(nid) is None]
 
     def _legacy_canon_path(self) -> list[str]:
@@ -687,8 +716,8 @@ class Store:
         """
         if self.get_node(node_id) is None:
             raise KeyError(f"node not found: {node_id}")
-        if self._node_kind(node_id) is not None:
-            raise ValueError("「はじまり」や結末は切り離せません")
+        if self._node_kind(node_id) == "start":
+            raise ValueError("「はじまり」は切り離せません")
         cur = self.conn.execute("DELETE FROM edges WHERE to_node = ?", (node_id,))
         if cur.rowcount == 0:
             return False  # 既に根
@@ -715,8 +744,8 @@ class Store:
             raise ValueError("自分自身には繋げません")
         if self._node_kind(parent_id) == "ending":
             raise ValueError("結末の先にはつなげません")
-        if self._node_kind(child_id) is not None:
-            raise ValueError("「はじまり」や結末はつなぎ替えの対象になりません")
+        if self._node_kind(child_id) == "start":
+            raise ValueError("「はじまり」はつなぎ替えの対象になりません")
         if self.parent_of(child_id) is not None:
             raise ValueError("繋ぎ先のシーンには既に親がいます(先に切り離してください)")
         if parent_id in self.subtree_order(child_id):
@@ -792,9 +821,23 @@ class Store:
         )
         return ending_id
 
-    def create_ending(self, parent_id: str, title: str | None = None,
+    def create_ending(self, parent_id: str | None, title: str | None = None,
                       activate: bool = True) -> dict[str, Any]:
-        """シーンの先に新しい結末を作る(複数エンディングの入口)。"""
+        """新しい結末を作る(複数エンディングの入口)。
+
+        parent_id=None なら、どこにも繋がない浮いた結末を作る(あとでシーンから
+        ドラッグしてつなぐ)。浮いた結末は正史の導出に関わらないのでアクティブにしない。
+        """
+        if parent_id is None:
+            now = _now()
+            ending_id = _new_id()
+            self.conn.execute(
+                "INSERT INTO nodes(id, title, beat, cast, status, kind, created_at, updated_at)"
+                " VALUES(?,?,?,?,?,?,?,?)",
+                (ending_id, (title or "").strip() or "結末", "", "[]", "draft", "ending", now, now),
+            )
+            self.conn.commit()
+            return self.get_node(ending_id)  # type: ignore[return-value]
         if self.get_node(parent_id) is None:
             raise KeyError(f"node not found: {parent_id}")
         if self._node_kind(parent_id) is not None:

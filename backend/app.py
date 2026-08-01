@@ -370,6 +370,12 @@ async def create_ending(node_id: str, body: EndingIn) -> dict[str, Any]:
         raise HTTPException(400, str(e))
 
 
+@app.post("/endings")
+async def create_floating_ending(body: EndingIn) -> dict[str, Any]:
+    """どこにも繋がない結末を作る(あとでシーンからドラッグしてつなぐ)。"""
+    return store.create_ending(None, body.title, activate=False)
+
+
 class AttachIn(BaseModel):
     parent_id: str
     child_id: str

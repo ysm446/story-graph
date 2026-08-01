@@ -64,6 +64,9 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ title: title ?? null })
     }),
+  // どこにも繋がない結末(あとでシーンからドラッグしてつなぐ)
+  createFloatingEnding: (title?: string) =>
+    request<StoryNode>('/endings', { method: 'POST', body: JSON.stringify({ title: title ?? null }) }),
   // 親エッジを切って、このシーン以下を独立した島にする
   detachNode: (nodeId: string) =>
     request<{ detached: boolean; canon_path: string[] }>(`/nodes/${nodeId}/detach`, {

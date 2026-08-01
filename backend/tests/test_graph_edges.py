@@ -70,11 +70,37 @@ def test_attach_rejects_multi_parent_and_cycle(store):
 
 
 def test_attach_as_draft_keeps_canon(store):
+    """draft で繋いだ枝は正史にならない(本編側にアクティブな結末がある場合)。"""
     path = store.canon_path()
+    store.create_ending(path[0], "本編の結末")  # 本編側の結末をアクティブに
+    assert store.canon_path() == [path[0]]
     store.detach_node(path[1])
     store.attach_node(path[0], path[1], as_canon=False)
     assert store.canon_path() == [path[0]]  # 正史は伸びない
     assert store.get_node(path[1])["status"] == "draft"
+
+
+def test_reattaching_active_ending_restores_canon(store):
+    """アクティブな結末ごと切り離して繋ぎ直すと、その道が正史に戻る
+    (正史はアクティブな結末までの道、という定義どおり)。"""
+    path = store.canon_path()
+    store.detach_node(path[1])  # 結末は末尾に付いたまま島へ
+    assert store.canon_path() == [path[0]]  # 浮いている間は繋がっている分だけ
+    store.attach_node(path[0], path[1])
+    assert store.canon_path() == path
+
+
+def test_ending_edge_can_be_cut_and_reconnected(store):
+    """結末のエッジも切ったり繋いだりできる(付け替えで正史の終点を動かす)。"""
+    path = store.canon_path()
+    ending = store.active_ending()
+    assert store.parent_of(ending) == path[2]
+    assert store.detach_node(ending) is True  # 結末だけ浮かせる
+    assert store.parent_of(ending) is None
+    assert store.canon_path() == path  # 付け替え中は繋がっている分をそのまま使う
+    store.attach_node(path[1], ending)  # 第二話の先へ付け替え
+    assert store.canon_path() == path[:2]  # 正史の終点が動く
+    assert store.get_node(path[2])["status"] == "draft"
 
 
 def test_subtree_order_is_parent_first(store):

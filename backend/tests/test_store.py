@@ -206,6 +206,22 @@ def test_marker_guards(store):
     assert store.delete_node(alt["id"]) is True  # 複数あれば余分は消せる
 
 
+def test_floating_ending_create_and_connect(store):
+    """何もないところに結末を置いて、あとからシーンにつなぐ流れ(パネル右クリック)。"""
+    _setup_chars(store)
+    n1 = store.append_node({"beat": "b1", "cast": ["aya"]})
+    n2 = store.append_node({"beat": "b2", "cast": ["aya"]})
+    first = store.active_ending()
+    floating = store.create_ending(None, "もう一つの結末")
+    assert store.parent_of(floating["id"]) is None
+    assert store.active_ending() == first  # 浮いた結末はアクティブにしない
+    assert store.canon_path() == [n1["id"], n2["id"]]  # 正史は変わらない
+    store.attach_node(n1["id"], floating["id"])  # あとからつなぐ
+    store.make_canon(floating["id"])
+    assert store.active_ending() == floating["id"]
+    assert store.canon_path() == [n1["id"]]
+
+
 def test_deleting_active_ending_switches_to_another(store):
     _setup_chars(store)
     n1 = store.append_node({"beat": "b1", "cast": ["aya"]})

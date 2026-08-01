@@ -1878,6 +1878,8 @@ function StructureModeInner({
     ending?: boolean
     /** 章カードの右クリック(値は group id) */
     chapter?: string
+    /** 何もないところの右クリック(値はキャンバス座標) */
+    pane?: { x: number; y: number }
   } | null>(null)
   // 清書の条件(スタイルプリセット / POV)。清書タブと右クリックの一括清書で共用し、
   // 鑑賞モードとも settings 経由で共通(RenderStyle.tsx)
@@ -2296,7 +2298,11 @@ function StructureModeInner({
       }
       const child = graphNodes.find((n) => n.id === edge.to_node)
       const label = child?.title || '(無題)'
-      if (!window.confirm(`「${label}」から先を切り離しますか?(シーンは残り、独立した島になります)`)) return
+      const message =
+        child?.kind === 'ending'
+          ? `結末「${label}」を切り離しますか?(あとで別のシーンにつなげます)`
+          : `「${label}」から先を切り離しますか?(シーンは残り、独立した島になります)`
+      if (!window.confirm(message)) return
       try {
         await api.detachNode(edge.to_node)
         setSelectedEdgeId(null)
@@ -2980,6 +2986,20 @@ function StructureModeInner({
     }
   }
 
+  // 何もないところに浮いた結末を置く(あとでシーンからドラッグしてつなぐ)
+  const createFloatingEndingAt = async (at: { x: number; y: number }): Promise<void> => {
+    try {
+      const node = await api.createFloatingEnding()
+      // 結末カードは w-40(160px)なので、その半分ぶん左上へずらして置く
+      await api.setNodePosition(node.id, Math.round(at.x - 80), Math.round(at.y - 40))
+      await reload()
+      setSelectedId(node.id)
+      setGenStatus('結末を置きました。シーンの右のハンドルからドラッグしてつなげます')
+    } catch (e) {
+      setGenStatus(`結末を作れません: ${String(e)}`)
+    }
+  }
+
   const renameEnding = (endingId: string): void => {
     const node = graphNodes.find((n) => n.id === endingId)
     setNamePrompt({
@@ -3129,8 +3149,9 @@ function StructureModeInner({
   }
 
   // どこにも繋がない独立シーン。自動レイアウトの対象外にしたいので、
-  // 画面の中央に手動配置として置く(島を作り置きするための入り口)
-  const handleAddDetached = async (): Promise<void> => {
+  // 手動配置として置く(島を作り置きするための入り口)。
+  // at を渡すとその位置(キャンバス座標)、省略時は画面の中央
+  const handleAddDetached = async (at?: { x: number; y: number }): Promise<void> => {
     try {
       const node = await api.createNode({
         beat: '(ここに出来事の仕様を書く)',
@@ -3138,12 +3159,16 @@ function StructureModeInner({
         detached: true
       })
       const rect = canvasRef.current?.getBoundingClientRect()
-      if (rect) {
-        const center = reactFlow.screenToFlowPosition({
-          x: rect.left + rect.width / 2,
-          y: rect.top + rect.height / 2
-        })
-        // カード幅 288 / 高さの目安 160 の分だけ左上にずらして中央に見せる
+      const center =
+        at ??
+        (rect
+          ? reactFlow.screenToFlowPosition({
+              x: rect.left + rect.width / 2,
+              y: rect.top + rect.height / 2
+            })
+          : null)
+      if (center) {
+        // カード幅 288 / 高さの目安 160 の分だけ左上にずらして置く
         await api.setNodePosition(node.id, Math.round(center.x - 144), Math.round(center.y - 80))
       }
       await reload()
@@ -3311,7 +3336,9 @@ function StructureModeInner({
             }}
             onPaneContextMenu={(event) => {
               event.preventDefault()
-              setMenu(null)
+              // 何もないところの右クリック: 追加系のメニュー(置く場所はこの位置)
+              const flow = reactFlow.screenToFlowPosition({ x: event.clientX, y: event.clientY })
+              setMenu({ x: event.clientX, y: event.clientY, targets: [], pane: flow })
             }}
             onNodeDragStart={(_, node) => {
               dragStartPosRef.current.set(node.id, { x: node.position.x, y: node.position.y })
@@ -3665,16 +3692,36 @@ function StructureModeInner({
               }}
             >
               <div className="px-3 py-1 text-[10px]" style={{ color: 'var(--text-faint)' }}>
-                {menu.chapter
-                  ? (groups.find((g) => g.id === menu.chapter)?.on_canon
-                      ? `第${groups.findIndex((g) => g.id === menu.chapter) + 1}章`
-                      : '別ルートの章')
-                  : menu.ending
-                    ? '結末'
-                    : `${menu.targets.length} シーンを選択中`}
+                {menu.pane
+                  ? 'ここに追加'
+                  : menu.chapter
+                    ? (groups.find((g) => g.id === menu.chapter)?.on_canon
+                        ? `第${groups.findIndex((g) => g.id === menu.chapter) + 1}章`
+                        : '別ルートの章')
+                    : menu.ending
+                      ? '結末'
+                      : `${menu.targets.length} シーンを選択中`}
               </div>
               {(
-                menu.chapter
+                menu.pane
+                  ? [
+                      {
+                        label: '＋ シーンを追加',
+                        hint: selectedNode ? '選択中のシーンの子として追加' : '正史の末尾(結末の手前)に追加',
+                        run: () => void handleAddBeat()
+                      },
+                      {
+                        label: '⊕ 独立シーン(島)をここに',
+                        hint: 'どこにも繋がらないシーン。あとでドラッグして繋げます',
+                        run: () => void handleAddDetached(menu.pane)
+                      },
+                      {
+                        label: '🏁 結末をここに置く',
+                        hint: 'シーンの右のハンドルからドラッグしてつなげます',
+                        run: () => void createFloatingEndingAt(menu.pane!)
+                      }
+                    ]
+                  : menu.chapter
                   ? ((): Array<{ label: string; hint: string; disabled?: boolean; run: () => void }> => {
                       const group = groups.find((g) => g.id === menu.chapter)
                       if (!group) return []
