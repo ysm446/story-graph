@@ -2851,14 +2851,15 @@ function StructureModeInner({
     if (effectiveView !== 'chapters') return null
     const { groupByNode, orderOf } = chapterSeq
     const nodes: AppFlowNode[] = [...chapterNodes]
-    // 未分類のシーン: 正史上のものは並び順の位置、分岐・島は自分の位置のまま
+    // 未分類のシーン: 正史上のものは並び順の位置(固定)、分岐・島・はじまり / 結末
+    // マーカーは自分の位置のままで、ドラッグで動かせる(位置は保存される)
     for (const fn of flowNodes) {
       if (groupByNode.has(fn.id)) continue
       const order = orderOf.get(fn.id)
       nodes.push({
         ...fn,
         position: order !== undefined ? { x: order * COLUMN_GAP_X, y: 0 } : fn.position,
-        draggable: false
+        draggable: order === undefined
       })
     }
     // エッジ: 端点を章カードへ写像し、章の内部エッジは落とす(重複もまとめる)
