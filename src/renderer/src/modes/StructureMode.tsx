@@ -2847,6 +2847,9 @@ function StructureModeInner({
   // カードが不可視のままになる(選択状態の保持も同じ理由)
   const [chapterNodes, setChapterNodes] = useState<ChapterFlowNode[]>([])
   const openChapter = useCallback((groupId: string): void => setChapterView(groupId), [])
+  // ドラッグ開始時の位置。島章カードの移動量は「開始位置との差」で計算する
+  // (保存座標基準だと、整列直後(座標が全消去された状態)に基準が無くて動かせない)
+  const dragStartPosRef = useRef(new Map<string, { x: number; y: number }>())
   useEffect(() => {
     setChapterNodes((prev) => {
       const prevById = new Map(prev.map((n) => [n.id, n]))
@@ -2863,10 +2866,12 @@ function StructureModeInner({
           position = { x: order * COLUMN_GAP_X, y: CHAPTER_ROW_Y }
         } else {
           const first = nodeById.get(g.node_ids[0])
+          // 保存座標が無い(整列直後など)ときは、画面上の実際の位置に追従する
+          const flowPos = flowNodesRef.current.find((n) => n.id === g.node_ids[0])?.position
           position =
             first && first.pos_x != null && first.pos_y != null
               ? { x: first.pos_x, y: first.pos_y }
-              : { x: islandIndex++ * COLUMN_GAP_X, y: 420 }
+              : (flowPos ?? { x: islandIndex++ * COLUMN_GAP_X, y: 420 })
         }
         return {
           id,
@@ -3304,19 +3309,22 @@ function StructureModeInner({
               event.preventDefault()
               setMenu(null)
             }}
+            onNodeDragStart={(_, node) => {
+              dragStartPosRef.current.set(node.id, { x: node.position.x, y: node.position.y })
+            }}
             onNodeDragStop={(_, __, draggedNodes) => {
               const chapterDrag = draggedNodes.find((n) => n.type === 'chapterNode')
               if (chapterDrag) {
                 const dragged = (chapterDrag.data as ChapterNodeData).group
                 if (!dragged.on_canon) {
                   // 別ルートの章カードのドラッグ = 章のシーン(と分岐)ごと位置を移動
-                  const first = graphNodes.find((n) => n.id === dragged.node_ids[0])
-                  if (!first || first.pos_x == null || first.pos_y == null) {
-                    void reload() // 基準位置が無い(自動配置のまま)なら諦めて戻す
+                  const origin = dragStartPosRef.current.get(chapterDrag.id)
+                  if (!origin) {
+                    void reload() // 開始位置が取れなかったら諦めて戻す
                     return
                   }
-                  const dx = chapterDrag.position.x - first.pos_x
-                  const dy = chapterDrag.position.y - first.pos_y
+                  const dx = chapterDrag.position.x - origin.x
+                  const dy = chapterDrag.position.y - origin.y
                   // 章内ビューと同じ集合(メンバー + そこから生える分岐)を一緒に動かす
                   const moveSet = new Set(dragged.node_ids)
                   const childrenMap: Record<string, string[]> = {}
