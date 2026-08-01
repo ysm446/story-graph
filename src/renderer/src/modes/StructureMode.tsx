@@ -2122,6 +2122,10 @@ function StructureModeInner({
           position: existing?.dragging ? existing.position : position,
           selected: existing?.selected ?? false,
           dragging: existing?.dragging,
+          // 実測サイズを引き継ぐ。落とすと再構築のたびに heightsSig が 0 に振れて
+          // リフローが走り、保存座標のないノードが仮の高さで並べ直されてしまう
+          // (整列直後に 1 ノード動かすと全体が巻き戻って見える不具合の原因)
+          measured: existing?.measured,
           data: {
             storyNode: n,
             characters: charMap,
