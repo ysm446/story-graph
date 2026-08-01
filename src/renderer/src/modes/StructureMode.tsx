@@ -125,6 +125,34 @@ function layoutDag(
 
 // ---- カスタムノード --------------------------------------------------
 
+/** カード上の挿絵(シーンカード / 章カードの表紙で共用)。挿絵が無ければ何も出さない。
+ *
+ *  グラフ上のカードは静止画で足りるので、動画の挿絵は保存済みのサムネイルを出す。
+ *  まだ無い場合だけ動画要素で先頭フレームを見せる(その裏で
+ *  videoThumb.backfillVideoThumbs が生成して、次回からは <img> になる)
+ */
+function NodeThumb({
+  node,
+  className,
+  style
+}: {
+  node: StoryNode
+  className?: string
+  style?: React.CSSProperties
+}): React.JSX.Element | null {
+  const src = assetUrl(node.image_path)
+  if (!src) return null
+  if (isVideoAsset(node.image_path)) {
+    const thumb = assetUrl(node.thumb_path)
+    return thumb ? (
+      <img src={thumb} className={className} style={style} />
+    ) : (
+      <video src={src} preload="metadata" muted playsInline className={className} style={style} />
+    )
+  }
+  return <img src={src} className={className} style={style} />
+}
+
 type BeatNodeData = {
   storyNode: StoryNode
   characters: Record<string, Character>
@@ -191,34 +219,11 @@ function BeatNodeCard({ data, selected }: NodeProps<BeatFlowNode>): React.JSX.El
     >
       {/* 当たり判定と見た目は index.css の .react-flow__handle で調整している */}
       <Handle type="target" position={Position.Left} />
-      {assetUrl(storyNode.image_path) &&
-        (isVideoAsset(storyNode.image_path) ? (
-          // グラフ上のカードは静止画で足りるので、保存済みのサムネイルを出す。
-          // まだ無い場合だけ動画要素で先頭フレームを見せる(その裏で
-          // videoThumb.backfillVideoThumbs が生成して、次回からは <img> になる)
-          assetUrl(storyNode.thumb_path) ? (
-            <img
-              src={assetUrl(storyNode.thumb_path)!}
-              className="mx-auto mb-2 max-h-40 max-w-full rounded-xl"
-              style={{ opacity: isDraft ? 0.8 : 1 }}
-            />
-          ) : (
-            <video
-              src={assetUrl(storyNode.image_path)!}
-              preload="metadata"
-              muted
-              playsInline
-              className="mx-auto mb-2 max-h-40 max-w-full rounded-xl"
-              style={{ opacity: isDraft ? 0.8 : 1 }}
-            />
-          )
-        ) : (
-          <img
-            src={assetUrl(storyNode.image_path)!}
-            className="mx-auto mb-2 max-h-40 max-w-full rounded-xl"
-            style={{ opacity: isDraft ? 0.8 : 1 }}
-          />
-        ))}
+      <NodeThumb
+        node={storyNode}
+        className="mx-auto mb-2 max-h-40 max-w-full rounded-xl"
+        style={{ opacity: isDraft ? 0.8 : 1 }}
+      />
       <div className="mb-1 flex items-center gap-2">
         <span className="min-w-0 flex-1 truncate text-[13px] font-semibold" style={{ color: 'var(--text)' }}>
           {storyNode.title || '(無題のシーン)'}
@@ -280,12 +285,30 @@ function BeatNodeCard({ data, selected }: NodeProps<BeatFlowNode>): React.JSX.El
 // 実体ノードではない。データモデルはシーンノード + エッジ + nodes.group_id の
 // ままで、章ビューは canon パスの「章に属す区間」を 1 枚のカードに圧縮して見せる。
 
-type ChapterNodeData = { group: Group; number: number; onOpen: (groupId: string) => void }
+type ChapterNodeData = {
+  group: Group
+  number: number
+  /** 表紙にするシーン(cover_node_id の指定 → 無ければ章内で最初に挿絵があるシーン) */
+  cover: StoryNode | null
+  onOpen: (groupId: string) => void
+}
 type ChapterFlowNode = Node<ChapterNodeData, 'chapterNode'>
 type AppFlowNode = BeatFlowNode | ChapterFlowNode
 
+/** 章の表紙にするシーンを決める。作者が指定していればそれを優先し、
+ *  指定が無い(または指定シーンの挿絵が外された)ときは章内で最初に挿絵があるシーン。 */
+function chapterCoverNode(group: Group, nodeById: Map<string, StoryNode>): StoryNode | null {
+  const picked = group.cover_node_id ? nodeById.get(group.cover_node_id) : undefined
+  if (picked?.image_path) return picked
+  for (const id of group.node_ids) {
+    const node = nodeById.get(id)
+    if (node?.image_path) return node
+  }
+  return null
+}
+
 function ChapterNodeCard({ data, selected }: NodeProps<ChapterFlowNode>): React.JSX.Element {
-  const { group, number, onOpen } = data
+  const { group, number, cover, onOpen } = data
   return (
     <div
       className={`w-64 rounded-3xl border-2 px-5 py-5 shadow-lg shadow-black/30 ${selected ? 'ring-4' : ''}`}
@@ -305,6 +328,8 @@ function ChapterNodeCard({ data, selected }: NodeProps<ChapterFlowNode>): React.
       }}
     >
       <Handle type="target" position={Position.Left} />
+      {/* 表紙。シーンカードと同じく、切り抜かずに元の比率のまま収める */}
+      {cover && <NodeThumb node={cover} className="mx-auto mb-3 max-h-40 max-w-full rounded-xl" />}
       <div className="text-[10px] uppercase tracking-[0.25em]" style={{ color: 'var(--text-faint)' }}>
         {group.on_canon ? `第${number}章` : '別ルートの章'}
       </div>
@@ -1352,7 +1377,8 @@ function ChapterTab({
   onSelectScene,
   onChanged,
   onRename,
-  onDissolve
+  onDissolve,
+  onSetCover
 }: {
   group: Group
   number: number
@@ -1362,6 +1388,8 @@ function ChapterTab({
   onChanged: () => void
   onRename: () => void
   onDissolve: () => void
+  /** 章カードの表紙にするシーン(null = 自動に戻す) */
+  onSetCover: (nodeId: string | null) => void
 }): React.JSX.Element {
   const [digest, setDigest] = useState<EventInput[]>([])
   const [hasDigest, setHasDigest] = useState(false)
@@ -1375,6 +1403,9 @@ function ChapterTab({
 
   const nameOf = (charId: string): string => characters.find((c) => c.id === charId)?.name ?? charId
   const nodeTitle = (id: string): string => nodes.find((n) => n.id === id)?.title || '(無題)'
+  // 章カードの表紙。指定が無ければ章内で最初に挿絵があるシーン(章カードと同じ導出)
+  const nodeById = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes])
+  const cover = chapterCoverNode(group, nodeById)
 
   const refetch = useCallback(async (): Promise<void> => {
     setLoading(true)
@@ -1474,20 +1505,64 @@ function ChapterTab({
           ⚠ {group.warning}
         </p>
       )}
+      {/* 表紙(章カードのサムネイル)。挿絵はシーンのもので、章はどれを使うかだけを持つ */}
+      {cover && (
+        <div>
+          <div className="mb-1 flex items-center gap-2">
+            <span className="text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
+              表紙
+            </span>
+            <span className="min-w-0 flex-1 truncate text-[11px]" style={{ color: 'var(--text-faint)' }}>
+              {group.cover_node_id ? nodeTitle(cover.id) : `自動(${nodeTitle(cover.id)})`}
+            </span>
+            {group.cover_node_id && (
+              <button
+                onClick={() => onSetCover(null)}
+                title="表紙の指定を外して、章内で最初に挿絵があるシーンに戻す"
+                className="shrink-0 rounded px-1 text-[11px] hover:bg-[var(--accent-soft)]"
+                style={{ color: 'var(--text-faint)' }}
+              >
+                自動に戻す
+              </button>
+            )}
+          </div>
+          <NodeThumb node={cover} className="mx-auto max-h-40 max-w-full rounded-xl" />
+        </div>
+      )}
       <div>
         <span className="mb-1 block text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
           シーン({group.node_ids.length})
         </span>
         <div className="flex flex-col">
           {group.node_ids.map((id, i) => (
-            <button
-              key={id}
-              onClick={() => onSelectScene(id)}
-              className="rounded-md px-2 py-1 text-left text-[12px] hover:bg-[var(--accent-soft)]"
-              style={{ color: 'var(--text-dim)' }}
-            >
-              {i + 1}. {nodeTitle(id)}
-            </button>
+            <div key={id} className="group/scene flex items-center rounded-md hover:bg-[var(--accent-soft)]">
+              <button
+                onClick={() => onSelectScene(id)}
+                className="min-w-0 flex-1 truncate px-2 py-1 text-left text-[12px]"
+                style={{ color: 'var(--text-dim)' }}
+              >
+                {i + 1}. {nodeTitle(id)}
+              </button>
+              {/* 挿絵のあるシーンだけ、表紙にできる */}
+              {nodeById.get(id)?.image_path && (
+                <button
+                  onClick={() => onSetCover(group.cover_node_id === id ? null : id)}
+                  title={
+                    group.cover_node_id === id
+                      ? '表紙の指定を外す(自動に戻す)'
+                      : 'このシーンの挿絵を章の表紙にする'
+                  }
+                  className={`shrink-0 rounded px-1.5 py-1 text-[11px] ${
+                    group.cover_node_id === id ? '' : 'opacity-0 group-hover/scene:opacity-100'
+                  }`}
+                  style={
+                    group.cover_node_id === id ? { background: 'var(--accent-soft)' } : undefined
+                  }
+                >
+                  🖼
+                </button>
+              )}
+            </div>
           ))}
         </div>
       </div>
@@ -2373,13 +2448,14 @@ function StructureModeInner({
     [groups]
   )
 
-  // 繋げるのは「島の根(親がいないノード)」だけ。循環と多重親を防ぐ
+  // 繋ぎ先に既に親がいる場合は「つなぎ替え」になる(A-B-C で A→C を繋ぐと B-C が切れる)。
+  // 多重親にはならず、循環だけを防ぐ
   const isValidConnection = useCallback(
     (connection: { source?: string | null; target?: string | null }): boolean => {
       const source = resolveEndpoint(connection.source, 'source')
       const target = resolveEndpoint(connection.target, 'target')
       if (!source || !target || source === target) return false
-      if (graphEdges.some((e) => e.to_node === target)) return false // 既に親がいる
+      if (graphEdges.some((e) => e.from_node === source && e.to_node === target)) return false // 既にある
       // 自分の下流には繋げない(循環)
       const descendants = new Set([target])
       let added = true
@@ -2402,8 +2478,12 @@ function StructureModeInner({
       const source = resolveEndpoint(connection.source, 'source')
       const target = resolveEndpoint(connection.target, 'target')
       if (!source || !target || !isValidConnection(connection)) return
+      // 繋ぎ先に既にいる親は切れる(つなぎ替え)。何を切ったかは黙らずに知らせる
+      const oldParent = graphEdges.find((e) => e.to_node === target)?.from_node ?? null
+      const titleOf = (id: string): string =>
+        graphNodes.find((n) => n.id === id)?.title || '(無題)'
       try {
-        await api.connectNodes(source, target)
+        await api.connectNodes(source, target, false, true)
       } catch (e) {
         setGenStatus(`繋げません: ${String(e)}`)
         return
@@ -2414,7 +2494,9 @@ function StructureModeInner({
         const normalized = await api.normalizeChain(target)
         await reload()
         const parts = [
-          '繋ぎました(下書きとして接続)',
+          oldParent
+            ? `繋ぎ替えました(${titleOf(oldParent)} → ${titleOf(target)} を外しました)`
+            : '繋ぎました(下書きとして接続)',
           normalized.removed > 0 ? `重複した登場イベントを ${normalized.removed} 件整理` : '整理は不要でした'
         ]
         if (normalized.warnings.length > 0) {
@@ -2824,7 +2906,12 @@ function StructureModeInner({
           dragging: existing?.dragging,
           selected: existing?.selected ?? false,
           measured: existing?.measured,
-          data: { group: g, number: gi + 1, onOpen: openChapter }
+          data: {
+            group: g,
+            number: gi + 1,
+            cover: chapterCoverNode(g, nodeById),
+            onOpen: openChapter
+          }
         }
       })
     })
@@ -3191,6 +3278,17 @@ function StructureModeInner({
         })()
       }
     })
+  }
+
+  /** 章カードの表紙にするシーンを指定する(nodeId = null で自動導出に戻す)。
+   *  挿絵そのものはシーンのもので、章は「どれを表紙にするか」だけを持つ */
+  const setChapterCover = async (groupId: string, nodeId: string | null): Promise<void> => {
+    try {
+      await api.updateGroup(groupId, { cover_node_id: nodeId })
+      await reload()
+    } catch (e) {
+      setGenStatus(`表紙を変更できません: ${String(e)}`)
+    }
   }
 
   /** 章を並べ替える。swapWith(入れ替える相手の章)を渡すと**カードの位置も入れ替える**。
@@ -3899,6 +3997,29 @@ function StructureModeInner({
                         }
                       ]
                     : []),
+                  // 章の表紙: 挿絵のある章内のシーンを右クリックしたときだけ出す
+                  ...((): Array<{ label: string; hint: string; run: () => void }> => {
+                    if (menu.targets.length !== 1) return []
+                    const node = graphNodes.find((n) => n.id === menu.targets[0])
+                    if (!node?.group_id || !node.image_path) return []
+                    const group = groups.find((g) => g.id === node.group_id)
+                    if (!group) return []
+                    return group.cover_node_id === node.id
+                      ? [
+                          {
+                            label: '🖼 表紙をやめる',
+                            hint: '章の表紙を自動(先頭の挿絵)に戻す',
+                            run: () => void setChapterCover(group.id, null)
+                          }
+                        ]
+                      : [
+                          {
+                            label: '🖼 この挿絵を章の表紙にする',
+                            hint: `「${group.title}」の章カードのサムネイルにする`,
+                            run: () => void setChapterCover(group.id, node.id)
+                          }
+                        ]
+                  })(),
                   ...(menu.targets.length === 1 && graphNodes.find((n) => n.id === menu.targets[0])?.group_id
                     ? [
                         {
@@ -4132,6 +4253,7 @@ function StructureModeInner({
                 onChanged={() => void reload()}
                 onRename={() => void renameChapter(chapterForPanel)}
                 onDissolve={() => void dissolveChapter(chapterForPanel)}
+                onSetCover={(nodeId) => void setChapterCover(chapterForPanel.id, nodeId)}
               />
             ) : selectedNode?.kind ? (
               // はじまり / 結末マーカーの簡易パネル

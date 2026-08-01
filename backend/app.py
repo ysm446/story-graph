@@ -380,6 +380,8 @@ class AttachIn(BaseModel):
     parent_id: str
     child_id: str
     canon: bool = False  # 既定は draft で繋ぐ(正史にするのは make_canon)
+    # True で「つなぎ替え」: 繋ぎ先に既に親がいれば、その親エッジを切ってから繋ぐ
+    replace_parent: bool = False
 
 
 @app.post("/nodes/{node_id}/detach")
@@ -406,10 +408,10 @@ async def normalize_chain(node_id: str) -> dict[str, Any]:
 
 @app.post("/edges")
 async def create_edge(body: AttachIn) -> dict[str, Any]:
-    """島の根を他のシーンの子として繋ぐ。"""
+    """シーンを他のシーンの子として繋ぐ(replace_parent=True で既存の親から繋ぎ替え)。"""
     snapshots.auto(store, "つなぎ替えの前", 60)
     try:
-        store.attach_node(body.parent_id, body.child_id, body.canon)
+        store.attach_node(body.parent_id, body.child_id, body.canon, body.replace_parent)
     except KeyError:
         raise HTTPException(404, "node not found")
     except ValueError as e:
@@ -428,6 +430,8 @@ class GroupCreateIn(BaseModel):
 class GroupPatch(BaseModel):
     title: str | None = None
     color: str | None = None
+    # 章カードの表紙にするシーン(null = 自動。章内で最初に挿絵があるシーンを使う)
+    cover_node_id: str | None = None
 
 
 @app.get("/groups")
@@ -446,7 +450,10 @@ async def create_group(body: GroupCreateIn) -> dict[str, Any]:
 
 @app.patch("/groups/{group_id}")
 async def update_group(group_id: str, body: GroupPatch) -> dict[str, Any]:
-    group = store.update_group(group_id, body.model_dump(exclude_unset=True))
+    try:
+        group = store.update_group(group_id, body.model_dump(exclude_unset=True))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     if group is None:
         raise HTTPException(404, "group not found")
     return group

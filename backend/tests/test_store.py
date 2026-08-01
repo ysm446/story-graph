@@ -301,6 +301,23 @@ def test_group_dissolve_and_remove_edge_only(store):
     assert store.get_node(n1["id"])["group_id"] is None  # シーンは残る
 
 
+def test_group_cover_node(store):
+    """章カードの表紙。章のシーンだけ指定でき、章から外れたら自動(None)に戻る。"""
+    n1, n2, n3 = _three_scenes(store)
+    g = store.create_group("第一章", [n1["id"], n2["id"]])
+    assert g["cover_node_id"] is None  # 既定は自動導出(表示側で先頭の挿絵を使う)
+    entry = store.update_group(g["id"], {"cover_node_id": n2["id"]})
+    assert entry["cover_node_id"] == n2["id"]
+    # 名前だけ変えても表紙は保たれる(exclude_unset で送られてこない)
+    assert store.update_group(g["id"], {"title": "序章"})["cover_node_id"] == n2["id"]
+    with pytest.raises(ValueError):
+        store.update_group(g["id"], {"cover_node_id": n3["id"]})  # 章の外のシーン
+    store.remove_node_from_group(n2["id"])  # 表紙のシーンが章から外れた
+    assert store.list_groups()[0]["cover_node_id"] is None
+    store.update_group(g["id"], {"cover_node_id": n1["id"]})
+    assert store.update_group(g["id"], {"cover_node_id": None})["cover_node_id"] is None
+
+
 def test_group_insert_inherits_when_inside(store):
     n1, n2, n3 = _three_scenes(store)
     g = store.create_group("第一章", [n1["id"], n2["id"]])

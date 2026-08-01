@@ -729,12 +729,21 @@ class Store:
         self.conn.commit()
         return True
 
-    def attach_node(self, parent_id: str, child_id: str, as_canon: bool = False) -> None:
-        """島の根 child_id を parent_id の子として繋ぐ。
+    def attach_node(
+        self, parent_id: str, child_id: str, as_canon: bool = False, replace_parent: bool = False
+    ) -> None:
+        """child_id を parent_id の子として繋ぐ。
 
         多重親と循環を作らないように、child_id は根であること、parent_id が
         child_id の子孫でないことを確認する。既定は draft(正史にするのは
         make_canon の役目)。
+
+        replace_parent=True のときは、child_id に既に親がいれば**その親エッジを
+        切ってから繋ぐ**(つなぎ替え。A-B-C で A→C を繋ぐと B-C が切れる)。
+        切って繋ぎ直す 2 手と違い、途中で島にならないので、C 以下にアクティブな
+        結末があってもそのまま保たれる(detach_node は根無しの結末を切り替える)。
+        既定を False にしているのは、UI 以外の呼び出し(将来の LLM 書き込みツール)が
+        既存のつながりを黙って壊さないようにするため。
         """
         if self.get_node(parent_id) is None:
             raise KeyError(f"node not found: {parent_id}")
@@ -746,10 +755,16 @@ class Store:
             raise ValueError("結末の先にはつなげません")
         if self._node_kind(child_id) == "start":
             raise ValueError("「はじまり」はつなぎ替えの対象になりません")
-        if self.parent_of(child_id) is not None:
+        old_parent = self.parent_of(child_id)
+        if old_parent is not None and not replace_parent:
             raise ValueError("繋ぎ先のシーンには既に親がいます(先に切り離してください)")
         if parent_id in self.subtree_order(child_id):
             raise ValueError("自分の下流には繋げません(循環になります)")
+        if old_parent == parent_id:
+            return  # 既に同じ親。切って繋ぎ直すと無意味に stale が広がる
+        if old_parent is not None:
+            # 循環の検査を通ってから切る(通らなければ既存のつながりは無傷で残す)
+            self.conn.execute("DELETE FROM edges WHERE to_node = ?", (child_id,))
         self.conn.execute(
             "INSERT INTO edges(id, from_node, to_node, is_canon) VALUES(?,?,?,0)",
             (_new_id(), parent_id, child_id),
@@ -1263,6 +1278,8 @@ class Store:
                     "on_canon": on_canon,
                     "pos_x": row["pos_x"],
                     "pos_y": row["pos_y"],
+                    # 表紙のシーンが章から外れた / 消えたときは自動(NULL)に戻して返す
+                    "cover_node_id": row["cover_node_id"] if row["cover_node_id"] in ordered else None,
                     "node_ids": ordered,
                     "_created": gi,
                 }
@@ -1316,9 +1333,19 @@ class Store:
         title = data.get("title", row["title"])
         if isinstance(title, str):
             title = title.strip() or row["title"]
+        # 表紙(章カードのサムネイル)にするシーン。None = 自動導出に戻す
+        cover = row["cover_node_id"]
+        if "cover_node_id" in data:
+            cover = data["cover_node_id"] or None
+            if cover is not None:
+                member = self.conn.execute(
+                    "SELECT group_id FROM nodes WHERE id = ?", (cover,)
+                ).fetchone()
+                if member is None or member["group_id"] != group_id:
+                    raise ValueError("表紙にできるのはこの章のシーンだけです")
         self.conn.execute(
-            "UPDATE groups SET title = ?, color = ? WHERE id = ?",
-            (title, data.get("color", row["color"]), group_id),
+            "UPDATE groups SET title = ?, color = ?, cover_node_id = ? WHERE id = ?",
+            (title, data.get("color", row["color"]), cover, group_id),
         )
         self.conn.commit()
         return next((g for g in self.list_groups() if g["id"] == group_id), None)

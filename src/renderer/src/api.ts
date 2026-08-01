@@ -80,11 +80,17 @@ export const api = {
       changed_nodes: string[]
       warnings: Array<{ node_id: string; title: string; errors: string[] }>
     }>(`/nodes/${nodeId}/normalize_chain`, { method: 'POST' }),
-  // 島の根を他のシーンの子として繋ぐ(既定は draft)
-  connectNodes: (parentId: string, childId: string, canon = false) =>
+  // シーンを他のシーンの子として繋ぐ(既定は draft)。
+  // replaceParent = 繋ぎ先に既に親がいたら、その親エッジを切ってから繋ぐ(つなぎ替え)
+  connectNodes: (parentId: string, childId: string, canon = false, replaceParent = false) =>
     request<{ canon_path: string[] }>('/edges', {
       method: 'POST',
-      body: JSON.stringify({ parent_id: parentId, child_id: childId, canon })
+      body: JSON.stringify({
+        parent_id: parentId,
+        child_id: childId,
+        canon,
+        replace_parent: replaceParent
+      })
     }),
   createNode: (data: {
     title?: string
@@ -137,8 +143,11 @@ export const api = {
   listGroups: () => request<Group[]>('/groups'),
   createGroup: (title: string, nodeIds: string[]) =>
     request<Group>('/groups', { method: 'POST', body: JSON.stringify({ title, node_ids: nodeIds }) }),
-  updateGroup: (groupId: string, data: { title?: string; color?: string }) =>
-    request<Group>(`/groups/${groupId}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  updateGroup: (
+    groupId: string,
+    // cover_node_id: null を渡すと表紙の指定を外して自動導出に戻す
+    data: { title?: string; color?: string; cover_node_id?: string | null }
+  ) => request<Group>(`/groups/${groupId}`, { method: 'PATCH', body: JSON.stringify(data) }),
   // 章の解除(シーンは残る)
   deleteGroup: (groupId: string) => request<unknown>(`/groups/${groupId}`, { method: 'DELETE' }),
   // 章ビューでの章カードの配置(並べ替えではなく表示位置)

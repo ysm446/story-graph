@@ -85,6 +85,8 @@ export interface Group {
   /** 章ビューでの章カードの手動配置(null = 導出位置) */
   pos_x: number | null
   pos_y: number | null
+  /** 章カードの表紙にするシーン(null = 自動。章内で最初に挿絵があるシーンを使う) */
+  cover_node_id: string | null
   /** メンバーのシーン ID(鎖の順) */
   node_ids: string[]
 }

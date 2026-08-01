@@ -58,9 +58,29 @@ def test_attach_reconnects_island(store):
     assert store.get_node(path[2])["status"] == "canon"
 
 
+def test_attach_replaces_parent(store):
+    """A-B-C で A→C を繋ぐと B-C が切れる(つなぎ替え。B は子の無い枝として残る)。"""
+    a, b, c = store.canon_path()
+    ending = store.active_ending()
+    store.attach_node(a, c, replace_parent=True)
+    assert store.parent_of(c) == a
+    assert store.subtree_order(b) == [b]  # B は置き去りの枝(削除はしない)
+    # C 以下は島にならないので、C の先のアクティブな結末がそのまま保たれる
+    assert store.active_ending() == ending
+    assert store.canon_path() == [a, c]  # B を飛ばした道が正史になる
+    assert store.get_node(b)["status"] == "draft"
+    # 同じ親に繋ぎ直しても何も起きない(無意味な stale を広げない)
+    store.attach_node(a, c, replace_parent=True)
+    assert store.parent_of(c) == a
+    # 循環は繋ぎ替えでも防ぐ。弾いたときは既存のつながりを壊さない
+    with pytest.raises(ValueError):
+        store.attach_node(c, a, replace_parent=True)
+    assert store.parent_of(c) == a
+
+
 def test_attach_rejects_multi_parent_and_cycle(store):
     path = store.canon_path()
-    with pytest.raises(ValueError):  # 既に親がいる
+    with pytest.raises(ValueError):  # 既に親がいる(replace_parent を渡さない限り繋ぎ替えない)
         store.attach_node(path[0], path[2])
     store.detach_node(path[1])
     with pytest.raises(ValueError):  # 自分の下流には繋げない
