@@ -138,6 +138,9 @@ export const api = {
     request<Group>(`/groups/${groupId}`, { method: 'PATCH', body: JSON.stringify(data) }),
   // 章の解散(シーンは残る)
   deleteGroup: (groupId: string) => request<unknown>(`/groups/${groupId}`, { method: 'DELETE' }),
+  // 章の並べ替え: 別の章の後ろへつなぎ替える(after=null は先頭へ)
+  moveGroup: (groupId: string, after: string | null) =>
+    request<Group[]>(`/groups/${groupId}/move`, { method: 'POST', body: JSON.stringify({ after }) }),
   // シーンを章から外す(端のシーンのみ)
   removeNodeFromGroup: (groupId: string, nodeId: string) =>
     request<{ groups: Group[] }>(`/groups/${groupId}/nodes/${nodeId}`, { method: 'DELETE' }),

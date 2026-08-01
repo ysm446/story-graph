@@ -365,6 +365,45 @@ def test_digest_delete_restores_raw_state(store):
     assert store.get_group(g["id"])["digest_events"] is None
 
 
+def test_move_group_reorders_chapters(store):
+    """章の並べ替え: つなぎ替えがアトミックに行われ、章ラベルと分岐が保たれる。"""
+    _setup_chars(store)
+    scenes = [store.append_node({"beat": f"b{i}", "cast": ["aya"], "title": f"s{i}"}) for i in range(4)]
+    ids = [n["id"] for n in scenes]
+    g1 = store.create_group("第一章", ids[0:2])
+    g2 = store.create_group("第二章", ids[2:4])
+    branch = store.append_node({"beat": "分岐", "cast": ["aya"]}, parent_id=ids[1])
+    # 第一章を第二章の後ろへ
+    store.move_group(g1["id"], g2["id"])
+    assert store.canon_path() == [ids[2], ids[3], ids[0], ids[1]]
+    groups = store.list_groups()
+    assert [g["title"] for g in groups] == ["第二章", "第一章"]
+    assert groups[1]["node_ids"] == ids[0:2]  # 章ラベルは保たれる
+    assert store.parent_of(branch["id"]) == ids[1]  # 分岐は章と一緒に移動
+    ending = store.active_ending()
+    assert store.parent_of(ending) == ids[1]  # 結末は新しい末尾に付く
+    # 先頭(はじまりの直後)へ戻す
+    store.move_group(g1["id"], None)
+    assert store.canon_path() == [ids[0], ids[1], ids[2], ids[3]]
+
+
+def test_move_group_marks_digests_stale(store):
+    _setup_chars(store)
+    scenes = [store.append_node({"beat": f"b{i}", "cast": ["aya"], "title": f"s{i}"}) for i in range(4)]
+    ids = [n["id"] for n in scenes]
+    g1 = store.create_group("第一章", ids[0:2])
+    g2 = store.create_group("第二章", ids[2:4])
+    store.save_group_digest(g1["id"], [
+        {"type": "memory_compress", "payload": {"char": "aya", "replaces": [], "summary": "一章まとめ", "importance": 0.5}},
+    ])
+    store.save_group_digest(g2["id"], [
+        {"type": "memory_compress", "payload": {"char": "aya", "replaces": [], "summary": "二章まとめ", "importance": 0.5}},
+    ])
+    store.move_group(g2["id"], None)  # 第二章を先頭へ
+    # 前提(上流の文脈)が変わるので両方の章に要更新が立つ
+    assert all(g["digest_stale"] == 1 for g in store.list_groups())
+
+
 def test_group_pruned_when_detached(store):
     n1, n2, n3 = _three_scenes(store)
     store.create_group("第一章", [n1["id"], n2["id"], n3["id"]])

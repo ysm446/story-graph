@@ -1277,6 +1277,69 @@ class Store:
         self.conn.execute("UPDATE nodes SET group_id = NULL WHERE id = ?", (node_id,))
         self.conn.commit()
 
+    def move_group(self, group_id: str, after_group_id: str | None) -> list[dict[str, Any]]:
+        """章(正史上の連続区間)を別の章の後ろへつなぎ替える(docs/design/chapters.md §8)。
+
+        after_group_id=None は先頭(「はじまり」の直後)へ。章のシーンから生える
+        分岐は一緒に移動する。並べ替えで前提(上流の文脈)が変わる章のまとめには
+        「要更新」を立て、下流の状態・清書は stale にする。
+        """
+        groups = self.list_groups()
+        me = next((g for g in groups if g["id"] == group_id), None)
+        if me is None:
+            raise KeyError(f"group not found: {group_id}")
+        if after_group_id == group_id:
+            raise ValueError("自分自身の後ろへは動かせません")
+        if after_group_id is None:
+            start = self.conn.execute("SELECT id FROM nodes WHERE kind = 'start'").fetchone()
+            if start is None:
+                raise ValueError("「はじまり」が見つかりません")
+            anchor = start["id"]
+        else:
+            target = next((g for g in groups if g["id"] == after_group_id), None)
+            if target is None:
+                raise KeyError(f"group not found: {after_group_id}")
+            anchor = target["node_ids"][-1]
+        a_first, a_last = me["node_ids"][0], me["node_ids"][-1]
+        if self.parent_of(a_first) == anchor:
+            return groups  # 既にその位置
+        # スプライス: (p → A → c) と (anchor → d) を (p → c) と (anchor → A → d) に
+        e_in = self.conn.execute("SELECT id, from_node FROM edges WHERE to_node = ?", (a_first,)).fetchone()
+        e_out = self.conn.execute(
+            "SELECT id, to_node FROM edges WHERE from_node = ? AND is_canon = 1", (a_last,)
+        ).fetchone()
+        e_anchor = self.conn.execute(
+            "SELECT id, to_node FROM edges WHERE from_node = ? AND is_canon = 1", (anchor,)
+        ).fetchone()
+        if e_in is None or e_out is None or e_anchor is None:
+            raise ValueError("章のつなぎ替えに必要なエッジが見つかりません(正史が壊れている可能性)")
+        successor = e_out["to_node"]
+        self.conn.execute("UPDATE edges SET from_node = ? WHERE id = ?", (e_in["from_node"], e_out["id"]))
+        self.conn.execute(
+            "UPDATE edges SET from_node = ?, to_node = ?, is_canon = 1 WHERE id = ?",
+            (anchor, a_first, e_in["id"]),
+        )
+        self.conn.execute("UPDATE edges SET from_node = ? WHERE id = ?", (a_last, e_anchor["id"]))
+        # 前提(上流の文脈)が変わった位置から後ろの章のまとめに「要更新」を立てる
+        new_canon = self.canon_path()
+        order = {nid: i for i, nid in enumerate(new_canon)}
+        affected_from = order.get(a_first, 0)
+        if successor in order:
+            affected_from = min(affected_from, order[successor])
+        for g in self.list_groups():
+            if order.get(g["node_ids"][0], 0) >= affected_from:
+                self.conn.execute(
+                    "UPDATE groups SET digest_stale = 1 WHERE id = ? AND digest_events IS NOT NULL",
+                    (g["id"],),
+                )
+        self.mark_dirty_downstream(a_first, commit=False)
+        if self._node_kind(successor) is None:
+            self.mark_dirty_downstream(successor, commit=False)
+        self._resync_canon()
+        self._resync_memory_orders(commit=False)
+        self.conn.commit()
+        return self.list_groups()
+
     # ---- 章じまいのまとめ(digest。docs/design/chapters.md §3-4) -----
     #
     # digest は章末尾の「境界」で適用される memory_compress / fact_set のイベント列。

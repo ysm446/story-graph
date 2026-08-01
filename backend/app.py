@@ -453,6 +453,22 @@ async def delete_group(group_id: str) -> dict[str, str]:
     return {"status": "deleted"}
 
 
+class GroupMoveIn(BaseModel):
+    after: str | None = None  # None = 先頭(「はじまり」の直後)へ
+
+
+@app.post("/groups/{group_id}/move")
+async def move_group(group_id: str, body: GroupMoveIn) -> list[dict[str, Any]]:
+    """章を別の章の後ろへつなぎ替える(並べ替え)。"""
+    snapshots.auto(store, "章の並べ替えの前", 60)
+    try:
+        return store.move_group(group_id, body.after)
+    except KeyError:
+        raise HTTPException(404, "group not found")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
 class DigestIn(BaseModel):
     events: list[EventIn]
 

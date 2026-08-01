@@ -1851,7 +1851,14 @@ function StructureModeInner({
   // エッジ選択(Delete で切断)と、チェーン再抽出の進捗
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null)
   // 右クリックメニュー(範囲選択した複数ノードへの一括操作)
-  const [menu, setMenu] = useState<{ x: number; y: number; targets: string[]; ending?: boolean } | null>(null)
+  const [menu, setMenu] = useState<{
+    x: number
+    y: number
+    targets: string[]
+    ending?: boolean
+    /** 章カードの右クリック(値は group id) */
+    chapter?: string
+  } | null>(null)
   // 清書の条件(スタイルプリセット / POV)。清書タブと右クリックの一括清書で共用し、
   // 鑑賞モードとも settings 経由で共通(RenderStyle.tsx)
   const renderStyle = useRenderStyle()
@@ -2830,7 +2837,7 @@ function StructureModeInner({
           id,
           type: 'chapterNode' as const,
           position: { x: (chapterSeq.orderOf.get(id) ?? gi) * COLUMN_GAP_X, y: 0 },
-          draggable: false,
+          draggable: true, // ドラッグで並べ替え(onNodeDragStop で確定)
           selected: existing?.selected ?? false,
           measured: existing?.measured,
           data: { group: g, number: gi + 1, onOpen: openChapter }
@@ -3003,6 +3010,16 @@ function StructureModeInner({
         })()
       }
     })
+  }
+
+  const moveChapter = async (groupId: string, after: string | null): Promise<void> => {
+    try {
+      await api.moveGroup(groupId, after)
+    } catch (e) {
+      setGenStatus(`章を移動できません: ${String(e)}`)
+    } finally {
+      await reload() // 失敗時もカードの位置を導出位置へ戻す
+    }
   }
 
   const dissolveChapter = async (group: Group): Promise<void> => {
@@ -3218,7 +3235,15 @@ function StructureModeInner({
             // 右クリック: 選択中のノード群(右クリックしたノードを含む)に対する一括操作
             onNodeContextMenu={(event, node) => {
               event.preventDefault()
-              if (node.type === 'chapterNode') return // 章ノードの操作は章内ビュー側で
+              if (node.type === 'chapterNode') {
+                setMenu({
+                  x: event.clientX,
+                  y: event.clientY,
+                  targets: [],
+                  chapter: (node.data as ChapterNodeData).group.id
+                })
+                return
+              }
               const kind = (node.data as BeatNodeData).storyNode.kind
               if (kind === 'start') return // はじまりに操作は無い
               if (kind === 'ending') {
@@ -3246,6 +3271,23 @@ function StructureModeInner({
               setMenu(null)
             }}
             onNodeDragStop={(_, __, draggedNodes) => {
+              // 章カードのドラッグ = 並べ替え。落とした x 位置から「どの章の後ろか」を決める
+              const chapterDrag = draggedNodes.find((n) => n.type === 'chapterNode')
+              if (chapterDrag) {
+                const dragged = (chapterDrag.data as ChapterNodeData).group
+                const before = chapterNodes
+                  .filter((n) => n.id !== chapterDrag.id && n.position.x < chapterDrag.position.x)
+                  .sort((a, b) => a.position.x - b.position.x)
+                const after = before.length > 0 ? before[before.length - 1].data.group.id : null
+                const gi = groups.findIndex((g) => g.id === dragged.id)
+                const currentAfter = gi > 0 ? groups[gi - 1].id : null
+                if (after === currentAfter) {
+                  void reload() // 並びは変わらない。カードを導出位置へ戻すだけ
+                } else {
+                  void moveChapter(dragged.id, after)
+                }
+                return
+              }
               // busyNodeIds の変化などでノード配列が再構築されても座標が戻らないよう、
               // サーバー由来の graphNodes にも先に反映しておく(楽観更新)
               const moved = new Map(draggedNodes.map((n) => [n.id, n.position]))
@@ -3525,10 +3567,49 @@ function StructureModeInner({
               }}
             >
               <div className="px-3 py-1 text-[10px]" style={{ color: 'var(--text-faint)' }}>
-                {menu.ending ? '結末' : `${menu.targets.length} シーンを選択中`}
+                {menu.chapter
+                  ? `第${groups.findIndex((g) => g.id === menu.chapter) + 1}章`
+                  : menu.ending
+                    ? '結末'
+                    : `${menu.targets.length} シーンを選択中`}
               </div>
               {(
-                menu.ending
+                menu.chapter
+                  ? ((): Array<{ label: string; hint: string; disabled?: boolean; run: () => void }> => {
+                      const gi = groups.findIndex((g) => g.id === menu.chapter)
+                      const group = groups[gi]
+                      if (!group) return []
+                      return [
+                        {
+                          label: '章の中を開く',
+                          hint: 'ダブルクリックと同じ',
+                          run: () => setChapterView(group.id)
+                        },
+                        {
+                          label: '← 前へ移動',
+                          hint: '一つ前の章と入れ替える(ドラッグでも可)',
+                          disabled: gi <= 0,
+                          run: () => void moveChapter(group.id, gi <= 1 ? null : groups[gi - 2].id)
+                        },
+                        {
+                          label: '→ 後ろへ移動',
+                          hint: '一つ後ろの章と入れ替える(ドラッグでも可)',
+                          disabled: gi >= groups.length - 1,
+                          run: () => void moveChapter(group.id, groups[gi + 1]?.id ?? null)
+                        },
+                        {
+                          label: '名前を変更',
+                          hint: '章のタイトル',
+                          run: () => renameChapter(group)
+                        },
+                        {
+                          label: '解散',
+                          hint: '章をやめる(シーンは残る)',
+                          run: () => void dissolveChapter(group)
+                        }
+                      ]
+                    })()
+                  : menu.ending
                   ? [
                       {
                         label: '🏁 この結末にする',
