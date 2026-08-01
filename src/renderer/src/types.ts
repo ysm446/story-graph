@@ -78,9 +78,11 @@ export interface Group {
   digest_stale: number
   /** 章じまいのまとめ(digest)が保存されているか */
   has_digest: boolean
-  /** 章の前提が崩れているときの警告(正史外のシーンあり / 分断)。null = 正常 */
+  /** 章の前提が崩れているときの警告(鎖が途切れている)。null = 正常 */
   warning: string | null
-  /** メンバーのシーン ID(正史順) */
+  /** 正史ルート上の章か(false = 島・分岐の章。並べ替え・鑑賞の見出し対象外) */
+  on_canon: boolean
+  /** メンバーのシーン ID(鎖の順) */
   node_ids: string[]
 }
 

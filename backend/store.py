@@ -1182,11 +1182,11 @@ class Store:
     # 導出で、真実はシーンノード + エッジ + nodes.group_id のまま。
 
     def list_groups(self) -> list[dict[str, Any]]:
-        """章の一覧を正史パス順で返す。node_ids はメンバー(正史順)。
+        """章の一覧を返す(正史ルート上の章 → 島・分岐の章の順)。node_ids は鎖の順。
 
-        章ラベル(nodes.group_id)は切り離しや正史切替で**自動では消さない**
-        (2026-08-01 ユーザー要望。以前は _prune_groups が解除していた)。
-        正史から外れたメンバーが居る・正史上で分断されている章は warning を
+        章は「親子で一続きにつながったシーンの列」で、正史・分岐・島のどこにでも
+        作れる(2026-08-01 一般化。on_canon で区別)。章ラベル(nodes.group_id)は
+        切り離しや正史切替で**自動では消さない**。鎖が途切れている章は warning を
         付けて返し、UI がバッジで知らせる。つなぎ直せば章はそのまま復活する。
         """
         path = self.canon_path()
@@ -1195,19 +1195,18 @@ class Store:
         for row in self.conn.execute("SELECT id, group_id FROM nodes WHERE group_id IS NOT NULL"):
             members.setdefault(row["group_id"], []).append(row["id"])
         result = []
-        for row in self.conn.execute("SELECT * FROM groups"):
+        for gi, row in enumerate(self.conn.execute("SELECT * FROM groups ORDER BY created_at").fetchall()):
             all_ids = members.get(row["id"], [])
-            ids = sorted((n for n in all_ids if n in order), key=lambda n: order[n])
-            if not ids:
-                # 全メンバーが正史外(章ごと島など)は一覧に出せないが、ラベルは
-                # 残っているので、つなぎ直せば章は戻ってくる
-                continue
+            if not all_ids:
+                continue  # ラベルを持つノードが無い章は出さない(解除済み)
+            # 鎖(親子)の順に並べる。深さ = ルートからの距離
+            ordered = sorted(all_ids, key=lambda n: len(self.path_to(n)))
             warning: str | None = None
-            if len(ids) < len(all_ids):
-                warning = "正史から外れたシーンがあります(つなぎ直すと章に戻ります)"
-            idxs = [order[n] for n in ids]
-            if idxs != list(range(idxs[0], idxs[-1] + 1)):
-                warning = "章が正史上で分断されています(並べ替えはできません)"
+            for prev, cur in zip(ordered, ordered[1:]):
+                if self.parent_of(cur) != prev:
+                    warning = "章のシーンが一続きにつながっていません(つなぎ直すと直ります)"
+                    break
+            on_canon = all(n in order for n in ordered)
             result.append(
                 {
                     "id": row["id"],
@@ -1216,27 +1215,35 @@ class Store:
                     "digest_stale": row["digest_stale"],
                     "has_digest": bool(row["digest_events"]),
                     "warning": warning,
-                    "node_ids": ids,
+                    "on_canon": on_canon,
+                    "node_ids": ordered,
+                    "_created": gi,
                 }
             )
-        result.sort(key=lambda g: order[g["node_ids"][0]])
+        # 正史ルート上の章は正史位置順、島・分岐の章はその後ろに作成順
+        result.sort(key=lambda g: (0, order.get(g["node_ids"][0], 0)) if g["on_canon"] else (1, g["_created"]))
+        for g in result:
+            del g["_created"]
         return result
 
     def create_group(self, title: str, node_ids: list[str]) -> dict[str, Any]:
-        """正史パス上の連続区間を章にする。分岐・島・他章所属のシーンは不可。"""
+        """親子で一続きにつながったシーンの列を章にする(正史・分岐・島のどこでも可)。"""
         title = (title or "").strip()
         if not title:
             raise ValueError("章の名前を入力してください")
         if not node_ids:
             raise ValueError("章に入れるシーンがありません")
-        path = self.canon_path()
-        order = {nid: i for i, nid in enumerate(path)}
         unique_ids = list(dict.fromkeys(node_ids))
-        if any(n not in order for n in unique_ids):
-            raise ValueError("章にできるのは正史パス上のシーンだけです(分岐・島は入れられません)")
-        idxs = sorted(order[n] for n in unique_ids)
-        if idxs != list(range(idxs[0], idxs[-1] + 1)):
-            raise ValueError("章は正史パス上で連続したシーンの並びにしてください")
+        for n in unique_ids:
+            if self.get_node(n) is None:
+                raise ValueError("存在しないシーンが含まれています")
+            if self._node_kind(n) is not None:
+                raise ValueError("はじまり / 結末は章に入れられません")
+        # 鎖の検証: 深さ順に並べ、各シーンの親が直前のシーンであること
+        ordered = sorted(unique_ids, key=lambda n: len(self.path_to(n)))
+        for prev, cur in zip(ordered, ordered[1:]):
+            if self.parent_of(cur) != prev:
+                raise ValueError("章は親子で一続きにつながったシーンの並びにしてください")
         placeholders = ",".join("?" for _ in unique_ids)
         taken = self.conn.execute(
             f"SELECT id FROM nodes WHERE id IN ({placeholders}) AND group_id IS NOT NULL",
@@ -1250,7 +1257,7 @@ class Store:
             (group_id, title, None, _now()),
         )
         self.conn.executemany(
-            "UPDATE nodes SET group_id = ? WHERE id = ?", [(group_id, n) for n in unique_ids]
+            "UPDATE nodes SET group_id = ? WHERE id = ?", [(group_id, n) for n in ordered]
         )
         self.conn.commit()
         return next(g for g in self.list_groups() if g["id"] == group_id)
@@ -1311,9 +1318,13 @@ class Store:
             target = next((g for g in groups if g["id"] == after_group_id), None)
             if target is None:
                 raise KeyError(f"group not found: {after_group_id}")
+            if not target.get("on_canon"):
+                raise ValueError("移動先は正史ルート上の章にしてください")
             anchor = target["node_ids"][-1]
         if me.get("warning"):
             raise ValueError(f"並べ替えできません: {me['warning']}")
+        if not me.get("on_canon"):
+            raise ValueError("並べ替えできるのは正史ルート上の章だけです(島・分岐の章は位置を動かすだけで足ります)")
         a_first, a_last = me["node_ids"][0], me["node_ids"][-1]
         if self.parent_of(a_first) == anchor:
             return groups  # 既にその位置

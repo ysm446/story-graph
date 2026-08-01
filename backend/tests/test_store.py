@@ -239,16 +239,38 @@ def test_group_create_and_list(store):
     assert [x["id"] for x in groups] == [g["id"]]
 
 
-def test_group_requires_contiguous_canon_range(store):
+def test_group_requires_connected_chain(store):
     n1, n2, n3 = _three_scenes(store)
     with pytest.raises(ValueError):
-        store.create_group("飛び章", [n1["id"], n3["id"]])  # n2 を飛ばした非連続
+        store.create_group("飛び章", [n1["id"], n3["id"]])  # n2 を飛ばした(鎖でない)
+    # 分岐・島でも章にできる(2026-08-01 一般化。正史かどうかは問わない)
     branch = store.append_node({"beat": "if", "cast": ["aya"]}, parent_id=n1["id"], force_draft=True)
-    with pytest.raises(ValueError):
-        store.create_group("分岐章", [branch["id"]])  # 正史外は不可
-    store.create_group("第一章", [n1["id"], n2["id"]])
+    bg = store.create_group("分岐章", [branch["id"]])
+    assert bg["on_canon"] is False
+    g1 = store.create_group("第一章", [n1["id"], n2["id"]])
+    assert g1["on_canon"] is True
     with pytest.raises(ValueError):
         store.create_group("重複章", [n2["id"], n3["id"]])  # 他章のノードを含む
+    # 一覧は正史ルート上の章が先、島・分岐の章が後ろ
+    assert [g["id"] for g in store.list_groups()] == [g1["id"], bg["id"]]
+
+
+def test_island_chapter_connect_flow(store):
+    """島で章を作って編集し、あとで正史につなぐ流れ(2026-08-01 一般化の目的)。"""
+    _setup_chars(store)
+    n1 = store.append_node({"beat": "b1", "cast": ["aya"]})
+    i1 = store.append_node({"beat": "島1", "cast": ["aya"]}, detached=True)
+    i2 = store.append_node({"beat": "島2", "cast": ["aya"]}, parent_id=i1["id"])
+    g = store.create_group("作り置きの章", [i2["id"], i1["id"]])  # 順不同でも鎖順に整う
+    assert g["node_ids"] == [i1["id"], i2["id"]]
+    assert g["on_canon"] is False and g["warning"] is None
+    with pytest.raises(ValueError):
+        store.move_group(g["id"], None)  # 島の章は並べ替え対象外
+    store.attach_node(n1["id"], i1["id"])
+    store.make_canon(i2["id"])
+    entry = next(x for x in store.list_groups() if x["id"] == g["id"])
+    assert entry["on_canon"] is True
+    assert store.canon_path() == [n1["id"], i1["id"], i2["id"]]
 
 
 def test_group_dissolve_and_remove_edge_only(store):
@@ -406,20 +428,20 @@ def test_move_group_marks_digests_stale(store):
 
 def test_group_label_survives_detach(store):
     """切り離しで章ラベルは消えない(2026-08-01 変更。以前は自動で解除していた)。
-    正史から外れている間は警告バッジで知らせ、つなぎ直せば章がそのまま戻る。"""
+    鎖が途切れている間は警告バッジで知らせ、つなぎ直せば章がそのまま戻る。"""
     n1, n2, n3 = _three_scenes(store)
     g = store.create_group("第一章", [n1["id"], n2["id"], n3["id"]])
-    store.detach_node(n3["id"])  # n3 は島になる
+    store.detach_node(n3["id"])  # n3 は島になる(鎖が途切れる)
     assert store.get_node(n3["id"])["group_id"] == g["id"]  # ラベルは残る
-    entry = store.list_groups()[0]
-    assert entry["node_ids"] == [n1["id"], n2["id"]]  # 一覧上は正史メンバーだけ
+    entry = next(x for x in store.list_groups() if x["id"] == g["id"])
     assert entry["warning"] is not None  # 警告バッジ
     # つなぎ直して正史に戻すと、章が元どおり復活して警告も消える
     store.attach_node(n2["id"], n3["id"])
     store.make_canon(n3["id"])
-    entry = store.list_groups()[0]
+    entry = next(x for x in store.list_groups() if x["id"] == g["id"])
     assert entry["node_ids"] == [n1["id"], n2["id"], n3["id"]]
     assert entry["warning"] is None
+    assert entry["on_canon"] is True
 
 
 def test_validation_rejects_retired_and_unintroduced(store):

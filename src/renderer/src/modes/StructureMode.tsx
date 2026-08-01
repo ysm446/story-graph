@@ -292,6 +292,9 @@ function ChapterNodeCard({ data, selected }: NodeProps<ChapterFlowNode>): React.
       style={{
         background: 'var(--bg-card)',
         borderColor: group.color || 'var(--border-strong)',
+        // 島・分岐の章は draft ノードと同じく破線で「別の可能性」を示す
+        borderStyle: group.on_canon ? 'solid' : 'dashed',
+        opacity: group.on_canon ? 1 : 0.9,
         ['--tw-ring-color' as string]: 'var(--accent-border)'
       }}
       title="ダブルクリックで章の中を開く"
@@ -303,7 +306,7 @@ function ChapterNodeCard({ data, selected }: NodeProps<ChapterFlowNode>): React.
     >
       <Handle type="target" position={Position.Left} />
       <div className="text-[10px] uppercase tracking-[0.25em]" style={{ color: 'var(--text-faint)' }}>
-        第{number}章
+        {group.on_canon ? `第${number}章` : '別ルートの章'}
       </div>
       <div className="mt-1 truncate text-[15px] font-semibold" style={{ color: 'var(--text)' }}>
         {group.title}
@@ -1394,7 +1397,7 @@ function ChapterTab({
     <div className="flex flex-col gap-4">
       <div className="flex items-center gap-2">
         <span className="shrink-0 text-[10px] uppercase tracking-[0.2em]" style={{ color: 'var(--text-faint)' }}>
-          第{number}章
+          {group.on_canon ? `第${number}章` : '別ルートの章'}
         </span>
         <span className="min-w-0 flex-1 truncate text-[14px] font-semibold" style={{ color: 'var(--text)' }}>
           {group.title}
@@ -2844,21 +2847,36 @@ function StructureModeInner({
   useEffect(() => {
     setChapterNodes((prev) => {
       const prevById = new Map(prev.map((n) => [n.id, n]))
+      const nodeById = new Map(graphNodes.map((n) => [n.id, n]))
+      let islandIndex = 0
       return groups.map((g, gi) => {
         const id = `chapter:${g.id}`
         const existing = prevById.get(id)
+        const order = chapterSeq.orderOf.get(id)
+        // 正史ルート上の章は並びの列に。島・分岐の章は先頭シーンの位置に置く
+        let position: { x: number; y: number }
+        if (order !== undefined) {
+          position = { x: order * COLUMN_GAP_X, y: 0 }
+        } else {
+          const first = nodeById.get(g.node_ids[0])
+          position =
+            first && first.pos_x != null && first.pos_y != null
+              ? { x: first.pos_x, y: first.pos_y }
+              : { x: islandIndex++ * COLUMN_GAP_X, y: 420 }
+        }
         return {
           id,
           type: 'chapterNode' as const,
-          position: { x: (chapterSeq.orderOf.get(id) ?? gi) * COLUMN_GAP_X, y: 0 },
-          draggable: true, // ドラッグで並べ替え(onNodeDragStop で確定)
+          position,
+          // 正史章のドラッグは並べ替え。島・分岐の章は対象外(位置はシーン由来)
+          draggable: order !== undefined,
           selected: existing?.selected ?? false,
           measured: existing?.measured,
           data: { group: g, number: gi + 1, onOpen: openChapter }
         }
       })
     })
-  }, [groups, chapterSeq, openChapter])
+  }, [groups, chapterSeq, graphNodes, openChapter])
 
   // 章ビュー: 章カード + 未分類のシーン
   const chapterFlow = useMemo(() => {
@@ -3351,7 +3369,8 @@ function StructureModeInner({
                       ← 章一覧
                     </button>
                     <span className="max-w-56 truncate font-medium" style={{ color: 'var(--text)' }}>
-                      第{groups.indexOf(focusedGroup) + 1}章 {focusedGroup.title}
+                      {focusedGroup.on_canon ? `第${groups.indexOf(focusedGroup) + 1}章` : '別ルートの章'}{' '}
+                      {focusedGroup.title}
                     </span>
                     <button
                       onClick={() => void renameChapter(focusedGroup)}
@@ -3583,7 +3602,9 @@ function StructureModeInner({
             >
               <div className="px-3 py-1 text-[10px]" style={{ color: 'var(--text-faint)' }}>
                 {menu.chapter
-                  ? `第${groups.findIndex((g) => g.id === menu.chapter) + 1}章`
+                  ? (groups.find((g) => g.id === menu.chapter)?.on_canon
+                      ? `第${groups.findIndex((g) => g.id === menu.chapter) + 1}章`
+                      : '別ルートの章')
                   : menu.ending
                     ? '結末'
                     : `${menu.targets.length} シーンを選択中`}
@@ -3591,27 +3612,33 @@ function StructureModeInner({
               {(
                 menu.chapter
                   ? ((): Array<{ label: string; hint: string; disabled?: boolean; run: () => void }> => {
-                      const gi = groups.findIndex((g) => g.id === menu.chapter)
-                      const group = groups[gi]
+                      const group = groups.find((g) => g.id === menu.chapter)
                       if (!group) return []
+                      // 並べ替えは正史ルート上の章同士でだけ意味を持つ
+                      const canonGroups = groups.filter((g) => g.on_canon)
+                      const ci = canonGroups.findIndex((g) => g.id === group.id)
                       return [
                         {
                           label: '章の中を開く',
                           hint: 'ダブルクリックと同じ',
                           run: () => setChapterView(group.id)
                         },
-                        {
-                          label: '← 前へ移動',
-                          hint: '一つ前の章と入れ替える(ドラッグでも可)',
-                          disabled: gi <= 0,
-                          run: () => void moveChapter(group.id, gi <= 1 ? null : groups[gi - 2].id)
-                        },
-                        {
-                          label: '→ 後ろへ移動',
-                          hint: '一つ後ろの章と入れ替える(ドラッグでも可)',
-                          disabled: gi >= groups.length - 1,
-                          run: () => void moveChapter(group.id, groups[gi + 1]?.id ?? null)
-                        },
+                        ...(group.on_canon
+                          ? [
+                              {
+                                label: '← 前へ移動',
+                                hint: '一つ前の章と入れ替える(ドラッグでも可)',
+                                disabled: ci <= 0,
+                                run: () => void moveChapter(group.id, ci <= 1 ? null : canonGroups[ci - 2].id)
+                              },
+                              {
+                                label: '→ 後ろへ移動',
+                                hint: '一つ後ろの章と入れ替える(ドラッグでも可)',
+                                disabled: ci >= canonGroups.length - 1,
+                                run: () => void moveChapter(group.id, canonGroups[ci + 1]?.id ?? null)
+                              }
+                            ]
+                          : []),
                         {
                           label: '名前を変更',
                           hint: '章のタイトル',
@@ -3648,7 +3675,7 @@ function StructureModeInner({
                     ? [
                         {
                           label: '📖 章にまとめる',
-                          hint: '正史上で連続したシーンを章にする',
+                          hint: '一続きにつながったシーンを章にする(島・分岐でも可)',
                           run: () => void createChapter(menu.targets)
                         }
                       ]

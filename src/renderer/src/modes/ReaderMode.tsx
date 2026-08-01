@@ -232,7 +232,8 @@ export default function ReaderMode({
     try {
       const [sceneList, groupList] = await Promise.all([api.listRenders(presetId, povChar), api.listGroups()])
       setScenes(sceneList)
-      setGroups(groupList)
+      // 鑑賞モードで見出し・目次になるのは正史ルート上の章だけ(島・分岐の章は対象外)
+      setGroups(groupList.filter((g) => g.on_canon))
     } catch (e) {
       setStatus(`シーン一覧の取得に失敗しました: ${String(e)}`)
     }
