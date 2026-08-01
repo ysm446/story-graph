@@ -242,12 +242,12 @@ function BeatNodeCard({ data, selected }: NodeProps<BeatFlowNode>): React.JSX.El
 // 実体ノードではない。データモデルはシーンノード + エッジ + nodes.group_id の
 // ままで、章ビューは canon パスの「章に属す区間」を 1 枚のカードに圧縮して見せる。
 
-type ChapterNodeData = { group: Group; number: number }
+type ChapterNodeData = { group: Group; number: number; onOpen: (groupId: string) => void }
 type ChapterFlowNode = Node<ChapterNodeData, 'chapterNode'>
 type AppFlowNode = BeatFlowNode | ChapterFlowNode
 
 function ChapterNodeCard({ data, selected }: NodeProps<ChapterFlowNode>): React.JSX.Element {
-  const { group, number } = data
+  const { group, number, onOpen } = data
   return (
     <div
       className={`w-64 rounded-3xl border-2 px-5 py-5 shadow-lg shadow-black/30 ${selected ? 'ring-4' : ''}`}
@@ -257,6 +257,11 @@ function ChapterNodeCard({ data, selected }: NodeProps<ChapterFlowNode>): React.
         ['--tw-ring-color' as string]: 'var(--accent-border)'
       }}
       title="ダブルクリックで章の中を開く"
+      onDoubleClick={(e) => {
+        // React Flow のダブルクリックズームに任せず、カード自身で確実に開く
+        e.stopPropagation()
+        onOpen(group.id)
+      }}
     >
       <Handle type="target" position={Position.Left} />
       <div className="text-[10px] uppercase tracking-[0.25em]" style={{ color: 'var(--text-faint)' }}>
@@ -2771,6 +2776,7 @@ function StructureModeInner({
   // (measured)が失われ、v12 は実測が確定するまでノードを描画しないため、
   // カードが不可視のままになる(選択状態の保持も同じ理由)
   const [chapterNodes, setChapterNodes] = useState<ChapterFlowNode[]>([])
+  const openChapter = useCallback((groupId: string): void => setChapterView(groupId), [])
   useEffect(() => {
     setChapterNodes((prev) => {
       const prevById = new Map(prev.map((n) => [n.id, n]))
@@ -2784,11 +2790,11 @@ function StructureModeInner({
           draggable: false,
           selected: existing?.selected ?? false,
           measured: existing?.measured,
-          data: { group: g, number: gi + 1 }
+          data: { group: g, number: gi + 1, onOpen: openChapter }
         }
       })
     })
-  }, [groups, chapterSeq])
+  }, [groups, chapterSeq, openChapter])
 
   // 章ビュー: 章カード + 未分類のシーン
   const chapterFlow = useMemo(() => {
@@ -3155,6 +3161,8 @@ function StructureModeInner({
             }}
             minZoom={0.1}
             maxZoom={2}
+            // ダブルクリックズームは章カードの「開く」と競合するので切る
+            zoomOnDoubleClick={false}
             fitView
             panOnDrag={[1]}
             selectionOnDrag
