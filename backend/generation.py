@@ -749,11 +749,18 @@ DIGEST_TEMPERATURE = 0.3
 
 DIGEST_PROMPT = """あなたは物語の編集者です。章の内容から、各キャラクターの「章のまとめの記憶」を作ります。
 
+このまとめは、次の章から先では**その章の記憶のすべて**になります(章の中の細かい記憶と
+置き換わります)。後で効く事実が落ちると取り返しがつかないので、削りすぎないでください。
+
 ルール:
-- キャラクターごとに、この章で経験したこと・変わったことを 1〜3 文で要約する
-- 内容は章を正しく代表する要約にする(曖昧にぼかさない。固有名詞・約束・秘密など、決定的な事実は残す)
+- **同じキャラクターについて複数の項目を出してよい**(件数の目安は下記)。
+  1 件あたり 2〜4 文
+- 項目ごとに焦点を 1 つにする(出来事 / 関係の変化 / 知った秘密 など)。
+  1 件に詰め込むより、焦点の違う項目に分けたほうが後で思い出しやすい
+- 内容は章を正しく代表する要約にする(曖昧にぼかさない。固有名詞・約束・秘密・
+  数字・場所など、決定的な事実はそのまま残す)
 - このまとめは後の章の執筆でそのキャラの記憶として参照される。後で効く事実を優先する
-- importance は 0.0〜1.0(その章でそのキャラに起きた最も重い出来事に合わせる)
+- importance は 0.0〜1.0(その項目の重さ)
 - この章に出番も記憶も無いキャラクターは出力しない"""
 
 
@@ -813,6 +820,9 @@ async def generate_group_digest(store: Store, base_url: str, group_id: str) -> l
         mem_lines.append(f"### {char['name'] if char else cid}({cid})")
         entries = memories_by_char.get(cid, [])
         mem_lines += [f"- {content}" for _, content in entries] or ["- (この章での記憶イベントは無し)"]
+    # まとめの分量は章の規模に合わせる(2 シーンの章に何件も要らないし、
+    # 10 シーンの章をキャラ 1 件では代表できない)
+    max_entries = 1 if len(beats) <= 2 else 2 if len(beats) <= 6 else 3
     messages = [
         {"role": "system", "content": DIGEST_PROMPT},
         {
@@ -827,6 +837,12 @@ async def generate_group_digest(store: Store, base_url: str, group_id: str) -> l
                     "## キャラクターごとの、この章の記憶",
                     *mem_lines,
                     "",
+                    "## まとめの分量の目安",
+                    f"- この章は {len(beats)} シーン。キャラクターごとに 1〜{max_entries} 件、"
+                    "1 件あたり 2〜4 文",
+                    "- 記憶が多いキャラクターほど件数を多めに"
+                    "(記憶が 1〜2 件だけのキャラクターは 1 件で十分)",
+                    "",
                     "この章のまとめを作ってください。",
                 ]
             ),
@@ -837,7 +853,8 @@ async def generate_group_digest(store: Store, base_url: str, group_id: str) -> l
         base_url=base_url,
         schema=_digest_schema(char_ids),
         temperature=DIGEST_TEMPERATURE,
-        max_tokens=2048,
+        # JSON の途中で切れると生成ごと失敗するので、キャラ数 × 件数に合わせて確保する
+        max_tokens=min(6144, 1024 + 400 * len(char_ids) * max_entries),
         label=f"章のまとめ: {group['title']}",
     )
     events: list[dict[str, Any]] = []
@@ -846,6 +863,9 @@ async def generate_group_digest(store: Store, base_url: str, group_id: str) -> l
         if cid not in char_ids or not (s.get("summary") or "").strip():
             continue
         importance = s.get("importance")
+        # 同じキャラの項目が複数あるときは、どれにも同じ replaces を持たせる。
+        # fold は 1 件目で生の記憶を落として自分を積み、2 件目以降は追加だけになる
+        # (この持たせ方なら、あとで 1 件消しても生の記憶が復活しない)
         events.append(
             {
                 "type": "memory_compress",

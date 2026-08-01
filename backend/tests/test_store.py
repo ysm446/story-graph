@@ -378,6 +378,33 @@ def test_digest_applies_at_chapter_boundary(store):
     assert row["content"] == "第一章で誓いと決別を経た"
 
 
+def test_digest_allows_multiple_summaries_per_char(store):
+    """キャラごとに複数のまとめを置ける(長い章は焦点ごとに分ける。生成側の既定)。
+
+    同じ replaces を持つ memory_compress が並んでも壊れない: 1 件目で生の記憶が
+    落ち、2 件目以降は追加だけになる。どちらも検索用の memories 行になる。
+    """
+    n1, n2, n3, g = _chapter_with_digest(store)
+    first = g["digest_events"][0]
+    g = store.save_group_digest(
+        g["id"],
+        [
+            first,
+            {
+                "type": "memory_compress",
+                "payload": {**first["payload"], "summary": "ケンとの決別で独りになった"},
+            },
+        ],
+    )
+    ids = [e["id"] for e in g["digest_events"]]
+    assert len(ids) == 2 and ids[0] == first["id"]  # 既存の項目の ID は引き継ぐ
+    assert store.get_state(n3["id"])["chars"]["aya"]["memories"] == ids  # 生の記憶は残らない
+    rows = store.conn.execute(
+        "SELECT id FROM memories WHERE id IN (?, ?)", (ids[0], ids[1])
+    ).fetchall()
+    assert len(rows) == 2
+
+
 def test_digest_isolates_in_chapter_edit(store):
     """まとめ済みの章の中で記憶の文面だけ直しても(ID 引き継ぎ)、章の外へは波及しない。"""
     n1, n2, n3, g = _chapter_with_digest(store)
