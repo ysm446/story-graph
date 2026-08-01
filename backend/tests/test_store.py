@@ -153,6 +153,70 @@ def test_cast_edit_that_changes_state_stales_downstream(store):
     assert "mio" in store.get_state(n2["id"])["chars"]
 
 
+# ---- はじまり / 結末ノード(docs/design/endings.md) ------------------
+
+
+def test_story_markers_are_ensured(store):
+    starts = store.conn.execute("SELECT * FROM nodes WHERE kind = 'start'").fetchall()
+    endings = store.conn.execute("SELECT * FROM nodes WHERE kind = 'ending'").fetchall()
+    assert len(starts) == 1 and len(endings) == 1
+    assert store.active_ending() == endings[0]["id"]
+    assert store.canon_path() == []  # マーカーは正史(シーン列)に混ざらない
+
+
+def test_append_keeps_ending_at_tail(store):
+    _setup_chars(store)
+    n1 = store.append_node({"beat": "b1", "cast": ["aya"]})
+    assert n1["status"] == "canon"  # 「はじまり」直後の挿入でも正史扱い
+    n2 = store.append_node({"beat": "b2", "cast": ["aya"]})
+    assert store.canon_path() == [n1["id"], n2["id"]]
+    ending = store.active_ending()
+    assert store.parent_of(ending) == n2["id"]  # 結末は常に末尾に居続ける
+    start = store.conn.execute("SELECT id FROM nodes WHERE kind = 'start'").fetchone()["id"]
+    assert store.parent_of(n1["id"]) == start  # 最初のシーンは「はじまり」の子
+
+
+def test_multiple_endings_switch(store):
+    _setup_chars(store)
+    n1 = store.append_node({"beat": "b1", "cast": ["aya"]})
+    n2 = store.append_node({"beat": "b2", "cast": ["aya"]})
+    b1 = store.append_node({"beat": "別ルート", "cast": ["aya"]}, parent_id=n1["id"])
+    alt = store.create_ending(b1["id"], "バッドエンド")
+    assert store.active_ending() == alt["id"]
+    assert store.canon_path() == [n1["id"], b1["id"]]  # 正史は結末からの逆引きで切り替わる
+    assert store.get_node(n2["id"])["status"] == "draft"
+    store.make_canon(n2["id"])  # 元のルートへ戻す(n2 の先の結末がアクティブになる)
+    assert store.canon_path() == [n1["id"], n2["id"]]
+    assert store.get_node(b1["id"])["status"] == "draft"
+    assert store.get_node(alt["id"])["title"] == "バッドエンド"
+
+
+def test_marker_guards(store):
+    _setup_chars(store)
+    n1 = store.append_node({"beat": "b1", "cast": ["aya"]})
+    start = store.conn.execute("SELECT id FROM nodes WHERE kind = 'start'").fetchone()["id"]
+    ending = store.active_ending()
+    with pytest.raises(ValueError):
+        store.delete_node(start)  # はじまりは削除不可
+    with pytest.raises(ValueError):
+        store.delete_node(ending)  # 最後の結末は削除不可
+    with pytest.raises(ValueError):
+        store.append_node({"beat": "x", "cast": []}, parent_id=ending)  # 結末の先は不可
+    alt = store.create_ending(n1["id"], "別エンド", activate=False)
+    assert store.delete_node(alt["id"]) is True  # 複数あれば余分は消せる
+
+
+def test_deleting_active_ending_switches_to_another(store):
+    _setup_chars(store)
+    n1 = store.append_node({"beat": "b1", "cast": ["aya"]})
+    first = store.active_ending()
+    alt = store.create_ending(n1["id"], "別エンド", activate=True)
+    assert store.active_ending() == alt["id"]
+    store.delete_node(alt["id"])
+    assert store.active_ending() == first  # 残った結末へ自動で切り替わる
+    assert store.canon_path() == [n1["id"]]
+
+
 # ---- 章グループ(docs/design/chapters.md) ---------------------------
 
 
@@ -407,12 +471,15 @@ def test_delete_fork_node_reattaches_all_children(store):
     assert store.get_node(branch["id"])["status"] == "draft"
 
 
-def test_delete_root_makes_children_roots(store):
+def test_delete_first_scene_splices_to_start(store):
+    """最初のシーンを消すと、次のシーンが「はじまり」に直結して正史が繋がる
+    (結末方式で変更。以前は子が根になっていた)。"""
     _setup_chars(store)
     n1 = store.append_node({"beat": "b1", "cast": ["aya"]}, _intro_events("aya"))
     n2 = store.append_node({"beat": "b2", "cast": ["aya"]})
     assert store.delete_node(n1["id"]) is True
-    assert store.parent_of(n2["id"]) is None
+    start = store.conn.execute("SELECT id FROM nodes WHERE kind = 'start'").fetchone()["id"]
+    assert store.parent_of(n2["id"]) == start
     assert store.canon_path() == [n2["id"]]
 
 
@@ -430,7 +497,8 @@ def test_branch_creation_and_state_isolation(store):
     ], parent_id=n1["id"])
     assert b1["status"] == "draft"
     assert store.canon_path() == [n1["id"], n2["id"]]
-    assert store.path_to(b1["id"]) == [n1["id"], b1["id"]]
+    # path_to は「はじまり」マーカーを含む生のチェーンを返す
+    assert store.path_to(b1["id"])[1:] == [n1["id"], b1["id"]]
     # 状態は独立: 正史側は街、分岐側は山
     assert store.get_state(n2["id"])["chars"]["aya"]["facts"]["location"] == "街"
     assert store.get_state(b1["id"])["chars"]["aya"]["facts"]["location"] == "山"
@@ -463,7 +531,7 @@ def test_extend_from_branch_and_make_canon(store):
     assert b1["status"] == "draft"
     # 分岐の先に伸ばす(b1 に canon の子は居ないので、b1 の線内では延長)
     b2 = store.append_node({"beat": "分岐の続き", "cast": ["aya"]}, parent_id=b1["id"])
-    assert store.path_to(b2["id"]) == [n1["id"], b1["id"], b2["id"]]
+    assert store.path_to(b2["id"])[1:] == [n1["id"], b1["id"], b2["id"]]
     # 正史は n1 → n2 のまま(n1 → b1 が canon でないため)
     assert store.canon_path() == [n1["id"], n2["id"]]
     store.make_canon(b2["id"])
@@ -541,7 +609,9 @@ def test_graph_matches_get_node_shape(store):
     ])
     store.append_node({"beat": "b2", "cast": ["aya", "ken"]})
     graph = store.graph()
-    assert [n["id"] for n in graph["nodes"]] == store.canon_path()
+    # graph にははじまり / 結末マーカーも含まれるので、シーンだけを正史と比べる
+    assert [n["id"] for n in graph["nodes"] if not n["kind"]] == store.canon_path()
     for node in graph["nodes"]:
         assert node == store.get_node(node["id"])
-    assert graph["nodes"][0]["events"] == store.list_events(n1["id"])
+    n1_in_graph = next(n for n in graph["nodes"] if n["id"] == n1["id"])
+    assert n1_in_graph["events"] == store.list_events(n1["id"])

@@ -58,6 +58,12 @@ export const api = {
   getNode: (id: string) => request<StoryNode>(`/nodes/${id}`),
   makeCanon: (nodeId: string) =>
     request<{ canon_path: string[] }>(`/nodes/${nodeId}/make_canon`, { method: 'POST' }),
+  // このシーンの先に新しい結末を作る(既定でアクティブ化 = 正史がここまでになる)
+  createEnding: (nodeId: string, title?: string) =>
+    request<StoryNode>(`/nodes/${nodeId}/ending`, {
+      method: 'POST',
+      body: JSON.stringify({ title: title ?? null })
+    }),
   // 親エッジを切って、このシーン以下を独立した島にする
   detachNode: (nodeId: string) =>
     request<{ detached: boolean; canon_path: string[] }>(`/nodes/${nodeId}/detach`, {

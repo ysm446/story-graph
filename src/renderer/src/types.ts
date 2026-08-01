@@ -61,6 +61,8 @@ export interface StoryNode {
   target_chars: number | null
   /** 章グループ(null = 未分類。docs/design/chapters.md) */
   group_id: string | null
+  /** はじまり / 結末のマーカーノード(null = 通常シーン。docs/design/endings.md) */
+  kind: 'start' | 'ending' | null
   created_at: string
   updated_at: string
   events: StoryEvent[]

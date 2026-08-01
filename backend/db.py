@@ -209,6 +209,8 @@ def init_schema(conn: sqlite3.Connection) -> None:
         "ALTER TABLE chats ADD COLUMN mode TEXT",  # キャラチャットの枠組み: interview | roleplay
         "ALTER TABLE chats ADD COLUMN title TEXT",  # 会話名(NULL = 冒頭の発言を見出しに使う)
         "ALTER TABLE nodes ADD COLUMN group_id TEXT",  # 章グループ(NULL = 未分類。docs/design/chapters.md)
+        # はじまり / 結末のマーカーノード(NULL = 通常シーン。docs/design/endings.md)
+        "ALTER TABLE nodes ADD COLUMN kind TEXT",
         "ALTER TABLE renders ADD COLUMN meta TEXT",  # 生成統計(JSON。tokens / elapsed_sec など)
         # 生成時に LLM へ送った messages の控え(JSON。UI の閲覧用。チャットの prompt_messages と同趣旨)
         "ALTER TABLE renders ADD COLUMN prompt_messages TEXT",

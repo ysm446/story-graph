@@ -59,6 +59,7 @@ class Store:
     def __init__(self, conn: sqlite3.Connection, root: str | None = None):
         self.conn = conn
         self.root = root
+        self.ensure_story_markers()
 
     def switch_library(self, root: str) -> None:
         from pathlib import Path
@@ -69,6 +70,7 @@ class Store:
         self.conn = new_conn
         self.root = str(root)
         old_conn.close()
+        self.ensure_story_markers()
 
     # ---- characters -------------------------------------------------
 
@@ -302,8 +304,129 @@ class Store:
         node["events"] = self.list_events(node_id)
         return node
 
+    # ---- はじまり / 結末マーカー(docs/design/endings.md) ------------
+    #
+    # 正史 = アクティブな結末ノードから根へさかのぼった道(マーカーは含めない)。
+    # edges.is_canon / nodes.status はこの導出のキャッシュに格下げされた
+    # (_resync_canon が貼り直す)。不変条件: はじまりは常に 1 つ(削除不可)、
+    # 結末は常に 1 つ以上(最後の 1 つは削除不可)。
+
+    def _node_kind(self, node_id: str) -> str | None:
+        row = self.conn.execute("SELECT kind FROM nodes WHERE id = ?", (node_id,)).fetchone()
+        return row["kind"] if row else None
+
+    def active_ending(self) -> str | None:
+        """アクティブな結末ノードの ID。設定が欠けている・死んでいるときは自動補正。"""
+        eid = self.get_settings().get("active_ending")
+        if eid and self._node_kind(eid) == "ending":
+            return eid
+        row = self.conn.execute(
+            "SELECT id FROM nodes WHERE kind = 'ending' ORDER BY created_at"
+        ).fetchone()
+        if row:
+            self.set_settings({"active_ending": row["id"]})
+            return row["id"]
+        return None
+
+    def ensure_story_markers(self) -> None:
+        """はじまり / 結末ノードを保証する(接続時に一度。無停止移行)。
+
+        既存ライブラリでは、旧方式(is_canon エッジ辿り)の正史の根の親に
+        「はじまり」を、末尾の子に「結末」を自動でつなぐ。"""
+        try:
+            has_kind = self.conn.execute("SELECT kind FROM nodes LIMIT 1")
+            has_kind.fetchone()
+        except sqlite3.OperationalError:
+            return  # kind 列の無い接続(スキーマ未初期化)では何もしない
+        legacy = self._legacy_canon_path()
+        now = _now()
+        start = self.conn.execute("SELECT id FROM nodes WHERE kind = 'start'").fetchone()
+        if start is None:
+            start_id = _new_id()
+            self.conn.execute(
+                "INSERT INTO nodes(id, title, beat, cast, status, kind, created_at, updated_at)"
+                " VALUES(?,?,?,?,?,?,?,?)",
+                (start_id, "はじまり", "", "[]", "canon", "start", now, now),
+            )
+            if legacy:
+                self.conn.execute(
+                    "INSERT INTO edges(id, from_node, to_node, is_canon) VALUES(?,?,?,1)",
+                    (_new_id(), start_id, legacy[0], ),
+                )
+        else:
+            start_id = start["id"]
+        endings = [r["id"] for r in self.conn.execute("SELECT id FROM nodes WHERE kind = 'ending'")]
+        if not endings:
+            ending_id = _new_id()
+            self.conn.execute(
+                "INSERT INTO nodes(id, title, beat, cast, status, kind, created_at, updated_at)"
+                " VALUES(?,?,?,?,?,?,?,?)",
+                (ending_id, "結末", "", "[]", "canon", "ending", now, now),
+            )
+            tail = legacy[-1] if legacy else start_id
+            self.conn.execute(
+                "INSERT INTO edges(id, from_node, to_node, is_canon) VALUES(?,?,?,1)",
+                (_new_id(), tail, ending_id),
+            )
+            endings = [ending_id]
+        if self.get_settings().get("active_ending") not in endings:
+            self.set_settings({"active_ending": endings[0]})
+        self._resync_canon()
+        self.conn.commit()
+
+    def _resync_canon(self) -> None:
+        """edges.is_canon / nodes.status をアクティブ結末からの導出で貼り直す。
+        commit は呼び出し側。"""
+        ending = self.active_ending()
+        if ending is None:
+            return
+        chain = self.path_to(ending)  # はじまり〜結末のマーカー込みチェーン
+        chain_set = set(chain)
+        pairs = set(zip(chain, chain[1:]))
+        for e in self.conn.execute("SELECT id, from_node, to_node, is_canon FROM edges").fetchall():
+            flag = 1 if (e["from_node"], e["to_node"]) in pairs else 0
+            if flag != e["is_canon"]:
+                self.conn.execute("UPDATE edges SET is_canon = ? WHERE id = ?", (flag, e["id"]))
+        for row in self.conn.execute("SELECT id, status FROM nodes").fetchall():
+            status = "canon" if row["id"] in chain_set else "draft"
+            if status != row["status"]:
+                self.conn.execute("UPDATE nodes SET status = ? WHERE id = ?", (status, row["id"]))
+
+    def _ensure_active_ending_rooted(self) -> None:
+        """切り離しなどでアクティブな結末が「はじまり」から辿れなくなったら、
+        はじまり側の結末へ切り替える(無ければ正史連鎖の末端に作る)。commit は呼び出し側。"""
+        start = self.conn.execute("SELECT id FROM nodes WHERE kind = 'start'").fetchone()
+        ending = self.active_ending()
+        if start is None or ending is None:
+            return
+        if self.path_to(ending)[0] == start["id"]:
+            return
+        for r in self.conn.execute("SELECT id FROM nodes WHERE kind = 'ending' ORDER BY created_at"):
+            if self.path_to(r["id"])[0] == start["id"]:
+                self.set_settings({"active_ending": r["id"]})
+                return
+        # はじまりの木に結末が無くなった: canon 連鎖の末端に作って正史を守る
+        current = start["id"]
+        while True:
+            row = self.conn.execute(
+                "SELECT to_node FROM edges WHERE from_node = ? AND is_canon = 1", (current,)
+            ).fetchone()
+            if row is None:
+                break
+            current = row["to_node"]
+        self.set_settings({"active_ending": self._insert_ending(current, "結末")})
+
     def canon_path(self) -> list[str]:
-        """ルートから正史パスのノード ID 列を返す(canon エッジを辿る)。"""
+        """正史パスのシーン ID 列(アクティブな結末から根へさかのぼる。マーカーは除く)。"""
+        ending = self.active_ending()
+        if ending is None:
+            # 移行前(結末なし)の互換: 旧方式で辿る
+            return [nid for nid in self._legacy_canon_path() if self._node_kind(nid) is None]
+        kinds = {r["id"]: r["kind"] for r in self.conn.execute("SELECT id, kind FROM nodes")}
+        return [nid for nid in self.path_to(ending) if kinds.get(nid) is None]
+
+    def _legacy_canon_path(self) -> list[str]:
+        """旧方式の正史導出(canon エッジ辿り)。移行時と結末なしの互換にだけ使う。"""
         rows = self.conn.execute("SELECT from_node, to_node FROM edges WHERE is_canon = 1").fetchall()
         children = {r["from_node"]: r["to_node"] for r in rows}
         # ルート判定は全エッジで行う(非 canon の子をルート扱いしないため)
@@ -382,11 +505,18 @@ class Store:
         - detached: どこにも繋がない独立ノード(島の起点。エピソードの作り置き用)
         """
         canon = self.canon_path()
+        if parent_id is not None and self._node_kind(parent_id) == "ending":
+            raise ValueError("結末の先にはつなげません")
         if detached:
             parent_id = None
             as_canon = False
             on_canon_path = False
         elif parent_id is None and not force_draft:
+            # 正史末尾への追加 = アクティブな結末の直前に挿す(結末は末尾に居続ける)
+            ending = self.active_ending()
+            ending_parent = self.parent_of(ending) if ending else None
+            if ending_parent is not None:
+                return self.insert_node_after(ending_parent, data, events, source=source)
             parent_id = canon[-1] if canon else None
             as_canon = True
             on_canon_path = True
@@ -442,6 +572,8 @@ class Store:
         """
         if self.get_node(parent_id) is None:
             raise KeyError(f"parent not found: {parent_id}")
+        if self._node_kind(parent_id) == "ending":
+            raise ValueError("結末の先にはつなげません")
         chain_edge = self.conn.execute(
             "SELECT id, to_node FROM edges WHERE from_node = ? AND is_canon = 1", (parent_id,)
         ).fetchone()
@@ -451,7 +583,11 @@ class Store:
 
         node_id = data.get("id") or _new_id()
         now = _now()
-        on_canon_path = parent_id in self.canon_path()
+        # 正史チェーン上か(status 用)。canon_path はシーンだけなので、
+        # 「はじまり」の直後への挿入も拾えるようマーカー込みのチェーンで見る
+        ending = self.active_ending()
+        chain = set(self.path_to(ending)) if ending else set(self.canon_path())
+        on_canon_path = parent_id in chain
         # 章の真ん中(前後が同じ章)への挿入は、その章を引き継ぐ。引き継がないと
         # 章が非連続になって _prune_groups に解散されてしまう(docs/design/chapters.md)
         neighbors = self.conn.execute(
@@ -493,15 +629,6 @@ class Store:
         self._resync_memory_orders(commit=False)
         self.conn.commit()
         return self.get_node(node_id)  # type: ignore[return-value]
-
-    def _resync_status(self) -> None:
-        """status は「正史パス上か」の導出値。現在の canon エッジから貼り直す。"""
-        canon = set(self.canon_path())
-        for row in self.conn.execute("SELECT id FROM nodes"):
-            self.conn.execute(
-                "UPDATE nodes SET status = ? WHERE id = ?",
-                ("canon" if row["id"] in canon else "draft", row["id"]),
-            )
 
     def subtree_order(self, node_id: str) -> list[str]:
         """node_id を根とする部分木を、親が先に来る順で返す(再抽出の実行順)。"""
@@ -560,11 +687,15 @@ class Store:
         """
         if self.get_node(node_id) is None:
             raise KeyError(f"node not found: {node_id}")
+        if self._node_kind(node_id) is not None:
+            raise ValueError("「はじまり」や結末は切り離せません")
         cur = self.conn.execute("DELETE FROM edges WHERE to_node = ?", (node_id,))
         if cur.rowcount == 0:
             return False  # 既に根
         self.mark_dirty_downstream(node_id, commit=False)
-        self._resync_status()
+        # アクティブな結末ごと切り離した場合は、はじまり側の結末へ切り替える
+        self._ensure_active_ending_rooted()
+        self._resync_canon()
         self._resync_memory_orders(commit=False)
         self._prune_groups()  # 島になったシーンは章から外れる
         self.conn.commit()
@@ -583,49 +714,102 @@ class Store:
             raise KeyError(f"node not found: {child_id}")
         if parent_id == child_id:
             raise ValueError("自分自身には繋げません")
+        if self._node_kind(parent_id) == "ending":
+            raise ValueError("結末の先にはつなげません")
+        if self._node_kind(child_id) is not None:
+            raise ValueError("「はじまり」や結末はつなぎ替えの対象になりません")
         if self.parent_of(child_id) is not None:
             raise ValueError("繋ぎ先のシーンには既に親がいます(先に切り離してください)")
         if parent_id in self.subtree_order(child_id):
             raise ValueError("自分の下流には繋げません(循環になります)")
-        if as_canon:
-            self.conn.execute(
-                "UPDATE edges SET is_canon = 0 WHERE from_node = ?", (parent_id,)
-            )
         self.conn.execute(
-            "INSERT INTO edges(id, from_node, to_node, is_canon) VALUES(?,?,?,?)",
-            (_new_id(), parent_id, child_id, 1 if as_canon else 0),
+            "INSERT INTO edges(id, from_node, to_node, is_canon) VALUES(?,?,?,0)",
+            (_new_id(), parent_id, child_id),
         )
         self.mark_dirty_downstream(child_id, commit=False)
-        self._resync_status()
         self._resync_memory_orders(commit=False)
+        if as_canon:
+            # 正史へ = 繋いだ枝の先の結末をアクティブにする(無ければ末端に作る)
+            self.conn.commit()
+            self.make_canon(child_id)
+            return
+        self._resync_canon()
         self._prune_groups()  # 正史が変わった場合、前提の崩れた章を整える
         self.conn.commit()
 
     def make_canon(self, node_id: str) -> None:
-        """node_id までのパスを正史にする(各分岐点で canon エッジを付け替え)。
+        """node_id を通る道を正史にする(結末方式。docs/design/endings.md §3)。
 
-        status は「正史パス上なら canon、外れたら draft」の導出値として全ノードを更新する。
-        正史が変わると story_order が変わるため memories も再同期する。
+        node_id の先の canon 連鎖を辿って結末を探し、あればそれをアクティブに、
+        無ければ連鎖の末端に結末を作ってアクティブにする。is_canon / status は
+        導出キャッシュとして貼り直し、story_order・章も再同期する。
         """
         if self.get_node(node_id) is None:
             raise KeyError(f"node not found: {node_id}")
-        path = self.path_to(node_id)
-        for parent, child in zip(path, path[1:]):
-            self.conn.execute(
-                "UPDATE edges SET is_canon = CASE WHEN to_node = ? THEN 1 ELSE 0 END"
-                " WHERE from_node = ?",
-                (child, parent),
-            )
-        # 切替先の canon 末尾から先に既存の canon 継続があれば辿って有効なままにする
-        canon = set(self.canon_path())
-        for row in self.conn.execute("SELECT id FROM nodes"):
-            self.conn.execute(
-                "UPDATE nodes SET status = ? WHERE id = ?",
-                ("canon" if row["id"] in canon else "draft", row["id"]),
-            )
+        if self._node_kind(node_id) == "start":
+            raise ValueError("「はじまり」は正史の切替対象になりません")
+        current = node_id
+        target: str | None = None
+        seen = {current}
+        while target is None:
+            if self._node_kind(current) == "ending":
+                target = current
+                break
+            children = self.conn.execute(
+                "SELECT to_node, is_canon FROM edges WHERE from_node = ?", (current,)
+            ).fetchall()
+            ending_child = next((c["to_node"] for c in children if self._node_kind(c["to_node"]) == "ending"), None)
+            if ending_child is not None:
+                target = ending_child
+                break
+            # 既存の canon 継続を優先して末端まで辿る(従来の「切替先の先の正史は
+            # 有効なまま」の挙動を引き継ぐ)。フラグが無くても一本道なら辿る
+            # (島は resync で内部フラグが落ちていることがある)
+            canon_child = next((c["to_node"] for c in children if c["is_canon"]), None)
+            if canon_child is None and len(children) == 1:
+                canon_child = children[0]["to_node"]
+            if canon_child is None or canon_child in seen:
+                # 連鎖の終わり(または分岐点でどちらとも決められない): ここに結末を作る
+                target = self._insert_ending(current, "結末")
+                break
+            seen.add(canon_child)
+            current = canon_child
+        self.set_settings({"active_ending": target})
+        self._resync_canon()
         self._resync_memory_orders(commit=False)
         self._prune_groups()  # 正史から外れた・非連続になった章の割り当てを外す
         self.conn.commit()
+
+    def _insert_ending(self, parent_id: str, title: str) -> str:
+        """parent_id の子として結末ノードを作る(アクティブ化は呼び出し側)。"""
+        now = _now()
+        ending_id = _new_id()
+        self.conn.execute(
+            "INSERT INTO nodes(id, title, beat, cast, status, kind, created_at, updated_at)"
+            " VALUES(?,?,?,?,?,?,?,?)",
+            (ending_id, title, "", "[]", "draft", "ending", now, now),
+        )
+        self.conn.execute(
+            "INSERT INTO edges(id, from_node, to_node, is_canon) VALUES(?,?,?,0)",
+            (_new_id(), parent_id, ending_id),
+        )
+        return ending_id
+
+    def create_ending(self, parent_id: str, title: str | None = None,
+                      activate: bool = True) -> dict[str, Any]:
+        """シーンの先に新しい結末を作る(複数エンディングの入口)。"""
+        if self.get_node(parent_id) is None:
+            raise KeyError(f"node not found: {parent_id}")
+        if self._node_kind(parent_id) is not None:
+            raise ValueError("結末はシーンの先につないでください")
+        ending_id = self._insert_ending(parent_id, (title or "").strip() or "結末")
+        if activate:
+            self.set_settings({"active_ending": ending_id})
+            self._resync_canon()
+            self._resync_memory_orders(commit=False)
+            self._prune_groups()
+        self.conn.commit()
+        return self.get_node(ending_id)  # type: ignore[return-value]
 
     # 状態(fold)に効くノードフィールドは cast のみ(fold の入力は
     # parent_state / events / cast)。下記はプロンプト文面にしか効かないので、
@@ -797,6 +981,16 @@ class Store:
         - 根を削除した場合、子はそれぞれ新しい根になる
         削除で下流の状態と正史順が変わるため、state_cache と memories を再同期する。
         """
+        kind = self._node_kind(node_id)
+        if kind == "start":
+            raise ValueError("「はじまり」は削除できません")
+        if kind == "ending":
+            others = [
+                r["id"]
+                for r in self.conn.execute("SELECT id FROM nodes WHERE kind = 'ending' AND id != ?", (node_id,))
+            ]
+            if not others:
+                raise ValueError("最後の結末は削除できません")
         if self.get_node(node_id) is None:
             return False
         self._mark_digest_stale(node_id)  # 章のメンバーを消すならまとめの材料が変わる(削除前に)
@@ -843,13 +1037,10 @@ class Store:
         self.conn.execute("DELETE FROM nodes WHERE id = ?", (node_id,))
         for child_id in child_ids:
             self.mark_dirty_downstream(child_id, commit=False)
-        # status は「正史パス上か」の導出値なので、繋ぎ替え後の正史で貼り直す
-        canon = set(self.canon_path())
-        for row in self.conn.execute("SELECT id FROM nodes"):
-            self.conn.execute(
-                "UPDATE nodes SET status = ? WHERE id = ?",
-                ("canon" if row["id"] in canon else "draft", row["id"]),
-            )
+        # 消したのがアクティブな結末なら別の結末へ切り替わる(active_ending が自動補正)。
+        # is_canon / status は導出キャッシュなので、繋ぎ替え後の正史で貼り直す
+        self._ensure_active_ending_rooted()
+        self._resync_canon()
         self._resync_memory_orders(commit=False)
         self.conn.commit()
         return True

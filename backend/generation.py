@@ -732,7 +732,9 @@ async def _reextract(
     yield _sse({"stage": "start", "total": len(order)})
     for index, nid in enumerate(order):
         node = store.get_node(nid)
-        title = (node["title"] if node else None) or "(無題)"
+        if node is None or node.get("kind"):
+            continue  # はじまり / 結末マーカーは抽出しない
+        title = node["title"] or "(無題)"
         yield _sse({"stage": "node", "index": index + 1, "total": len(order), "title": title, "node_id": nid})
         try:
             await extract_events(store, base_url, nid, keep_user_events)

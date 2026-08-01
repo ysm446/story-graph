@@ -138,6 +138,44 @@ type BeatFlowNode = Node<BeatNodeData, 'beatNode'>
 function BeatNodeCard({ data, selected }: NodeProps<BeatFlowNode>): React.JSX.Element {
   const { storyNode, characters, place, busy } = data
   const isDraft = storyNode.status === 'draft'
+  // はじまり / 結末のマーカーノードは小さな専用カード(docs/design/endings.md)
+  if (storyNode.kind) {
+    const isEnding = storyNode.kind === 'ending'
+    const active = storyNode.status === 'canon'
+    return (
+      <div
+        className={`relative w-40 rounded-2xl border-2 px-4 py-3 text-center shadow-lg shadow-black/30 ${
+          selected ? 'ring-4' : ''
+        }`}
+        style={{
+          background: 'var(--bg-card)',
+          borderColor: active ? 'var(--accent-border)' : 'var(--border-strong)',
+          borderStyle: active ? 'solid' : 'dashed',
+          opacity: active ? 1 : 0.85,
+          ['--tw-ring-color' as string]: 'var(--accent-border)'
+        }}
+        title={
+          isEnding
+            ? active
+              ? 'アクティブな結末(ここまでが正史)'
+              : '結末の候補。右クリック →「この結末にする」で正史を切り替え'
+            : '物語のはじまり(最初のシーンはこの子としてつながる)'
+        }
+      >
+        <Handle type="target" position={Position.Left} />
+        <div className="text-[16px]">{isEnding ? '🏁' : '📖'}</div>
+        <div className="mt-0.5 truncate text-[12px] font-semibold" style={{ color: 'var(--text)' }}>
+          {storyNode.title || (isEnding ? '結末' : 'はじまり')}
+        </div>
+        {isEnding && active && (
+          <div className="mt-0.5 text-[10px]" style={{ color: 'var(--accent)' }}>
+            アクティブ
+          </div>
+        )}
+        <Handle type="source" position={Position.Right} />
+      </div>
+    )
+  }
   return (
     <div
       className={`relative w-72 rounded-3xl border-2 px-5 py-4 shadow-lg shadow-black/30 ${
@@ -1813,7 +1851,7 @@ function StructureModeInner({
   // エッジ選択(Delete で切断)と、チェーン再抽出の進捗
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null)
   // 右クリックメニュー(範囲選択した複数ノードへの一括操作)
-  const [menu, setMenu] = useState<{ x: number; y: number; targets: string[] } | null>(null)
+  const [menu, setMenu] = useState<{ x: number; y: number; targets: string[]; ending?: boolean } | null>(null)
   // 清書の条件(スタイルプリセット / POV)。清書タブと右クリックの一括清書で共用し、
   // 鑑賞モードとも settings 経由で共通(RenderStyle.tsx)
   const renderStyle = useRenderStyle()
@@ -2683,7 +2721,11 @@ function StructureModeInner({
       current = parent
     }
     ids.reverse()
-    return ids.map((id) => nodeById.get(id)!).filter(Boolean)
+    // はじまり / 結末マーカーはシーンではないので、パス表示(関係図・事実)からは除く
+    return ids
+      .map((id) => nodeById.get(id)!)
+      .filter(Boolean)
+      .filter((n) => !n.kind)
   }, [selectedId, graphNodes, graphEdges])
 
   // 正史パス(canon エッジを根から辿る)
@@ -2705,7 +2747,8 @@ function StructureModeInner({
       seen.add(next)
       current = next
     }
-    return path
+    // はじまり / 結末マーカーはシーンではないので正史(シーン列)からは除く
+    return path.filter((n) => !n.kind)
   }, [graphNodes, graphEdges])
 
   const flowEdges: Edge[] = useMemo(
@@ -2866,6 +2909,54 @@ function StructureModeInner({
     value: string
     onSubmit: (value: string) => void
   } | null>(null)
+
+  // ---- はじまり / 結末の操作(docs/design/endings.md) ----------------
+
+  const makeEndingCanon = async (endingId: string): Promise<void> => {
+    try {
+      await api.makeCanon(endingId)
+      await reload()
+    } catch (e) {
+      setGenStatus(`正史を切り替えられません: ${String(e)}`)
+    }
+  }
+
+  const createEndingAt = async (nodeId: string): Promise<void> => {
+    try {
+      await api.createEnding(nodeId)
+      await reload()
+    } catch (e) {
+      setGenStatus(`結末を作れません: ${String(e)}`)
+    }
+  }
+
+  const renameEnding = (endingId: string): void => {
+    const node = graphNodes.find((n) => n.id === endingId)
+    setNamePrompt({
+      label: '結末の名前(トゥルーエンドなど)',
+      value: node?.title || '結末',
+      onSubmit: (title) => {
+        void (async () => {
+          try {
+            await api.updateNode(endingId, { title })
+            await reload()
+          } catch (e) {
+            setGenStatus(`名前を変更できません: ${String(e)}`)
+          }
+        })()
+      }
+    })
+  }
+
+  const deleteEnding = async (endingId: string): Promise<void> => {
+    if (!window.confirm('この結末を削除しますか?')) return
+    try {
+      await api.deleteNode(endingId)
+      await reload()
+    } catch (e) {
+      setGenStatus(`削除できません: ${String(e)}`)
+    }
+  }
 
   const createChapter = (targets: string[]): void => {
     setNamePrompt({
@@ -3128,14 +3219,25 @@ function StructureModeInner({
             onNodeContextMenu={(event, node) => {
               event.preventDefault()
               if (node.type === 'chapterNode') return // 章ノードの操作は章内ビュー側で
-              const selected = flowNodes.filter((n) => n.selected).map((n) => n.id)
+              const kind = (node.data as BeatNodeData).storyNode.kind
+              if (kind === 'start') return // はじまりに操作は無い
+              if (kind === 'ending') {
+                setMenu({ x: event.clientX, y: event.clientY, targets: [node.id], ending: true })
+                return
+              }
+              // マーカーは一括操作の対象にしない
+              const selected = flowNodes
+                .filter((n) => n.selected && !n.data.storyNode.kind)
+                .map((n) => n.id)
               const targets = selected.includes(node.id) ? selected : [node.id]
               setMenu({ x: event.clientX, y: event.clientY, targets })
             }}
             onSelectionContextMenu={(event, nodes) => {
               event.preventDefault()
-              // 章ノード(導出表示)は一括操作の対象にしない
-              const targets = nodes.filter((n) => n.type !== 'chapterNode').map((n) => n.id)
+              // 章ノード(導出表示)とはじまり / 結末マーカーは一括操作の対象にしない
+              const targets = nodes
+                .filter((n) => n.type !== 'chapterNode' && !(n.data as BeatNodeData).storyNode?.kind)
+                .map((n) => n.id)
               if (targets.length === 0) return
               setMenu({ x: event.clientX, y: event.clientY, targets })
             }}
@@ -3423,10 +3525,28 @@ function StructureModeInner({
               }}
             >
               <div className="px-3 py-1 text-[10px]" style={{ color: 'var(--text-faint)' }}>
-                {menu.targets.length} シーンを選択中
+                {menu.ending ? '結末' : `${menu.targets.length} シーンを選択中`}
               </div>
               {(
-                [
+                menu.ending
+                  ? [
+                      {
+                        label: '🏁 この結末にする',
+                        hint: 'ここまでの道を正史にする',
+                        run: () => void makeEndingCanon(menu.targets[0])
+                      },
+                      {
+                        label: '名前を変更',
+                        hint: '「トゥルーエンド」など',
+                        run: () => renameEnding(menu.targets[0])
+                      },
+                      {
+                        label: '削除',
+                        hint: '結末の候補を消す(最後の 1 つは消せない)',
+                        run: () => void deleteEnding(menu.targets[0])
+                      }
+                    ]
+                  : ([
                   // 章にまとめる: 未分類のシーンだけを選んでいるときに出す(重複所属は不可)
                   ...(menu.targets.every((t) => !graphNodes.find((n) => n.id === t)?.group_id)
                     ? [
@@ -3434,6 +3554,16 @@ function StructureModeInner({
                           label: '📖 章にまとめる',
                           hint: '正史上で連続したシーンを章にする',
                           run: () => void createChapter(menu.targets)
+                        }
+                      ]
+                    : []),
+                  // 結末を作る: 単一シーンの右クリックで
+                  ...(menu.targets.length === 1
+                    ? [
+                        {
+                          label: '🏁 ここに結末を作る',
+                          hint: 'このシーンの先に新しい結末(正史がここまでになる)',
+                          run: () => void createEndingAt(menu.targets[0])
                         }
                       ]
                     : []),
@@ -3497,7 +3627,7 @@ function StructureModeInner({
                     hint: '後続シーンは前のシーンに繋がる',
                     run: () => void deleteNodes(menu.targets)
                   }
-                ] as Array<{ label: string; hint: string; disabled?: boolean; run: () => void }>
+                ] as Array<{ label: string; hint: string; disabled?: boolean; run: () => void }>)
               ).map((item) => (
                 <button
                   key={item.label}
@@ -3671,6 +3801,41 @@ function StructureModeInner({
                 onRename={() => void renameChapter(chapterForPanel)}
                 onDissolve={() => void dissolveChapter(chapterForPanel)}
               />
+            ) : selectedNode?.kind ? (
+              // はじまり / 結末マーカーの簡易パネル
+              <div className="pt-8 text-center text-[12px]" style={{ color: 'var(--text-dim)' }}>
+                <div className="text-[28px]">{selectedNode.kind === 'ending' ? '🏁' : '📖'}</div>
+                <div className="mt-1.5 text-[14px] font-semibold" style={{ color: 'var(--text)' }}>
+                  {selectedNode.title || (selectedNode.kind === 'ending' ? '結末' : 'はじまり')}
+                </div>
+                <div className="mt-1.5" style={{ color: 'var(--text-faint)' }}>
+                  {selectedNode.kind === 'ending'
+                    ? selectedNode.status === 'canon'
+                      ? 'アクティブな結末。ここから根へさかのぼった道が正史です'
+                      : '結末の候補(別のルート)'
+                    : '物語のはじまり。最初のシーンはこの子としてつながります'}
+                </div>
+                {selectedNode.kind === 'ending' && (
+                  <div className="mt-4 flex flex-col items-center gap-2">
+                    {selectedNode.status !== 'canon' && (
+                      <button
+                        onClick={() => void makeEndingCanon(selectedNode.id)}
+                        className="rounded-lg px-3 py-1.5 text-[12px] font-medium text-white"
+                        style={{ background: 'var(--accent)' }}
+                      >
+                        🏁 この結末にする
+                      </button>
+                    )}
+                    <button
+                      onClick={() => renameEnding(selectedNode.id)}
+                      className="rounded-lg border px-3 py-1 text-[12px]"
+                      style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+                    >
+                      名前を変更
+                    </button>
+                  </div>
+                )}
+              </div>
             ) : selectedNode ? (
               inspectorTab === 'render' ? (
                 <RenderTab

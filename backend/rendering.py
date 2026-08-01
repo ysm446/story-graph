@@ -224,6 +224,8 @@ async def render_stream(
             if node is None:
                 yield _sse({"error": f"ノードが見つかりません: {node_id}"})
                 return
+            if node.get("kind"):
+                continue  # はじまり / 結末マーカーは清書しない
             # 直前シーンの散文末尾(スライディングウィンドウ)
             prev_tail = None
             if node_id in canon:

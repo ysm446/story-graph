@@ -343,12 +343,31 @@ async def insert_node_after(node_id: str, body: NodeIn) -> dict[str, Any]:
 
 @app.post("/nodes/{node_id}/make_canon")
 async def make_canon(node_id: str) -> dict[str, Any]:
+    """このノードを通る道を正史にする(先の結末をアクティブに。無ければ作る)。"""
     snapshots.auto(store, "正史切替の前", 0)
     try:
         store.make_canon(node_id)
     except KeyError:
         raise HTTPException(404, "node not found")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     return {"canon_path": store.canon_path()}
+
+
+class EndingIn(BaseModel):
+    title: str | None = None
+    activate: bool = True
+
+
+@app.post("/nodes/{node_id}/ending")
+async def create_ending(node_id: str, body: EndingIn) -> dict[str, Any]:
+    """このシーンの先に新しい結末を作る(docs/design/endings.md)。"""
+    try:
+        return store.create_ending(node_id, body.title, body.activate)
+    except KeyError:
+        raise HTTPException(404, "node not found")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 class AttachIn(BaseModel):
@@ -365,6 +384,8 @@ async def detach_node(node_id: str) -> dict[str, Any]:
         detached = store.detach_node(node_id)
     except KeyError:
         raise HTTPException(404, "node not found")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     return {"detached": detached, "canon_path": store.canon_path()}
 
 
@@ -518,7 +539,11 @@ async def update_node(node_id: str, body: NodePatch) -> dict[str, Any]:
 @app.delete("/nodes/{node_id}")
 async def delete_node(node_id: str) -> dict[str, str]:
     snapshots.auto(store, "シーン削除の前", 30)
-    if not store.delete_node(node_id):
+    try:
+        deleted = store.delete_node(node_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if not deleted:
         raise HTTPException(404, "node not found")
     return {"status": "deleted"}
 

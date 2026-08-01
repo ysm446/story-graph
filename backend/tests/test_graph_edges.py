@@ -30,8 +30,17 @@ def test_detach_makes_island(store):
     assert store.get_node(path[0])["status"] == "canon"
 
 
-def test_detach_root_is_noop(store):
-    assert store.detach_node(store.canon_path()[0]) is False
+def test_detach_first_scene_now_allowed(store):
+    """最初のシーンにも親(「はじまり」)が居るので島にできる(結末方式で変更)。
+    アクティブな結末ごと切り離した場合は、はじまり側に結末が作り直される。"""
+    path = store.canon_path()
+    assert store.detach_node(path[0]) is True
+    assert store.canon_path() == []  # 正史は空(シーンが全部島になった)
+    assert store.active_ending() is not None  # 結末は常に 1 つ以上ある
+    # 「はじまり」自体は切り離せない
+    start = store.conn.execute("SELECT id FROM nodes WHERE kind = 'start'").fetchone()["id"]
+    with pytest.raises(ValueError):
+        store.detach_node(start)
 
 
 def test_island_folds_from_its_own_root(store):
@@ -73,7 +82,9 @@ def test_subtree_order_is_parent_first(store):
     branch = store.append_node({"beat": "分岐", "cast": ["aya"], "title": "if"}, parent_id=path[1])
     order = store.subtree_order(path[1])
     assert order[0] == path[1]
-    assert set(order) == {path[1], path[2], branch["id"]}
+    # 部分木には末尾の結末マーカーも含まれるので、シーンだけを比べる
+    scenes = [nid for nid in order if store.get_node(nid)["kind"] is None]
+    assert set(scenes) == {path[1], path[2], branch["id"]}
 
 
 def test_detached_node_has_no_parent(store):

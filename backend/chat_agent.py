@@ -112,7 +112,8 @@ def build_tools() -> list[dict[str, Any]]:
 def _visible_path(store: Store, anchor: str | None, scope: str) -> list[str]:
     if scope == "all" or anchor is None:
         return store.canon_path()
-    return store.path_to(anchor)
+    # はじまり / 結末マーカーはシーンではないので除く(fold はイベントが無く素通り)
+    return [nid for nid in store.path_to(anchor) if store._node_kind(nid) is None]
 
 
 def _tool_get_beats(store: Store, path: list[str], args: dict[str, Any]) -> dict[str, Any]:
