@@ -150,6 +150,9 @@ const MAX_DYNAMIC = 3 // うち、内容から生成された質問に使う枠(
 const SIDEBAR_MIN = 140 // 会話一覧の最小幅(見出しが読める下限)
 const SIDEBAR_MAX = 420 // 同・最大幅。会話エリアを潰さない上限
 const SIDEBAR_DEFAULT = 264 // 会話名 + キャラ名 / シーン名の 2 行が切れにくい幅
+// アンカーが動いてから使用量を取り直すまでの待ち。選択が落ち着いてから 1 回だけ
+// 投げるための間で、矢印キーの連打(1 回 60ms 程度)は十分に吸収できる長さ
+const USAGE_DEBOUNCE_MS = 400
 const RING_RADIUS = 10 // コンテキスト使用量リング(26px の SVG 内)
 const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS
 
@@ -254,6 +257,7 @@ export default function ChatDrawer({
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
   const panelRef = useRef<HTMLDivElement | null>(null) // 入力欄の高さの上限を決めるのに使う
   const rootRef = useRef<HTMLDivElement | null>(null) // 会話一覧の最大幅を決めるのに使う
+  const usageSeqRef = useRef(0) // 使用量の取得は追い越しがあるので最後の応答だけ採用する
   const busyElapsed = useElapsedSeconds(busy)
 
   // 分割線のドラッグで会話一覧の幅を変える(構造モードの分割線と同じ作り)。
@@ -349,13 +353,15 @@ export default function ChatDrawer({
     }
   }
 
-  // コンテキスト使用量を取り直す(会話トークン / ctx_size)
+  // コンテキスト使用量を取り直す(会話トークン / ctx_size)。
+  // 追い越しがあるので、最後に投げた分の応答だけを採用する
   const refreshUsage = async (
     cid: string | null,
     anchor: string | null,
     charOverride?: string | null
   ): Promise<void> => {
     const c = charOverride !== undefined ? charOverride : charId
+    const seq = ++usageSeqRef.current
     try {
       const res = await chatApi.tokenUsage({
         chat_id: cid,
@@ -364,8 +370,10 @@ export default function ChatDrawer({
         char_id: c,
         mode: roleplay ? 'roleplay' : 'interview'
       })
+      if (seq !== usageSeqRef.current) return // 新しい要求に追い越された
       setUsage({ tokens: res.token_count, ctx: res.ctx_size, estimated: res.estimated })
     } catch {
+      if (seq !== usageSeqRef.current) return
       setUsage(null)
     }
   }
@@ -401,13 +409,27 @@ export default function ChatDrawer({
     }
   }, [menuOpenId])
 
-  // 開いたタイミング(と設定変更時)に候補と使用量を取っておく
+  // 開いたタイミング(と設定変更時)に質問候補を取っておく
   useEffect(() => {
     if (!open) return
-    void refreshUsage(chatId, liveAnchor)
     if (dynamicSuggestions) void refreshSuggestions(chatId, liveAnchor)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, dynamicSuggestions])
+
+  /** 使用量リングの取り直し。会話が始まるまではアンカーが選択に追従するので、
+   *  その間はアンカー(とスコープ・相手)が変わるたびに取り直す必要がある。
+   *
+   *  ただし /chat/token_usage は「見える範囲の fold + llama-server の /tokenize」
+   *  を通るので 1 選択 1 リクエストにはしない。**選択が落ち着いてから 1 回だけ**
+   *  投げる(矢印キーでシーンを渡り歩く間ずっと叩かないため)。
+   *  会話が始まったあと(chatId あり)はアンカーが固定されるので、ここでは何もせず
+   *  送信・履歴読み込み・ターン削除の各所からの明示的な呼び出しに任せる。 */
+  useEffect(() => {
+    if (!open || chatId) return
+    const timer = window.setTimeout(() => void refreshUsage(null, liveAnchor), USAGE_DEBOUNCE_MS)
+    return () => window.clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, chatId, liveAnchor, scope, charId, roleplay])
 
   // 候補チップも会話の中(末尾)にあるので、チップが差し替わったときも下端へ寄せる
   useEffect(() => {
