@@ -3139,13 +3139,36 @@ function StructureModeInner({
     })
   }
 
-  const moveChapter = async (groupId: string, after: string | null): Promise<void> => {
+  /** 章を並べ替える。swapWith(入れ替える相手の章)を渡すと**カードの位置も入れ替える**。
+   *
+   * どちらの章もまだ動かしていない(位置が導出のまま)なら、並びが変われば導出位置も
+   * 一緒に入れ替わるので何もしない。手で置いた章が絡むときだけ座標を書き換える。
+   */
+  const moveChapter = async (
+    groupId: string,
+    after: string | null,
+    swapWith?: string
+  ): Promise<void> => {
     try {
+      const posOf = (id: string): { x: number; y: number } | undefined =>
+        chapterNodes.find((n) => n.id === `chapter:${id}`)?.position
+      const pinned = (id: string): boolean => {
+        const g = groups.find((x) => x.id === id)
+        return g?.pos_x != null && g?.pos_y != null
+      }
+      const mine = swapWith ? posOf(groupId) : undefined
+      const theirs = swapWith ? posOf(swapWith) : undefined
       await api.moveGroup(groupId, after)
+      if (swapWith && mine && theirs && (pinned(groupId) || pinned(swapWith))) {
+        await Promise.all([
+          api.setGroupPosition(groupId, Math.round(theirs.x), Math.round(theirs.y)),
+          api.setGroupPosition(swapWith, Math.round(mine.x), Math.round(mine.y))
+        ])
+      }
     } catch (e) {
       setGenStatus(`章を移動できません: ${String(e)}`)
     } finally {
-      await reload() // 失敗時もカードの位置を導出位置へ戻す
+      await reload()
     }
   }
 
@@ -3749,15 +3772,25 @@ function StructureModeInner({
                           ? [
                               {
                                 label: '← 前へ移動',
-                                hint: '一つ前の章と入れ替える(物語の順番が変わります)',
+                                hint: '一つ前の章と入れ替える(カードの位置も入れ替わります)',
                                 disabled: ci <= 0,
-                                run: () => void moveChapter(group.id, ci <= 1 ? null : canonGroups[ci - 2].id)
+                                run: () =>
+                                  void moveChapter(
+                                    group.id,
+                                    ci <= 1 ? null : canonGroups[ci - 2].id,
+                                    canonGroups[ci - 1]?.id
+                                  )
                               },
                               {
                                 label: '→ 後ろへ移動',
-                                hint: '一つ後ろの章と入れ替える(物語の順番が変わります)',
+                                hint: '一つ後ろの章と入れ替える(カードの位置も入れ替わります)',
                                 disabled: ci >= canonGroups.length - 1,
-                                run: () => void moveChapter(group.id, canonGroups[ci + 1]?.id ?? null)
+                                run: () =>
+                                  void moveChapter(
+                                    group.id,
+                                    canonGroups[ci + 1]?.id ?? null,
+                                    canonGroups[ci + 1]?.id
+                                  )
                               }
                             ]
                           : []),
