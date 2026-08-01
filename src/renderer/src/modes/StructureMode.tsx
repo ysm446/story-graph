@@ -1297,6 +1297,56 @@ function CharTab({
  */
 // ---- 章タブ(章ノードを選択したときのインスペクタ。docs/design/chapters.md §6) ----
 
+/** 内容に合わせて縦幅が伸びる textarea(中でスクロールさせない)。
+ *  ビートタブの「感情の核」と同じ方式で、インスペクタ幅の変化でも測り直す */
+function AutoTextarea({
+  value,
+  onChange,
+  className,
+  style
+}: {
+  value: string
+  onChange: (value: string) => void
+  className?: string
+  style?: React.CSSProperties
+}): React.JSX.Element {
+  const ref = useRef<HTMLTextAreaElement>(null)
+  const autosize = useCallback((): void => {
+    const el = ref.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${el.scrollHeight + 2}px`
+  }, [])
+
+  useEffect(() => autosize(), [value, autosize])
+
+  // 折り返しが変わると必要な高さも変わるので、幅の変化でも再計算する
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    let lastWidth = el.clientWidth
+    const observer = new ResizeObserver(() => {
+      if (el.clientWidth !== lastWidth) {
+        lastWidth = el.clientWidth
+        autosize()
+      }
+    })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [autosize])
+
+  return (
+    <textarea
+      ref={ref}
+      rows={1}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className={className}
+      style={{ ...style, overflow: 'hidden', resize: 'none' }}
+    />
+  )
+}
+
 function ChapterTab({
   group,
   number,
@@ -1533,11 +1583,10 @@ function ChapterTab({
                       style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
                     />
                   </div>
-                  <textarea
-                    rows={3}
+                  <AutoTextarea
                     value={String(e.payload.summary ?? '')}
-                    onChange={(ev) => updateEntry(i, { summary: ev.target.value })}
-                    className="w-full resize-y rounded-md border px-2 py-1 text-[12px] leading-relaxed outline-none"
+                    onChange={(v) => updateEntry(i, { summary: v })}
+                    className="w-full rounded-md border px-2 py-1 text-[12px] leading-relaxed outline-none"
                     style={{ background: 'var(--bg-input)', borderColor: 'var(--border)', color: 'var(--text)' }}
                   />
                 </div>
