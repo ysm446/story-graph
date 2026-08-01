@@ -2630,134 +2630,6 @@ function StructureModeInner({
     }
   }, [menu])
 
-  /** 矢印キーでのシーン移動。
-   *
-   * ← → は時間軸(親 / 子)、↑ ↓ は同じ分岐点の兄弟レーン。DAG の 2 軸と
-   * キーの 2 軸を一致させている。兄弟の並びは自動レイアウトと同じ順
-   * (正史の子が先、あとは作成順)なので、画面の上下と ↑ ↓ が対応する。
-   * 選択ごと動かすので、インスペクタもついてくる。
-   */
-  const navigateSelection = useCallback(
-    (direction: 'left' | 'right' | 'up' | 'down'): void => {
-      const currentId = flowNodes.find((n) => n.selected)?.id ?? selectedId
-      if (!currentId) return
-      const orderIndex = new Map(graphNodes.map((n, i) => [n.id, i]))
-      const parentOf = new Map(graphEdges.map((e) => [e.to_node, e.from_node]))
-      const sortIds = (ids: string[]): string[] =>
-        ids.slice().sort((a, b) => {
-          const canonOf = (id: string): number =>
-            graphEdges.some((e) => e.to_node === id && e.is_canon) ? 1 : 0
-          return canonOf(b) - canonOf(a) || (orderIndex.get(a) ?? 0) - (orderIndex.get(b) ?? 0)
-        })
-      const childrenOf = (id: string): string[] =>
-        sortIds(graphEdges.filter((e) => e.from_node === id).map((e) => e.to_node))
-
-      let targetId: string | undefined
-      if (direction === 'right') {
-        targetId = childrenOf(currentId)[0] // 分岐しているときは正史の子へ
-      } else if (direction === 'left') {
-        targetId = parentOf.get(currentId)
-      } else {
-        // 兄弟(親が無ければ島の根どうし)を並べて 1 つ隣へ。端では止まる
-        const parent = parentOf.get(currentId)
-        const siblings = parent
-          ? childrenOf(parent)
-          : sortIds(graphNodes.filter((n) => !parentOf.has(n.id)).map((n) => n.id))
-        const index = siblings.indexOf(currentId)
-        if (index < 0) return
-        targetId = siblings[index + (direction === 'down' ? 1 : -1)]
-      }
-      if (!targetId) return
-
-      const flow = reactFlow.getNode(targetId)
-      if (flow) {
-        // ズームは保ったまま中央へ寄せる(F の fitBounds とは役割を分ける)
-        void reactFlow.setCenter(
-          flow.position.x + (flow.measured?.width ?? 288) / 2,
-          flow.position.y + (flow.measured?.height ?? FALLBACK_NODE_HEIGHT) / 2,
-          { zoom: reactFlow.getZoom(), duration: 300 }
-        )
-      }
-      const nextId = targetId
-      setSelectedId(nextId)
-      setFlowNodes((prev) =>
-        prev.map((n) => (n.selected === (n.id === nextId) ? n : { ...n, selected: n.id === nextId }))
-      )
-    },
-    [flowNodes, selectedId, graphNodes, graphEdges, reactFlow]
-  )
-
-  // キーボードショートカット(lm-graph と同じ): A = 全体表示 / F = 選択にフォーカス
-  // Delete = 選択ノードを削除(エッジ選択中は切断)
-  // 矢印 = シーン間の移動(← → が親子、↑ ↓ が分岐レーン)
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent): void => {
-      const target = event.target as HTMLElement | null
-      if (
-        target &&
-        (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)
-      ) {
-        return
-      }
-      if (event.key === 'Delete') {
-        // エッジを選択中なら「削除」ではなく「切断」(ノードは残す)
-        if (selectedEdgeId) {
-          event.preventDefault()
-          void detachEdge(selectedEdgeId)
-          return
-        }
-        // キャンバス上で選択中のノードを優先し、無ければインスペクタの選択ノード
-        const targetId = flowNodes.find((n) => n.selected)?.id ?? selectedId
-        if (!targetId) return
-        event.preventDefault()
-        void deleteNodeById(targetId)
-        return
-      }
-      const arrows: Record<string, 'left' | 'right' | 'up' | 'down'> = {
-        ArrowLeft: 'left',
-        ArrowRight: 'right',
-        ArrowUp: 'up',
-        ArrowDown: 'down'
-      }
-      if (arrows[event.key]) {
-        event.preventDefault()
-        navigateSelection(arrows[event.key])
-        return
-      }
-      if (event.key === 'a') {
-        event.preventDefault()
-        void reactFlow.fitView({ duration: 300, padding: 0.1 })
-        return
-      }
-      if (event.key === 'f') {
-        let targets = flowNodes.filter((n) => n.selected)
-        if (targets.length === 0 && selectedId) {
-          targets = flowNodes.filter((n) => n.id === selectedId)
-        }
-        if (targets.length === 0) return
-        event.preventDefault()
-        let minX = Infinity
-        let minY = Infinity
-        let maxX = -Infinity
-        let maxY = -Infinity
-        for (const n of targets) {
-          const width = n.measured?.width ?? 288
-          const height = n.measured?.height ?? 160
-          minX = Math.min(minX, n.position.x)
-          minY = Math.min(minY, n.position.y)
-          maxX = Math.max(maxX, n.position.x + width)
-          maxY = Math.max(maxY, n.position.y + height)
-        }
-        void reactFlow.fitBounds(
-          { x: minX, y: minY, width: maxX - minX, height: maxY - minY },
-          { duration: 300, padding: 0.2 }
-        )
-      }
-    }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [reactFlow, flowNodes, selectedId, deleteNodeById, navigateSelection])
-
   const toggleChat = useCallback((): void => {
     // 分割線(1px)を含めた分だけノードエリアが縮む / 拡がる
     shiftViewportForShrink(0, chatOpen ? -(chatHeight + 1) : chatHeight + 1)
@@ -2999,24 +2871,208 @@ function StructureModeInner({
     return { nodes, edges }
   }, [effectiveView, chapterSeq, chapterNodes, flowNodes, graphEdges])
 
-  const displayNodes: AppFlowNode[] =
-    effectiveView === 'chapters' && chapterFlow
-      ? chapterFlow.nodes
-      : visibleIds
-        ? flowNodes.filter((n) => visibleIds.has(n.id))
-        : flowNodes
-  const displayEdges: Edge[] =
-    effectiveView === 'chapters' && chapterFlow
-      ? chapterFlow.edges
-      : visibleIds
-        ? flowEdges.filter((e) => visibleIds.has(e.source) && visibleIds.has(e.target))
-        : flowEdges
+  // 矢印キーの移動もこの 2 つを見るので、参照が毎レンダー変わらないよう memo する
+  const displayNodes: AppFlowNode[] = useMemo(
+    () =>
+      effectiveView === 'chapters' && chapterFlow
+        ? chapterFlow.nodes
+        : visibleIds
+          ? flowNodes.filter((n) => visibleIds.has(n.id))
+          : flowNodes,
+    [effectiveView, chapterFlow, visibleIds, flowNodes]
+  )
+  const displayEdges: Edge[] = useMemo(
+    () =>
+      effectiveView === 'chapters' && chapterFlow
+        ? chapterFlow.edges
+        : visibleIds
+          ? flowEdges.filter((e) => visibleIds.has(e.source) && visibleIds.has(e.target))
+          : flowEdges,
+    [effectiveView, chapterFlow, visibleIds, flowEdges]
+  )
 
   // ビューを切り替えたらノード構成が大きく変わるので、全体が見える位置へ
   useEffect(() => {
     const timer = setTimeout(() => void reactFlow.fitView({ duration: 300, maxZoom: 1 }), 60)
     return () => clearTimeout(timer)
   }, [effectiveView, chapterView, reactFlow])
+
+  // ---- キーボード操作 -------------------------------------------------
+
+  /** 矢印キーが辿るグラフ。**いま画面に出ているつながり**を対象にする。
+   *
+   * 章ビューではエッジの端点を章カードへ畳んで「章どうしのつながり」にし、
+   * 章内ビューではその章に見えているシーンだけに絞る。以前はシーングラフを
+   * そのまま辿っていたため、章ビューでは章カードを選んでも何も起きず、
+   * 画面に出ていないシーンへ選択だけが移っていた。
+   */
+  const navGraph = useMemo(() => {
+    // シーン ID → 画面上のノード ID(章ビューでは章カード)。null = 画面に無い
+    const rep = (id: string): string | null => {
+      if (effectiveView === 'chapters') {
+        const groupId = chapterSeq.groupByNode.get(id)
+        return groupId ? `chapter:${groupId}` : id
+      }
+      return visibleIds && !visibleIds.has(id) ? null : id
+    }
+    // 並び順は元のシーン順から導く(章カードは先頭シーンの順)
+    const order = new Map<string, number>()
+    graphNodes.forEach((n, i) => {
+      const id = rep(n.id)
+      if (id && !order.has(id)) order.set(id, i)
+    })
+    const parentOf = new Map<string, string>()
+    const childList = new Map<string, { id: string; canon: number }[]>()
+    for (const e of graphEdges) {
+      const from = rep(e.from_node)
+      const to = rep(e.to_node)
+      if (!from || !to || from === to) continue // 章の内部エッジは畳むと消える
+      if (!parentOf.has(to)) parentOf.set(to, from)
+      const children = childList.get(from) ?? []
+      if (!children.some((c) => c.id === to)) children.push({ id: to, canon: e.is_canon ? 1 : 0 })
+      childList.set(from, children)
+    }
+    const byOrder = (a: string, b: string): number => (order.get(a) ?? 0) - (order.get(b) ?? 0)
+    const childrenOf = (id: string): string[] =>
+      (childList.get(id) ?? [])
+        .slice()
+        .sort((a, b) => b.canon - a.canon || byOrder(a.id, b.id))
+        .map((c) => c.id)
+    const roots = (): string[] => [...order.keys()].filter((id) => !parentOf.has(id)).sort(byOrder)
+    return { rep, parentOf, childrenOf, roots }
+  }, [effectiveView, chapterSeq, visibleIds, graphNodes, graphEdges])
+
+  /** 矢印キーでの移動。
+   *
+   * ← → は時間軸(親 / 子)、↑ ↓ は同じ分岐点の兄弟レーン。DAG の 2 軸と
+   * キーの 2 軸を一致させている。兄弟の並びは自動レイアウトと同じ順
+   * (正史の子が先、あとは作成順)なので、画面の上下と ↑ ↓ が対応する。
+   * 選択ごと動かすので、インスペクタもついてくる(章カードなら章パネル)。
+   */
+  const navigateSelection = useCallback(
+    (direction: 'left' | 'right' | 'up' | 'down'): void => {
+      const focus = (nextId: string): void => {
+        const flow = reactFlow.getNode(nextId)
+        if (flow) {
+          // ズームは保ったまま中央へ寄せる(F の fitBounds とは役割を分ける)
+          void reactFlow.setCenter(
+            flow.position.x + (flow.measured?.width ?? 288) / 2,
+            flow.position.y + (flow.measured?.height ?? FALLBACK_NODE_HEIGHT) / 2,
+            { zoom: reactFlow.getZoom(), duration: 300 }
+          )
+        }
+        // 選択の持ち場所はシーンと章カードで別。どちらか一方だけが選ばれるようにする
+        const chapterId = nextId.startsWith('chapter:') ? nextId.slice('chapter:'.length) : null
+        setFlowNodes((prev) =>
+          prev.map((n) => (n.selected === (n.id === nextId) ? n : { ...n, selected: n.id === nextId }))
+        )
+        setChapterNodes((prev) =>
+          prev.map((n) => (n.selected === (n.id === nextId) ? n : { ...n, selected: n.id === nextId }))
+        )
+        setSelectedChapterId(chapterId)
+        setSelectedId(chapterId ? null : nextId)
+      }
+
+      const currentId =
+        displayNodes.find((n) => n.selected)?.id ?? (selectedId ? navGraph.rep(selectedId) : null)
+      if (!currentId) {
+        // 何も選んでいないときは、まず先頭(いちばん上流)を選ぶ
+        const first = navGraph.roots()[0]
+        if (first) focus(first)
+        return
+      }
+
+      let targetId: string | undefined
+      if (direction === 'right') {
+        targetId = navGraph.childrenOf(currentId)[0] // 分岐しているときは正史の子へ
+      } else if (direction === 'left') {
+        targetId = navGraph.parentOf.get(currentId)
+      } else {
+        // 兄弟(親が無ければ島の根どうし)を並べて 1 つ隣へ。端では止まる
+        const parent = navGraph.parentOf.get(currentId)
+        const siblings = parent ? navGraph.childrenOf(parent) : navGraph.roots()
+        const index = siblings.indexOf(currentId)
+        if (index < 0) return
+        targetId = siblings[index + (direction === 'down' ? 1 : -1)]
+      }
+      if (!targetId) return
+      focus(targetId)
+    },
+    [displayNodes, selectedId, navGraph, reactFlow]
+  )
+
+  // キーボードショートカット(lm-graph と同じ): A = 全体表示 / F = 選択にフォーカス
+  // Delete = 選択ノードを削除(エッジ選択中は切断)
+  // 矢印 = ノード間の移動(← → が親子、↑ ↓ が分岐レーン)
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      const target = event.target as HTMLElement | null
+      if (
+        target &&
+        (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)
+      ) {
+        return
+      }
+      if (event.key === 'Delete') {
+        // エッジを選択中なら「削除」ではなく「切断」(ノードは残す)
+        if (selectedEdgeId) {
+          event.preventDefault()
+          void detachEdge(selectedEdgeId)
+          return
+        }
+        // キャンバス上で選択中のノードを優先し、無ければインスペクタの選択ノード
+        const targetId = displayNodes.find((n) => n.selected)?.id ?? selectedId
+        if (!targetId) return
+        // 章カードは表示上の導出ノード。章の解除は右クリックからだけにする
+        if (targetId.startsWith('chapter:')) return
+        event.preventDefault()
+        void deleteNodeById(targetId)
+        return
+      }
+      const arrows: Record<string, 'left' | 'right' | 'up' | 'down'> = {
+        ArrowLeft: 'left',
+        ArrowRight: 'right',
+        ArrowUp: 'up',
+        ArrowDown: 'down'
+      }
+      if (arrows[event.key]) {
+        event.preventDefault()
+        navigateSelection(arrows[event.key])
+        return
+      }
+      if (event.key === 'a') {
+        event.preventDefault()
+        void reactFlow.fitView({ duration: 300, padding: 0.1 })
+        return
+      }
+      if (event.key === 'f') {
+        let targets = displayNodes.filter((n) => n.selected)
+        if (targets.length === 0 && selectedId) {
+          targets = displayNodes.filter((n) => n.id === selectedId)
+        }
+        if (targets.length === 0) return
+        event.preventDefault()
+        let minX = Infinity
+        let minY = Infinity
+        let maxX = -Infinity
+        let maxY = -Infinity
+        for (const n of targets) {
+          const width = n.measured?.width ?? 288
+          const height = n.measured?.height ?? 160
+          minX = Math.min(minX, n.position.x)
+          minY = Math.min(minY, n.position.y)
+          maxX = Math.max(maxX, n.position.x + width)
+          maxY = Math.max(maxY, n.position.y + height)
+        }
+        void reactFlow.fitBounds(
+          { x: minX, y: minY, width: maxX - minX, height: maxY - minY },
+          { duration: 300, padding: 0.2 }
+        )
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [reactFlow, displayNodes, selectedId, selectedEdgeId, detachEdge, deleteNodeById, navigateSelection])
 
   // ---- 章の操作 -------------------------------------------------------
   // Electron は window.prompt を使えない(呼ぶと例外)ので、名前の入力は
