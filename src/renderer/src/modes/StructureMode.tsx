@@ -2868,8 +2868,9 @@ function StructureModeInner({
           id,
           type: 'chapterNode' as const,
           position,
-          // 正史章のドラッグは並べ替え。島・分岐の章は対象外(位置はシーン由来)
-          draggable: order !== undefined,
+          // 正史章のドラッグ = 並べ替え、島・分岐の章のドラッグ = 章ごと位置の移動
+          // (どちらも onNodeDragStop で確定)
+          draggable: true,
           selected: existing?.selected ?? false,
           measured: existing?.measured,
           data: { group: g, number: gi + 1, onOpen: openChapter }
@@ -3304,10 +3305,61 @@ function StructureModeInner({
               setMenu(null)
             }}
             onNodeDragStop={(_, __, draggedNodes) => {
-              // 章カードのドラッグ = 並べ替え。落とした x 位置から「どの章の後ろか」を決める
               const chapterDrag = draggedNodes.find((n) => n.type === 'chapterNode')
               if (chapterDrag) {
                 const dragged = (chapterDrag.data as ChapterNodeData).group
+                if (!dragged.on_canon) {
+                  // 別ルートの章カードのドラッグ = 章のシーン(と分岐)ごと位置を移動
+                  const first = graphNodes.find((n) => n.id === dragged.node_ids[0])
+                  if (!first || first.pos_x == null || first.pos_y == null) {
+                    void reload() // 基準位置が無い(自動配置のまま)なら諦めて戻す
+                    return
+                  }
+                  const dx = chapterDrag.position.x - first.pos_x
+                  const dy = chapterDrag.position.y - first.pos_y
+                  // 章内ビューと同じ集合(メンバー + そこから生える分岐)を一緒に動かす
+                  const moveSet = new Set(dragged.node_ids)
+                  const childrenMap: Record<string, string[]> = {}
+                  for (const e of graphEdges) (childrenMap[e.from_node] ??= []).push(e.to_node)
+                  const byId = new Map(graphNodes.map((n) => [n.id, n]))
+                  const queue = [...dragged.node_ids]
+                  while (queue.length > 0) {
+                    const current = queue.pop()!
+                    for (const child of childrenMap[current] ?? []) {
+                      if (moveSet.has(child)) continue
+                      const node = byId.get(child)
+                      if (node && node.status === 'draft' && !node.group_id) {
+                        moveSet.add(child)
+                        queue.push(child)
+                      }
+                    }
+                  }
+                  const positions = flowNodesRef.current
+                    .filter((n) => moveSet.has(n.id))
+                    .map((n) => ({
+                      id: n.id,
+                      x: Math.round(n.position.x + dx),
+                      y: Math.round(n.position.y + dy)
+                    }))
+                  const posById = new Map(positions.map((p) => [p.id, p]))
+                  setGraphNodes((prev) =>
+                    prev.map((n) => {
+                      const p = posById.get(n.id)
+                      return p ? { ...n, pos_x: p.x, pos_y: p.y } : n
+                    })
+                  )
+                  setFlowNodes((prev) =>
+                    prev.map((n) => {
+                      const p = posById.get(n.id)
+                      return p ? { ...n, position: { x: p.x, y: p.y } } : n
+                    })
+                  )
+                  void api
+                    .setNodePositions(positions)
+                    .catch((e) => setGenStatus(`位置を保存できません: ${String(e)}`))
+                  return
+                }
+                // 正史章のドラッグ = 並べ替え。落とした x 位置から「どの章の後ろか」を決める
                 const before = chapterNodes
                   .filter((n) => n.id !== chapterDrag.id && n.position.x < chapterDrag.position.x)
                   .sort((a, b) => a.position.x - b.position.x)
