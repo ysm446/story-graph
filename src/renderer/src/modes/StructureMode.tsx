@@ -67,6 +67,9 @@ import type {
 const COLUMN_GAP_X = 344 // カード幅(w-72 = 288)+ 余白
 const LANE_GAP_Y = 56 // レーン間の余白
 const FALLBACK_NODE_HEIGHT = 160
+// 章ビューで正史章カードを並べる専用レーン(シーン面の上)。シーン自体の位置は
+// 章ビューでも動かさない(勝手に配置を変えない方針。docs/design/chapters.md)
+const CHAPTER_ROW_Y = -340
 
 // ---- DAG レイアウト(正史は左から右へ一直線、分岐は下のレーンへ) ------
 // カード幅は固定なので x は深さで決まる。y はレーンごとに、そのレーンの
@@ -2853,10 +2856,11 @@ function StructureModeInner({
         const id = `chapter:${g.id}`
         const existing = prevById.get(id)
         const order = chapterSeq.orderOf.get(id)
-        // 正史ルート上の章は並びの列に。島・分岐の章は先頭シーンの位置に置く
+        // 正史ルート上の章はシーン面の上の専用レーンに並べる。島・分岐の章は
+        // 先頭シーンの位置に置く
         let position: { x: number; y: number }
         if (order !== undefined) {
-          position = { x: order * COLUMN_GAP_X, y: 0 }
+          position = { x: order * COLUMN_GAP_X, y: CHAPTER_ROW_Y }
         } else {
           const first = nodeById.get(g.node_ids[0])
           position =
@@ -2882,18 +2886,14 @@ function StructureModeInner({
   // 章ビュー: 章カード + 未分類のシーン
   const chapterFlow = useMemo(() => {
     if (effectiveView !== 'chapters') return null
-    const { groupByNode, orderOf } = chapterSeq
+    const { groupByNode } = chapterSeq
     const nodes: AppFlowNode[] = [...chapterNodes]
-    // 未分類のシーン: 正史上のものは並び順の位置(固定)、分岐・島・はじまり / 結末
-    // マーカーは自分の位置のままで、ドラッグで動かせる(位置は保存される)
+    // 章に属さないノード(シーン・分岐・島・はじまり / 結末)は、章ビューでも
+    // 自分の位置のまま・通常どおりドラッグできる(以前は正史上のシーンを
+    // 並びの列に固定していたが、ドラッグ・整列と衝突するためやめた)
     for (const fn of flowNodes) {
       if (groupByNode.has(fn.id)) continue
-      const order = orderOf.get(fn.id)
-      nodes.push({
-        ...fn,
-        position: order !== undefined ? { x: order * COLUMN_GAP_X, y: 0 } : fn.position,
-        draggable: order === undefined
-      })
+      nodes.push(fn)
     }
     // エッジ: 端点を章カードへ写像し、章の内部エッジは落とす(重複もまとめる)
     const rep = (id: string): string => {
