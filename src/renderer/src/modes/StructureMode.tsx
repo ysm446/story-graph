@@ -67,9 +67,6 @@ import type {
 const COLUMN_GAP_X = 344 // カード幅(w-72 = 288)+ 余白
 const LANE_GAP_Y = 56 // レーン間の余白
 const FALLBACK_NODE_HEIGHT = 160
-// 章ビューで正史章カードを並べる専用レーン(シーン面の上)。シーン自体の位置は
-// 章ビューでも動かさない(勝手に配置を変えない方針。docs/design/chapters.md)
-const CHAPTER_ROW_Y = -340
 
 // ---- DAG レイアウト(正史は左から右へ一直線、分岐は下のレーンへ) ------
 // カード幅は固定なので x は深さで決まる。y はレーンごとに、そのレーンの
@@ -2903,24 +2900,28 @@ function StructureModeInner({
     return set
   }, [effectiveView, focusedGroup, graphNodes, graphEdges])
 
-  // 章ビューの並び: 正史順で、章に属す区間は 'chapter:ID' の 1 項目に圧縮
+  // 章ビュー用: シーン ID → 章 ID(カードへの写像とエッジの畳み込みに使う)
   const chapterSeq = useMemo(() => {
     const groupByNode = new Map<string, string>()
     groups.forEach((g) => g.node_ids.forEach((n) => groupByNode.set(n, g.id)))
-    const seq: string[] = [] // 'chapter:ID' か ノード ID
-    for (const n of canonPath) {
-      const gid = groupByNode.get(n.id)
-      const key = gid ? `chapter:${gid}` : n.id
-      if (seq[seq.length - 1] !== key) seq.push(key)
-    }
-    return { groupByNode, orderOf: new Map(seq.map((key, i) => [key, i])) }
-  }, [groups, canonPath])
+    return { groupByNode }
+  }, [groups])
 
   // 章カードは state で持つ。毎レンダー作り直すと React Flow の実測サイズ
   // (measured)が失われ、v12 は実測が確定するまでノードを描画しないため、
   // カードが不可視のままになる(選択状態の保持も同じ理由)
   const [chapterNodes, setChapterNodes] = useState<ChapterFlowNode[]>([])
   const openChapter = useCallback((groupId: string): void => setChapterView(groupId), [])
+  // 章カードの導出位置は「先頭シーンの位置」。整列(⟲)すると正史は横一直線に
+  // 並ぶので、章カードもその行にそのまま収まる(以前は章カードだけ専用レーンに
+  // 上げていたため、整列すると 2 段に折り返したように見えていた)。
+  // 先頭シーンが動いたときだけ作り直せばよいので、位置の署名を依存にする
+  const chapterAnchorSig = groups
+    .map((g) => {
+      const p = flowNodes.find((n) => n.id === g.node_ids[0])?.position
+      return p ? `${g.id}:${Math.round(p.x)}:${Math.round(p.y)}` : `${g.id}:-`
+    })
+    .join(',')
   useEffect(() => {
     setChapterNodes((prev) => {
       const prevById = new Map(prev.map((n) => [n.id, n]))
@@ -2929,24 +2930,19 @@ function StructureModeInner({
       return groups.map((g, gi) => {
         const id = `chapter:${g.id}`
         const existing = prevById.get(id)
-        const order = chapterSeq.orderOf.get(id)
         // 章カードは一度動かしたらその位置のまま(groups.pos_x/pos_y)。
-        // まだ動かしていない章だけ導出位置に置く: 正史ルート上の章はシーン面の
-        // 上の専用レーンへ、島・分岐の章は先頭シーンの位置へ
-        let position: { x: number; y: number }
-        if (g.pos_x != null && g.pos_y != null) {
-          position = { x: g.pos_x, y: g.pos_y }
-        } else if (order !== undefined) {
-          position = { x: order * COLUMN_GAP_X, y: CHAPTER_ROW_Y }
-        } else {
-          const first = nodeById.get(g.node_ids[0])
-          // 保存座標が無い(整列直後など)ときは、画面上の実際の位置に追従する
-          const flowPos = flowNodesRef.current.find((n) => n.id === g.node_ids[0])?.position
-          position =
-            first && first.pos_x != null && first.pos_y != null
-              ? { x: first.pos_x, y: first.pos_y }
-              : (flowPos ?? { x: islandIndex++ * COLUMN_GAP_X, y: 420 })
-        }
+        // まだ動かしていない章は、画面上の先頭シーンの位置に置く(正史・島とも同じ)
+        const first = nodeById.get(g.node_ids[0])
+        const anchor =
+          flowNodesRef.current.find((n) => n.id === g.node_ids[0])?.position ??
+          (first && first.pos_x != null && first.pos_y != null
+            ? { x: first.pos_x, y: first.pos_y }
+            : undefined)
+        const position =
+          g.pos_x != null && g.pos_y != null
+            ? { x: g.pos_x, y: g.pos_y }
+            : // 先頭シーンがまだ画面に無い(整列直後の作り直し中など)は今の位置を保つ
+              (anchor ?? existing?.position ?? { x: islandIndex++ * COLUMN_GAP_X, y: 420 })
         return {
           id,
           type: 'chapterNode' as const,
@@ -2960,7 +2956,9 @@ function StructureModeInner({
         }
       })
     })
-  }, [groups, chapterSeq, graphNodes, openChapter])
+    // chapterAnchorSig は flowNodes の位置を畳んだ署名(毎フレーム作り直さないため)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groups, chapterAnchorSig, graphNodes, openChapter])
 
   // 章ビュー: 章カード + 未分類のシーン
   const chapterFlow = useMemo(() => {
