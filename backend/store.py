@@ -1258,7 +1258,7 @@ class Store:
         return next((g for g in self.list_groups() if g["id"] == group_id), None)
 
     def delete_group(self, group_id: str) -> None:
-        """章を解散する(シーン自体はそのまま残る)。"""
+        """章を解除する(シーン自体はそのまま残る)。"""
         self.conn.execute("UPDATE nodes SET group_id = NULL WHERE group_id = ?", (group_id,))
         self.conn.execute("DELETE FROM groups WHERE id = ?", (group_id,))
         self.conn.commit()

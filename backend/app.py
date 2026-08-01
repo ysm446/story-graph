@@ -448,7 +448,7 @@ async def update_group(group_id: str, body: GroupPatch) -> dict[str, Any]:
 
 @app.delete("/groups/{group_id}")
 async def delete_group(group_id: str) -> dict[str, str]:
-    """章を解散する(シーンはそのまま残る)。"""
+    """章を解除する(シーンはそのまま残る)。"""
     store.delete_group(group_id)
     return {"status": "deleted"}
 

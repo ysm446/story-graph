@@ -136,7 +136,7 @@ export const api = {
     request<Group>('/groups', { method: 'POST', body: JSON.stringify({ title, node_ids: nodeIds }) }),
   updateGroup: (groupId: string, data: { title?: string; color?: string }) =>
     request<Group>(`/groups/${groupId}`, { method: 'PATCH', body: JSON.stringify(data) }),
-  // 章の解散(シーンは残る)
+  // 章の解除(シーンは残る)
   deleteGroup: (groupId: string) => request<unknown>(`/groups/${groupId}`, { method: 'DELETE' }),
   // 章の並べ替え: 別の章の後ろへつなぎ替える(after=null は先頭へ)
   moveGroup: (groupId: string, after: string | null) =>

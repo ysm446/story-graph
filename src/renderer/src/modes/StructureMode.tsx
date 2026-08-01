@@ -1400,11 +1400,11 @@ function ChapterTab({
         </button>
         <button
           onClick={onDissolve}
-          title="章を解散する(シーンは残る)"
+          title="章を解除する(シーンは残る)"
           className="rounded p-0.5 text-[11px] hover:bg-[var(--accent-soft)]"
           style={{ color: 'var(--text-faint)' }}
         >
-          解散
+          解除
         </button>
       </div>
       <div>
@@ -3023,13 +3023,13 @@ function StructureModeInner({
   }
 
   const dissolveChapter = async (group: Group): Promise<void> => {
-    if (!window.confirm(`「${group.title}」を解散しますか?(シーンはそのまま残ります)`)) return
+    if (!window.confirm(`「${group.title}」の章を解除しますか?(シーンはそのまま残ります)`)) return
     try {
       await api.deleteGroup(group.id)
       setChapterView('chapters')
       await reload()
     } catch (e) {
-      setGenStatus(`章を解散できません: ${String(e)}`)
+      setGenStatus(`章を解除できません: ${String(e)}`)
     }
   }
 
@@ -3321,7 +3321,7 @@ function StructureModeInner({
             <Panel position="top-left">
               {/* 畳んでいるときは幅を詰める(パネルの領域はキャンバスのクリックを奪うため) */}
               <div className={`flex flex-col gap-2 ${genPanelOpen || genStatus ? 'w-72' : 'w-fit'}`}>
-                {/* 章内ビューのパンくず(章名 / 名前の変更 / 解散) */}
+                {/* 章内ビューのパンくず(章名 / 名前の変更 / 解除) */}
                 {effectiveView === 'focused' && focusedGroup && (
                   <div
                     className="flex w-fit items-center gap-1.5 rounded-xl border px-2 py-1.5 text-[12px] shadow-lg shadow-black/30"
@@ -3350,7 +3350,7 @@ function StructureModeInner({
                       onClick={() => void dissolveChapter(focusedGroup)}
                       className="rounded-md px-1 py-0.5 hover:bg-[var(--accent-soft)]"
                       style={{ color: 'var(--text-faint)' }}
-                      title="章を解散する(シーンは残る)"
+                      title="章を解除する(シーンは残る)"
                     >
                       解散
                     </button>
@@ -3603,8 +3603,8 @@ function StructureModeInner({
                           run: () => renameChapter(group)
                         },
                         {
-                          label: '解散',
-                          hint: '章をやめる(シーンは残る)',
+                          label: '章を解除',
+                          hint: 'まとまりをやめる(シーンは残る)',
                           run: () => void dissolveChapter(group)
                         }
                       ]
