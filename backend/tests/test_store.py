@@ -404,12 +404,22 @@ def test_move_group_marks_digests_stale(store):
     assert all(g["digest_stale"] == 1 for g in store.list_groups())
 
 
-def test_group_pruned_when_detached(store):
+def test_group_label_survives_detach(store):
+    """切り離しで章ラベルは消えない(2026-08-01 変更。以前は自動で解除していた)。
+    正史から外れている間は警告バッジで知らせ、つなぎ直せば章がそのまま戻る。"""
     n1, n2, n3 = _three_scenes(store)
-    store.create_group("第一章", [n1["id"], n2["id"], n3["id"]])
-    store.detach_node(n3["id"])  # n3 は島になる → 章から外れる
-    assert store.get_node(n3["id"])["group_id"] is None
-    assert store.list_groups()[0]["node_ids"] == [n1["id"], n2["id"]]
+    g = store.create_group("第一章", [n1["id"], n2["id"], n3["id"]])
+    store.detach_node(n3["id"])  # n3 は島になる
+    assert store.get_node(n3["id"])["group_id"] == g["id"]  # ラベルは残る
+    entry = store.list_groups()[0]
+    assert entry["node_ids"] == [n1["id"], n2["id"]]  # 一覧上は正史メンバーだけ
+    assert entry["warning"] is not None  # 警告バッジ
+    # つなぎ直して正史に戻すと、章が元どおり復活して警告も消える
+    store.attach_node(n2["id"], n3["id"])
+    store.make_canon(n3["id"])
+    entry = store.list_groups()[0]
+    assert entry["node_ids"] == [n1["id"], n2["id"], n3["id"]]
+    assert entry["warning"] is None
 
 
 def test_validation_rejects_retired_and_unintroduced(store):

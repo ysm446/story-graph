@@ -588,8 +588,8 @@ class Store:
         ending = self.active_ending()
         chain = set(self.path_to(ending)) if ending else set(self.canon_path())
         on_canon_path = parent_id in chain
-        # 章の真ん中(前後が同じ章)への挿入は、その章を引き継ぐ。引き継がないと
-        # 章が非連続になって _prune_groups に解散されてしまう(docs/design/chapters.md)
+        # 章の真ん中(前後が同じ章)への挿入は、その章を引き継ぐ
+        # (引き継がないと章が正史上で分断されて警告バッジが付く)
         neighbors = self.conn.execute(
             "SELECT id, group_id FROM nodes WHERE id IN (?, ?)",
             (parent_id, chain_edge["to_node"]),
@@ -697,7 +697,6 @@ class Store:
         self._ensure_active_ending_rooted()
         self._resync_canon()
         self._resync_memory_orders(commit=False)
-        self._prune_groups()  # 島になったシーンは章から外れる
         self.conn.commit()
         return True
 
@@ -734,7 +733,6 @@ class Store:
             self.make_canon(child_id)
             return
         self._resync_canon()
-        self._prune_groups()  # 正史が変わった場合、前提の崩れた章を整える
         self.conn.commit()
 
     def make_canon(self, node_id: str) -> None:
@@ -777,7 +775,6 @@ class Store:
         self.set_settings({"active_ending": target})
         self._resync_canon()
         self._resync_memory_orders(commit=False)
-        self._prune_groups()  # 正史から外れた・非連続になった章の割り当てを外す
         self.conn.commit()
 
     def _insert_ending(self, parent_id: str, title: str) -> str:
@@ -807,7 +804,6 @@ class Store:
             self.set_settings({"active_ending": ending_id})
             self._resync_canon()
             self._resync_memory_orders(commit=False)
-            self._prune_groups()
         self.conn.commit()
         return self.get_node(ending_id)  # type: ignore[return-value]
 
@@ -1186,7 +1182,13 @@ class Store:
     # 導出で、真実はシーンノード + エッジ + nodes.group_id のまま。
 
     def list_groups(self) -> list[dict[str, Any]]:
-        """章の一覧を正史パス順で返す。node_ids はメンバー(正史順)。"""
+        """章の一覧を正史パス順で返す。node_ids はメンバー(正史順)。
+
+        章ラベル(nodes.group_id)は切り離しや正史切替で**自動では消さない**
+        (2026-08-01 ユーザー要望。以前は _prune_groups が解除していた)。
+        正史から外れたメンバーが居る・正史上で分断されている章は warning を
+        付けて返し、UI がバッジで知らせる。つなぎ直せば章はそのまま復活する。
+        """
         path = self.canon_path()
         order = {nid: i for i, nid in enumerate(path)}
         members: dict[str, list[str]] = {}
@@ -1194,9 +1196,18 @@ class Store:
             members.setdefault(row["group_id"], []).append(row["id"])
         result = []
         for row in self.conn.execute("SELECT * FROM groups"):
-            ids = sorted((n for n in members.get(row["id"], []) if n in order), key=lambda n: order[n])
+            all_ids = members.get(row["id"], [])
+            ids = sorted((n for n in all_ids if n in order), key=lambda n: order[n])
             if not ids:
-                continue  # メンバーの居ない章は出さない(行だけ残っていても無害)
+                # 全メンバーが正史外(章ごと島など)は一覧に出せないが、ラベルは
+                # 残っているので、つなぎ直せば章は戻ってくる
+                continue
+            warning: str | None = None
+            if len(ids) < len(all_ids):
+                warning = "正史から外れたシーンがあります(つなぎ直すと章に戻ります)"
+            idxs = [order[n] for n in ids]
+            if idxs != list(range(idxs[0], idxs[-1] + 1)):
+                warning = "章が正史上で分断されています(並べ替えはできません)"
             result.append(
                 {
                     "id": row["id"],
@@ -1204,6 +1215,7 @@ class Store:
                     "color": row["color"],
                     "digest_stale": row["digest_stale"],
                     "has_digest": bool(row["digest_events"]),
+                    "warning": warning,
                     "node_ids": ids,
                 }
             )
@@ -1300,6 +1312,8 @@ class Store:
             if target is None:
                 raise KeyError(f"group not found: {after_group_id}")
             anchor = target["node_ids"][-1]
+        if me.get("warning"):
+            raise ValueError(f"並べ替えできません: {me['warning']}")
         a_first, a_last = me["node_ids"][0], me["node_ids"][-1]
         if self.parent_of(a_first) == anchor:
             return groups  # 既にその位置
@@ -1487,27 +1501,6 @@ class Store:
             "SELECT to_node FROM edges WHERE from_node = ? AND is_canon = 0", (tail,)
         ):
             self.mark_dirty_downstream(row["to_node"], commit=False)
-
-    def _prune_groups(self) -> None:
-        """正史の変化(切替・切り離しなど)で章の前提が崩れたときの後始末。
-        正史から外れたメンバーは章から出し、残りが非連続になった章は割り当てを全部外す
-        (データを壊さない最小対応。docs/design/chapters.md §8)。commit は呼び出し側。"""
-        path = self.canon_path()
-        order = {nid: i for i, nid in enumerate(path)}
-        members: dict[str, list[str]] = {}
-        for row in self.conn.execute("SELECT id, group_id FROM nodes WHERE group_id IS NOT NULL"):
-            members.setdefault(row["group_id"], []).append(row["id"])
-        for group_id, ids in members.items():
-            on_canon = [n for n in ids if n in order]
-            off_canon = [n for n in ids if n not in order]
-            self.conn.executemany(
-                "UPDATE nodes SET group_id = NULL WHERE id = ?", [(n,) for n in off_canon]
-            )
-            idxs = sorted(order[n] for n in on_canon)
-            if idxs and idxs != list(range(idxs[0], idxs[-1] + 1)):
-                self.conn.executemany(
-                    "UPDATE nodes SET group_id = NULL WHERE id = ?", [(n,) for n in on_canon]
-                )
 
     # ---- state cache / fold -----------------------------------------
 

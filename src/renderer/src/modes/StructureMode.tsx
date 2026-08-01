@@ -310,6 +310,15 @@ function ChapterNodeCard({ data, selected }: NodeProps<ChapterFlowNode>): React.
       </div>
       <div className="mt-2 flex items-center gap-1.5 text-[11px]" style={{ color: 'var(--text-dim)' }}>
         {group.node_ids.length} シーン
+        {group.warning && (
+          <span
+            className="rounded px-1.5 py-px text-[10px]"
+            style={{ background: 'rgba(239,68,68,0.12)', color: '#f2a3a3' }}
+            title={group.warning}
+          >
+            ⚠ 要確認
+          </span>
+        )}
         {group.has_digest &&
           (group.digest_stale ? (
             <span
@@ -1407,6 +1416,11 @@ function ChapterTab({
           解除
         </button>
       </div>
+      {group.warning && (
+        <p className="text-[11px] leading-relaxed" style={{ color: '#f2a3a3' }}>
+          ⚠ {group.warning}
+        </p>
+      )}
       <div>
         <span className="mb-1 block text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
           シーン({group.node_ids.length})
