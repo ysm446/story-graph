@@ -61,6 +61,7 @@ import type {
   RenderResult,
   StateSnapshot,
   StoryEvent,
+  StoryGraph,
   StoryNode
 } from '../types'
 
@@ -129,6 +130,38 @@ function layoutDag(
     positions[id] = { x: p.depth * COLUMN_GAP_X, y: laneY[p.lane] ?? 0 }
   }
   return positions
+}
+
+/** rootId とその下流のうち、**手動配置のノードだけ**を dx だけ右へずらす座標を返す。
+ *
+ *  自動配置(pos が NULL)のノードは触らない — 座標を書くとその場に固定されて
+ *  しまい、以後の自動レイアウトから外れるため。
+ */
+function shiftDownstreamX(
+  graph: StoryGraph,
+  rootId: string,
+  dx: number
+): Array<{ id: string; x: number; y: number }> {
+  const children: Record<string, string[]> = {}
+  for (const e of graph.edges) (children[e.from_node] ??= []).push(e.to_node)
+  const byId = new Map(graph.nodes.map((n) => [n.id, n]))
+  const moved: Array<{ id: string; x: number; y: number }> = []
+  const seen = new Set([rootId])
+  const queue = [rootId]
+  while (queue.length > 0) {
+    const current = queue.shift()!
+    const node = byId.get(current)
+    if (node && node.pos_x != null && node.pos_y != null) {
+      moved.push({ id: current, x: snapped(node.pos_x + dx), y: node.pos_y })
+    }
+    for (const child of children[current] ?? []) {
+      if (!seen.has(child)) {
+        seen.add(child)
+        queue.push(child)
+      }
+    }
+  }
+  return moved
 }
 
 // ---- カスタムノード --------------------------------------------------
@@ -3605,7 +3638,7 @@ function StructureModeInner({
    * 任せたほうが全体が揃うため。
    */
   const placeNextToParent = useCallback(
-    async (newNodeId: string, parentId: string | null, extraLanes = 0): Promise<void> => {
+    async (newNodeId: string, parentId: string | null): Promise<void> => {
       if (!parentId) return
       const parent = reactFlow.getNode(parentId) as BeatFlowNode | undefined
       if (!parent || parent.data.storyNode.pos_x == null || parent.data.storyNode.pos_y == null) return
@@ -3617,7 +3650,52 @@ function StructureModeInner({
       await api.setNodePosition(
         newNodeId,
         snapped(parent.position.x + COLUMN_GAP_X),
-        snapped(parent.position.y + (siblings + extraLanes) * (height + LANE_GAP_Y))
+        snapped(parent.position.y + siblings * (height + LANE_GAP_Y))
+      )
+    },
+    [reactFlow]
+  )
+
+  /** 割り込ませたシーンを「親と後続のあいだ」に置く(**親が手動配置のときだけ**)。
+   *
+   * 親が自動配置なら何もしない — 自動レイアウトは深さで並べるので、割り込んだ
+   * 時点で後続ごと右にずれ、放っておいても間に入る。
+   *
+   * 手動配置の領域では後続が動かないので、隙間が 1 列ぶんに足りなければ
+   * **後続から下流の手動配置ノードを 1 列ぶん右へ押し出して**場所を作る
+   * (2026-08-03 ユーザー要望。従来は重なりを避けて「後続の 1 レーン下」へ
+   * 逃がしていたが、割り込んだシーンが列から外れて見えていた)。
+   */
+  const placeBetween = useCallback(
+    async (parentId: string, newNodeId: string): Promise<void> => {
+      const parent = reactFlow.getNode(parentId) as BeatFlowNode | undefined
+      if (!parent || parent.data.storyNode.pos_x == null || parent.data.storyNode.pos_y == null) return
+      // 後続は「新しいシーンの子」。割り込みの向き先はサーバーが決めるので、
+      // ここで連鎖の規則を推測せず、繋がった結果を読む
+      const graph = await api.getGraph()
+      const successorId = graph.edges.find((e) => e.from_node === newNodeId)?.to_node ?? null
+      const successor = successorId
+        ? (reactFlow.getNode(successorId) as BeatFlowNode | undefined)
+        : undefined
+      if (!successorId || !successor) {
+        // 後続が居ない = 末尾への追加と同じ。親の右隣へ
+        await api.setNodePosition(
+          newNodeId,
+          snapped(parent.position.x + COLUMN_GAP_X),
+          snapped(parent.position.y)
+        )
+        return
+      }
+      let successorX = successor.position.x
+      if (successorX - parent.position.x < COLUMN_GAP_X * 2) {
+        const moved = shiftDownstreamX(graph, successorId, COLUMN_GAP_X)
+        if (moved.length > 0) await api.setNodePositions(moved)
+        successorX += COLUMN_GAP_X
+      }
+      await api.setNodePosition(
+        newNodeId,
+        snapped((parent.position.x + successorX) / 2),
+        snapped((parent.position.y + successor.position.y) / 2)
       )
     },
     [reactFlow]
@@ -3698,9 +3776,7 @@ function StructureModeInner({
         beat: '(ここに出来事の仕様を書く)',
         cast: []
       })
-      // 割り込みなので、元の後続シーンが居る右隣とは重ならないよう 1 レーン下に置く
-      // (手動配置の領域では下流を自動で押し出せないため、位置の調整は作者に任せる)
-      await placeNextToParent(node.id, selectedId, 1)
+      await placeBetween(selectedId, node.id)
       await reload()
       setSelectedId(node.id)
       setInspectorTab('beat')
