@@ -233,6 +233,47 @@ def test_character_system_prompt_roleplay_frame(store):
     assert "インタビュー" not in text
 
 
+def test_character_system_prompt_keeps_recent_memories(store):
+    """重要度の低い直近の記憶が、重要度上位に押し出されて消えないこと。
+
+    章のまとめ(digest)のような importance 高めの記憶が溜まると、重要度だけの
+    選抜では「少し前の出来事」が本文から落ちて本人が覚えていないことになる。
+    """
+    path = store.canon_path()
+    # 第一話に重要度の高い記憶を大量に積む(15 件枠を埋め尽くす役)
+    store.replace_events(path[0], store.list_events(path[0]) + [
+        {"type": "memory_add", "payload": {"char": "aya", "content": f"重大な出来事{i}", "importance": 0.9}}
+        for i in range(20)
+    ])
+    # 最新シーンに、重要度は低いが直近の記憶
+    store.replace_events(path[-1], store.list_events(path[-1]) + [
+        {"type": "memory_add", "payload": {"char": "aya", "content": "昨日ケンと橋で立ち話をした", "importance": 0.2}},
+    ])
+    text = chat_agent.build_character_system(store, path, "aya", "interview")
+    assert "昨日ケンと橋で立ち話をした" in text
+    assert "## 最近の出来事" in text
+    assert "## 強く残っている記憶" in text
+    # 本文に載るのは合計 15 件まで(節見出しと補足行は数えない)
+    prefixes = ("- 重大な出来事", "- 昨日", "- 石橋")
+    shown = [ln for ln in text.splitlines() if ln.startswith(prefixes)]
+    assert len(shown) == chat_agent.CHARACTER_MEMORY_LIMIT
+    assert "件ある" in text  # 残りは recall で、の案内
+
+
+def test_character_system_prompt_single_section_when_all_fit(store):
+    """記憶が枠に収まるときは 1 節のまま(節を分けない)。"""
+    text = chat_agent.build_character_system(store, store.canon_path(), "aya", "interview")
+    assert "## あなたの記憶" in text
+    assert "## 最近の出来事" not in text
+    assert "件ある" not in text
+
+
+def test_character_system_prompt_tells_to_recall_first(store):
+    """「無ければ知らないと答える」だけだと recall を呼ばずに打ち切る。"""
+    text = chat_agent.build_character_system(store, store.canon_path(), "aya", "interview")
+    assert "まず recall で思い出そうとする" in text
+
+
 def test_character_chat_uses_recall_and_saves_char(store, monkeypatch):
     tc = _tool_call("recall", {"query": "裏切り"})
     monkeypatch.setattr(

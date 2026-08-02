@@ -388,6 +388,13 @@ class Store:
             if self._ending_is_rooted(ending)
             else self._canon_chain_from_start()
         )
+        # 正史が章の出口を飛ばして外へ出ていたら、先に境界へ挟み直す(読み順は不変)
+        if self._realign_boundaries(chain):
+            chain = (
+                self.path_to(ending)
+                if self._ending_is_rooted(ending)
+                else self._canon_chain_from_start()
+            )
         chain_set = set(chain)
         pairs = set(zip(chain, chain[1:]))
         for e in self.conn.execute("SELECT id, from_node, to_node, is_canon FROM edges").fetchall():
@@ -398,6 +405,57 @@ class Store:
             status = "canon" if row["id"] in chain_set else "draft"
             if status != row["status"]:
                 self.conn.execute("UPDATE nodes SET status = ? WHERE id = ?", (status, row["id"]))
+
+    def _realign_boundaries(self, chain: list[str]) -> bool:
+        """正史が章の出口を飛ばして外へ出ていたら、出口をその境界へ挟み直す。
+
+        「章の外へ出るときは必ず出口を通る」が境界の不変条件(§9)。**章の中の
+        分岐が別の章になっていて、その分岐が正史になった**ときなどに、正史が
+        出口を迂回する形が作れてしまう(2026-08-02 ユーザー報告)。迂回線自体は
+        章を作った時点(マーカーの挟み込み)でできているので、接続時の正規化
+        (`_normalize_chapter_entry`)では捕まえられない。正史が動いたここで直す。
+
+        直すのはマーカーの位置だけで、**正史の読み順は変えない**(入口 / 出口は
+        `canon_path` から除かれる)。章の道から外れたシーンは章のメンバーのまま
+        残り、章パネルに「ルートに乗らないシーン」として並ぶ。commit は呼び出し側。
+        """
+        pos = {nid: i for i, nid in enumerate(chain)}
+        changed = False
+        for row in self.conn.execute("SELECT id FROM groups").fetchall():
+            out = self.conn.execute(
+                "SELECT id FROM nodes WHERE group_id = ? AND kind = 'chapter_out'", (row["id"],)
+            ).fetchone()
+            if out is None:
+                continue
+            on_canon = [
+                r["id"]
+                for r in self.conn.execute(
+                    "SELECT id FROM nodes WHERE group_id = ? AND kind IS NULL", (row["id"],)
+                )
+                if r["id"] in pos
+            ]
+            if not on_canon:
+                continue  # 章が丸ごと正史から外れている(島・落選した分岐)
+            tail = max(on_canon, key=lambda n: pos[n])
+            nxt = chain[pos[tail] + 1] if pos[tail] + 1 < len(chain) else None
+            if nxt is None or nxt == out["id"]:
+                continue  # 既に出口を通って外へ出ている
+            if out["id"] in pos and pos[out["id"]] < pos[tail]:
+                # 出口が章の途中に取り残されている(道が章の外を通る形)。ここで
+                # 動かすと出口の下流が自分の上流になって循環するので警告に任せる
+                continue
+            self.conn.execute("DELETE FROM edges WHERE to_node = ?", (out["id"],))
+            self.conn.execute("DELETE FROM edges WHERE to_node = ?", (nxt,))
+            self.conn.execute(
+                "INSERT INTO edges(id, from_node, to_node, is_canon) VALUES(?,?,?,1)",
+                (_new_id(), tail, out["id"]),
+            )
+            self.conn.execute(
+                "INSERT INTO edges(id, from_node, to_node, is_canon) VALUES(?,?,?,1)",
+                (_new_id(), out["id"], nxt),
+            )
+            changed = True
+        return changed
 
     def _ensure_active_ending_rooted(self) -> None:
         """切り離しなどでアクティブな結末が「はじまり」から辿れなくなったら、
@@ -753,6 +811,10 @@ class Store:
             raise KeyError(f"node not found: {child_id}")
         if parent_id == child_id:
             raise ValueError("自分自身には繋げません")
+        # 章の入口へ繋ぐときは、繋ぎ元を「その章の出口」に読み替える(境界の担保)
+        parent_id = self._normalize_chapter_entry(parent_id, child_id)
+        if parent_id == child_id:
+            return  # 読み替えた先が自分自身(ありえないが念のため)
         if self._node_kind(parent_id) == "ending":
             raise ValueError("結末の先にはつなげません")
         if self._node_kind(child_id) == "start":
@@ -794,6 +856,40 @@ class Store:
             return
         self._resync_canon()
         self.conn.commit()
+
+    def _normalize_chapter_entry(self, parent_id: str, child_id: str) -> str:
+        """章の**道の終わり**から次章の入口へ繋いだとき、繋ぎ元を出口に読み替える。
+
+        「章の外へ出るときは必ず出口を通る」が境界の不変条件(§9)。章ビューは
+        端点を入口 / 出口に解決してから繋ぐが、フラット表示からシーン → 次章の
+        入口へ直接ドラッグすると出口を迂回する線が作れてしまい、しかも作った
+        時点では何も起きない(警告は正史の線しか見ない)。あとで無関係な操作で
+        正史がその線に乗った瞬間に、別の章の警告と破線として現れる
+        (2026-08-02 ユーザー報告)。同じ正規化をサーバ側でも行って塞ぐ。
+
+        読み替えるのは**出口がぶら下がっているシーン(= その章の道の終わり)**
+        から繋いだときだけ。章の途中のシーンから別の章の入口へ繋ぐのは
+        「そこから別の章へ分岐する」という正当な形なので触らない。
+        """
+        child = self.conn.execute(
+            "SELECT kind, group_id FROM nodes WHERE id = ?", (child_id,)
+        ).fetchone()
+        if child is None or child["kind"] != "chapter_in":
+            return parent_id
+        parent = self.conn.execute(
+            "SELECT kind, group_id FROM nodes WHERE id = ?", (parent_id,)
+        ).fetchone()
+        if parent is None or not parent["group_id"]:
+            return parent_id
+        if parent["group_id"] == child["group_id"] or parent["kind"] is not None:
+            return parent_id  # 同じ章の中 / マーカー自身なら触らない
+        out = self.conn.execute(
+            "SELECT id FROM nodes WHERE group_id = ? AND kind = 'chapter_out'",
+            (parent["group_id"],),
+        ).fetchone()
+        if out is None or self.parent_of(out["id"]) != parent_id:
+            return parent_id  # 章の途中から生やす分岐は正当
+        return out["id"]
 
     def make_canon(self, node_id: str) -> None:
         """node_id を通る道を正史にする(結末方式。docs/design/endings.md §3)。
@@ -1391,13 +1487,18 @@ class Store:
         return in_id, out_id
 
     def ensure_chapter_markers(self) -> None:
-        """まだ入口 / 出口を持っていない章に、マーカーを作って挟む(無停止移行)。"""
+        """まだ入口 / 出口を持っていない章に、マーカーを作って挟む(無停止移行)。
+
+        あわせて境界の迂回も直す(`_realign_boundaries`)。修正前に作られた
+        ライブラリは既に迂回した状態で保存されているので、開いた時点で直す。
+        """
         try:
             rows = self.conn.execute("SELECT id FROM groups").fetchall()
         except sqlite3.OperationalError:
             return
         for row in rows:
             self.ensure_group_markers(row["id"], commit=False)
+        self._resync_canon()
         self.conn.commit()
 
     def _legacy_route(self, members: list[str]) -> list[str]:

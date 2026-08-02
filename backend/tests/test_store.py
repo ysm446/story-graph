@@ -357,8 +357,13 @@ def test_island_chapter_out_does_not_touch_canon(store):
     assert n3["id"] in store.canon_path()
 
 
-def test_group_warns_when_bypassing_the_exit(store):
-    """「章の外へ出るときは必ず出口を通る」= 境界の不変条件。破れたら警告。"""
+def test_canon_bypass_is_repaired_at_the_boundary(store):
+    """「章の外へ出るときは必ず出口を通る」= 境界の不変条件。
+
+    正史が出口を迂回したら、**出口をその境界へ挟み直して直す**(2026-08-02 変更。
+    従来は警告を出すだけだったが、操作した章とは別の章に ⚠ と破線が出るだけで
+    直す手立てが無く、原因も分からなかった)。読み順は変えない。
+    """
     n1, n2, _n3 = _three_scenes(store)
     g = store.create_group("第一章", [n1["id"], n2["id"]])
     assert g["warning"] is None
@@ -366,9 +371,73 @@ def test_group_warns_when_bypassing_the_exit(store):
     store.attach_node(n2["id"], outside["id"])  # 出口を通らずに外へ生やす(分岐なので可)
     entry = next(x for x in store.list_groups() if x["id"] == g["id"])
     assert entry["warning"] is None  # 分岐が外へ出るのは異常ではない
+    assert store.parent_of(outside["id"]) == n2["id"]  # まだ迂回したまま
+
     store.make_canon(outside["id"])  # 正史がその迂回路を通るようにする
     entry = next(x for x in store.list_groups() if x["id"] == g["id"])
-    assert entry["warning"] is not None
+    assert entry["warning"] is None  # 警告ではなく、境界に挟み直して直す
+    assert store.parent_of(entry["out_id"]) == n2["id"]
+    assert store.parent_of(outside["id"]) == entry["out_id"]
+    # 読み順は変わらない(マーカーは canon_path から除かれる)
+    assert store.canon_path() == [n1["id"], n2["id"], outside["id"]]
+
+
+def test_branch_chapter_becoming_canon_keeps_the_boundary(store):
+    """章の中の分岐が別の章になっていて、その分岐が正史になった場合(実例)。
+
+    「A の途中のシーンから生えた分岐が章になっている」形。その章を先の章へ
+    繋いで正史がそちらを通ると、A の出口が飛ばされて A に ⚠ と破線が出ていた
+    (2026-08-02 ユーザー報告)。出口を実際の境界へ寄せて直す。
+    """
+    n1, n2, n3 = _three_scenes(store)
+    a = store.create_group("A", [n1["id"], n2["id"]])
+    later = store.create_group("後の章", [n3["id"]])
+    # A の**途中**(n1)から生えた分岐を章にする
+    branch = store.append_node({"beat": "寄り道", "cast": ["aya"]}, parent_id=n1["id"], force_draft=True)
+    side = store.create_group("寄り道章", [branch["id"]])
+    assert store.parent_of(side["in_id"]) == n1["id"]  # A の中から直に入る形
+
+    # 寄り道章の出口を後の章の入口へ繋ぐ = 正史がそちらを通る
+    store.attach_node(side["out_id"], later["in_id"], replace_parent=True)
+    store.make_canon(branch["id"])
+    groups = {x["title"]: x for x in store.list_groups()}
+    assert all(x["warning"] is None for x in groups.values())
+    # A の出口は「正史が A を出る場所」= n1 の直後に寄っている
+    assert store.parent_of(groups["A"]["out_id"]) == n1["id"]
+    assert store.parent_of(side["in_id"]) == groups["A"]["out_id"]
+    assert groups["A"]["route"] == [n1["id"]]
+    # n2 は A のメンバーのまま(道から外れた分岐として残る)
+    assert n2["id"] in groups["A"]["node_ids"]
+    assert store.canon_path() == [n1["id"], branch["id"], n3["id"]]
+
+
+def test_chapter_entry_is_normalized_to_the_exit(store):
+    """章のシーンから次章の入口へ直に繋いでも、繋ぎ元は出口に読み替えられる。
+
+    2026-08-02 ユーザー報告の再発防止。フラット表示からシーン → 次章の入口へ
+    ドラッグすると出口を迂回する線ができ、そのときは何も起きないが、あとで
+    正史がその線に乗った瞬間に「出口を通らずに…」の警告と破線として現れていた。
+    """
+    n1, n2, n3 = _three_scenes(store)
+    a = store.create_group("A", [n1["id"], n2["id"]])
+    b = store.create_group("B", [n3["id"]])
+    # A の最後のシーンから B の入口へ直接繋ぐ(出口を迂回する操作)
+    store.attach_node(n2["id"], b["in_id"], replace_parent=True)
+    # 繋ぎ元は A の出口に読み替えられている
+    assert store.parent_of(b["in_id"]) == a["out_id"]
+    assert store.parent_of(a["out_id"]) == n2["id"]
+    for entry in store.list_groups():
+        assert entry["warning"] is None
+    assert store.canon_path() == [n1["id"], n2["id"], n3["id"]]
+
+    # 章の**途中**のシーンから別の章の入口へ繋ぐのは「そこから分岐する」という
+    # 正当な形なので読み替えない(章の中の分岐が別の章になっている場合)
+    alt = store.append_node({"beat": "もし別の道なら", "cast": ["aya"]}, parent_id=n1["id"])
+    store.add_node_to_group(a["id"], alt["id"])
+    other = store.append_node({"beat": "別の章の中身", "cast": ["aya"]}, detached=True)
+    c = store.create_group("C", [other["id"]])
+    store.attach_node(alt["id"], c["in_id"], replace_parent=True)
+    assert store.parent_of(c["in_id"]) == alt["id"]
 
 
 def test_group_route_excludes_islands_and_branches(store):

@@ -199,7 +199,8 @@ def dispatch_tool(store: Store, name: str, args: dict[str, Any], path: list[str]
 # アンカー時点の fold 済み state をキャラの人格材料にする。シーン一覧は
 # 渡さない(居合わせていない場面を含むため)。知識は facts + 記憶のみ。
 
-CHARACTER_MEMORY_LIMIT = 15  # システムプロンプトに直接入れる記憶数(importance 上位)
+CHARACTER_MEMORY_LIMIT = 15  # システムプロンプトに直接入れる記憶数
+CHARACTER_RECENT_SLOTS = 5  # うち「最近の出来事」に確保する枠(残りを重要度で埋める)
 
 
 def build_character_tools() -> list[dict[str, Any]]:
@@ -235,6 +236,38 @@ def _describe_score(score: float) -> str:
     if score > -0.6:
         return "敵対的"
     return "強い憎しみ・恐れ"
+
+
+def _select_memories(
+    store: Store, memory_ids: list[str]
+) -> tuple[list[Any], list[Any], int]:
+    """本文に載せる記憶を選ぶ。返り値は (強く残っている記憶, 最近の記憶, 総数)。
+
+    重要度だけで上位を取ると、記憶が増えるほど「少し前の出来事」が押し出されて
+    本人が覚えていないことになる(retrieval 側は story_order の時間減衰を持って
+    いるのに、プロンプト側には新しさの概念が無かった)。章のまとめ(digest)の
+    要約記憶は importance が高め(既定 0.6)なので、章を重ねるほどこれが効く。
+    そこで直近 CHARACTER_RECENT_SLOTS 件の枠を先に確保し、残りを重要度で埋める。
+
+    全部載るときは (空, 全件を古い順, 総数) を返し、呼び出し側が 1 節にまとめる。
+    """
+    placeholders = ",".join("?" for _ in memory_ids)
+    # 新しい順。分岐ノード上の記憶(story_order < 0)は retrieval と同じく「いま」扱い
+    rows = store.conn.execute(
+        f"SELECT id, content, importance FROM memories WHERE id IN ({placeholders})"
+        " ORDER BY (story_order IS NULL OR story_order < 0) DESC, story_order DESC",
+        memory_ids,
+    ).fetchall()
+    if len(rows) <= CHARACTER_MEMORY_LIMIT:
+        return [], list(reversed(rows)), len(rows)
+    recent = rows[:CHARACTER_RECENT_SLOTS]
+    taken = {r["id"] for r in recent}
+    important = sorted(
+        (r for r in rows if r["id"] not in taken),
+        key=lambda r: r["importance"] if r["importance"] is not None else 0.0,
+        reverse=True,
+    )[: CHARACTER_MEMORY_LIMIT - len(recent)]
+    return important, list(reversed(recent)), len(rows)
 
 
 def build_character_system(store: Store, path: list[str], char_id: str, mode: str) -> str:
@@ -275,17 +308,21 @@ def build_character_system(store: Store, path: list[str], char_id: str, mode: st
 
     memory_ids = list(cs.get("memories") or [])
     if memory_ids:
-        placeholders = ",".join("?" for _ in memory_ids)
-        rows = store.conn.execute(
-            f"SELECT content, importance FROM memories WHERE id IN ({placeholders})"
-            " ORDER BY COALESCE(importance, 0) DESC",
-            memory_ids,
-        ).fetchall()
-        lines += ["", "## あなたの記憶(重要なもの)"]
-        for r in rows[:CHARACTER_MEMORY_LIMIT]:
-            lines.append(f"- {r['content']}")
-        if len(rows) > CHARACTER_MEMORY_LIMIT:
-            lines.append("(ほかにも記憶がある。思い出せないことは recall ツールで思い出せる)")
+        important, recent, total = _select_memories(store, memory_ids)
+        if not important:
+            lines += ["", "## あなたの記憶"]
+            lines += [f"- {r['content']}" for r in recent]
+        else:
+            lines += ["", "## 強く残っている記憶"]
+            lines += [f"- {r['content']}" for r in important]
+            lines += ["", "## 最近の出来事"]
+            lines += [f"- {r['content']}" for r in recent]
+        rest = total - len(important) - len(recent)
+        if rest > 0:
+            lines.append(
+                f"(ここに書かれていない記憶がほかに {rest} 件ある。"
+                "思い出せないことは recall で思い出せる)"
+            )
 
     frame = (
         [
@@ -306,7 +343,11 @@ def build_character_system(store: Store, path: list[str], char_id: str, mode: st
         *frame,
         "",
         "## 厳守すること",
-        "- 上に書かれた状況・気持ち・記憶にあることだけを知っています。それ以外を聞かれたら「知らない」「分からない」と答える",
+        # 「書かれていないことは知らないと答えろ」だけだと recall を呼ばずに打ち切って
+        # しまう(本文には重要度・直近で選んだ一部しか載っていない)。先に思い出させる
+        "- 上に書かれていないことを聞かれたら、まず recall で思い出そうとする。"
+        "それでも出てこなければ「覚えていない」「知らない」と答える",
+        "- 知っているのは、上に書かれた状況・気持ち・記憶と、recall で思い出したことだけ",
         "- 記憶にない大きな出来事や事実を発明しない(言い回しや細部の脚色は構いません)",
         "- これから先に何が起きるかは知りません",
         "- 一人称で、あなたの口調で話す。物語・シーン・登場人物などのメタな言葉は使わない",
