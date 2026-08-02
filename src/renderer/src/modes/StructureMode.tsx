@@ -324,6 +324,8 @@ function BeatNodeCard({ data, selected }: NodeProps<BeatFlowNode>): React.JSX.El
 type ChapterNodeData = {
   group: Group
   number: number
+  /** シーンをこのカードの上へ運んでいる(離すとその章に入る) */
+  dropTarget?: boolean
   /** 表紙にするシーン(cover_node_id の指定 → 無ければ章内で最初に挿絵があるシーン) */
   cover: StoryNode | null
   onOpen: (groupId: string) => void
@@ -344,19 +346,21 @@ function chapterCoverNode(group: Group, nodeById: Map<string, StoryNode>): Story
 }
 
 function ChapterNodeCard({ data, selected }: NodeProps<ChapterFlowNode>): React.JSX.Element {
-  const { group, number, cover, onOpen } = data
+  const { group, number, cover, dropTarget, onOpen } = data
   return (
     <div
-      className={`w-64 rounded-3xl border-2 px-5 py-5 shadow-lg shadow-black/30 ${selected ? 'ring-4' : ''}`}
+      className={`w-64 rounded-3xl border-2 px-5 py-5 shadow-lg shadow-black/30 ${
+        selected || dropTarget ? 'ring-4' : ''
+      }`}
       style={{
-        background: 'var(--bg-card)',
-        borderColor: group.color || 'var(--border-strong)',
+        background: dropTarget ? 'var(--accent-soft)' : 'var(--bg-card)',
+        borderColor: dropTarget ? 'var(--accent)' : group.color || 'var(--border-strong)',
         // 島・分岐の章は draft ノードと同じく破線で「別の可能性」を示す
         borderStyle: group.on_canon ? 'solid' : 'dashed',
         opacity: group.on_canon ? 1 : 0.9,
         ['--tw-ring-color' as string]: 'var(--accent-border)'
       }}
-      title="ダブルクリックで章の中を開く"
+      title="ダブルクリックで章の中を開く(シーンをここに落とすとこの章に入ります)"
       onDoubleClick={(e) => {
         // React Flow のダブルクリックズームに任せず、カード自身で確実に開く
         e.stopPropagation()
@@ -2963,11 +2967,47 @@ function StructureModeInner({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groups, chapterAnchorSig, graphNodes, openChapter])
 
+  // シーンを章カードの上へ運んでいるか(離すとその章に入る)
+  const [dropTargetGroupId, setDropTargetGroupId] = useState<string | null>(null)
+
+  /** ドラッグ中のシーンが重なっている章カードの ID(章ビューでのみ) */
+  const chapterDropTarget = useCallback(
+    (node: AppFlowNode, dragged: AppFlowNode[]): string | null => {
+      if (effectiveView !== 'chapters') return null
+      // 章カードごと動かしているときは対象外(カードの移動が優先)
+      if (node.type === 'chapterNode' || dragged.some((n) => n.type === 'chapterNode')) return null
+      const hit = reactFlow.getIntersectingNodes(node).find((n) => n.type === 'chapterNode')
+      return hit ? (hit.data as ChapterNodeData).group.id : null
+    },
+    [effectiveView, reactFlow]
+  )
+
+  /** 章カードへ落としたシーンを、その章に入れる(繋がっている後続も一緒に入る) */
+  const dropIntoChapter = async (groupId: string, nodeIds: string[]): Promise<void> => {
+    const title = groups.find((g) => g.id === groupId)?.title ?? '章'
+    let added = 0
+    for (const id of nodeIds) {
+      try {
+        await api.addNodeToGroup(groupId, id)
+        added += 1
+      } catch (e) {
+        setGenStatus(`「${title}」に入れられません: ${String(e)}`)
+      }
+    }
+    if (added > 0) setGenStatus(`${added} シーンを「${title}」に入れました`)
+    await reload()
+  }
+
   // 章ビュー: 章カード + 未分類のシーン
   const chapterFlow = useMemo(() => {
     if (effectiveView !== 'chapters') return null
     const { groupByNode } = chapterSeq
-    const nodes: AppFlowNode[] = [...chapterNodes]
+    // ドロップ先の章カードだけ光らせる(data を差し替えるのはその 1 枚)
+    const nodes: AppFlowNode[] = chapterNodes.map((n) =>
+      dropTargetGroupId && n.data.group.id === dropTargetGroupId
+        ? { ...n, data: { ...n.data, dropTarget: true } }
+        : n
+    )
     // 章に属さないノード(シーン・分岐・島・はじまり / 結末)は、章ビューでも
     // 自分の位置のまま・通常どおりドラッグできる(以前は正史上のシーンを
     // 並びの列に固定していたが、ドラッグ・整列と衝突するためやめた)
@@ -3003,7 +3043,7 @@ function StructureModeInner({
       })
     }
     return { nodes, edges, derived }
-  }, [effectiveView, chapterSeq, chapterNodes, flowNodes, graphEdges])
+  }, [effectiveView, chapterSeq, chapterNodes, flowNodes, graphEdges, dropTargetGroupId])
 
   /** ⟲ の中身。**いま見えている範囲だけ**を整列する。
    *
@@ -3807,7 +3847,22 @@ function StructureModeInner({
               const flow = reactFlow.screenToFlowPosition({ x: event.clientX, y: event.clientY })
               setMenu({ x: event.clientX, y: event.clientY, targets: [], pane: flow })
             }}
-            onNodeDragStop={(_, __, draggedNodes) => {
+            // 章カードの上へシーンを運んでいる間だけ、カードを光らせる
+            onNodeDrag={(_, node, draggedNodes) => {
+              setDropTargetGroupId(chapterDropTarget(node, draggedNodes))
+            }}
+            onNodeDragStop={(_, node, draggedNodes) => {
+              // 章カードに落とした = その章に入れる(位置は保存しない。
+              // カードの下に置いた座標はフラット表示では意味がないため)
+              const dropGroupId = chapterDropTarget(node, draggedNodes)
+              setDropTargetGroupId(null)
+              if (dropGroupId) {
+                void dropIntoChapter(
+                  dropGroupId,
+                  draggedNodes.filter((n) => n.type !== 'chapterNode').map((n) => n.id)
+                )
+                return
+              }
               // 章カードのドラッグ = 置いた場所にそのまま置く(groups.pos_x/pos_y に保存)。
               // 章の並べ替えは右クリックの「← 前へ / → 後ろへ」で行う(ドラッグと
               // 兼ねると位置が導出に戻ってしまうため。docs/design/chapters.md §6)
