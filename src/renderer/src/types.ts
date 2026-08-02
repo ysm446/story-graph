@@ -61,8 +61,9 @@ export interface StoryNode {
   target_chars: number | null
   /** 章グループ(null = 未分類。docs/design/chapters.md) */
   group_id: string | null
-  /** はじまり / 結末のマーカーノード(null = 通常シーン。docs/design/endings.md) */
-  kind: 'start' | 'ending' | null
+  /** マーカーノード(null = 通常シーン)。start / ending は docs/design/endings.md、
+   *  chapter_in / chapter_out は章の入口・出口(docs/design/chapters.md §9) */
+  kind: 'start' | 'ending' | 'chapter_in' | 'chapter_out' | null
   created_at: string
   updated_at: string
   events: StoryEvent[]
@@ -87,6 +88,10 @@ export interface Group {
   pos_y: number | null
   /** 章カードの表紙にするシーン(null = 自動。章内で最初に挿絵があるシーンを使う) */
   cover_node_id: string | null
+  /** 章の入口 / 出口マーカー(ノードグループの Input / Output と同じ役割)。
+   *  章の外との接続はここを通る(docs/design/chapters.md §9) */
+  in_id: string | null
+  out_id: string | null
   /** 章の中の「読む道」。メンバーのうち正史に乗っているもの(無ければ島の一続き)。
    *  鑑賞モード・まとめ・並べ替え・章カードのピンはこちらを見る */
   route: string[]

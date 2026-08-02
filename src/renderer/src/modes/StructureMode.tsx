@@ -174,6 +174,34 @@ type BeatFlowNode = Node<BeatNodeData, 'beatNode'>
 function BeatNodeCard({ data, selected }: NodeProps<BeatFlowNode>): React.JSX.Element {
   const { storyNode, characters, place, busy } = data
   const isDraft = storyNode.status === 'draft'
+  // 章の入口 / 出口(ノードグループの Input / Output。docs/design/chapters.md §9)
+  if (storyNode.kind === 'chapter_in' || storyNode.kind === 'chapter_out') {
+    const isIn = storyNode.kind === 'chapter_in'
+    return (
+      <div
+        className={`relative w-40 rounded-2xl border-2 border-dashed px-4 py-3 text-center shadow-lg shadow-black/30 ${
+          selected ? 'ring-4' : ''
+        }`}
+        style={{
+          background: 'var(--bg-card)',
+          borderColor: 'var(--accent-border)',
+          ['--tw-ring-color' as string]: 'var(--accent-border)'
+        }}
+        title={
+          isIn
+            ? '章の入口。前の章(や前のシーン)からの線はここに繋ぐ'
+            : '章の出口。ここに繋がっている道が、この章の読む道になる'
+        }
+      >
+        <Handle type="target" position={Position.Left} />
+        <div className="text-[15px]">{isIn ? '⇥' : '↦'}</div>
+        <div className="mt-0.5 text-[11px] font-semibold" style={{ color: 'var(--text-dim)' }}>
+          {isIn ? '章の入口' : '章の出口'}
+        </div>
+        <Handle type="source" position={Position.Right} />
+      </div>
+    )
+  }
   // はじまり / 結末のマーカーノードは小さな専用カード(docs/design/endings.md)
   if (storyNode.kind) {
     const isEnding = storyNode.kind === 'ending'
@@ -2420,8 +2448,10 @@ function StructureModeInner({
       if (!id) return null
       if (!id.startsWith('chapter:')) return id
       const group = groups.find((g) => g.id === id.slice('chapter:'.length))
-      if (!group || group.route.length === 0) return null
-      return role === 'source' ? group.route[group.route.length - 1] : group.route[0]
+      if (!group) return null
+      // 章カードのピンは、章の出口 / 入口そのもの(無い章は route の端で代用)
+      const fallback = role === 'source' ? group.route.at(-1) : group.route[0]
+      return (role === 'source' ? group.out_id : group.in_id) ?? fallback ?? null
     },
     [groups]
   )
@@ -2816,7 +2846,12 @@ function StructureModeInner({
   // 章内ビューで見せるノード: 章のメンバー + そこから生える分岐(draft・未分類)の部分木
   const visibleIds = useMemo(() => {
     if (effectiveView !== 'focused' || !focusedGroup) return null
-    const set = new Set(focusedGroup.node_ids)
+    // 入口 / 出口も章の中に見せる(ここに繋ぎ替えて章の道を決めるため)
+    const set = new Set(
+      [...focusedGroup.node_ids, focusedGroup.in_id, focusedGroup.out_id].filter(
+        (id): id is string => !!id
+      )
+    )
     const children: Record<string, string[]> = {}
     for (const e of graphEdges) (children[e.from_node] ??= []).push(e.to_node)
     const byId = new Map(graphNodes.map((n) => [n.id, n]))
@@ -2842,7 +2877,12 @@ function StructureModeInner({
   // 章ビューでだけ章カードの外に飛び出すのを防ぐ
   const chapterSeq = useMemo(() => {
     const groupByNode = new Map<string, string>()
-    groups.forEach((g) => g.node_ids.forEach((n) => groupByNode.set(n, g.id)))
+    groups.forEach((g) => {
+      g.node_ids.forEach((n) => groupByNode.set(n, g.id))
+      // 入口 / 出口も章カードに畳む(章ビューでは章の境界 = カードのピン)
+      if (g.in_id) groupByNode.set(g.in_id, g.id)
+      if (g.out_id) groupByNode.set(g.out_id, g.id)
+    })
     const children: Record<string, string[]> = {}
     for (const e of graphEdges) (children[e.from_node] ??= []).push(e.to_node)
     const byId = new Map(graphNodes.map((n) => [n.id, n]))
@@ -3736,6 +3776,8 @@ function StructureModeInner({
               }
               const kind = (node.data as BeatNodeData).storyNode.kind
               if (kind === 'start') return // はじまりに操作は無い
+              // 章の入口 / 出口は配線するだけ(操作は章カードの右クリックにある)
+              if (kind === 'chapter_in' || kind === 'chapter_out') return
               if (kind === 'ending') {
                 setMenu({ x: event.clientX, y: event.clientY, targets: [node.id], ending: true })
                 return

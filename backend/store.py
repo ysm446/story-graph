@@ -60,6 +60,7 @@ class Store:
         self.conn = conn
         self.root = root
         self.ensure_story_markers()
+        self.ensure_chapter_markers()
 
     def switch_library(self, root: str) -> None:
         from pathlib import Path
@@ -71,6 +72,7 @@ class Store:
         self.root = str(root)
         old_conn.close()
         self.ensure_story_markers()
+        self.ensure_chapter_markers()
 
     # ---- characters -------------------------------------------------
 
@@ -1040,6 +1042,8 @@ class Store:
         kind = self._node_kind(node_id)
         if kind == "start":
             raise ValueError("「はじまり」は削除できません")
+        if kind in ("chapter_in", "chapter_out"):
+            raise ValueError("章の入口 / 出口は単独では消せません(章を解除してください)")
         if kind == "ending":
             others = [
                 r["id"]
@@ -1241,6 +1245,94 @@ class Store:
     # 影響しないので、章の操作では dirty / stale を立てない。章ビューは表示のための
     # 導出で、真実はシーンノード + エッジ + nodes.group_id のまま。
 
+    def _new_marker(self, kind: str, title: str, group_id: str) -> str:
+        """章の入口 / 出口マーカーのノード行を作る(シーンではないので events は持たない)。"""
+        marker_id = _new_id()
+        now = _now()
+        self.conn.execute(
+            "INSERT INTO nodes(id, title, beat, cast, status, kind, group_id, created_at, updated_at)"
+            " VALUES(?,?,?,?,?,?,?,?,?)",
+            (marker_id, title, "", "[]", "draft", kind, group_id, now, now),
+        )
+        return marker_id
+
+    def ensure_group_markers(self, group_id: str, commit: bool = True) -> tuple[str, str]:
+        """章の入口(in)と出口(out)を保証し、鎖に挟み込む。(in_id, out_id) を返す。
+
+        ノードグループの Input / Output と同じ役割(docs/design/chapters.md §9)。
+        `… → 前章の out → in → A → B → out → 次章の in → …` の形にする。
+        メンバーが 0 の章は「浮いた in → out のペア」になり、あとで in に繋げば
+        物語に挿し込める。既に居るマーカーは動かさない(位置は作者の配線が真実)。
+        """
+        existing = {
+            r["kind"]: r["id"]
+            for r in self.conn.execute(
+                "SELECT id, kind FROM nodes WHERE group_id = ? AND kind IN ('chapter_in','chapter_out')",
+                (group_id,),
+            )
+        }
+        title = (
+            self.conn.execute("SELECT title FROM groups WHERE id = ?", (group_id,)).fetchone() or {"title": "章"}
+        )["title"]
+        in_id = existing.get("chapter_in") or self._new_marker("chapter_in", f"{title} 入口", group_id)
+        out_id = existing.get("chapter_out") or self._new_marker("chapter_out", f"{title} 出口", group_id)
+        entry = next((g for g in self.list_groups() if g["id"] == group_id), None)
+        route = entry["route"] if entry else []
+        if "chapter_in" not in existing:
+            if route:
+                head = route[0]
+                parent_edge = self.conn.execute(
+                    "SELECT id, is_canon FROM edges WHERE to_node = ?", (head,)
+                ).fetchone()
+                if parent_edge is not None:
+                    # 親 → 先頭 を 親 → in に付け替え、in → 先頭 を足す
+                    self.conn.execute(
+                        "UPDATE edges SET to_node = ? WHERE id = ?", (in_id, parent_edge["id"])
+                    )
+                    self.conn.execute(
+                        "INSERT INTO edges(id, from_node, to_node, is_canon) VALUES(?,?,?,?)",
+                        (_new_id(), in_id, head, parent_edge["is_canon"]),
+                    )
+                else:
+                    self.conn.execute(
+                        "INSERT INTO edges(id, from_node, to_node, is_canon) VALUES(?,?,?,1)",
+                        (_new_id(), in_id, head),
+                    )
+        if "chapter_out" not in existing:
+            if route:
+                tail = route[-1]
+                child_edge = self.conn.execute(
+                    "SELECT id FROM edges WHERE from_node = ? AND is_canon = 1", (tail,)
+                ).fetchone()
+                if child_edge is not None:
+                    # 末尾 → 次 を out → 次 に付け替え、末尾 → out を足す
+                    self.conn.execute(
+                        "UPDATE edges SET from_node = ? WHERE id = ?", (out_id, child_edge["id"])
+                    )
+                self.conn.execute(
+                    "INSERT INTO edges(id, from_node, to_node, is_canon) VALUES(?,?,?,1)",
+                    (_new_id(), tail, out_id),
+                )
+            else:
+                # 空の章: 浮いた in → out のペアにする
+                self.conn.execute(
+                    "INSERT INTO edges(id, from_node, to_node, is_canon) VALUES(?,?,?,1)",
+                    (_new_id(), in_id, out_id),
+                )
+        if commit:
+            self.conn.commit()
+        return in_id, out_id
+
+    def ensure_chapter_markers(self) -> None:
+        """まだ入口 / 出口を持っていない章に、マーカーを作って挟む(無停止移行)。"""
+        try:
+            rows = self.conn.execute("SELECT id FROM groups").fetchall()
+        except sqlite3.OperationalError:
+            return
+        for row in rows:
+            self.ensure_group_markers(row["id"], commit=False)
+        self.conn.commit()
+
     def _member_chain(self, members: list[str]) -> list[str]:
         """メンバーの中で、いちばん浅いシーンから親子で辿れる一続き。
 
@@ -1289,8 +1381,15 @@ class Store:
         path = self.canon_path()
         order = {nid: i for i, nid in enumerate(path)}
         members: dict[str, list[str]] = {}
-        for row in self.conn.execute("SELECT id, group_id FROM nodes WHERE group_id IS NOT NULL"):
-            members.setdefault(row["group_id"], []).append(row["id"])
+        markers: dict[str, dict[str, str]] = {}
+        for row in self.conn.execute(
+            "SELECT id, group_id, kind FROM nodes WHERE group_id IS NOT NULL"
+        ):
+            # 入口 / 出口マーカーは章の構造であってシーンではない(メンバーに数えない)
+            if row["kind"] in ("chapter_in", "chapter_out"):
+                markers.setdefault(row["group_id"], {})[row["kind"]] = row["id"]
+            elif row["kind"] is None:
+                members.setdefault(row["group_id"], []).append(row["id"])
         result = []
         for gi, row in enumerate(self.conn.execute("SELECT * FROM groups ORDER BY created_at").fetchall()):
             # メンバーが 0 の章もそのまま返す(空の章を器として先に作れる。§9)
@@ -1318,6 +1417,9 @@ class Store:
                     "pos_y": row["pos_y"],
                     # 表紙のシーンが章から外れた / 消えたときは自動(NULL)に戻して返す
                     "cover_node_id": row["cover_node_id"] if row["cover_node_id"] in ordered else None,
+                    # 章の入口 / 出口マーカー(ノードグループの Input / Output と同じ役割)
+                    "in_id": markers.get(row["id"], {}).get("chapter_in"),
+                    "out_id": markers.get(row["id"], {}).get("chapter_out"),
                     "route": route,
                     "node_ids": node_ids,
                     "_created": gi,
@@ -1366,6 +1468,7 @@ class Store:
             "UPDATE nodes SET group_id = ? WHERE id = ?", [(group_id, n) for n in ordered]
         )
         self.conn.commit()
+        self.ensure_group_markers(group_id)  # 入口 / 出口を作って鎖に挟む
         return next(g for g in self.list_groups() if g["id"] == group_id)
 
     def update_group(self, group_id: str, data: dict[str, Any]) -> dict[str, Any] | None:
@@ -1400,10 +1503,35 @@ class Store:
         self.conn.commit()
         return cur.rowcount > 0
 
+    def _splice_out_node(self, node_id: str) -> None:
+        """ノードを鎖から抜いて消す(親 → 子 を繋ぎ直す)。マーカーの撤去に使う。"""
+        parent_edge = self.conn.execute(
+            "SELECT id, from_node FROM edges WHERE to_node = ?", (node_id,)
+        ).fetchone()
+        has_children = self.conn.execute(
+            "SELECT 1 FROM edges WHERE from_node = ?", (node_id,)
+        ).fetchone()
+        if parent_edge is not None and has_children is not None:
+            self.conn.execute(
+                "UPDATE edges SET from_node = ? WHERE from_node = ?",
+                (parent_edge["from_node"], node_id),
+            )
+        self.conn.execute(
+            "DELETE FROM edges WHERE from_node = ? OR to_node = ?", (node_id, node_id)
+        )
+        self.conn.execute("DELETE FROM nodes WHERE id = ?", (node_id,))
+
     def delete_group(self, group_id: str) -> None:
-        """章を解除する(シーン自体はそのまま残る)。"""
+        """章を解除する(シーン自体はそのまま残る)。入口 / 出口は抜いて鎖を繋ぎ直す。"""
+        markers = self.conn.execute(
+            "SELECT id FROM nodes WHERE group_id = ? AND kind IN ('chapter_in','chapter_out')",
+            (group_id,),
+        ).fetchall()
+        for m in markers:
+            self._splice_out_node(m["id"])
         self.conn.execute("UPDATE nodes SET group_id = NULL WHERE group_id = ?", (group_id,))
         self.conn.execute("DELETE FROM groups WHERE id = ?", (group_id,))
+        self._resync_canon()
         self.conn.commit()
 
     def add_node_to_group(self, group_id: str, node_id: str) -> dict[str, Any]:
@@ -1486,14 +1614,15 @@ class Store:
                 raise KeyError(f"group not found: {after_group_id}")
             if not target.get("on_canon"):
                 raise ValueError("移動先は正史ルート上の章にしてください")
-            anchor = target["route"][-1]
+            anchor = target["out_id"] or target["route"][-1]
         if me.get("warning"):
             raise ValueError(f"並べ替えできません: {me['warning']}")
         if not me.get("on_canon"):
             raise ValueError("並べ替えできるのは正史ルート上の章だけです(島・分岐の章は位置を動かすだけで足ります)")
-        # 動かすのはルート(正史上の区間)。そこから生える分岐は一緒に動き、
-        # 章に入れてある島は繋がっていないのでその場に残る
-        a_first, a_last = me["route"][0], me["route"][-1]
+        # 動かすのは **入口 → 出口** の区間まるごと(章の境界そのもの)。そこから
+        # 生える分岐は一緒に動き、章に入れてある島は繋がっていないのでその場に残る
+        a_first = me["in_id"] or me["route"][0]
+        a_last = me["out_id"] or me["route"][-1]
         if self.parent_of(a_first) == anchor:
             return groups  # 既にその位置
         # スプライス: (p → A → c) と (anchor → d) を (p → c) と (anchor → A → d) に

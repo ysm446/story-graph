@@ -321,7 +321,8 @@ def test_island_chapter_connect_flow(store):
     assert g["on_canon"] is False and g["warning"] is None
     with pytest.raises(ValueError):
         store.move_group(g["id"], None)  # 島の章は並べ替え対象外
-    store.attach_node(n1["id"], i1["id"])
+    # 本編へは章の**入口**を繋ぐ(章の境界は in / out。docs/design/chapters.md §9)
+    store.attach_node(n1["id"], g["in_id"])
     store.make_canon(i2["id"])
     entry = next(x for x in store.list_groups() if x["id"] == g["id"])
     assert entry["on_canon"] is True
@@ -384,14 +385,18 @@ def test_group_cover_node(store):
 
 
 def test_group_insert_inherits_when_inside(store):
+    """章の中への割り込みは章を引き継ぐ。**出口の手前**も章の中(§9 の in / out)。"""
     n1, n2, n3 = _three_scenes(store)
     g = store.create_group("第一章", [n1["id"], n2["id"]])
     mid = store.insert_node_after(n1["id"], {"beat": "間", "cast": ["aya"]})
     assert store.get_node(mid["id"])["group_id"] == g["id"]  # 章の真ん中 → 引き継ぐ
-    tail = store.insert_node_after(n2["id"], {"beat": "章の後", "cast": ["aya"]})
-    assert store.get_node(tail["id"])["group_id"] is None  # 章末尾の後 → 未分類
-    # 章は連続のまま保たれている
-    assert store.list_groups()[0]["node_ids"] == [n1["id"], mid["id"], n2["id"]]
+    # 末尾の後ろ = 出口の手前なので、これも章の中(マーカー導入前は未分類だった)
+    tail = store.insert_node_after(n2["id"], {"beat": "章の終わり際", "cast": ["aya"]})
+    assert store.get_node(tail["id"])["group_id"] == g["id"]
+    assert store.list_groups()[0]["route"] == [n1["id"], mid["id"], n2["id"], tail["id"]]
+    # 章の外(出口の先)に足すと未分類のまま
+    outside = store.insert_node_after(store.list_groups()[0]["out_id"], {"beat": "次章", "cast": ["aya"]})
+    assert store.get_node(outside["id"])["group_id"] is None
 
 
 def test_event_ids_preserved_on_replace(store):
@@ -528,7 +533,8 @@ def test_move_group_reorders_chapters(store):
     assert groups[1]["node_ids"] == ids[0:2]  # 章ラベルは保たれる
     assert store.parent_of(branch["id"]) == ids[1]  # 分岐は章と一緒に移動
     ending = store.active_ending()
-    assert store.parent_of(ending) == ids[1]  # 結末は新しい末尾に付く
+    # 結末は新しい末尾の章の**出口**に付く(章の境界は in / out)
+    assert store.parent_of(ending) == groups[1]["out_id"]
     # 先頭(はじまりの直後)へ戻す
     store.move_group(g1["id"], None)
     assert store.canon_path() == [ids[0], ids[1], ids[2], ids[3]]
