@@ -582,6 +582,36 @@ def _chapter_with_digest(store):
     return n1, n2, n3, g
 
 
+def test_move_group_marks_only_the_chapters_after_the_change(store):
+    """A-B-C-D で B と C を入れ替えたとき、上流の A のまとめは古くならない。
+
+    位置を canon_path(入口 / 出口を除く)で見ていたため、区間の先頭である入口が
+    見つからず既定の 0 になり、全章に「要更新」が出ていた(2026-08-02 ユーザー報告)。
+    """
+    _setup_chars(store)
+    scenes = {}
+    groups = {}
+    for name in ("A", "B", "C", "D"):
+        scenes[name] = store.append_node({"beat": name, "cast": ["aya"]}, [
+            {"type": "memory_add", "payload": {"char": "aya", "content": f"{name} の出来事", "importance": 0.5}},
+        ])
+    for name in ("A", "B", "C", "D"):
+        g = store.create_group(name, [scenes[name]["id"]])
+        mem = next(e["id"] for e in store.list_events(scenes[name]["id"]) if e["type"] == "memory_add")
+        groups[name] = store.save_group_digest(g["id"], [
+            {"type": "memory_compress",
+             "payload": {"char": "aya", "replaces": [mem], "summary": f"{name} のまとめ", "importance": 0.5}},
+        ])
+    assert all(store.get_group(g["id"])["digest_stale"] == 0 for g in groups.values())
+
+    # B を C の後ろへ(右クリックの「後ろへ」)
+    store.move_group(groups["B"]["id"], groups["C"]["id"])
+    assert store.canon_path() == [scenes[n]["id"] for n in ("A", "C", "B", "D")]
+    assert store.get_group(groups["A"]["id"])["digest_stale"] == 0  # 上流は無関係
+    for name in ("B", "C", "D"):
+        assert store.get_group(groups[name]["id"])["digest_stale"] == 1, name
+
+
 def test_digest_applies_at_chapter_boundary(store):
     n1, n2, n3, g = _chapter_with_digest(store)
     digest_id = g["digest_events"][0]["id"]

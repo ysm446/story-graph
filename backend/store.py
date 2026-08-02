@@ -1890,21 +1890,28 @@ class Store:
             (anchor, a_first, e_in["id"]),
         )
         self.conn.execute("UPDATE edges SET from_node = ? WHERE id = ?", (a_last, e_anchor["id"]))
-        # 前提(上流の文脈)が変わった位置から後ろの章のまとめに「要更新」を立てる
-        new_canon = self.canon_path()
-        order = {nid: i for i, nid in enumerate(new_canon)}
-        affected_from = order.get(a_first, 0)
-        if successor in order:
-            affected_from = min(affected_from, order[successor])
-        for g in self.list_groups():
-            if order.get(g["route"][0], 0) >= affected_from:
-                self.conn.execute(
-                    "UPDATE groups SET digest_stale = 1 WHERE id = ? AND digest_events IS NOT NULL",
-                    (g["id"],),
-                )
+        # 前提(上流の文脈)が変わった位置から後ろの章のまとめに「要更新」を立てる。
+        # 位置は**マーカー込みのチェーン**で見る: canon_path は入口 / 出口を除くので、
+        # 区間の先頭である入口 a_first が見つからず既定の 0 になり、上流の章まで
+        # 巻き込んで全章に「要更新」が出ていた(2026-08-02 ユーザー報告)
+        ending = self.active_ending()
+        chain = self.path_to(ending) if ending is not None else []
+        order = {nid: i for i, nid in enumerate(chain)}
+        moved = [order[n] for n in (a_first, successor) if n in order]
+        if moved:
+            affected_from = min(moved)
+            for g in self.list_groups():
+                head = g["in_id"] or (g["route"][0] if g["route"] else None)
+                # 島・分岐だけの章は正史の並びに乗らないので前提が変わらない
+                if head is not None and order.get(head, -1) >= affected_from:
+                    self.conn.execute(
+                        "UPDATE groups SET digest_stale = 1 WHERE id = ? AND digest_events IS NOT NULL",
+                        (g["id"],),
+                    )
         self.mark_dirty_downstream(a_first, commit=False)
-        if self._node_kind(successor) is None:
-            self.mark_dirty_downstream(successor, commit=False)
+        # successor は次章の入口(マーカー)であることが多い。マーカーだからと
+        # 飛ばすと、並べ替えで親が変わった章の state_cache が dirty にならない
+        self.mark_dirty_downstream(successor, commit=False)
         self._resync_canon()
         self._resync_memory_orders(commit=False)
         self.conn.commit()
