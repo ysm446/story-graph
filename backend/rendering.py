@@ -16,6 +16,7 @@ from store import Store
 RENDER_TEMPERATURE = 0.9
 PREV_TAIL_CHARS = 1400  # 直前散文の受け渡し量(~800 tokens 目安)
 MEMORY_LIMIT = 8
+SUMMARY_SLOTS = 4  # うち「章のまとめ(要約記憶)」に確保する枠
 DEFAULT_MAX_TOKENS = 4096
 # 字数指定時の生成上限。日本語は Gemma のトークナイザで 1 字 ≈ 1.0〜1.5 tokens
 # なので、指示より長めに書かれても途中で切れないよう 2.5 倍を取る
@@ -51,8 +52,25 @@ def _sse(data: dict[str, Any]) -> str:
 
 
 def _memory_contents(store: Store, memory_ids: list[str], limit: int = MEMORY_LIMIT) -> list[str]:
+    """清書に渡す記憶。**章のまとめ(要約記憶)は押し出さない**。
+
+    従来は末尾 limit 件(時系列の新しい順)だけを渡していたため、当章の記憶が
+    limit 件を超えると前章までのまとめが枠から落ちて、長い物語ほど過去が
+    見えなくなっていた(2026-08-02 ユーザー指摘)。まとめは章 1 つを代表する
+    骨格なので、新しい順に SUMMARY_SLOTS 件までは必ず入れ、残りの枠を生の
+    記憶の新しい順で埋める。並びは時系列のまま(fold の順)。
+    """
+    if not memory_ids:
+        return []
+    summaries = store.summary_memory_ids()
+    kept = [mid for mid in memory_ids if mid in summaries][-SUMMARY_SLOTS:]
+    raw = [mid for mid in memory_ids if mid not in summaries]
+    room = max(limit - len(kept), 0)
+    chosen = set(kept) | set(raw[-room:] if room else [])
     contents = []
-    for mid in memory_ids[-limit:]:
+    for mid in memory_ids:  # 時系列の並びを保って取り出す
+        if mid not in chosen:
+            continue
         row = store.conn.execute("SELECT content FROM memories WHERE id = ?", (mid,)).fetchone()
         if row:
             contents.append(row["content"])

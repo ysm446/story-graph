@@ -162,7 +162,7 @@ title / beat / emotional_core / location / story_time はプロンプト文面�
 | 対象 | 現状 | 変更 |
 |---|---|---|
 | シーン生成([generation.py](../../backend/generation.py)) | 全キャラ・全状態 + 直近 3 ビート + 記憶検索 top5 | 状態は fold 済みを使うので**自動的にまとめ後の記憶**になる。加えて「直近 3 ビート」を「**当章のビート全部(上限あり)+ 前章までは章タイトル 1 行ずつ**」に変えると、章のあらすじ層がプロンプトに乗る |
-| 清書([rendering.py](../../backend/rendering.py)) | 直前散文の末尾 1400 字 + state(記憶末尾 8 件) | state 経由で自動的にまとめ後になる。章の先頭シーンでは「前章のあらすじ」(digest の要約記憶)を明示ブロックで渡すと接続が安定する |
+| 清書([rendering.py](../../backend/rendering.py)) | 直前散文の末尾 1400 字 + state(記憶 8 件。**うち 4 枠はまとめに確保**) | state 経由で自動的にまとめ後になる。章の先頭シーンでは「前章のあらすじ」(digest の要約記憶)を明示ブロックで渡すと接続が安定する(未実装) |
 | チャット([chat_agent.py](../../backend/chat_agent.py)) | get_state / search_memories | fold 済み state を読むので自動的に反映。get_beats に章情報(章タイトル・区切り)を含めると「第2章を要約して」が効くようになる |
 
 ### まとめと生データの役割分担(2026-08-01 追記)

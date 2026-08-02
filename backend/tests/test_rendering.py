@@ -271,3 +271,35 @@ def test_stale_marked_on_upstream_edit(store, monkeypatch):
     ])
     assert store.latest_render(path[1], preset["id"], None)["stale"] == 1
 
+
+
+def test_chapter_digest_survives_the_memory_limit(store):
+    """章のまとめ(要約記憶)は、当章の記憶が増えても清書の枠から落ちない。
+
+    従来は末尾 MEMORY_LIMIT 件を渡すだけだったので、当章の記憶が枠を超えると
+    前章までのまとめが押し出され、長い物語ほど過去が見えなくなっていた
+    (2026-08-02 ユーザー指摘)。
+    """
+    path = store.canon_path()
+    # 第一章(1 シーン)に記憶を積んでまとめる
+    store.replace_events(path[0], store.list_events(path[0]) + [
+        {"type": "memory_add", "payload": {"char": "aya", "content": "石橋で誓った", "importance": 0.9}},
+    ])
+    g = store.create_group("第一章", [path[0]])
+    old = [e["id"] for e in store.list_events(path[0]) if e["type"] == "memory_add"]
+    store.save_group_digest(g["id"], [
+        {"type": "memory_compress",
+         "payload": {"char": "aya", "replaces": old, "summary": "第一章で誓いを立てた", "importance": 0.9}},
+    ])
+    # 第二話(章の外)に、枠を超える数の記憶を積む
+    store.replace_events(path[1], store.list_events(path[1]) + [
+        {"type": "memory_add", "payload": {"char": "aya", "content": f"当章の出来事{i}", "importance": 0.4}}
+        for i in range(rendering.MEMORY_LIMIT + 4)
+    ])
+    memories = store.get_state(path[1])["chars"]["aya"]["memories"]
+    assert len(memories) > rendering.MEMORY_LIMIT
+
+    contents = rendering._memory_contents(store, memories)
+    assert len(contents) <= rendering.MEMORY_LIMIT
+    assert "第一章で誓いを立てた" in contents  # まとめは残る
+    assert any(c.startswith("当章の出来事") for c in contents)  # 直近も入る

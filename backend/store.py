@@ -1477,6 +1477,32 @@ class Store:
                     "DELETE FROM memories_vec WHERE memory_id = ?", (memory_id,)
                 )
 
+    def summary_memory_ids(self) -> set[str]:
+        """要約記憶(`memory_compress`)の ID 集合。章のまとめと手動の圧縮の両方。
+
+        章のまとめ(digest)はノードの events ではなく `groups.digest_events` に
+        居るので、events テーブルを見るだけでは拾えない。清書や想起で「まとめは
+        押し出さない」判断に使う。
+        """
+        ids = {
+            r["id"]
+            for r in self.conn.execute(
+                "SELECT m.id FROM memories m JOIN events e ON e.id = m.event_id"
+                " WHERE e.type = 'memory_compress'"
+            )
+        }
+        for row in self.conn.execute(
+            "SELECT digest_events FROM groups WHERE digest_events IS NOT NULL"
+        ):
+            try:
+                events = json.loads(row["digest_events"]) or []
+            except (TypeError, ValueError):
+                continue
+            ids.update(
+                e["id"] for e in events if e.get("type") == "memory_compress" and e.get("id")
+            )
+        return ids
+
     def _resync_memory_orders(self, commit: bool = True) -> None:
         """正史切替後に全 memories の story_order を再計算する。"""
         path = self.canon_path()

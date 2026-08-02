@@ -86,6 +86,33 @@ def test_generate_beat_after_id_inserts_inside_the_chapter(store, monkeypatch):
     assert store.canon_path() == [first["id"], new_id, later["id"]]
 
 
+def test_generation_context_excludes_markers(store, monkeypatch):
+    """章の入口 / 出口が「直近のビート」に混ざらない(2026-08-02 発見)。
+
+    分岐生成(parent_id)は path_to をそのまま文脈にしていたため、章の境界の
+    近くで生成すると 3 件の直近ビートのうち 2 件が beat の空なマーカーで埋まり、
+    実質 1 ビートしか見えていなかった。
+    """
+    sent: list[list[dict[str, str]]] = []
+
+    async def fake_chat_json(messages, **kwargs):
+        sent.append(messages)
+        return _valid_result()
+
+    monkeypatch.setattr(llm_mod, "chat_json", fake_chat_json)
+    n1 = store.append_node({"beat": "出会う", "cast": ["aya"], "title": "第1話"})
+    n2 = store.append_node({"beat": "別れる", "cast": ["aya"], "title": "第2話"})
+    n3 = store.append_node({"beat": "再会する", "cast": ["aya"], "title": "第3話"})
+    store.create_group("第一章", [n1["id"], n2["id"]])
+    store.create_group("第二章", [n3["id"]])
+
+    collect_sse(generation.generate_beat_stream(store, "http://fake", None, parent_id=n3["id"]))
+    body = sent[-1][1]["content"]
+    recent = body.split("## 直近のビート")[1].split("## 指示")[0]
+    assert "入口" not in recent and "出口" not in recent
+    assert "第1話" in recent and "第2話" in recent and "第3話" in recent
+
+
 def test_generate_beat_retries_on_validation_error(store, monkeypatch):
     bad = _valid_result()
     bad["cast"] = ["aya", "nobody"]  # 未登録のキャラ ID が混ざっている

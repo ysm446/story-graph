@@ -5,8 +5,11 @@
   → それでも NG なら警告付きで採用(ユーザー判断で削除可能)
 - イベント抽出: 手動記入されたビートからイベント列のみを抽出する単独パス
 
-LLM が発行できるイベント型は 5 種に絞る(relationship_set / manual_override /
-memory_compress は手動・Phase 6 の領分)。
+LLM が発行できるイベント型は memory_add / relationship_update / fact_set(scope=char)
+の 3 種だけ(`_event_schemas`)。char_introduce / char_retire は 2026-07-26 に外し、
+relationship_set / manual_override は手動の領分。memory_compress も LLM のシーン生成
+では出させないが、**章のまとめ(digest)だけは別枠でこのモジュールが生成する**
+(`generate_group_digest`。docs/design/chapters.md §3)。
 """
 
 from __future__ import annotations
@@ -257,6 +260,17 @@ def generation_system_prompt(store: Store) -> str:
     return f"{base or DEFAULT_GENERATION_PROMPT}\n\n{GENERATION_RULES}"
 
 
+def _scene_path(store: Store, node_id: str) -> list[str]:
+    """そのノードまでの道のうち、**シーンだけ**を返す。
+
+    `path_to` ははじまり / 結末 / 章の入口・出口のマーカーも含む。これをそのまま
+    文脈にすると「直近のビート」がマーカー(beat が空)で埋まり、章の境界の近くで
+    生成すると実質 1 ビートしか見えなくなる(2026-08-02 発見)。記憶の想起で使う
+    `current_order` も、マーカーの分だけ story_order とずれて減衰が狂う。
+    """
+    return [n for n in store.path_to(node_id) if store._node_kind(n) is None]
+
+
 def _build_messages(store: Store, instruction: str | None, path: list[str],
                     branching: bool = False) -> list[dict[str, str]]:
     tail = path[-1] if path else None
@@ -358,10 +372,9 @@ async def _generate_beat_impl(
         return
 
     if parent_id:
-        path = store.path_to(parent_id)
+        path = _scene_path(store, parent_id)  # 分岐生成: その枝までの道が文脈
     elif after_id:
-        # 章の中への追加: そのノードまでの道が文脈(マーカーは文脈に混ぜない)
-        path = [n for n in store.path_to(after_id) if store._node_kind(n) is None]
+        path = _scene_path(store, after_id)  # 章の中への追加: そのノードまでの道
     else:
         path = store.canon_path()
     schema = beat_schema(char_ids, sorted(store.known_place_ids()))
