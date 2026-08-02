@@ -333,6 +333,31 @@ def test_chapter_out_decides_the_route(store):
     assert store.canon_path()[:2] == [n1["id"], alt["id"]]
 
 
+def test_chapter_route_can_be_shortened_via_the_exit(store):
+    """道の**途中**のシーンを出口に繋いで、章の道を短くできる(2026-08-03 修正)。
+
+    以前は出口への接続後に make_canon(parent) を呼んでいて、その中の
+    _realign_group_out が繋ぎ替え前の is_canon を辿って出口を旧末尾へ繋ぎ戻す
+    ため、UI は「差し替えました」と言いながら何も変わっていなかった。
+    """
+    n1, n2, n3 = _three_scenes(store)
+    g = store.create_group("第一章", [n1["id"], n2["id"], n3["id"]])
+    entry = next(x for x in store.list_groups() if x["id"] == g["id"])
+    assert entry["route"] == [n1["id"], n2["id"], n3["id"]]
+    endings_before = {r["id"] for r in store.conn.execute("SELECT id FROM nodes WHERE kind = 'ending'")}
+
+    # n1 → 出口 に繋ぎ替える = 道を n1 までに短くする
+    store.attach_node(n1["id"], entry["out_id"], replace_parent=True)
+    entry = next(x for x in store.list_groups() if x["id"] == g["id"])
+    assert store.parent_of(entry["out_id"]) == n1["id"]
+    assert entry["route"] == [n1["id"]]
+    assert store.canon_path() == [n1["id"]]
+    # n2 / n3 は道から外れた分岐としてメンバーに残る。結末は増えない
+    assert set(entry["node_ids"]) == {n1["id"], n2["id"], n3["id"]}
+    endings_after = {r["id"] for r in store.conn.execute("SELECT id FROM nodes WHERE kind = 'ending'")}
+    assert endings_after == endings_before
+
+
 def test_island_chapter_out_does_not_touch_canon(store):
     """島の章の中で出口に繋いでも、正史と結末には触らない(2026-08-02 ユーザー報告)。
 

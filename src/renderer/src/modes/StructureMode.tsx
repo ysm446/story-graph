@@ -259,7 +259,9 @@ function BeatNodeCard({ data, selected }: NodeProps<BeatFlowNode>): React.JSX.El
             : '物語のはじまり(最初のシーンはこの子としてつながる)'
         }
       >
-        <Handle type="target" position={Position.Left} />
+        {/* はじまりに親は繋げず、結末から先も繋げない(サーバーが拒否する)。
+            不可能な側のハンドルは出さず、ドラッグ自体を始めさせない */}
+        {isEnding && <Handle type="target" position={Position.Left} />}
         <div className="text-[16px]">{isEnding ? '🏁' : '📖'}</div>
         <div className="mt-0.5 truncate text-[12px] font-semibold" style={{ color: 'var(--text)' }}>
           {storyNode.title || (isEnding ? '結末' : 'はじまり')}
@@ -269,7 +271,7 @@ function BeatNodeCard({ data, selected }: NodeProps<BeatFlowNode>): React.JSX.El
             アクティブ
           </div>
         )}
-        <Handle type="source" position={Position.Right} />
+        {!isEnding && <Handle type="source" position={Position.Right} />}
       </div>
     )
   }
@@ -2435,27 +2437,50 @@ function StructureModeInner({
   // エッジを切る = 子ノード以下を独立した島にする(ノードは消さない)
   const detachEdge = useCallback(
     async (edgeId: string): Promise<void> => {
-      const edge = graphEdges.find((e) => e.id === edgeId)
-      if (!edge) {
+      // 章ビューのエッジは端点を章カードへ畳んだ導出表示で、ID は
+      // `source->target` の合成キー(graphEdges には無い)。切断は
+      // 「繋がり先の実ノードの親エッジを切る」ことなので、繋がり先を
+      // 実ノード(章カードなら章の入口)へ読み替える。以前は見つからず
+      // 黙って何も起きなかった(章ビューでは章どうしを切り離せなかった)
+      let childId = graphEdges.find((e) => e.id === edgeId)?.to_node ?? null
+      const arrow = edgeId.indexOf('->')
+      if (!childId && arrow >= 0) {
+        const targetKey = edgeId.slice(arrow + 2)
+        if (targetKey.startsWith('chapter:')) {
+          const group = groups.find((g) => g.id === targetKey.slice('chapter:'.length))
+          childId = group?.in_id ?? group?.route[0] ?? null
+        } else {
+          childId = targetKey
+        }
+      }
+      if (!childId || !graphEdges.some((e) => e.to_node === childId)) {
         setSelectedEdgeId(null) // 消えたエッジの選択を残さない(Delete が誤爆しないように)
         return
       }
-      const child = graphNodes.find((n) => n.id === edge.to_node)
+      const child = graphNodes.find((n) => n.id === childId)
       const label = child?.title || '(無題)'
+      // 章の入口を切る = 章ごと切り離す。マーカー名(「第一章 入口」)ではなく
+      // 章の名前で確認する
+      const chapterTitle =
+        child?.kind === 'chapter_in'
+          ? groups.find((g) => g.id === child.group_id)?.title ?? label
+          : null
       const message =
         child?.kind === 'ending'
           ? `結末「${label}」を切り離しますか?(あとで別のシーンにつなげます)`
-          : `「${label}」から先を切り離しますか?(シーンは残り、独立した島になります)`
+          : chapterTitle !== null
+            ? `章「${chapterTitle}」を前から切り離しますか?(章ごと独立した島になります)`
+            : `「${label}」から先を切り離しますか?(シーンは残り、独立した島になります)`
       if (!window.confirm(message)) return
       try {
-        await api.detachNode(edge.to_node)
+        await api.detachNode(childId)
         setSelectedEdgeId(null)
         await reload()
       } catch (e) {
         setGenStatus(`切り離せません: ${String(e)}`)
       }
     },
-    [graphEdges, graphNodes, reload]
+    [graphEdges, graphNodes, groups, reload]
   )
 
   // いま開いている章と表示の種類。接続・シーン追加の挙動にも効くので、
@@ -2486,6 +2511,10 @@ function StructureModeInner({
       const source = resolveEndpoint(connection.source, 'source')
       const target = resolveEndpoint(connection.target, 'target')
       if (!source || !target || source === target) return false
+      // 結末の先には繋げず、はじまりに親は作れない(ハンドルも出していないが、
+      // 章カードのピン読み替えを通る経路もあるためここでも弾く)
+      if (graphNodes.find((n) => n.id === source)?.kind === 'ending') return false
+      if (graphNodes.find((n) => n.id === target)?.kind === 'start') return false
       if (graphEdges.some((e) => e.from_node === source && e.to_node === target)) return false // 既にある
       // 自分の下流には繋げない(循環)
       const descendants = new Set([target])
@@ -2501,7 +2530,7 @@ function StructureModeInner({
       }
       return !descendants.has(source)
     },
-    [graphEdges, resolveEndpoint]
+    [graphEdges, graphNodes, resolveEndpoint]
   )
 
   const handleConnect = useCallback(
@@ -3059,18 +3088,22 @@ function StructureModeInner({
       if (seen.has(key)) continue
       seen.add(key)
       derived.push({ id: key, from_node: source, to_node: target, is_canon: e.is_canon })
+      const selected = key === selectedEdgeId
       edges.push({
         id: key,
         source,
         target,
         interactionWidth: 18,
-        style: e.is_canon
-          ? { stroke: '#8a8fb8', strokeWidth: 2.5 }
-          : { stroke: '#4a4f66', strokeWidth: 1.5, strokeDasharray: '7 5' }
+        selected,
+        style: selected
+          ? { stroke: 'var(--accent)', strokeWidth: 3 }
+          : e.is_canon
+            ? { stroke: '#8a8fb8', strokeWidth: 2.5 }
+            : { stroke: '#4a4f66', strokeWidth: 1.5, strokeDasharray: '7 5' }
       })
     }
     return { nodes, edges, derived }
-  }, [effectiveView, chapterSeq, chapterNodes, flowNodes, graphEdges, dropTargetGroupId])
+  }, [effectiveView, chapterSeq, chapterNodes, flowNodes, graphEdges, dropTargetGroupId, selectedEdgeId])
 
   /** ⟲ の中身。**いま見えている範囲だけ**を整列する。
    *

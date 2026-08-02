@@ -881,17 +881,16 @@ class Store:
         self._resync_memory_orders(commit=False)
         if self._node_kind(child_id) == "chapter_out":
             # 章の出口に繋ぎ替えた = その章の読む道を選んだ、ということ。
-            # **その章が正史の上にあるときだけ**、正史もその道を通るように合わせる。
-            # 島の章で追従させると、make_canon が道の先に結末を作ってしまい、
-            # 島が正史に化ける(2026-08-02 ユーザー報告)
-            ending = self.active_ending()
-            on_canon_route = ending is not None and child_id in self.path_to(ending)
+            # 正史は結末からの導出(path_to はエッジの親リンクを遡る)なので、
+            # 貼り直すだけで新しい配線に追従する。結末が出口の下流にあるときだけ
+            # 正史が変わり、島の章では何も動かない(島で結末を作らない。
+            # 2026-08-02 ユーザー報告)。
+            # 以前はここで make_canon(parent_id) を呼んでいたが、その中の
+            # _realign_group_out が繋ぎ替え**前**の is_canon を辿って出口を旧末尾へ
+            # 繋ぎ戻すため、道を途中まで(短く)する繋ぎ替えが黙って元に戻っていた
+            # (2026-08-03 修正)
+            self._resync_canon()
             self.conn.commit()
-            if on_canon_route:
-                self.make_canon(parent_id)
-            else:
-                self._resync_canon()
-                self.conn.commit()
             return
         if as_canon:
             # 正史へ = 繋いだ枝の先の結末をアクティブにする(無ければ末端に作る)
