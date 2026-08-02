@@ -2884,11 +2884,15 @@ function StructureModeInner({
   // 章ビューでだけ章カードの外に飛び出すのを防ぐ
   const chapterSeq = useMemo(() => {
     const groupByNode = new Map<string, string>()
+    const outIds = new Set<string>()
     groups.forEach((g) => {
       g.node_ids.forEach((n) => groupByNode.set(n, g.id))
       // 入口 / 出口も章カードに畳む(章ビューでは章の境界 = カードのピン)
       if (g.in_id) groupByNode.set(g.in_id, g.id)
-      if (g.out_id) groupByNode.set(g.out_id, g.id)
+      if (g.out_id) {
+        groupByNode.set(g.out_id, g.id)
+        outIds.add(g.out_id)
+      }
     })
     const children: Record<string, string[]> = {}
     for (const e of graphEdges) (children[e.from_node] ??= []).push(e.to_node)
@@ -2896,6 +2900,10 @@ function StructureModeInner({
     const queue = [...groupByNode.keys()]
     while (queue.length > 0) {
       const current = queue.pop()!
+      // **出口の先は章の外**。ここから畳むと、章の後ろに繋いだ独立シーンが
+      // 章カードに吸い込まれて画面から消える(2026-08-02 ユーザー報告)。
+      // 畳む対象は「章の中のシーンから生える分岐」だけ
+      if (outIds.has(current)) continue
       const gid = groupByNode.get(current)!
       for (const child of children[current] ?? []) {
         if (groupByNode.has(child)) continue
