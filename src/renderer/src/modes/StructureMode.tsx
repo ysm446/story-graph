@@ -597,15 +597,6 @@ function BeatTab({
     }
   }
 
-  const handleMakeCanon = async (): Promise<void> => {
-    try {
-      await api.makeCanon(node.id)
-      onSaved()
-    } catch (e) {
-      setError(String(e))
-    }
-  }
-
   const handleDelete = async (): Promise<void> => {
     if (!window.confirm('このシーンを削除しますか?(後続シーンは前のシーンに繋がります)')) return
     try {
@@ -644,17 +635,12 @@ function BeatTab({
 
   return (
     <div className="flex flex-col gap-3">
-      {node.status === 'draft' && (
-        <button
-          onClick={() => void handleMakeCanon()}
-          className="rounded-lg border px-3 py-1.5 text-[13px] font-medium"
-          style={{ borderColor: 'var(--accent-border)', color: 'var(--accent)', background: 'var(--accent-soft)' }}
-        >
-          ★ このブランチを正史にする
-        </button>
-      )}
-      {/* 「ここから先のイベントを作り直す」はノードエリアの右クリック
-          (イベントを作り直す(この先も / LLM))と同じ操作なので、こちらは置かない */}
+      {/* 「★ このブランチを正史にする」は置かない(2026-08-02 ユーザー判断)。
+          正史は**アクティブな結末から遡った道**なので、決めることは「どの結末を
+          アクティブにするか」だけ。道を直接選ぶ操作があると概念が二重になるうえ、
+          中身の make_canon は枝の先に結末が無いと黙って結末を作っていた。
+          切替は結末ノードの右クリック「🏁 この結末にする」で行う。
+          「ここから先のイベントを作り直す」も右クリックと同じ操作なので置かない */}
       {validation.length > 0 && (
         <div
           className="rounded-lg border px-3 py-2 text-[12px] leading-relaxed"
@@ -3380,7 +3366,9 @@ function StructureModeInner({
 
   // ---- はじまり / 結末の操作(docs/design/endings.md) ----------------
 
-  /** そのノードを通る道を正史にする(結末の切替にも、章の道の差し替えにも使う)。 */
+  /** 結末をアクティブにする(= そこまでの道が正史になる)。
+   *  2026-08-02 以降、呼ぶのは結末ノードの右クリックだけ。シーンを指して
+   *  「この道を正史にする」操作は概念の重複なので UI から外した。 */
   const makeRouteCanon = async (nodeId: string): Promise<void> => {
     try {
       await api.makeCanon(nodeId)
@@ -4333,25 +4321,21 @@ function StructureModeInner({
                         }
                       ]
                     : []),
-                  // 章の道(ルート)の切替: 分岐のシーンを右クリックしたときに出す。
-                  // 中身は make_canon(この枝の先の結末をアクティブにする)なので、
-                  // 章の中で使えば「章の道を差し替える」操作になる
+                  // 章の道(ルート)の差し替え: **章の中で**分岐のシーンを右クリックしたとき。
+                  // 出口の繋ぎ替えとして扱う(島の章で正史を巻き込まないよう、正史を
+                  // 追従させるかはサーバー側が判断する)。
+                  // 章の外の「★ この道を正史にする」は削除した(2026-08-02 ユーザー判断)。
+                  // 正史はアクティブな結末から遡った道なので、決めるのは「どの結末か」だけ。
+                  // 切替は結末ノードの右クリックに一本化する
                   ...((): Array<{ label: string; hint: string; run: () => void }> => {
-                    if (menu.targets.length !== 1) return []
+                    if (menu.targets.length !== 1 || !focusedGroup) return []
                     const node = graphNodes.find((n) => n.id === menu.targets[0])
                     if (!node || node.kind || node.status !== 'draft') return []
                     return [
                       {
-                        label: focusedGroup ? '★ この枝を章の道にする' : '★ この道を正史にする',
-                        hint: focusedGroup
-                          ? '章の出口をこの枝に繋ぎ替えます(鑑賞モードとまとめもこの道になります)'
-                          : 'この枝を通る道を正史にする',
-                        // 章の中では出口の繋ぎ替えとして扱う(島の章で正史を
-                        // 巻き込まないよう、正史の追従はサーバー側が判断する)
-                        run: () =>
-                          void (focusedGroup
-                            ? setChapterRoute(focusedGroup.id, node.id)
-                            : makeRouteCanon(node.id))
+                        label: '★ この枝を章の道にする',
+                        hint: '章の出口をこの枝に繋ぎ替えます(鑑賞モードとまとめもこの道になります)',
+                        run: () => void setChapterRoute(focusedGroup.id, node.id)
                       }
                     ]
                   })(),
