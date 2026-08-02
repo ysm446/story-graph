@@ -686,13 +686,15 @@ export async function generateBeatStream(
   instruction: string | null,
   onEvent: (data: GenerationEvent) => void,
   parentId: string | null = null,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  // 指定するとそのノードの直後へ割り込ませる(章の中への追加。章の出口の手前に入る)
+  afterId: string | null = null
 ): Promise<void> {
   if (!baseUrl) throw new Error('backend not ready')
   const res = await fetch(`${baseUrl}/generate/beat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ instruction, parent_id: parentId }),
+    body: JSON.stringify({ instruction, parent_id: parentId, after_id: afterId }),
     signal
   })
   if (!res.ok || !res.body) {

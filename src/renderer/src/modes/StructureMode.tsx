@@ -3706,8 +3706,12 @@ function StructureModeInner({
   // 指示文は積んだ時点のものを使うので、入力欄はすぐ空にする
   const handleGenerate = (parentId: string | null): void => {
     const promptText = instruction.trim() || null
+    // 章の中では**その章の末尾(出口の手前)**に足す。渡さないと正史の末尾
+    // (= 物語の最後、章の外)にできてしまう。空の章では入口の直後へ
+    const afterId = parentId ? null : (focusedGroup?.route.at(-1) ?? focusedGroup?.in_id ?? null)
     // 生成されるノードはまだ存在しないので、続きを書く元のノードを光らせる
-    const originId = parentId ?? (canonPath.length > 0 ? canonPath[canonPath.length - 1].id : null)
+    const originId =
+      parentId ?? afterId ?? (canonPath.length > 0 ? canonPath[canonPath.length - 1].id : null)
     setInstruction('')
     const taskId = enqueueTask({
       label: parentId ? '分岐生成' : 'シーン生成',
@@ -3748,7 +3752,8 @@ function StructureModeInner({
               }
             },
             parentId,
-            signal
+            signal,
+            afterId
           )
         } catch (err) {
           setGenStatus(isAbortError(err) ? 'キャンセルしました' : String(err))

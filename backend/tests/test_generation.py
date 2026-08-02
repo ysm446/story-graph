@@ -64,6 +64,28 @@ def test_generate_beat_appends_node(store, monkeypatch):
     assert done["node"]["events"][0]["source"] == "llm"
 
 
+def test_generate_beat_after_id_inserts_inside_the_chapter(store, monkeypatch):
+    """章の中での「次のシーンを生成」は、その章の出口の手前に入る(§9)。
+
+    after_id を渡さないと正史の末尾(= 物語の最後、章の外)にできてしまう。
+    """
+    async def fake_chat_json(messages, **kwargs):
+        return _valid_result()
+
+    monkeypatch.setattr(llm_mod, "chat_json", fake_chat_json)
+    first = store.append_node({"beat": "b1", "cast": ["aya"]})
+    later = store.append_node({"beat": "b2", "cast": ["aya"]})
+    g = store.create_group("第一章", [first["id"]])  # 章は 1 シーンだけ
+    events = collect_sse(
+        generation.generate_beat_stream(store, "http://fake", None, after_id=g["route"][-1])
+    )
+    new_id = events[-1]["node"]["id"]
+    entry = next(x for x in store.list_groups() if x["id"] == g["id"])
+    assert entry["route"] == [first["id"], new_id]  # 章の中(出口の手前)に入る
+    assert store.get_node(new_id)["group_id"] == g["id"]
+    assert store.canon_path() == [first["id"], new_id, later["id"]]
+
+
 def test_generate_beat_retries_on_validation_error(store, monkeypatch):
     bad = _valid_result()
     bad["cast"] = ["aya", "nobody"]  # 未登録のキャラ ID が混ざっている

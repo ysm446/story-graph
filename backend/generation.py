@@ -320,16 +320,20 @@ async def generate_beat_stream(
     base_url: str,
     instruction: str | None,
     parent_id: str | None = None,
+    after_id: str | None = None,
 ) -> AsyncIterator[str]:
     """SSE イベント列を返す。最後に done(node + validation) または error。
 
-    parent_id 指定時はそのノードからのブランチ生成(コンテキストは分岐元パス)。
+    - parent_id 指定時はそのノードからのブランチ生成(コンテキストは分岐元パス)
+    - after_id 指定時はそのノードの直後へ割り込ませる(章の中への追加。
+      章の出口の手前に入るので、生成したシーンがその章のものになる)
+    - どちらも無ければ正史の末尾に足す
 
     生成器の途中で例外が漏れると StreamingResponse が接続を切ってしまうため、
     必ず error イベントに変換する。
     """
     try:
-        async for chunk in _generate_beat_impl(store, base_url, instruction, parent_id):
+        async for chunk in _generate_beat_impl(store, base_url, instruction, parent_id, after_id):
             yield chunk
     except Exception as e:  # noqa: BLE001
         yield _sse({"error": f"{type(e).__name__}: {e}"})
@@ -340,6 +344,7 @@ async def _generate_beat_impl(
     base_url: str,
     instruction: str | None,
     parent_id: str | None = None,
+    after_id: str | None = None,
 ) -> AsyncIterator[str]:
     char_ids = sorted(store.known_char_ids())
     if not char_ids:
@@ -348,8 +353,17 @@ async def _generate_beat_impl(
     if parent_id is not None and store.get_node(parent_id) is None:
         yield _sse({"error": f"分岐元ノードが見つかりません: {parent_id}"})
         return
+    if after_id is not None and store.get_node(after_id) is None:
+        yield _sse({"error": f"挿入位置のノードが見つかりません: {after_id}"})
+        return
 
-    path = store.path_to(parent_id) if parent_id else store.canon_path()
+    if parent_id:
+        path = store.path_to(parent_id)
+    elif after_id:
+        # 章の中への追加: そのノードまでの道が文脈(マーカーは文脈に混ぜない)
+        path = [n for n in store.path_to(after_id) if store._node_kind(n) is None]
+    else:
+        path = store.canon_path()
     schema = beat_schema(char_ids, sorted(store.known_place_ids()))
     messages = _build_messages(store, instruction, path, branching=parent_id is not None)
     state_before = store.get_state(path[-1]) if path else None
@@ -399,19 +413,23 @@ async def _generate_beat_impl(
             ]
 
     assert result is not None
-    node = store.append_node(
-        {
-            "title": result.get("title"),
-            "beat": result["beat"],
-            "emotional_core": result.get("emotional_core"),
-            "cast": result.get("cast", []),
-            "location": result.get("location"),
-            "story_time": result.get("story_time"),
-        },
-        [{"type": e["type"], "payload": e["payload"], "source": "llm"} for e in result.get("events", [])],
-        source="llm",
-        parent_id=parent_id,
-    )
+    data = {
+        "title": result.get("title"),
+        "beat": result["beat"],
+        "emotional_core": result.get("emotional_core"),
+        "cast": result.get("cast", []),
+        "location": result.get("location"),
+        "story_time": result.get("story_time"),
+    }
+    events = [
+        {"type": e["type"], "payload": e["payload"], "source": "llm"} for e in result.get("events", [])
+    ]
+    if after_id:
+        # 章の中への追加: そのノードの直後(章の出口の手前)へ割り込ませる。
+        # 章の引き継ぎは insert_node_after に任せる(前後が同じ章なので入る)
+        node = store.insert_node_after(after_id, data, events, source="llm")
+    else:
+        node = store.append_node(data, events, source="llm", parent_id=parent_id)
     yield _sse({"done": True, "node": node, "validation": errors})
 
 

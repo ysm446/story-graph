@@ -788,6 +788,8 @@ async def list_models() -> dict[str, Any]:
 class GenerateBeatIn(BaseModel):
     instruction: str | None = None
     parent_id: str | None = None  # 指定時はそのノードからのブランチ生成(draft)
+    # 指定時はそのノードの直後へ割り込ませる(章の中への追加。章の出口の手前に入る)
+    after_id: str | None = None
 
 
 @app.get("/llm/status")
@@ -885,7 +887,9 @@ async def generate_beat(body: GenerateBeatIn) -> StreamingResponse:
             yield generation._sse({"error": str(e)})
         return StreamingResponse(error_stream(), media_type="text/event-stream")
     return StreamingResponse(
-        generation.generate_beat_stream(store, base_url, body.instruction, parent_id=body.parent_id),
+        generation.generate_beat_stream(
+            store, base_url, body.instruction, parent_id=body.parent_id, after_id=body.after_id
+        ),
         media_type="text/event-stream",
     )
 
