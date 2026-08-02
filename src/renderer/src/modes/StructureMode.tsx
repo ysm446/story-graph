@@ -3351,6 +3351,17 @@ function StructureModeInner({
     })
   }
 
+  /** 未分類のシーンを、隣接する章に入れる(後続の一続きも一緒に入る)。
+   *  章の中で書いたのに未分類のまま残ったシーンを拾い直すための操作 */
+  const addToChapter = async (nodeId: string, groupId: string): Promise<void> => {
+    try {
+      await api.addNodeToGroup(groupId, nodeId)
+      await reload()
+    } catch (e) {
+      setGenStatus(`章に入れられません: ${String(e)}`)
+    }
+  }
+
   const removeFromChapter = async (nodeId: string): Promise<void> => {
     const node = graphNodes.find((n) => n.id === nodeId)
     if (!node?.group_id) return
@@ -4129,6 +4140,26 @@ function StructureModeInner({
                         }
                       ]
                     : []),
+                  // 章に入れる: 未分類のシーンが章の端に隣接しているときだけ出す
+                  // (章の中で書いたのに未分類のまま残ったシーンを拾い直す)
+                  ...((): Array<{ label: string; hint: string; run: () => void }> => {
+                    if (menu.targets.length !== 1) return []
+                    const node = graphNodes.find((n) => n.id === menu.targets[0])
+                    if (!node || node.group_id || node.kind) return []
+                    const parentId = graphEdges.find((e) => e.to_node === node.id)?.from_node ?? null
+                    const childIds = graphEdges.filter((e) => e.from_node === node.id).map((e) => e.to_node)
+                    const target =
+                      groups.find((g) => g.node_ids.at(-1) === parentId) ??
+                      groups.find((g) => childIds.includes(g.node_ids[0]))
+                    if (!target) return []
+                    return [
+                      {
+                        label: '📖 この章に入れる',
+                        hint: `「${target.title}」のシーンにする(後ろに続くシーンも一緒に)`,
+                        run: () => void addToChapter(node.id, target.id)
+                      }
+                    ]
+                  })(),
                   // 章の表紙: 挿絵のある章内のシーンを右クリックしたときだけ出す
                   ...((): Array<{ label: string; hint: string; run: () => void }> => {
                     if (menu.targets.length !== 1) return []
