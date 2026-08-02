@@ -3451,6 +3451,17 @@ function StructureModeInner({
     })
   }
 
+  /** 章の読む道を、このシーンを通る道にする(出口をその枝の端へ繋ぎ替える) */
+  const setChapterRoute = async (groupId: string, nodeId: string): Promise<void> => {
+    try {
+      await api.setGroupRoute(groupId, nodeId)
+      await reload()
+      setGenStatus('章の道を差し替えました')
+    } catch (e) {
+      setGenStatus(`章の道を変えられません: ${String(e)}`)
+    }
+  }
+
   /** 未分類のシーンを、隣接する章に入れる(後続の一続きも一緒に入る)。
    *  章の中で書いたのに未分類のまま残ったシーンを拾い直すための操作 */
   const addToChapter = async (nodeId: string, groupId: string): Promise<void> => {
@@ -4326,7 +4337,12 @@ function StructureModeInner({
                         hint: focusedGroup
                           ? '章の出口をこの枝に繋ぎ替えます(鑑賞モードとまとめもこの道になります)'
                           : 'この枝を通る道を正史にする',
-                        run: () => void makeRouteCanon(node.id)
+                        // 章の中では出口の繋ぎ替えとして扱う(島の章で正史を
+                        // 巻き込まないよう、正史の追従はサーバー側が判断する)
+                        run: () =>
+                          void (focusedGroup
+                            ? setChapterRoute(focusedGroup.id, node.id)
+                            : makeRouteCanon(node.id))
                       }
                     ]
                   })(),

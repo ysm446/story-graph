@@ -326,6 +326,36 @@ def test_chapter_out_decides_the_route(store):
     assert entry["route"] == [n1["id"], n2["id"]]
     assert store.parent_of(entry["out_id"]) == n2["id"]
 
+    # ③ 「★ この枝を章の道にする」(set_group_route)でも同じ結果になる
+    entry = store.set_group_route(g["id"], alt["id"])
+    assert entry["route"] == [n1["id"], alt["id"]]
+    assert store.parent_of(entry["out_id"]) == alt["id"]
+    assert store.canon_path()[:2] == [n1["id"], alt["id"]]
+
+
+def test_island_chapter_out_does_not_touch_canon(store):
+    """島の章の中で出口に繋いでも、正史と結末には触らない(2026-08-02 ユーザー報告)。
+
+    出口への接続で正史を追従させる処理が島の章でも走っていたため、
+    make_canon が道の先に結末を作ってしまい、島が正史に化けていた。
+    """
+    n1, n2, n3 = _three_scenes(store)
+    canon_before = store.canon_path()
+    ending_before = store.active_ending()
+    endings_before = {r["id"] for r in store.conn.execute("SELECT id FROM nodes WHERE kind = 'ending'")}
+    i1 = store.append_node({"beat": "島1", "cast": ["aya"]}, detached=True)
+    i2 = store.append_node({"beat": "島2", "cast": ["aya"]}, parent_id=i1["id"])
+    g = store.create_group("島の章", [i1["id"], i2["id"]])
+    # 島の章の中で、出口を i1 に繋ぎ替える(読む道を短くする)
+    store.attach_node(i1["id"], g["out_id"], replace_parent=True)
+    entry = next(x for x in store.list_groups() if x["id"] == g["id"])
+    assert entry["route"] == [i1["id"]]  # 章の中の道は変わる
+    endings_after = {r["id"] for r in store.conn.execute("SELECT id FROM nodes WHERE kind = 'ending'")}
+    assert endings_after == endings_before  # 結末は増えていない
+    assert store.active_ending() == ending_before
+    assert store.canon_path() == canon_before  # 正史も変わらない
+    assert n3["id"] in store.canon_path()
+
 
 def test_group_warns_when_bypassing_the_exit(store):
     """「章の外へ出るときは必ず出口を通る」= 境界の不変条件。破れたら警告。"""

@@ -775,9 +775,17 @@ class Store:
         self._resync_memory_orders(commit=False)
         if self._node_kind(child_id) == "chapter_out":
             # 章の出口に繋ぎ替えた = その章の読む道を選んだ、ということ。
-            # 正史(アクティブな結末からの逆引き)もその道を通るように合わせる
+            # **その章が正史の上にあるときだけ**、正史もその道を通るように合わせる。
+            # 島の章で追従させると、make_canon が道の先に結末を作ってしまい、
+            # 島が正史に化ける(2026-08-02 ユーザー報告)
+            ending = self.active_ending()
+            on_canon_route = ending is not None and child_id in self.path_to(ending)
             self.conn.commit()
-            self.make_canon(parent_id)
+            if on_canon_route:
+                self.make_canon(parent_id)
+            else:
+                self._resync_canon()
+                self.conn.commit()
             return
         if as_canon:
             # 正史へ = 繋いだ枝の先の結末をアクティブにする(無ければ末端に作る)
@@ -798,6 +806,10 @@ class Store:
             raise KeyError(f"node not found: {node_id}")
         if self._node_kind(node_id) == "start":
             raise ValueError("「はじまり」は正史の切替対象になりません")
+        # 章の中の枝を選んだときは、**先に**その章の出口を繋ぎ替える。あとで
+        # 揃えると、出口が外れたままの枝の先に結末を作ってしまい(下の探索)、
+        # 章から先の物語が切り離される
+        self._realign_group_out(node_id)
         current = node_id
         target: str | None = None
         seen = {current}
@@ -825,7 +837,6 @@ class Store:
             seen.add(canon_child)
             current = canon_child
         self.set_settings({"active_ending": target})
-        self._realign_group_out(node_id)
         self._resync_canon()
         self._resync_memory_orders(commit=False)
         self.conn.commit()
@@ -1616,6 +1627,28 @@ class Store:
         )
         self.conn.commit()
         return cur.rowcount > 0
+
+    def set_group_route(self, group_id: str, node_id: str) -> dict[str, Any]:
+        """章の読む道を「このシーンを通る道」にする(出口をその枝の端へ繋ぎ替える)。
+
+        章が正史の上にあるときだけ正史も追従させる(島の章で追従させると
+        make_canon が道の先に結末を作ってしまう。2026-08-02 ユーザー報告)。
+        """
+        group = next((g for g in self.list_groups() if g["id"] == group_id), None)
+        if group is None:
+            raise KeyError(f"group not found: {group_id}")
+        if node_id not in group["node_ids"]:
+            raise ValueError("その章のシーンではありません")
+        self._realign_group_out(node_id)
+        self.conn.commit()
+        ending = self.active_ending()
+        out_id = group["out_id"]
+        if ending and out_id and out_id in self.path_to(ending):
+            self.make_canon(node_id)
+        else:
+            self._resync_canon()
+            self.conn.commit()
+        return next(g for g in self.list_groups() if g["id"] == group_id)
 
     def _splice_out_node(self, node_id: str) -> None:
         """ノードを鎖から抜いて消す(親 → 子 を繋ぎ直す)。マーカーの撤去に使う。"""

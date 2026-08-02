@@ -535,6 +535,19 @@ async def delete_group_digest(group_id: str) -> dict[str, Any]:
         raise HTTPException(404, "group not found")
 
 
+@app.post("/groups/{group_id}/route/{node_id}")
+async def set_group_route(group_id: str, node_id: str) -> dict[str, Any]:
+    """章の読む道を、このシーンを通る道にする(出口をその枝の端へ繋ぎ替える)。"""
+    snapshots.auto(store, "章の道の差し替えの前", 60)
+    try:
+        group = store.set_group_route(group_id, node_id)
+    except KeyError as e:
+        raise HTTPException(404, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"group": group, "groups": store.list_groups()}
+
+
 @app.post("/groups/{group_id}/nodes/{node_id}")
 async def add_node_to_group(group_id: str, node_id: str) -> dict[str, Any]:
     """シーンを章に入れる(章の端に隣接しているときだけ。後続の一続きも一緒に)。"""
