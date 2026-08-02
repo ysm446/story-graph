@@ -87,7 +87,11 @@ export interface Group {
   pos_y: number | null
   /** 章カードの表紙にするシーン(null = 自動。章内で最初に挿絵があるシーンを使う) */
   cover_node_id: string | null
-  /** メンバーのシーン ID(鎖の順) */
+  /** 章の中の「読む道」。メンバーのうち正史に乗っているもの(無ければ島の一続き)。
+   *  鑑賞モード・まとめ・並べ替え・章カードのピンはこちらを見る */
+  route: string[]
+  /** メンバーのシーン ID(ルート → それ以外の順)。**一続きとは限らない**:
+   *  章の中の分岐も、まだ繋いでいない島も入る(docs/design/chapters.md §9) */
   node_ids: string[]
 }
 

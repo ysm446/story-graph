@@ -1241,13 +1241,50 @@ class Store:
     # 影響しないので、章の操作では dirty / stale を立てない。章ビューは表示のための
     # 導出で、真実はシーンノード + エッジ + nodes.group_id のまま。
 
-    def list_groups(self) -> list[dict[str, Any]]:
-        """章の一覧を返す(正史ルート上の章 → 島・分岐の章の順)。node_ids は鎖の順。
+    def _member_chain(self, members: list[str]) -> list[str]:
+        """メンバーの中で、いちばん浅いシーンから親子で辿れる一続き。
 
-        章は「親子で一続きにつながったシーンの列」で、正史・分岐・島のどこにでも
-        作れる(2026-08-01 一般化。on_canon で区別)。章ラベル(nodes.group_id)は
-        切り離しや正史切替で**自動では消さない**。鎖が途切れている章は warning を
-        付けて返し、UI がバッジで知らせる。つなぎ直せば章はそのまま復活する。
+        正史に乗っていない章(島の章)の「読む順」に使う。分岐で分かれるときは
+        canon エッジ側を選び、それでも決まらなければそこで打ち切る。
+        """
+        if not members:
+            return []
+        pool = set(members)
+        start = min(members, key=lambda n: len(self.path_to(n)))
+        chain = [start]
+        current = start
+        while True:
+            children = [
+                (r["to_node"], r["is_canon"])
+                for r in self.conn.execute(
+                    "SELECT to_node, is_canon FROM edges WHERE from_node = ?", (current,)
+                )
+            ]
+            nxt = [c for c, _ in children if c in pool and c not in chain]
+            if len(nxt) > 1:
+                canon_next = [c for c, is_canon in children if is_canon and c in nxt]
+                nxt = canon_next
+            if len(nxt) != 1:
+                break
+            current = nxt[0]
+            chain.append(current)
+        return chain
+
+    def list_groups(self) -> list[dict[str, Any]]:
+        """章の一覧を返す(ルートが正史に乗る章 → 島・分岐だけの章の順)。
+
+        章は 2 層で持つ(docs/design/chapters.md §9):
+
+        - **メンバー(`node_ids`)**: `nodes.group_id` のラベル。**一続きである必要はない**。
+          章の中の分岐も、まだどこにも繋いでいない島も入れられる。並びは
+          「ルート → それ以外(深さ順)」
+        - **ルート(`route`)**: 章の中の「読む道」。メンバーのうち**正史パスに乗って
+          いるもの**(正史順)。1 つも無ければメンバーの中の一続き(島の章の読む順)
+
+        鑑賞モード / まとめ(digest)の適用点 / 章の並べ替えは **route** を見る。
+        章パネル / 一括操作 / 章カードへの畳み込みは **node_ids**(メンバー全部)を見る。
+        章ラベルは切り離しや正史切替で**自動では消さない**。ルートが正史の上で
+        分断されている章は warning を付けて返し、UI がバッジで知らせる。
         """
         path = self.canon_path()
         order = {nid: i for i, nid in enumerate(path)}
@@ -1259,14 +1296,16 @@ class Store:
             all_ids = members.get(row["id"], [])
             if not all_ids:
                 continue  # ラベルを持つノードが無い章は出さない(解除済み)
-            # 鎖(親子)の順に並べる。深さ = ルートからの距離
-            ordered = sorted(all_ids, key=lambda n: len(self.path_to(n)))
+            ordered = sorted(all_ids, key=lambda n: len(self.path_to(n)))  # 深さ順
+            on_route = [n for n in ordered if n in order]
+            on_canon = bool(on_route)
+            route = sorted(on_route, key=lambda n: order[n]) if on_canon else self._member_chain(ordered)
             warning: str | None = None
-            for prev, cur in zip(ordered, ordered[1:]):
-                if self.parent_of(cur) != prev:
-                    warning = "章のシーンが一続きにつながっていません(つなぎ直すと直ります)"
-                    break
-            on_canon = all(n in order for n in ordered)
+            if on_canon and order[route[-1]] - order[route[0]] != len(route) - 1:
+                # 正史の上で章の区間に他の章・未分類のシーンが挟まっている
+                warning = "章のルートが正史の上で分断されています(間に別のシーンがあります)"
+            rest = [n for n in ordered if n not in set(route)]
+            node_ids = route + rest
             result.append(
                 {
                     "id": row["id"],
@@ -1280,18 +1319,24 @@ class Store:
                     "pos_y": row["pos_y"],
                     # 表紙のシーンが章から外れた / 消えたときは自動(NULL)に戻して返す
                     "cover_node_id": row["cover_node_id"] if row["cover_node_id"] in ordered else None,
-                    "node_ids": ordered,
+                    "route": route,
+                    "node_ids": node_ids,
                     "_created": gi,
                 }
             )
-        # 正史ルート上の章は正史位置順、島・分岐の章はその後ろに作成順
-        result.sort(key=lambda g: (0, order.get(g["node_ids"][0], 0)) if g["on_canon"] else (1, g["_created"]))
+        # ルートが正史に乗る章は正史位置順、島・分岐だけの章はその後ろに作成順
+        result.sort(key=lambda g: (0, order.get(g["route"][0], 0)) if g["on_canon"] else (1, g["_created"]))
         for g in result:
             del g["_created"]
         return result
 
     def create_group(self, title: str, node_ids: list[str]) -> dict[str, Any]:
-        """親子で一続きにつながったシーンの列を章にする(正史・分岐・島のどこでも可)。"""
+        """選んだシーンを章にする。
+
+        **一続きの鎖である必要はない**(docs/design/chapters.md §9 Step 1)。
+        章の中の分岐も、まだどこにも繋いでいない島も入れられる。読む順(ルート)は
+        `list_groups` が導出する。
+        """
         title = (title or "").strip()
         if not title:
             raise ValueError("章の名前を入力してください")
@@ -1303,11 +1348,7 @@ class Store:
                 raise ValueError("存在しないシーンが含まれています")
             if self._node_kind(n) is not None:
                 raise ValueError("はじまり / 結末は章に入れられません")
-        # 鎖の検証: 深さ順に並べ、各シーンの親が直前のシーンであること
         ordered = sorted(unique_ids, key=lambda n: len(self.path_to(n)))
-        for prev, cur in zip(ordered, ordered[1:]):
-            if self.parent_of(cur) != prev:
-                raise ValueError("章は親子で一続きにつながったシーンの並びにしてください")
         placeholders = ",".join("?" for _ in unique_ids)
         taken = self.conn.execute(
             f"SELECT id FROM nodes WHERE id IN ({placeholders}) AND group_id IS NOT NULL",
@@ -1365,13 +1406,14 @@ class Store:
         self.conn.commit()
 
     def add_node_to_group(self, group_id: str, node_id: str) -> dict[str, Any]:
-        """シーンを章に入れる(章の端に隣接しているときだけ)。
+        """シーンを章に入れる。
 
-        章の中で書いたシーン(島を作って繋いだ・末尾に足した)が未分類のまま残ると、
-        章ビューでは章カードの外に出てしまう。章内ビューでの作成・接続からここを呼ぶ。
+        メンバーは鎖でなくてよい(§9 Step 1)ので、**どのシーンでも入れられる**
+        (別の章に属しているものと、はじまり / 結末を除く)。章内ビューでの
+        シーンの作成・接続からも呼ぶ。
 
-        **一続きに繋がった後続のシーンも一緒に入れる**(まだどの章にも属していない
-        ものだけ)。島を何シーンか書いてから繋いだときに、章が 1 シーンだけ伸びて
+        **繋がっている後続のシーンも一緒に入れる**(まだどの章にも属していない
+        ものだけ)。島を何シーンか書いてから繋いだときに、1 シーンだけ入って
         残りが取り残されるのを防ぐ。
         """
         group = next((g for g in self.list_groups() if g["id"] == group_id), None)
@@ -1386,30 +1428,23 @@ class Store:
             return group
         if node.get("group_id"):
             raise ValueError("既に別の章に属すシーンです(先に章から外してください)")
-        ids = group["node_ids"]
-        appending = self.parent_of(node_id) == ids[-1]
-        if not appending and self.parent_of(ids[0]) != node_id:
-            raise ValueError("章の端(先頭の直前・末尾の直後)に繋がっているシーンだけ入れられます")
         targets = [node_id]
-        if appending:
-            # 後続の一続きを辿る。枝分かれしていたら、そこで止める(章は鎖のため)
-            current = node_id
-            while True:
-                children = [
-                    r["to_node"]
-                    for r in self.conn.execute(
-                        "SELECT to_node FROM edges WHERE from_node = ?", (current,)
-                    )
-                ]
-                free = [
-                    c
-                    for c in children
-                    if self._node_kind(c) is None and (self.get_node(c) or {}).get("group_id") is None
-                ]
-                if len(children) != 1 or len(free) != 1:
-                    break
-                current = free[0]
-                targets.append(current)
+        current = node_id
+        while True:
+            children = [
+                r["to_node"]
+                for r in self.conn.execute("SELECT to_node FROM edges WHERE from_node = ?", (current,))
+            ]
+            free = [
+                c
+                for c in children
+                if self._node_kind(c) is None and (self.get_node(c) or {}).get("group_id") is None
+            ]
+            # 枝分かれしているところで止める(どちらを連れて行くか決められない)
+            if len(children) != 1 or len(free) != 1:
+                break
+            current = free[0]
+            targets.append(current)
         self.conn.executemany(
             "UPDATE nodes SET group_id = ? WHERE id = ?", [(group_id, n) for n in targets]
         )
@@ -1417,16 +1452,12 @@ class Store:
         return next(g for g in self.list_groups() if g["id"] == group_id)
 
     def remove_node_from_group(self, node_id: str) -> None:
-        """シーンを章から外す。途中を外すと章が非連続になるので、端(先頭か末尾)のみ。"""
+        """シーンを章から外す(メンバーは鎖でなくてよいので、どのシーンでも外せる)。"""
         node = self.get_node(node_id)
         if node is None:
             raise KeyError(f"node not found: {node_id}")
-        group_id = node.get("group_id")
-        if not group_id:
+        if not node.get("group_id"):
             return
-        group = next((g for g in self.list_groups() if g["id"] == group_id), None)
-        if group and node_id not in (group["node_ids"][0], group["node_ids"][-1]):
-            raise ValueError("章の途中のシーンは外せません(章が分断されます)。端から外してください")
         self.conn.execute("UPDATE nodes SET group_id = NULL WHERE id = ?", (node_id,))
         self.conn.commit()
 
@@ -1454,12 +1485,14 @@ class Store:
                 raise KeyError(f"group not found: {after_group_id}")
             if not target.get("on_canon"):
                 raise ValueError("移動先は正史ルート上の章にしてください")
-            anchor = target["node_ids"][-1]
+            anchor = target["route"][-1]
         if me.get("warning"):
             raise ValueError(f"並べ替えできません: {me['warning']}")
         if not me.get("on_canon"):
             raise ValueError("並べ替えできるのは正史ルート上の章だけです(島・分岐の章は位置を動かすだけで足ります)")
-        a_first, a_last = me["node_ids"][0], me["node_ids"][-1]
+        # 動かすのはルート(正史上の区間)。そこから生える分岐は一緒に動き、
+        # 章に入れてある島は繋がっていないのでその場に残る
+        a_first, a_last = me["route"][0], me["route"][-1]
         if self.parent_of(a_first) == anchor:
             return groups  # 既にその位置
         # スプライス: (p → A → c) と (anchor → d) を (p → c) と (anchor → A → d) に
@@ -1486,7 +1519,7 @@ class Store:
         if successor in order:
             affected_from = min(affected_from, order[successor])
         for g in self.list_groups():
-            if order.get(g["node_ids"][0], 0) >= affected_from:
+            if order.get(g["route"][0], 0) >= affected_from:
                 self.conn.execute(
                     "UPDATE groups SET digest_stale = 1 WHERE id = ? AND digest_events IS NOT NULL",
                     (g["id"],),
@@ -1515,7 +1548,10 @@ class Store:
         return entry
 
     def _digest_by_tail(self) -> dict[str, list[dict[str, Any]]]:
-        """章末尾ノード ID → digest イベント列。get_state が章境界で適用する。"""
+        """章末尾ノード ID → digest イベント列。get_state が章境界で適用する。
+
+        末尾は**ルートの末尾**(章に入れてある島や落選した分岐ではない)。
+        """
         rows = self.conn.execute(
             "SELECT id, digest_events FROM groups WHERE digest_events IS NOT NULL"
         ).fetchall()
@@ -1524,8 +1560,8 @@ class Store:
         digests = {r["id"]: json.loads(r["digest_events"]) for r in rows}
         result: dict[str, list[dict[str, Any]]] = {}
         for g in self.list_groups():
-            if g["id"] in digests and g["node_ids"]:
-                result[g["node_ids"][-1]] = digests[g["id"]]
+            if g["id"] in digests and g["route"]:
+                result[g["route"][-1]] = digests[g["id"]]
         return result
 
     def _mark_digest_stale(self, node_id: str) -> None:
@@ -1545,24 +1581,28 @@ class Store:
         if not node_row or not node_row["group_id"]:
             return None
         group = self.get_group(node_row["group_id"])
-        if not group or not group.get("digest_events") or not group["node_ids"]:
+        if not group or not group.get("digest_events") or not group["route"]:
             return None
-        tail = group["node_ids"][-1]
+        tail = group["route"][-1]
         try:
             return tail, fold_mod.state_hash(self.get_state(tail))
         except KeyError:
             return None
 
     def _stale_renders_within_group(self, node_id: str) -> None:
-        """章内に閉じた編集の清書 stale(編集シーンから章末尾まで)。commit は呼び出し側。"""
+        """章内に閉じた編集の清書 stale(編集シーンから章末尾まで)。commit は呼び出し側。
+
+        散文が繋がるのはルートの上だけなので、ルート上の編集はそこから章末尾まで、
+        ルートに乗っていないメンバー(島・落選した分岐)の編集はそのシーンだけ。
+        """
         row = self.conn.execute("SELECT group_id FROM nodes WHERE id = ?", (node_id,)).fetchone()
         group = self.get_group(row["group_id"]) if row and row["group_id"] else None
         if group is None:
             return
-        ids = group["node_ids"]
-        start = ids.index(node_id) if node_id in ids else 0
+        route = group["route"]
+        targets = route[route.index(node_id):] if node_id in route else [node_id]
         self.conn.executemany(
-            "UPDATE renders SET stale = 1 WHERE node_id = ?", [(n,) for n in ids[start:]]
+            "UPDATE renders SET stale = 1 WHERE node_id = ?", [(n,) for n in targets]
         )
 
     def save_group_digest(self, group_id: str, events: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1615,7 +1655,7 @@ class Store:
             self.conn.executemany("DELETE FROM memories WHERE id = ?", [(i,) for i in old_ids])
             self._remove_memory_index(old_ids)
         path = self.canon_path()
-        tail = group["node_ids"][-1] if group["node_ids"] else None
+        tail = group["route"][-1] if group["route"] else None
         story_order = path.index(tail) if tail in path else -1
         for e in new_events:
             if e.get("type") != "memory_compress":
@@ -1633,9 +1673,9 @@ class Store:
     def _propagate_from_boundary(self, group: dict[str, Any]) -> None:
         """まとめの変更を、章の次のノード(境界の先)から下流へ波及させる。
         章の中は生の状態のままなので触らない。commit は呼び出し側。"""
-        if not group["node_ids"]:
+        if not group["route"]:
             return
-        tail = group["node_ids"][-1]
+        tail = group["route"][-1]
         path = self.canon_path()
         if tail in path:
             idx = path.index(tail)
@@ -1862,13 +1902,14 @@ class Store:
     ) -> list[dict[str, Any]]:
         """正史パス順に各ノードの最新レンダーを返す(無ければ render: None)。
 
-        group_id を渡すと**その章のシーンだけ**を鎖の順に返す(鑑賞モードの
-        スコープ。docs/design/chapters.md §6)。島・分岐の章でも読めるように、
-        正史パスではなく章のメンバーをそのまま使う。存在しない章 ID は空。
+        group_id を渡すと**その章のルート**(読む道)を返す(鑑賞モードのスコープ。
+        docs/design/chapters.md §6)。島・分岐の章でも読めるように正史パスは使わない。
+        章に入れてある島や落選した分岐はルートに乗らないので読まれない。
+        存在しない章 ID は空。
         """
         if group_id is not None:
             group = next((g for g in self.list_groups() if g["id"] == group_id), None)
-            node_ids = group["node_ids"] if group else []
+            node_ids = group["route"] if group else []
         else:
             node_ids = self.canon_path()
         result = []

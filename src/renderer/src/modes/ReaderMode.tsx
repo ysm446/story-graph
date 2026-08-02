@@ -124,7 +124,7 @@ export default function ReaderMode({
   const scenesSig =
     scenes.map((s) => `${s.render?.id ?? 'x'}-${s.node.image_path ?? ''}`).join(',') +
     '|' +
-    groups.map((g) => `${g.id}:${g.title}:${g.node_ids[0]}`).join(',') +
+    groups.map((g) => `${g.id}:${g.title}:${g.route[0]}`).join(',') +
     `|${scopeGroupId ?? ''}`
   useEffect(() => {
     if (viewMode !== 'page') return
@@ -275,9 +275,10 @@ export default function ReaderMode({
     const canonOrder = groups.filter((g) => g.on_canon)
     const map = new Map<string, { id: string; title: string; number: number }>()
     headingGroups.forEach((g) => {
-      if (g.node_ids.length === 0) return
+      if (g.route.length === 0) return
       const index = canonOrder.findIndex((c) => c.id === g.id)
-      map.set(g.node_ids[0], { id: g.id, title: g.title, number: index >= 0 ? index + 1 : 0 })
+      // 見出しは「ルートの先頭シーン」の前に出す(章に入れてある島の前ではない)
+      map.set(g.route[0], { id: g.id, title: g.title, number: index >= 0 ? index + 1 : 0 })
     })
     return map
   }, [groups, headingGroups])

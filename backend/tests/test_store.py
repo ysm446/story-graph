@@ -255,20 +255,40 @@ def test_group_create_and_list(store):
     assert [x["id"] for x in groups] == [g["id"]]
 
 
-def test_group_requires_connected_chain(store):
+def test_group_members_need_not_be_a_chain(store):
+    """メンバーは一続きの鎖でなくてよい(§9 Step 1)。ルートは導出する。"""
     n1, n2, n3 = _three_scenes(store)
-    with pytest.raises(ValueError):
-        store.create_group("飛び章", [n1["id"], n3["id"]])  # n2 を飛ばした(鎖でない)
+    # n2 を飛ばした章も作れる。ただしルートが正史の上で分断されるので警告が付く
+    gapped = store.create_group("飛び章", [n1["id"], n3["id"]])
+    assert gapped["route"] == [n1["id"], n3["id"]]
+    assert gapped["warning"] is not None
+    store.delete_group(gapped["id"])
     # 分岐・島でも章にできる(2026-08-01 一般化。正史かどうかは問わない)
     branch = store.append_node({"beat": "if", "cast": ["aya"]}, parent_id=n1["id"], force_draft=True)
     bg = store.create_group("分岐章", [branch["id"]])
     assert bg["on_canon"] is False
     g1 = store.create_group("第一章", [n1["id"], n2["id"]])
-    assert g1["on_canon"] is True
+    assert g1["on_canon"] is True and g1["warning"] is None
     with pytest.raises(ValueError):
         store.create_group("重複章", [n2["id"], n3["id"]])  # 他章のノードを含む
-    # 一覧は正史ルート上の章が先、島・分岐の章が後ろ
+    # 一覧はルートが正史に乗る章が先、島・分岐だけの章が後ろ
     assert [g["id"] for g in store.list_groups()] == [g1["id"], bg["id"]]
+
+
+def test_group_route_excludes_islands_and_branches(store):
+    """章の中の分岐・島はメンバーだが、ルート(読む道)には乗らない。"""
+    n1, n2, n3 = _three_scenes(store)
+    branch = store.append_node({"beat": "if", "cast": ["aya"]}, parent_id=n1["id"], force_draft=True)
+    island = store.append_node({"beat": "作り置き", "cast": ["aya"]}, detached=True)
+    g = store.create_group("第一章", [n1["id"], n2["id"], branch["id"], island["id"]])
+    assert g["route"] == [n1["id"], n2["id"]]  # 正史に乗っている分だけ
+    assert set(g["node_ids"]) == {n1["id"], n2["id"], branch["id"], island["id"]}
+    assert g["node_ids"][:2] == g["route"]  # 並びはルートが先
+    assert g["on_canon"] is True and g["warning"] is None
+    # 鑑賞モードの章スコープはルートだけを読む
+    store.seed_presets()
+    preset = store.list_presets()[0]
+    assert [e["node"]["id"] for e in store.list_renders(preset["id"], None, g["id"])] == g["route"]
 
 
 def test_island_chapter_connect_flow(store):
@@ -289,20 +309,22 @@ def test_island_chapter_connect_flow(store):
     assert store.canon_path() == [n1["id"], i1["id"], i2["id"]]
 
 
-def test_group_dissolve_and_remove_edge_only(store):
+def test_group_dissolve_and_remove(store):
     n1, n2, n3 = _three_scenes(store)
     g = store.create_group("第一章", [n1["id"], n2["id"], n3["id"]])
-    with pytest.raises(ValueError):
-        store.remove_node_from_group(n2["id"])  # 途中は外せない(章が分断される)
-    store.remove_node_from_group(n3["id"])  # 端は外せる
-    assert store.list_groups()[0]["node_ids"] == [n1["id"], n2["id"]]
+    # メンバーは鎖でなくてよいので、途中のシーンも外せる(ルートは分断され警告が付く)
+    store.remove_node_from_group(n2["id"])
+    entry = store.list_groups()[0]
+    assert entry["node_ids"] == [n1["id"], n3["id"]] and entry["warning"] is not None
+    store.remove_node_from_group(n3["id"])
+    assert store.list_groups()[0]["node_ids"] == [n1["id"]]
     store.delete_group(g["id"])
     assert store.list_groups() == []
     assert store.get_node(n1["id"])["group_id"] is None  # シーンは残る
 
 
 def test_add_node_to_group(store):
-    """章の中で書いたシーンを章に入れる(端に隣接しているときだけ、後続の一続きも)。
+    """章の中で書いたシーンを章に入れる(繋がっている後続も一緒に)。
 
     章内ビューでシーンを足す / 島を繋いだときに呼ぶ。未分類のまま残ると
     章ビューで章カードの外に出てしまう(2026-08-02 ユーザー報告)。
@@ -311,11 +333,10 @@ def test_add_node_to_group(store):
     g = store.create_group("第一章", [n1["id"], n2["id"]])
     i1 = store.append_node({"beat": "島1", "cast": ["aya"]}, detached=True)
     i2 = store.append_node({"beat": "島2", "cast": ["aya"]}, parent_id=i1["id"])
-    with pytest.raises(ValueError):
-        store.add_node_to_group(g["id"], i1["id"])  # まだ章に繋がっていない
-    store.attach_node(n2["id"], i1["id"])
+    # まだ繋いでいない島も入れられる(メンバーは鎖でなくてよい)。後続も一緒に入る
     entry = store.add_node_to_group(g["id"], i1["id"])
-    assert entry["node_ids"] == [n1["id"], n2["id"], i1["id"], i2["id"]]  # 後続も一緒に入る
+    assert entry["node_ids"] == [n1["id"], n2["id"], i1["id"], i2["id"]]
+    assert entry["route"] == [n1["id"], n2["id"]]  # 島はルートに乗らない
     assert entry["warning"] is None
     with pytest.raises(ValueError):
         store.add_node_to_group(g["id"], store.active_ending())  # 結末は入れられない
@@ -513,14 +534,17 @@ def test_move_group_marks_digests_stale(store):
 
 def test_group_label_survives_detach(store):
     """切り離しで章ラベルは消えない(2026-08-01 変更。以前は自動で解除していた)。
-    鎖が途切れている間は警告バッジで知らせ、つなぎ直せば章がそのまま戻る。"""
+    切り離されたシーンは「章に入っている島」になり(§9 Step 1 でメンバーの
+    鎖の制約が外れた)、つなぎ直せばルートに戻る。"""
     n1, n2, n3 = _three_scenes(store)
     g = store.create_group("第一章", [n1["id"], n2["id"], n3["id"]])
-    store.detach_node(n3["id"])  # n3 は島になる(鎖が途切れる)
+    store.detach_node(n3["id"])  # n3 は島になる
     assert store.get_node(n3["id"])["group_id"] == g["id"]  # ラベルは残る
     entry = next(x for x in store.list_groups() if x["id"] == g["id"])
-    assert entry["warning"] is not None  # 警告バッジ
-    # つなぎ直して正史に戻すと、章が元どおり復活して警告も消える
+    assert entry["route"] == [n1["id"], n2["id"]]  # ルートからは外れる
+    assert entry["node_ids"][-1] == n3["id"]  # メンバーには残る(ルートの後ろ)
+    assert entry["warning"] is None  # 島がいるのは異常ではない
+    # つなぎ直して正史に戻すと、章が元どおり復活する
     store.attach_node(n2["id"], n3["id"])
     store.make_canon(n3["id"])
     entry = next(x for x in store.list_groups() if x["id"] == g["id"])

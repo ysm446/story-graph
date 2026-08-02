@@ -1540,6 +1540,11 @@ function ChapterTab({
       <div>
         <span className="mb-1 block text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
           シーン({group.node_ids.length})
+          {group.node_ids.length > group.route.length && (
+            <span className="ml-1.5 normal-case tracking-normal">
+              うち読む道 {group.route.length}
+            </span>
+          )}
         </span>
         <div className="flex flex-col">
           {group.node_ids.map((id, i) => (
@@ -1549,8 +1554,19 @@ function ChapterTab({
                 className="min-w-0 flex-1 truncate px-2 py-1 text-left text-[12px]"
                 style={{ color: 'var(--text-dim)' }}
               >
-                {i + 1}. {nodeTitle(id)}
+                {/* ルート(読む道)のシーンだけ番号を振る。分岐・島は番号なし */}
+                {i < group.route.length ? `${i + 1}. ` : '⌁ '}
+                {nodeTitle(id)}
               </button>
+              {i >= group.route.length && (
+                <span
+                  className="shrink-0 px-1 text-[10px]"
+                  style={{ color: 'var(--text-faint)' }}
+                  title="この章のシーンですが、読む道(鑑賞モード・まとめ)には乗っていません"
+                >
+                  別の道
+                </span>
+              )}
               {/* 挿絵のあるシーンだけ、表紙にできる */}
               {nodeById.get(id)?.image_path && (
                 <button
@@ -2404,8 +2420,8 @@ function StructureModeInner({
       if (!id) return null
       if (!id.startsWith('chapter:')) return id
       const group = groups.find((g) => g.id === id.slice('chapter:'.length))
-      if (!group || group.node_ids.length === 0) return null
-      return role === 'source' ? group.node_ids[group.node_ids.length - 1] : group.node_ids[0]
+      if (!group || group.route.length === 0) return null
+      return role === 'source' ? group.route[group.route.length - 1] : group.route[0]
     },
     [groups]
   )
@@ -2453,7 +2469,7 @@ function StructureModeInner({
       // 章の中で島を書いて章の末尾に繋いだときは、その章のシーンにする
       // (未分類のままだと章ビューで章カードの外に出てしまう。後続の一続きも
       // サーバー側で一緒に入る)
-      if (focusedGroup && source === focusedGroup.node_ids.at(-1)) {
+      if (focusedGroup && source === focusedGroup.route.at(-1)) {
         await api.addNodeToGroup(focusedGroup.id, target).catch(() => undefined)
       }
       try {
@@ -2857,7 +2873,7 @@ function StructureModeInner({
   // 先頭シーンが動いたときだけ作り直せばよいので、位置の署名を依存にする
   const chapterAnchorSig = groups
     .map((g) => {
-      const p = flowNodes.find((n) => n.id === g.node_ids[0])?.position
+      const p = flowNodes.find((n) => n.id === g.route[0])?.position
       return p ? `${g.id}:${Math.round(p.x)}:${Math.round(p.y)}` : `${g.id}:-`
     })
     .join(',')
@@ -2871,9 +2887,9 @@ function StructureModeInner({
         const existing = prevById.get(id)
         // 章カードは一度動かしたらその位置のまま(groups.pos_x/pos_y)。
         // まだ動かしていない章は、画面上の先頭シーンの位置に置く(正史・島とも同じ)
-        const first = nodeById.get(g.node_ids[0])
+        const first = nodeById.get(g.route[0])
         const anchor =
-          flowNodesRef.current.find((n) => n.id === g.node_ids[0])?.position ??
+          flowNodesRef.current.find((n) => n.id === g.route[0])?.position ??
           (first && first.pos_x != null && first.pos_y != null
             ? { x: first.pos_x, y: first.pos_y }
             : undefined)
@@ -3467,7 +3483,7 @@ function StructureModeInner({
   // 章を選んでいるときは**その章の末尾シーン**を候補にする
   // (ヘッダーの「アンカー: ○○ まで」= その章の終わりまで、と読める)
   const chatAnchorId =
-    selectedId ?? (chapterForPanel ? (chapterForPanel.node_ids.at(-1) ?? null) : null)
+    selectedId ?? (chapterForPanel ? (chapterForPanel.route.at(-1) ?? null) : null)
 
   /** 新しいシーンを親の右隣に手動配置する(**親が手動配置のときだけ**)。
    *
@@ -3501,7 +3517,7 @@ function StructureModeInner({
       // 従来は正史の末尾(= 章の外)に付いていたので、章の中で足したつもりの
       // シーンが章の外にできていた。シーンを選んでいるときは従来どおりその子
       // (章の途中なら分岐になる)
-      const chapterTail = selectedId ? null : (focusedGroup?.node_ids.at(-1) ?? null)
+      const chapterTail = selectedId ? null : (focusedGroup?.route.at(-1) ?? null)
       const parentId = selectedId ?? chapterTail ?? canonPath[canonPath.length - 1]?.id ?? null
       const draft = { beat: '(ここに出来事の仕様を書く)', cast: [] }
       const node = chapterTail
@@ -4149,8 +4165,8 @@ function StructureModeInner({
                     const parentId = graphEdges.find((e) => e.to_node === node.id)?.from_node ?? null
                     const childIds = graphEdges.filter((e) => e.from_node === node.id).map((e) => e.to_node)
                     const target =
-                      groups.find((g) => g.node_ids.at(-1) === parentId) ??
-                      groups.find((g) => childIds.includes(g.node_ids[0]))
+                      groups.find((g) => g.route.at(-1) === parentId) ??
+                      groups.find((g) => childIds.includes(g.route[0]))
                     if (!target) return []
                     return [
                       {

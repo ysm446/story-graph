@@ -798,7 +798,9 @@ async def generate_group_digest(store: Store, base_url: str, group_id: str) -> l
     beats: list[str] = []
     memories_by_char: dict[str, list[tuple[str, str]]] = {}
     cast: set[str] = set()
-    for i, nid in enumerate(group["node_ids"]):
+    # まとめるのは**ルート**(読む道)。章に入れてある島や落選した分岐は、
+    # 章末の状態に効いていないので要約の対象にしない
+    for i, nid in enumerate(group["route"]):
         node = store.get_node(nid)
         if node is None:
             continue
