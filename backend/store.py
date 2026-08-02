@@ -620,12 +620,23 @@ class Store:
             as_canon = has_canon_child is None and not force_draft
             # status は「正史パス上か」の導出値。draft 枝の延長は canon エッジでも draft
             on_canon_path = as_canon and (parent_id in canon if parent_id else True)
+        # 章のシーンの子は、その章のシーンにする。章の中で「+ シーン」しても
+        # 未分類のまま作られていて、それが章の道に挟まると
+        # 「この章に入っていないシーンが…」の警告になっていた(2026-08-02 ユーザー報告)。
+        # 出口の子は章の外なので継がない
+        group_id = None
+        if parent_id:
+            prow = self.conn.execute(
+                "SELECT kind, group_id FROM nodes WHERE id = ?", (parent_id,)
+            ).fetchone()
+            if prow is not None and prow["group_id"] and prow["kind"] != "chapter_out":
+                group_id = prow["group_id"]
         node_id = data.get("id") or _new_id()
         now = _now()
         self.conn.execute(
             """INSERT INTO nodes(id, title, beat, emotional_core, cast, location, story_time,
-                                 status, created_at, updated_at)
-               VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                                 status, group_id, created_at, updated_at)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 node_id,
                 data.get("title"),
@@ -635,6 +646,7 @@ class Store:
                 data.get("location"),
                 data.get("story_time"),
                 "canon" if on_canon_path else "draft",
+                group_id,
                 now,
                 now,
             ),
@@ -646,6 +658,11 @@ class Store:
             )
         if events:
             self.replace_events(node_id, events, source=source, commit=False)
+        # is_canon / status は導出キャッシュなので、貼り直して整合を取る。
+        # as_canon は「親に連鎖の子が居なければ延長」という当て推量で、島や
+        # 正史でない章の中では**どのエッジも is_canon=0** なので必ず真になり、
+        # 正史でないのに実線のエッジができていた(2026-08-02 ユーザー報告)
+        self._resync_canon()
         self.conn.commit()
         return self.get_node(node_id)  # type: ignore[return-value]
 
@@ -667,7 +684,29 @@ class Store:
             "SELECT id, to_node FROM edges WHERE from_node = ? AND is_canon = 1", (parent_id,)
         ).fetchone()
         if chain_edge is None:
-            # 後続が無いので通常の追加と同じ
+            # 島・正史でない章の中は**どのエッジも is_canon=0** なので連鎖が
+            # 見つからない。これが無いと章末尾への割り込みが出口の手前に入らず、
+            # 出口と並ぶ枝になっていた(2026-08-02 ユーザー報告)
+            children = self.conn.execute(
+                """SELECT e.id, e.to_node, n.kind, n.group_id
+                   FROM edges e JOIN nodes n ON n.id = e.to_node
+                   WHERE e.from_node = ?""",
+                (parent_id,),
+            ).fetchall()
+            parent_group = self.conn.execute(
+                "SELECT group_id FROM nodes WHERE id = ?", (parent_id,)
+            ).fetchone()["group_id"]
+            # 章の末尾なら割り込み先は「出口の手前」(章の道は出口が決める。§9)。
+            # 分岐が既にあっても、これなら迷わない
+            chain_edge = next(
+                (c for c in children if c["kind"] == "chapter_out" and c["group_id"] == parent_group),
+                None,
+            )
+            # 章の外の島は、一本道ならそれを連鎖として扱う(make_canon と同じ規則)
+            if chain_edge is None and len(children) == 1:
+                chain_edge = children[0]
+        if chain_edge is None:
+            # 後続が無い(分岐していてどれとも決められない)ので通常の追加と同じ
             return self.append_node(data, events, source=source, parent_id=parent_id)
 
         node_id = data.get("id") or _new_id()
@@ -716,6 +755,9 @@ class Store:
         if group_id:
             self._mark_digest_stale(node_id)  # 章の中に増えたシーンはまとめの材料が変わる
         self._resync_memory_orders(commit=False)
+        # 上で張ったエッジは is_canon=1 決め打ちなので、導出で貼り直す
+        # (島・正史でない章の中に実線のエッジができないように)
+        self._resync_canon()
         self.conn.commit()
         return self.get_node(node_id)  # type: ignore[return-value]
 
@@ -811,8 +853,8 @@ class Store:
             raise KeyError(f"node not found: {child_id}")
         if parent_id == child_id:
             raise ValueError("自分自身には繋げません")
-        # 章の入口へ繋ぐときは、繋ぎ元を「その章の出口」に読み替える(境界の担保)
-        parent_id = self._normalize_chapter_entry(parent_id, child_id)
+        # 章の中から別の章へ繋ぐときは、繋ぎ元を「その章の出口」に読み替える(境界の担保)
+        parent_id = self._normalize_chapter_boundary(parent_id, child_id)
         if parent_id == child_id:
             return  # 読み替えた先が自分自身(ありえないが念のため)
         if self._node_kind(parent_id) == "ending":
@@ -833,6 +875,8 @@ class Store:
             "INSERT INTO edges(id, from_node, to_node, is_canon) VALUES(?,?,?,0)",
             (_new_id(), parent_id, child_id),
         )
+        # 章のシーンに繋いだ未分類の枝は、その章に取り込む(境界の担保)
+        self._adopt_into_group(parent_id, child_id)
         self.mark_dirty_downstream(child_id, commit=False)
         self._resync_memory_orders(commit=False)
         if self._node_kind(child_id) == "chapter_out":
@@ -857,8 +901,8 @@ class Store:
         self._resync_canon()
         self.conn.commit()
 
-    def _normalize_chapter_entry(self, parent_id: str, child_id: str) -> str:
-        """章の**道の終わり**から次章の入口へ繋いだとき、繋ぎ元を出口に読み替える。
+    def _normalize_chapter_boundary(self, parent_id: str, child_id: str) -> str:
+        """章の中のシーンから**別の章**へ繋いだとき、繋ぎ元を出口に読み替える。
 
         「章の外へ出るときは必ず出口を通る」が境界の不変条件(§9)。章ビューは
         端点を入口 / 出口に解決してから繋ぐが、フラット表示からシーン → 次章の
@@ -867,29 +911,82 @@ class Store:
         正史がその線に乗った瞬間に、別の章の警告と破線として現れる
         (2026-08-02 ユーザー報告)。同じ正規化をサーバ側でも行って塞ぐ。
 
-        読み替えるのは**出口がぶら下がっているシーン(= その章の道の終わり)**
-        から繋いだときだけ。章の途中のシーンから別の章の入口へ繋ぐのは
-        「そこから別の章へ分岐する」という正当な形なので触らない。
+        当初は「章の道の終わりから繋いだときだけ」に絞っていたが、2026-08-02 の
+        ユーザー判断(「章の途中のノードが出口以外に外とつなげられるのは不自然。
+        そんな用途もたぶんない」)で**章の途中からの線も対象**にした。
+        繋ぎ先が未分類のシーンのときは読み替えず、そのシーンを章に取り込む
+        (`_adopt_into_group`)。章の中の分岐(what-if)は従来どおり作れる。
         """
-        child = self.conn.execute(
-            "SELECT kind, group_id FROM nodes WHERE id = ?", (child_id,)
-        ).fetchone()
-        if child is None or child["kind"] != "chapter_in":
-            return parent_id
         parent = self.conn.execute(
             "SELECT kind, group_id FROM nodes WHERE id = ?", (parent_id,)
         ).fetchone()
-        if parent is None or not parent["group_id"]:
+        # 対象は「章のシーン」からの線だけ。マーカー自身(出口・入口)は既に境界
+        if parent is None or not parent["group_id"] or parent["kind"] is not None:
             return parent_id
-        if parent["group_id"] == child["group_id"] or parent["kind"] is not None:
-            return parent_id  # 同じ章の中 / マーカー自身なら触らない
+        child = self.conn.execute(
+            "SELECT group_id FROM nodes WHERE id = ?", (child_id,)
+        ).fetchone()
+        # 未分類は取り込む側、同じ章の中は境界を跨がない
+        if child is None or not child["group_id"] or child["group_id"] == parent["group_id"]:
+            return parent_id
         out = self.conn.execute(
             "SELECT id FROM nodes WHERE group_id = ? AND kind = 'chapter_out'",
             (parent["group_id"],),
         ).fetchone()
-        if out is None or self.parent_of(out["id"]) != parent_id:
-            return parent_id  # 章の途中から生やす分岐は正当
-        return out["id"]
+        return out["id"] if out else parent_id
+
+    def _adopt_into_group(self, parent_id: str, child_id: str) -> None:
+        """章のシーンに繋いだ**未分類の枝**を、その章に取り込む。commit は呼び出し側。
+
+        `insert_node_after` は「前後が同じ章なら引き継ぐ」を持っていたのに、線を
+        引く操作(`attach_node`)には無かった。そのため章の道の真ん中に未分類の
+        シーンが挟まり、「章の道が章の外のシーンを通っています」になっていた
+        (2026-08-02 ユーザー報告)。章ビューはもともと**未分類の draft 部分木を
+        章カードに畳んで**表示しているので、データ側をその見え方に合わせる。
+
+        取り込むのは draft かつ未分類の枝だけ。正史のシーンまで巻き込むと、
+        章の後ろに繋ぎ直しただけで物語の残り全部が章に入ってしまう。
+        """
+        parent = self.conn.execute(
+            "SELECT kind, group_id FROM nodes WHERE id = ?", (parent_id,)
+        ).fetchone()
+        # 出口の先は章の外。入口・章のシーンからの線だけが「章の中」
+        if parent is None or not parent["group_id"] or parent["kind"] == "chapter_out":
+            return
+        group_id = parent["group_id"]
+        children: dict[str, list[str]] = {}
+        for r in self.conn.execute("SELECT from_node, to_node FROM edges"):
+            children.setdefault(r["from_node"], []).append(r["to_node"])
+        info = {
+            r["id"]: r
+            for r in self.conn.execute("SELECT id, kind, group_id, status FROM nodes")
+        }
+
+        def adoptable(node_id: str) -> bool:
+            row = info.get(node_id)
+            return (
+                row is not None
+                and row["kind"] is None
+                and not row["group_id"]
+                and row["status"] == "draft"
+            )
+
+        if not adoptable(child_id):
+            return
+        taken: list[str] = []
+        frontier = [child_id]
+        seen = {child_id}
+        while frontier:
+            current = frontier.pop()
+            taken.append(current)
+            for nxt in children.get(current, []):
+                if nxt not in seen and adoptable(nxt):
+                    seen.add(nxt)
+                    frontier.append(nxt)
+        self.conn.executemany(
+            "UPDATE nodes SET group_id = ? WHERE id = ?", [(group_id, n) for n in taken]
+        )
+        self._mark_digest_stale(child_id)  # 章の材料が増えたのでまとめは古くなる
 
     def make_canon(self, node_id: str) -> None:
         """node_id を通る道を正史にする(結末方式。docs/design/endings.md §3)。
@@ -1498,8 +1595,60 @@ class Store:
             return
         for row in rows:
             self.ensure_group_markers(row["id"], commit=False)
+        self._adopt_orphans_on_routes()
         self._resync_canon()
         self.conn.commit()
+
+    def _adopt_orphans_on_routes(self) -> None:
+        """入口と出口のあいだに挟まっている未分類のシーンを、その章に取り込む。
+
+        `attach_node` 側は `_adopt_into_group` で取り込むようになったが、それ以前に
+        作られたデータには「章の中に居るのに章のシーンではない」ノードが残っていて、
+        「章の道が章の外のシーンを通っています」の警告になる(2026-08-02 ユーザー報告
+        「どう見ても外の章につながっていない」— 実際、繋がっていたのは章の中に挟まった
+        未分類のシーンだった)。開いた時点で直す。commit は呼び出し側。
+
+        取り込むのは**出口から入口まで辿り着けたときだけ**。途中で別の章のシーンに
+        出たり行き止まったりしたら、章の外へはみ出している本物の警告なので触らない。
+        """
+        for row in self.conn.execute("SELECT id FROM groups").fetchall():
+            markers = {
+                r["kind"]: r["id"]
+                for r in self.conn.execute(
+                    "SELECT id, kind FROM nodes WHERE group_id = ? AND kind IN ('chapter_in','chapter_out')",
+                    (row["id"],),
+                )
+            }
+            in_id, out_id = markers.get("chapter_in"), markers.get("chapter_out")
+            if not in_id or not out_id:
+                continue
+            orphans: list[str] = []
+            current = out_id
+            seen = {out_id}
+            while True:
+                parent = self.parent_of(current)
+                if parent is None or parent in seen:
+                    orphans = []  # 入口に着かなかった → 触らない
+                    break
+                if parent == in_id:
+                    break
+                info = self.conn.execute(
+                    "SELECT kind, group_id FROM nodes WHERE id = ?", (parent,)
+                ).fetchone()
+                if info is None or info["kind"] is not None:
+                    orphans = []  # マーカー(別の章の境界)に出た
+                    break
+                if info["group_id"] and info["group_id"] != row["id"]:
+                    orphans = []  # 別の章のシーンを通っている
+                    break
+                if not info["group_id"]:
+                    orphans.append(parent)
+                seen.add(parent)
+                current = parent
+            if orphans:
+                self.conn.executemany(
+                    "UPDATE nodes SET group_id = ? WHERE id = ?", [(row["id"], n) for n in orphans]
+                )
 
     def _legacy_route(self, members: list[str]) -> list[str]:
         """マーカーが無い(移行前・配線前)ときの読む道。
@@ -1537,7 +1686,10 @@ class Store:
                 break  # 循環(データが壊れている)
             seen.add(current)
             if current not in members:
-                warning = "章の道が章の外のシーンを通っています(入口から出口までを章の中で繋いでください)"
+                # 「章の外のシーン」だと**別の章**と読まれる。実際は「この章に
+                # 入っていないシーン」で、章の中に挟まっていることが多い
+                # (2026-08-02 ユーザー報告「どう見ても外の章につながっていない」)
+                warning = "この章に入っていないシーンが、章の道の途中にあります(そのシーンを章に入れてください)"
                 break
             route.append(current)
             current = self.parent_of(current)
@@ -1694,7 +1846,11 @@ class Store:
             "UPDATE nodes SET group_id = ? WHERE id = ?", [(group_id, n) for n in ordered]
         )
         self.conn.commit()
-        self.ensure_group_markers(group_id)  # 入口 / 出口を作って鎖に挟む
+        self.ensure_group_markers(group_id, commit=False)  # 入口 / 出口を作って鎖に挟む
+        # マーカーのエッジは is_canon=1 決め打ちで挿さるので、導出で貼り直す
+        # (島の章が実線で描かれたままにならないように)
+        self._resync_canon()
+        self.conn.commit()
         return next(g for g in self.list_groups() if g["id"] == group_id)
 
     def update_group(self, group_id: str, data: dict[str, Any]) -> dict[str, Any] | None:

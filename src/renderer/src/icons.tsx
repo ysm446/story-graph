@@ -11,6 +11,7 @@ type IconName =
   | 'tokens' // トークン数
   | 'clock' // 所要時間
   | 'tool' // ツールのステップ数
+  | 'insert' // 線の途中に挿し込む(シーンの割り込み追加)
 
 const PATHS: Record<IconName, React.JSX.Element> = {
   chat: <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />,
@@ -52,6 +53,17 @@ const PATHS: Record<IconName, React.JSX.Element> = {
   ),
   tool: (
     <path d="M14.7 6.3a4 4 0 0 0 5 5l-9.4 9.4a2.1 2.1 0 0 1-3-3z" />
+  ),
+  // 「つながりの途中に足す」を絵にする(⤵ だと分岐と区別が付かなかった)。
+  // 左右の線がちょうど円に接するので -⊕- に見える
+  insert: (
+    <>
+      <path d="M2 12h5" />
+      <path d="M17 12h5" />
+      <circle cx="12" cy="12" r="5" />
+      <path d="M12 9.5v5" />
+      <path d="M9.5 12h5" />
+    </>
   )
 }
 

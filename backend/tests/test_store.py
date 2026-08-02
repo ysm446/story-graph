@@ -368,7 +368,13 @@ def test_canon_bypass_is_repaired_at_the_boundary(store):
     g = store.create_group("第一章", [n1["id"], n2["id"]])
     assert g["warning"] is None
     outside = store.append_node({"beat": "章の外", "cast": ["aya"]}, detached=True)
-    store.attach_node(n2["id"], outside["id"])  # 出口を通らずに外へ生やす(分岐なので可)
+    # 出口を迂回する線を直に作る。いまの attach_node は未分類の枝を章に取り込む
+    # ので作れないが、章を作ったときのマーカー挟み込みや古いデータでは生まれる
+    store.conn.execute(
+        "INSERT INTO edges(id, from_node, to_node, is_canon) VALUES('bypass',?,?,0)",
+        (n2["id"], outside["id"]),
+    )
+    store.conn.commit()
     entry = next(x for x in store.list_groups() if x["id"] == g["id"])
     assert entry["warning"] is None  # 分岐が外へ出るのは異常ではない
     assert store.parent_of(outside["id"]) == n2["id"]  # まだ迂回したまま
@@ -392,9 +398,15 @@ def test_branch_chapter_becoming_canon_keeps_the_boundary(store):
     n1, n2, n3 = _three_scenes(store)
     a = store.create_group("A", [n1["id"], n2["id"]])
     later = store.create_group("後の章", [n3["id"]])
-    # A の**途中**(n1)から生えた分岐を章にする
-    branch = store.append_node({"beat": "寄り道", "cast": ["aya"]}, parent_id=n1["id"], force_draft=True)
+    # A の**途中**(n1)から別の章へ直に入る形。いまは章のシーンの子はその章に
+    # 入るので作れないが、この規則より前のデータには残っている
+    branch = store.append_node({"beat": "寄り道", "cast": ["aya"]}, detached=True)
     side = store.create_group("寄り道章", [branch["id"]])
+    store.conn.execute(
+        "INSERT INTO edges(id, from_node, to_node, is_canon) VALUES('legacy',?,?,0)",
+        (n1["id"], side["in_id"]),
+    )
+    store.conn.commit()
     assert store.parent_of(side["in_id"]) == n1["id"]  # A の中から直に入る形
 
     # 寄り道章の出口を後の章の入口へ繋ぐ = 正史がそちらを通る
@@ -430,14 +442,49 @@ def test_chapter_entry_is_normalized_to_the_exit(store):
         assert entry["warning"] is None
     assert store.canon_path() == [n1["id"], n2["id"], n3["id"]]
 
-    # 章の**途中**のシーンから別の章の入口へ繋ぐのは「そこから分岐する」という
-    # 正当な形なので読み替えない(章の中の分岐が別の章になっている場合)
+    # 章の**途中**のシーンから別の章へ繋いでも、出口経由に読み替える
+    # (2026-08-02 ユーザー判断「章の途中のノードが出口以外に外とつなげられるのは
+    #  不自然。そんな用途もたぶんない」。当初は途中からの分岐を許していた)
     alt = store.append_node({"beat": "もし別の道なら", "cast": ["aya"]}, parent_id=n1["id"])
     store.add_node_to_group(a["id"], alt["id"])
     other = store.append_node({"beat": "別の章の中身", "cast": ["aya"]}, detached=True)
     c = store.create_group("C", [other["id"]])
     store.attach_node(alt["id"], c["in_id"], replace_parent=True)
-    assert store.parent_of(c["in_id"]) == alt["id"]
+    assert store.parent_of(c["in_id"]) == a["out_id"]
+
+
+def test_attaching_an_island_into_a_chapter_adopts_it(store):
+    """章のシーンに繋いだ未分類の枝は、その章に取り込む。
+
+    `insert_node_after` は「前後が同じ章なら引き継ぐ」を持っていたのに、線を引く
+    操作には無く、章の道の真ん中に未分類のシーンが挟まって
+    「章の道が章の外のシーンを通っています」になっていた(2026-08-02 ユーザー報告)。
+    """
+    n1, n2, _n3 = _three_scenes(store)
+    g = store.create_group("第一章", [n1["id"], n2["id"]])
+    island = store.append_node({"beat": "独立シーン", "cast": ["aya"]}, detached=True)
+    tail = store.append_node({"beat": "島の続き", "cast": ["aya"]}, parent_id=island["id"])
+
+    # 章の途中(n1 と n2 のあいだ)へ挿し込む
+    store.attach_node(n1["id"], island["id"])
+    store.attach_node(tail["id"], n2["id"], replace_parent=True)
+    entry = next(x for x in store.list_groups() if x["id"] == g["id"])
+    assert entry["warning"] is None
+    # 繋いだ枝は続きごと章のシーンになり、章の道に乗る
+    assert store.get_node(island["id"])["group_id"] == g["id"]
+    assert store.get_node(tail["id"])["group_id"] == g["id"]
+    assert entry["route"] == [n1["id"], island["id"], tail["id"], n2["id"]]
+
+
+def test_attaching_after_the_exit_does_not_adopt(store):
+    """出口の先は章の外。そこに繋いだシーンは章に取り込まない。"""
+    n1, n2, _n3 = _three_scenes(store)
+    g = store.create_group("第一章", [n1["id"], n2["id"]])
+    island = store.append_node({"beat": "章の次", "cast": ["aya"]}, detached=True)
+    store.attach_node(g["out_id"], island["id"])
+    assert store.get_node(island["id"])["group_id"] is None
+    entry = next(x for x in store.list_groups() if x["id"] == g["id"])
+    assert entry["warning"] is None
 
 
 def test_group_route_excludes_islands_and_branches(store):
@@ -582,6 +629,52 @@ def _chapter_with_digest(store):
     return n1, n2, n3, g
 
 
+def test_adding_scenes_inside_an_island_chapter_stays_draft(store):
+    """正史でない章の中でシーンを足しても、エッジは実線(is_canon)にならない。
+
+    as_canon は「親に連鎖の子が居なければ延長」という当て推量だが、島や正史でない
+    章の中は**どのエッジも is_canon=0** なので必ず真になり、正史でないのに実線の
+    エッジができていた(2026-08-02 ユーザー報告)。
+    """
+    store.append_node({"beat": "本編1", "cast": ["aya"]})
+    i1 = store.append_node({"beat": "島1", "cast": ["aya"]}, detached=True)
+    i2 = store.append_node({"beat": "島2", "cast": ["aya"]}, parent_id=i1["id"])
+    g = store.create_group("島の章", [i1["id"], i2["id"]])
+    assert g["on_canon"] is False
+
+    def canon_of(parent, child):
+        row = store.conn.execute(
+            "SELECT is_canon FROM edges WHERE from_node = ? AND to_node = ?", (parent, child)
+        ).fetchone()
+        return row["is_canon"]
+
+    # 章を作った直後、章の中のエッジは実線にならない(マーカーは is_canon=1 で挿さる)
+    entry = next(x for x in store.list_groups() if x["id"] == g["id"])
+    assert canon_of(i1["id"], i2["id"]) == 0
+    assert canon_of(entry["in_id"], i1["id"]) == 0
+    assert canon_of(i2["id"], entry["out_id"]) == 0
+
+    # ① 章の中のシーンを選んで「+ シーン」(append_node)。続けてその子にもう 1 つ
+    added = store.append_node({"beat": "選択して追加", "cast": ["aya"]}, parent_id=i2["id"])
+    assert added["status"] == "draft"
+    assert canon_of(i2["id"], added["id"]) == 0
+    # 親に連鎖の子が居ないので、従来はここが実線になっていた(ユーザー報告の症状)
+    again = store.append_node({"beat": "さらに追加", "cast": ["aya"]}, parent_id=added["id"])
+    assert again["status"] == "draft"
+    assert canon_of(added["id"], again["id"]) == 0
+
+    # ② 何も選ばずに「+ シーン」= 章の末尾(出口の手前)へ割り込み
+    entry = next(x for x in store.list_groups() if x["id"] == g["id"])
+    ins = store.insert_node_after(entry["route"][-1], {"beat": "末尾へ割り込み", "cast": ["aya"]})
+    entry = next(x for x in store.list_groups() if x["id"] == g["id"])
+    assert canon_of(entry["route"][-2], ins["id"]) == 0
+    # 出口の手前に入り、章の読む道に乗る(島の章は is_canon で連鎖を辿れないため、
+    # 一本道なら連鎖として扱う規則を入れた。従来は出口と並ぶ枝になっていた)
+    assert entry["route"][-1] == ins["id"]
+    assert store.parent_of(entry["out_id"]) == ins["id"]
+    assert entry["warning"] is None
+
+
 def test_move_group_marks_only_the_chapters_after_the_change(store):
     """A-B-C-D で B と C を入れ替えたとき、上流の A のまとめは古くならない。
 
@@ -708,7 +801,8 @@ def test_move_group_reorders_chapters(store):
     assert store.canon_path() == [ids[2], ids[3], ids[0], ids[1]]
     groups = store.list_groups()
     assert [g["title"] for g in groups] == ["第二章", "第一章"]
-    assert groups[1]["node_ids"] == ids[0:2]  # 章ラベルは保たれる
+    # 章ラベルは保たれる(章のシーンから生やした分岐もその章のシーンになる)
+    assert set(groups[1]["node_ids"]) == {*ids[0:2], branch["id"]}
     assert store.parent_of(branch["id"]) == ids[1]  # 分岐は章と一緒に移動
     ending = store.active_ending()
     # 結末は新しい末尾の章の**出口**に付く(章の境界は in / out)

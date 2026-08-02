@@ -4028,11 +4028,12 @@ function StructureModeInner({
                   {selectedId && (
                     <button
                       onClick={() => void handleInsertAfter()}
-                      className="rounded-lg border px-2.5 py-1.5 text-[13px] shadow-lg shadow-black/30"
+                      className="flex items-center rounded-lg border px-2.5 py-2 shadow-lg shadow-black/30"
                       style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
                       title="選択ノードと後続シーンの間に新しいシーンを割り込ませる"
+                      aria-label="選択ノードの後ろに割り込ませる"
                     >
-                      ⤵
+                      <Icon name="insert" size={15} />
                     </button>
                   )}
                   <button
