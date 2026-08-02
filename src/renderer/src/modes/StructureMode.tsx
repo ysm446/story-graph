@@ -2507,10 +2507,13 @@ function StructureModeInner({
         // char_introduce の掃除と検証だけを行う(即時・非破壊的)
         const normalized = await api.normalizeChain(target)
         await reload()
+        const toChapterOut = graphNodes.find((n) => n.id === target)?.kind === 'chapter_out'
         const parts = [
-          oldParent
-            ? `繋ぎ替えました(${titleOf(oldParent)} → ${titleOf(target)} を外しました)`
-            : '繋ぎました(下書きとして接続)',
+          toChapterOut
+            ? `この章の道を「${titleOf(source)}」までに差し替えました`
+            : oldParent
+              ? `繋ぎ替えました(${titleOf(oldParent)} → ${titleOf(target)} を外しました)`
+              : '繋ぎました(下書きとして接続)',
           normalized.removed > 0 ? `重複した登場イベントを ${normalized.removed} 件整理` : '整理は不要でした'
         ]
         if (normalized.warnings.length > 0) {
@@ -4250,7 +4253,7 @@ function StructureModeInner({
                       {
                         label: focusedGroup ? '★ この枝を章の道にする' : '★ この道を正史にする',
                         hint: focusedGroup
-                          ? '鑑賞モードとまとめが、この枝を通るようになります'
+                          ? '章の出口をこの枝に繋ぎ替えます(鑑賞モードとまとめもこの道になります)'
                           : 'この枝を通る道を正史にする',
                         run: () => void makeRouteCanon(node.id)
                       }

@@ -773,6 +773,12 @@ class Store:
         )
         self.mark_dirty_downstream(child_id, commit=False)
         self._resync_memory_orders(commit=False)
+        if self._node_kind(child_id) == "chapter_out":
+            # 章の出口に繋ぎ替えた = その章の読む道を選んだ、ということ。
+            # 正史(アクティブな結末からの逆引き)もその道を通るように合わせる
+            self.conn.commit()
+            self.make_canon(parent_id)
+            return
         if as_canon:
             # 正史へ = 繋いだ枝の先の結末をアクティブにする(無ければ末端に作る)
             self.conn.commit()
@@ -819,9 +825,52 @@ class Store:
             seen.add(canon_child)
             current = canon_child
         self.set_settings({"active_ending": target})
+        self._realign_group_out(node_id)
         self._resync_canon()
         self._resync_memory_orders(commit=False)
         self.conn.commit()
+
+    def _realign_group_out(self, node_id: str) -> None:
+        """章の中の枝を正史にしたとき、その章の**出口も同じ道へ繋ぎ替える**。
+
+        出口が章の読む道を決める(§9)ので、「★ 正史にする」で選んだ道と出口の
+        配線が食い違ったままにならないようにする。commit は呼び出し側。
+        """
+        row = self.conn.execute("SELECT group_id, kind FROM nodes WHERE id = ?", (node_id,)).fetchone()
+        if row is None or row["kind"] is not None or not row["group_id"]:
+            return
+        out = self.conn.execute(
+            "SELECT id FROM nodes WHERE group_id = ? AND kind = 'chapter_out'", (row["group_id"],)
+        ).fetchone()
+        if out is None:
+            return
+        members = {
+            r["id"]
+            for r in self.conn.execute(
+                "SELECT id FROM nodes WHERE group_id = ? AND kind IS NULL", (row["group_id"],)
+            )
+        }
+        # 選んだシーンから章の中を下って端まで(分岐は canon 側を優先)
+        current = node_id
+        seen = {current}
+        while True:
+            children = self.conn.execute(
+                "SELECT to_node, is_canon FROM edges WHERE from_node = ?", (current,)
+            ).fetchall()
+            nxt = [c["to_node"] for c in children if c["to_node"] in members and c["to_node"] not in seen]
+            if len(nxt) > 1:
+                nxt = [c["to_node"] for c in children if c["is_canon"] and c["to_node"] in nxt]
+            if len(nxt) != 1:
+                break
+            current = nxt[0]
+            seen.add(current)
+        if self.parent_of(out["id"]) == current:
+            return
+        self.conn.execute("DELETE FROM edges WHERE to_node = ?", (out["id"],))
+        self.conn.execute(
+            "INSERT INTO edges(id, from_node, to_node, is_canon) VALUES(?,?,?,1)",
+            (_new_id(), current, out["id"]),
+        )
 
     def _insert_ending(self, parent_id: str, title: str) -> str:
         """parent_id の子として結末ノードを作る(アクティブ化は呼び出し側)。"""
@@ -1274,10 +1323,17 @@ class Store:
         title = (
             self.conn.execute("SELECT title FROM groups WHERE id = ?", (group_id,)).fetchone() or {"title": "章"}
         )["title"]
+        # マーカーを置く位置は「配線する前」の道で決める。list_groups は
+        # 出口の配線から道を導くので、ここで呼ぶと空の道しか返ってこない(循環)
+        members = [
+            r["id"]
+            for r in self.conn.execute(
+                "SELECT id FROM nodes WHERE group_id = ? AND kind IS NULL", (group_id,)
+            )
+        ]
+        route = self._legacy_route(members)
         in_id = existing.get("chapter_in") or self._new_marker("chapter_in", f"{title} 入口", group_id)
         out_id = existing.get("chapter_out") or self._new_marker("chapter_out", f"{title} 出口", group_id)
-        entry = next((g for g in self.list_groups() if g["id"] == group_id), None)
-        route = entry["route"] if entry else []
         if "chapter_in" not in existing:
             if route:
                 head = route[0]
@@ -1332,6 +1388,51 @@ class Store:
         for row in rows:
             self.ensure_group_markers(row["id"], commit=False)
         self.conn.commit()
+
+    def _legacy_route(self, members: list[str]) -> list[str]:
+        """マーカーが無い(移行前・配線前)ときの読む道。
+
+        正史パスに乗っているメンバーを正史順に。1 つも無ければメンバーの中の一続き。
+        入口 / 出口を最初に置く位置を決めるのにも使う。
+        """
+        if not members:
+            return []
+        order = {nid: i for i, nid in enumerate(self.canon_path())}
+        on_canon = [n for n in members if n in order]
+        if on_canon:
+            return sorted(on_canon, key=lambda n: order[n])
+        return self._member_chain(sorted(members, key=lambda n: len(self.path_to(n))))
+
+    def _route_from_markers(
+        self, in_id: str | None, out_id: str | None, members: set[str]
+    ) -> tuple[list[str], str | None]:
+        """**出口に繋がっている道**を辿って章の読む道を返す((route, warning))。
+
+        ノードグループの Output と同じで、出口に何を繋ぐかがその章の道になる。
+        出口の親から親をさかのぼり、入口に着いたら終わり。章のメンバーでない
+        シーンに出たら、そこで打ち切って警告を返す(境界が破れている)。
+        """
+        if not out_id:
+            return [], None
+        current = self.parent_of(out_id)
+        if current is None:
+            return [], "章の出口に何も繋がっていません(読む道が決まりません)"
+        route: list[str] = []
+        seen: set[str] = set()
+        warning: str | None = None
+        while current is not None and current != in_id:
+            if current in seen:
+                break  # 循環(データが壊れている)
+            seen.add(current)
+            if current not in members:
+                warning = "章の道が章の外のシーンを通っています(入口から出口までを章の中で繋いでください)"
+                break
+            route.append(current)
+            current = self.parent_of(current)
+        if current is None and in_id is not None and route:
+            warning = "章の道が入口まで繋がっていません"
+        route.reverse()
+        return route, warning
 
     def _member_chain(self, members: list[str]) -> list[str]:
         """メンバーの中で、いちばん浅いシーンから親子で辿れる一続き。
@@ -1395,13 +1496,15 @@ class Store:
             # メンバーが 0 の章もそのまま返す(空の章を器として先に作れる。§9)
             all_ids = members.get(row["id"], [])
             ordered = sorted(all_ids, key=lambda n: len(self.path_to(n)))  # 深さ順
-            on_route = [n for n in ordered if n in order]
-            on_canon = bool(on_route)
-            route = sorted(on_route, key=lambda n: order[n]) if on_canon else self._member_chain(ordered)
-            warning: str | None = None
-            if on_canon and order[route[-1]] - order[route[0]] != len(route) - 1:
-                # 正史の上で章の区間に他の章・未分類のシーンが挟まっている
-                warning = "章のルートが正史の上で分断されています(間に別のシーンがあります)"
+            in_id = markers.get(row["id"], {}).get("chapter_in")
+            out_id = markers.get(row["id"], {}).get("chapter_out")
+            # 読む道は**出口に繋がっている道**。マーカーがまだ無い章(移行前)だけ、
+            # 従来どおり「正史に乗っているメンバー」から導出する
+            if out_id:
+                route, warning = self._route_from_markers(in_id, out_id, set(all_ids))
+            else:
+                route, warning = self._legacy_route(ordered), None
+            on_canon = bool(route) and all(n in order for n in route)
             rest = [n for n in ordered if n not in set(route)]
             node_ids = route + rest
             result.append(
