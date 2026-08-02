@@ -535,6 +535,18 @@ async def delete_group_digest(group_id: str) -> dict[str, Any]:
         raise HTTPException(404, "group not found")
 
 
+@app.post("/groups/{group_id}/nodes/{node_id}")
+async def add_node_to_group(group_id: str, node_id: str) -> dict[str, Any]:
+    """シーンを章に入れる(章の端に隣接しているときだけ。後続の一続きも一緒に)。"""
+    try:
+        group = store.add_node_to_group(group_id, node_id)
+    except KeyError as e:
+        raise HTTPException(404, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"group": group, "groups": store.list_groups()}
+
+
 @app.delete("/groups/{group_id}/nodes/{node_id}")
 async def remove_node_from_group(group_id: str, node_id: str) -> dict[str, Any]:
     """シーンを章から外す(端のシーンのみ)。"""

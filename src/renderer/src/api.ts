@@ -156,6 +156,11 @@ export const api = {
   // 章の並べ替え: 別の章の後ろへつなぎ替える(after=null は先頭へ)
   moveGroup: (groupId: string, after: string | null) =>
     request<Group[]>(`/groups/${groupId}/move`, { method: 'POST', body: JSON.stringify({ after }) }),
+  // シーンを章に入れる(章の端に隣接しているときのみ。後続の一続きも一緒に入る)
+  addNodeToGroup: (groupId: string, nodeId: string) =>
+    request<{ group: Group; groups: Group[] }>(`/groups/${groupId}/nodes/${nodeId}`, {
+      method: 'POST'
+    }),
   // シーンを章から外す(端のシーンのみ)
   removeNodeFromGroup: (groupId: string, nodeId: string) =>
     request<{ groups: Group[] }>(`/groups/${groupId}/nodes/${nodeId}`, { method: 'DELETE' }),

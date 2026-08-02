@@ -1364,6 +1364,58 @@ class Store:
         self.conn.execute("DELETE FROM groups WHERE id = ?", (group_id,))
         self.conn.commit()
 
+    def add_node_to_group(self, group_id: str, node_id: str) -> dict[str, Any]:
+        """シーンを章に入れる(章の端に隣接しているときだけ)。
+
+        章の中で書いたシーン(島を作って繋いだ・末尾に足した)が未分類のまま残ると、
+        章ビューでは章カードの外に出てしまう。章内ビューでの作成・接続からここを呼ぶ。
+
+        **一続きに繋がった後続のシーンも一緒に入れる**(まだどの章にも属していない
+        ものだけ)。島を何シーンか書いてから繋いだときに、章が 1 シーンだけ伸びて
+        残りが取り残されるのを防ぐ。
+        """
+        group = next((g for g in self.list_groups() if g["id"] == group_id), None)
+        if group is None:
+            raise KeyError(f"group not found: {group_id}")
+        node = self.get_node(node_id)
+        if node is None:
+            raise KeyError(f"node not found: {node_id}")
+        if self._node_kind(node_id) is not None:
+            raise ValueError("はじまり / 結末は章に入れられません")
+        if node.get("group_id") == group_id:
+            return group
+        if node.get("group_id"):
+            raise ValueError("既に別の章に属すシーンです(先に章から外してください)")
+        ids = group["node_ids"]
+        appending = self.parent_of(node_id) == ids[-1]
+        if not appending and self.parent_of(ids[0]) != node_id:
+            raise ValueError("章の端(先頭の直前・末尾の直後)に繋がっているシーンだけ入れられます")
+        targets = [node_id]
+        if appending:
+            # 後続の一続きを辿る。枝分かれしていたら、そこで止める(章は鎖のため)
+            current = node_id
+            while True:
+                children = [
+                    r["to_node"]
+                    for r in self.conn.execute(
+                        "SELECT to_node FROM edges WHERE from_node = ?", (current,)
+                    )
+                ]
+                free = [
+                    c
+                    for c in children
+                    if self._node_kind(c) is None and (self.get_node(c) or {}).get("group_id") is None
+                ]
+                if len(children) != 1 or len(free) != 1:
+                    break
+                current = free[0]
+                targets.append(current)
+        self.conn.executemany(
+            "UPDATE nodes SET group_id = ? WHERE id = ?", [(group_id, n) for n in targets]
+        )
+        self.conn.commit()
+        return next(g for g in self.list_groups() if g["id"] == group_id)
+
     def remove_node_from_group(self, node_id: str) -> None:
         """シーンを章から外す。途中を外すと章が非連続になるので、端(先頭か末尾)のみ。"""
         node = self.get_node(node_id)

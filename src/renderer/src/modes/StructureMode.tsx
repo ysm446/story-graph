@@ -2391,6 +2391,12 @@ function StructureModeInner({
     [graphEdges, graphNodes, reload]
   )
 
+  // いま開いている章と表示の種類。接続・シーン追加の挙動にも効くので、
+  // 章ビューのセクション(下)ではなくここで定義する
+  const focusedGroup = useMemo(() => groups.find((g) => g.id === chapterView) ?? null, [groups, chapterView])
+  const effectiveView: 'flat' | 'chapters' | 'focused' =
+    groups.length === 0 ? 'flat' : focusedGroup ? 'focused' : chapterView === 'chapters' ? 'chapters' : 'flat'
+
   // 章カードのピンは、章の実シーンに読み替える(出 = 末尾シーン、入 = 先頭シーン)。
   // 章カードは表示上の導出ノードなので、接続は中身のシーンに対して行う
   const resolveEndpoint = useCallback(
@@ -2444,6 +2450,12 @@ function StructureModeInner({
         setGenStatus(`繋げません: ${String(e)}`)
         return
       }
+      // 章の中で島を書いて章の末尾に繋いだときは、その章のシーンにする
+      // (未分類のままだと章ビューで章カードの外に出てしまう。後続の一続きも
+      // サーバー側で一緒に入る)
+      if (focusedGroup && source === focusedGroup.node_ids.at(-1)) {
+        await api.addNodeToGroup(focusedGroup.id, target).catch(() => undefined)
+      }
       try {
         // 状態は fold が親から積み直すので LLM は不要。ここでは重複した
         // char_introduce の掃除と検証だけを行う(即時・非破壊的)
@@ -2467,7 +2479,7 @@ function StructureModeInner({
     },
     // graphEdges / graphNodes は本体では使わないが、繋いだ結果の再評価に合わせて更新する
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [isValidConnection, resolveEndpoint, reload, graphEdges, graphNodes]
+    [isValidConnection, resolveEndpoint, reload, graphEdges, graphNodes, focusedGroup]
   )
 
   const nameOfChar = useCallback(
@@ -2782,10 +2794,8 @@ function StructureModeInner({
 
   // ---- 章ビュー ⇄ 章内ビュー(docs/design/chapters.md §6) ------------
   // データモデルは変えない。章ビューは flowNodes / graphEdges からの導出表示
-
-  const focusedGroup = useMemo(() => groups.find((g) => g.id === chapterView) ?? null, [groups, chapterView])
-  const effectiveView: 'flat' | 'chapters' | 'focused' =
-    groups.length === 0 ? 'flat' : focusedGroup ? 'focused' : chapterView === 'chapters' ? 'chapters' : 'flat'
+  // (どの章を見ているかは接続や追加の挙動にも効くので、focusedGroup /
+  //  effectiveView はこのセクションより前で定義している)
 
   // 章内ビューで見せるノード: 章のメンバー + そこから生える分岐(draft・未分類)の部分木
   const visibleIds = useMemo(() => {
@@ -2810,12 +2820,31 @@ function StructureModeInner({
     return set
   }, [effectiveView, focusedGroup, graphNodes, graphEdges])
 
-  // 章ビュー用: シーン ID → 章 ID(カードへの写像とエッジの畳み込みに使う)
+  // 章ビュー用: シーン ID → 章 ID(カードへの写像とエッジの畳み込みに使う)。
+  // 章のメンバーに加えて、**章のシーンから生える分岐(draft・未分類)の部分木**も
+  // その章に写す。章内ビューでは章の中に表示されている(visibleIds と同じ規則)ので、
+  // 章ビューでだけ章カードの外に飛び出すのを防ぐ
   const chapterSeq = useMemo(() => {
     const groupByNode = new Map<string, string>()
     groups.forEach((g) => g.node_ids.forEach((n) => groupByNode.set(n, g.id)))
+    const children: Record<string, string[]> = {}
+    for (const e of graphEdges) (children[e.from_node] ??= []).push(e.to_node)
+    const byId = new Map(graphNodes.map((n) => [n.id, n]))
+    const queue = [...groupByNode.keys()]
+    while (queue.length > 0) {
+      const current = queue.pop()!
+      const gid = groupByNode.get(current)!
+      for (const child of children[current] ?? []) {
+        if (groupByNode.has(child)) continue
+        const node = byId.get(child)
+        if (node && node.status === 'draft' && !node.group_id) {
+          groupByNode.set(child, gid)
+          queue.push(child)
+        }
+      }
+    }
     return { groupByNode }
-  }, [groups])
+  }, [groups, graphNodes, graphEdges])
 
   // 章カードは state で持つ。毎レンダー作り直すと React Flow の実測サイズ
   // (measured)が失われ、v12 は実測が確定するまでノードを描画しないため、
@@ -3457,13 +3486,21 @@ function StructureModeInner({
 
   const handleAddBeat = async (): Promise<void> => {
     try {
-      // 実際に親になるノード(未選択なら正史の末尾に付く)
-      const parentId = selectedId ?? canonPath[canonPath.length - 1]?.id ?? null
-      const node = await api.createNode({
-        beat: '(ここに出来事の仕様を書く)',
-        cast: [],
-        parent_id: selectedId ?? undefined
-      })
+      // 章の中で何も選んでいないときは**その章の末尾**へ割り込ませる。
+      // 従来は正史の末尾(= 章の外)に付いていたので、章の中で足したつもりの
+      // シーンが章の外にできていた。シーンを選んでいるときは従来どおりその子
+      // (章の途中なら分岐になる)
+      const chapterTail = selectedId ? null : (focusedGroup?.node_ids.at(-1) ?? null)
+      const parentId = selectedId ?? chapterTail ?? canonPath[canonPath.length - 1]?.id ?? null
+      const draft = { beat: '(ここに出来事の仕様を書く)', cast: [] }
+      const node = chapterTail
+        ? await api.insertNodeAfter(chapterTail, draft)
+        : await api.createNode({ ...draft, parent_id: selectedId ?? undefined })
+      // 章の末尾に足したシーンはその章のものにする(未分類のままだと
+      // 章ビューで章カードの外に出てしまう)
+      if (focusedGroup && chapterTail) {
+        await api.addNodeToGroup(focusedGroup.id, node.id).catch(() => undefined)
+      }
       await placeNextToParent(node.id, parentId)
       await reload()
       setSelectedId(node.id)

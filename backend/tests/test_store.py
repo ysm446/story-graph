@@ -301,6 +301,31 @@ def test_group_dissolve_and_remove_edge_only(store):
     assert store.get_node(n1["id"])["group_id"] is None  # シーンは残る
 
 
+def test_add_node_to_group(store):
+    """章の中で書いたシーンを章に入れる(端に隣接しているときだけ、後続の一続きも)。
+
+    章内ビューでシーンを足す / 島を繋いだときに呼ぶ。未分類のまま残ると
+    章ビューで章カードの外に出てしまう(2026-08-02 ユーザー報告)。
+    """
+    n1, n2, n3 = _three_scenes(store)
+    g = store.create_group("第一章", [n1["id"], n2["id"]])
+    i1 = store.append_node({"beat": "島1", "cast": ["aya"]}, detached=True)
+    i2 = store.append_node({"beat": "島2", "cast": ["aya"]}, parent_id=i1["id"])
+    with pytest.raises(ValueError):
+        store.add_node_to_group(g["id"], i1["id"])  # まだ章に繋がっていない
+    store.attach_node(n2["id"], i1["id"])
+    entry = store.add_node_to_group(g["id"], i1["id"])
+    assert entry["node_ids"] == [n1["id"], n2["id"], i1["id"], i2["id"]]  # 後続も一緒に入る
+    assert entry["warning"] is None
+    with pytest.raises(ValueError):
+        store.add_node_to_group(g["id"], store.active_ending())  # 結末は入れられない
+    other = store.create_group("第二章", [n3["id"]])
+    with pytest.raises(ValueError):
+        store.add_node_to_group(g["id"], n3["id"])  # 既に別の章のシーン
+    # 同じ章に入れ直しても何も起きない(冪等)
+    assert store.add_node_to_group(other["id"], n3["id"])["node_ids"] == [n3["id"]]
+
+
 def test_group_cover_node(store):
     """章カードの表紙。章のシーンだけ指定でき、章から外れたら自動(None)に戻る。"""
     n1, n2, n3 = _three_scenes(store)
