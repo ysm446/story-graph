@@ -1504,6 +1504,17 @@ class Store:
                 route, warning = self._route_from_markers(in_id, out_id, set(all_ids))
             else:
                 route, warning = self._legacy_route(ordered), None
+            if out_id and warning is None:
+                # 「章の外へ出るときは必ず出口を通る」= 境界の不変条件。
+                # 正史の流れがそれを迂回していたら知らせる(分岐は迂回してよい)
+                member_set = set(all_ids)
+                for m in all_ids:
+                    child = self.conn.execute(
+                        "SELECT to_node FROM edges WHERE from_node = ? AND is_canon = 1", (m,)
+                    ).fetchone()
+                    if child and child["to_node"] not in member_set and child["to_node"] != out_id:
+                        warning = "章の外へ、出口を通らずに繋がっているシーンがあります"
+                        break
             on_canon = bool(route) and all(n in order for n in route)
             rest = [n for n in ordered if n not in set(route)]
             node_ids = route + rest
@@ -1781,9 +1792,10 @@ class Store:
         return entry
 
     def _digest_by_tail(self) -> dict[str, list[dict[str, Any]]]:
-        """章末尾ノード ID → digest イベント列。get_state が章境界で適用する。
+        """章の境界ノード ID → digest イベント列。get_state が章境界で適用する。
 
-        末尾は**ルートの末尾**(章に入れてある島や落選した分岐ではない)。
+        境界は**章の出口マーカー**(§9)。出口を別の枝へ繋ぎ替えても、まとめは
+        章の境界に付いたまま効く。出口がまだ無い章(移行前)はルートの末尾で代用。
         """
         rows = self.conn.execute(
             "SELECT id, digest_events FROM groups WHERE digest_events IS NOT NULL"
@@ -1793,8 +1805,11 @@ class Store:
         digests = {r["id"]: json.loads(r["digest_events"]) for r in rows}
         result: dict[str, list[dict[str, Any]]] = {}
         for g in self.list_groups():
-            if g["id"] in digests and g["route"]:
-                result[g["route"][-1]] = digests[g["id"]]
+            if g["id"] not in digests:
+                continue
+            boundary = g["out_id"] or (g["route"][-1] if g["route"] else None)
+            if boundary:
+                result[boundary] = digests[g["id"]]
         return result
 
     def _mark_digest_stale(self, node_id: str) -> None:
@@ -1808,17 +1823,23 @@ class Store:
             )
 
     def _digest_boundary_for(self, node_id: str) -> tuple[str, str] | None:
-        """node_id が「まとめ済みの章」のメンバーなら(章末尾ノード, 現在の末尾状態ハッシュ)。
-        編集の前に控えておき、編集後のハッシュと比較する(章境界の early cutoff)。"""
+        """node_id が「まとめ済みの章」のメンバーなら(章の境界ノード, 境界の状態ハッシュ)。
+
+        境界は章の出口(まとめが適用される場所)。編集の前に控えておき、編集後の
+        ハッシュと比較する(章境界の early cutoff)。まとめが凍っている限り、
+        章の中を編集しても境界の状態は変わらない = 下流へ波及しない。
+        """
         node_row = self.conn.execute("SELECT group_id FROM nodes WHERE id = ?", (node_id,)).fetchone()
         if not node_row or not node_row["group_id"]:
             return None
         group = self.get_group(node_row["group_id"])
-        if not group or not group.get("digest_events") or not group["route"]:
+        if not group or not group.get("digest_events"):
             return None
-        tail = group["route"][-1]
+        boundary = group["out_id"] or (group["route"][-1] if group["route"] else None)
+        if boundary is None:
+            return None
         try:
-            return tail, fold_mod.state_hash(self.get_state(tail))
+            return boundary, fold_mod.state_hash(self.get_state(boundary))
         except KeyError:
             return None
 
@@ -1904,20 +1925,13 @@ class Store:
             self._index_memory(e["id"], p["summary"])
 
     def _propagate_from_boundary(self, group: dict[str, Any]) -> None:
-        """まとめの変更を、章の次のノード(境界の先)から下流へ波及させる。
+        """まとめの変更を、章の境界(出口)の先から下流へ波及させる。
         章の中は生の状態のままなので触らない。commit は呼び出し側。"""
-        if not group["route"]:
+        boundary = group["out_id"] or (group["route"][-1] if group["route"] else None)
+        if boundary is None:
             return
-        tail = group["route"][-1]
-        path = self.canon_path()
-        if tail in path:
-            idx = path.index(tail)
-            if idx + 1 < len(path):
-                self.mark_dirty_downstream(path[idx + 1], commit=False)
-        # 章末尾から生える分岐(draft)にも digest は効くので、そちらへも波及させる
-        for row in self.conn.execute(
-            "SELECT to_node FROM edges WHERE from_node = ? AND is_canon = 0", (tail,)
-        ):
+        # 出口の先(次章の入口など)へ。出口から生える分岐にも digest は効く
+        for row in self.conn.execute("SELECT to_node FROM edges WHERE from_node = ?", (boundary,)):
             self.mark_dirty_downstream(row["to_node"], commit=False)
 
     # ---- state cache / fold -----------------------------------------

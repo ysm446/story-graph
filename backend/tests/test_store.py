@@ -327,6 +327,20 @@ def test_chapter_out_decides_the_route(store):
     assert store.parent_of(entry["out_id"]) == n2["id"]
 
 
+def test_group_warns_when_bypassing_the_exit(store):
+    """「章の外へ出るときは必ず出口を通る」= 境界の不変条件。破れたら警告。"""
+    n1, n2, _n3 = _three_scenes(store)
+    g = store.create_group("第一章", [n1["id"], n2["id"]])
+    assert g["warning"] is None
+    outside = store.append_node({"beat": "章の外", "cast": ["aya"]}, detached=True)
+    store.attach_node(n2["id"], outside["id"])  # 出口を通らずに外へ生やす(分岐なので可)
+    entry = next(x for x in store.list_groups() if x["id"] == g["id"])
+    assert entry["warning"] is None  # 分岐が外へ出るのは異常ではない
+    store.make_canon(outside["id"])  # 正史がその迂回路を通るようにする
+    entry = next(x for x in store.list_groups() if x["id"] == g["id"])
+    assert entry["warning"] is not None
+
+
 def test_group_route_excludes_islands_and_branches(store):
     """章の中の分岐・島はメンバーだが、ルート(読む道)には乗らない。"""
     n1, n2, n3 = _three_scenes(store)
