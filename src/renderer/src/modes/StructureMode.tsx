@@ -3978,15 +3978,26 @@ function StructureModeInner({
                     onClick={() => void handleAddBeat()}
                     className="rounded-lg px-3 py-1.5 text-[13px] font-medium text-white shadow-lg shadow-black/30"
                     style={{ background: 'var(--accent)' }}
-                    title={selectedId ? '選択ノードの子としてシーンを追加' : '正史の末尾にシーンを追加'}
+                    title={
+                      selectedId
+                        ? '選択ノードの子としてシーンを追加'
+                        : focusedGroup
+                          ? `「${focusedGroup.title}」の末尾(出口の手前)にシーンを追加`
+                          : '正史の末尾にシーンを追加'
+                    }
                   >
                     + シーン
                   </button>
                   <button
-                    onClick={() => void handleAddDetached()}
+                    // 章の中で作った島は、その章のシーンにする
+                    onClick={() => void handleAddDetached(undefined, focusedGroup?.id)}
                     className="rounded-lg border px-2.5 py-1.5 text-[13px] shadow-lg shadow-black/30"
                     style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-                    title="どこにも繋がらないシーンを画面の中央に追加(あとでハンドルのドラッグで繋げます)"
+                    title={
+                      focusedGroup
+                        ? `どこにも繋がらないシーンを「${focusedGroup.title}」に追加(あとでハンドルのドラッグで繋げます)`
+                        : 'どこにも繋がらないシーンを画面の中央に追加(あとでハンドルのドラッグで繋げます)'
+                    }
                   >
                     ⊕
                   </button>
