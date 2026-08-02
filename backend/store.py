@@ -1293,9 +1293,8 @@ class Store:
             members.setdefault(row["group_id"], []).append(row["id"])
         result = []
         for gi, row in enumerate(self.conn.execute("SELECT * FROM groups ORDER BY created_at").fetchall()):
+            # メンバーが 0 の章もそのまま返す(空の章を器として先に作れる。§9)
             all_ids = members.get(row["id"], [])
-            if not all_ids:
-                continue  # ラベルを持つノードが無い章は出さない(解除済み)
             ordered = sorted(all_ids, key=lambda n: len(self.path_to(n)))  # 深さ順
             on_route = [n for n in ordered if n in order]
             on_canon = bool(on_route)
@@ -1324,8 +1323,10 @@ class Store:
                     "_created": gi,
                 }
             )
-        # ルートが正史に乗る章は正史位置順、島・分岐だけの章はその後ろに作成順
-        result.sort(key=lambda g: (0, order.get(g["route"][0], 0)) if g["on_canon"] else (1, g["_created"]))
+        # ルートが正史に乗る章は正史位置順、島・分岐だけの章と空の章はその後ろに作成順
+        result.sort(
+            key=lambda g: (0, order.get(g["route"][0], 0)) if g["on_canon"] else (1, g["_created"])
+        )
         for g in result:
             del g["_created"]
         return result
@@ -1340,8 +1341,7 @@ class Store:
         title = (title or "").strip()
         if not title:
             raise ValueError("章の名前を入力してください")
-        if not node_ids:
-            raise ValueError("章に入れるシーンがありません")
+        # node_ids が空の章も作れる(器を先に置いて、中身は後から書く)
         unique_ids = list(dict.fromkeys(node_ids))
         for n in unique_ids:
             if self.get_node(n) is None:
@@ -1349,13 +1349,14 @@ class Store:
             if self._node_kind(n) is not None:
                 raise ValueError("はじまり / 結末は章に入れられません")
         ordered = sorted(unique_ids, key=lambda n: len(self.path_to(n)))
-        placeholders = ",".join("?" for _ in unique_ids)
-        taken = self.conn.execute(
-            f"SELECT id FROM nodes WHERE id IN ({placeholders}) AND group_id IS NOT NULL",
-            unique_ids,
-        ).fetchall()
-        if taken:
-            raise ValueError("既に別の章に属すシーンがあります(先に章から外してください)")
+        if unique_ids:
+            placeholders = ",".join("?" for _ in unique_ids)
+            taken = self.conn.execute(
+                f"SELECT id FROM nodes WHERE id IN ({placeholders}) AND group_id IS NOT NULL",
+                unique_ids,
+            ).fetchall()
+            if taken:
+                raise ValueError("既に別の章に属すシーンがあります(先に章から外してください)")
         group_id = _new_id()
         self.conn.execute(
             "INSERT INTO groups(id, title, color, created_at) VALUES(?,?,?,?)",

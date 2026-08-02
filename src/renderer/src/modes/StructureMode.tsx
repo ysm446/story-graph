@@ -3289,9 +3289,10 @@ function StructureModeInner({
 
   // ---- はじまり / 結末の操作(docs/design/endings.md) ----------------
 
-  const makeEndingCanon = async (endingId: string): Promise<void> => {
+  /** そのノードを通る道を正史にする(結末の切替にも、章の道の差し替えにも使う)。 */
+  const makeRouteCanon = async (nodeId: string): Promise<void> => {
     try {
-      await api.makeCanon(endingId)
+      await api.makeCanon(nodeId)
       await reload()
     } catch (e) {
       setGenStatus(`正史を切り替えられません: ${String(e)}`)
@@ -3387,6 +3388,27 @@ function StructureModeInner({
     } catch (e) {
       setGenStatus(`章から外せません: ${String(e)}`)
     }
+  }
+
+  /** 空の章(器)を作る。中身は後から書く / 島を入れる(docs/design/chapters.md §9)。
+   *  at を渡すとその位置(キャンバス座標)に章カードを置く */
+  const createEmptyChapter = (at?: { x: number; y: number }): void => {
+    setNamePrompt({
+      label: '章の名前',
+      value: `第${groups.length + 1}章`,
+      onSubmit: (title) => {
+        void (async () => {
+          try {
+            const group = await api.createGroup(title, [])
+            if (at) await api.setGroupPosition(group.id, Math.round(at.x), Math.round(at.y))
+            await reload()
+            setChapterView('chapters')
+          } catch (e) {
+            setGenStatus(`章を作れません: ${String(e)}`)
+          }
+        })()
+      }
+    })
   }
 
   const renameChapter = (group: Group): void => {
@@ -3513,6 +3535,12 @@ function StructureModeInner({
 
   const handleAddBeat = async (): Promise<void> => {
     try {
+      // 空の章(器)の中では、島として作ってその章に入れる。物語のどこにも
+      // 位置していないので、繋ぎ先は作者があとで決める
+      if (focusedGroup && focusedGroup.node_ids.length === 0 && !selectedId) {
+        await handleAddDetached(undefined, focusedGroup.id)
+        return
+      }
       // 章の中で何も選んでいないときは**その章の末尾**へ割り込ませる。
       // 従来は正史の末尾(= 章の外)に付いていたので、章の中で足したつもりの
       // シーンが章の外にできていた。シーンを選んでいるときは従来どおりその子
@@ -3539,14 +3567,19 @@ function StructureModeInner({
 
   // どこにも繋がない独立シーン。自動レイアウトの対象外にしたいので、
   // 手動配置として置く(島を作り置きするための入り口)。
-  // at を渡すとその位置(キャンバス座標)、省略時は画面の中央
-  const handleAddDetached = async (at?: { x: number; y: number }): Promise<void> => {
+  // at を渡すとその位置(キャンバス座標)、省略時は画面の中央。
+  // groupId を渡すとその章のシーンにする(空の章の中で作るとき)
+  const handleAddDetached = async (
+    at?: { x: number; y: number },
+    groupId?: string
+  ): Promise<void> => {
     try {
       const node = await api.createNode({
         beat: '(ここに出来事の仕様を書く)',
         cast: [],
         detached: true
       })
+      if (groupId) await api.addNodeToGroup(groupId, node.id).catch(() => undefined)
       const rect = canvasRef.current?.getBoundingClientRect()
       const center =
         at ??
@@ -4057,13 +4090,21 @@ function StructureModeInner({
                       },
                       {
                         label: '⊕ 独立シーン(島)をここに',
-                        hint: 'どこにも繋がらないシーン。あとでドラッグして繋げます',
-                        run: () => void handleAddDetached(menu.pane)
+                        hint: focusedGroup
+                          ? 'どこにも繋がらないシーン。この章のシーンになります'
+                          : 'どこにも繋がらないシーン。あとでドラッグして繋げます',
+                        // 章の中で作った島はその章のものにする
+                        run: () => void handleAddDetached(menu.pane, focusedGroup?.id)
                       },
                       {
                         label: '🏁 結末をここに置く',
                         hint: 'シーンの右のハンドルからドラッグしてつなげます',
                         run: () => void createFloatingEndingAt(menu.pane!)
+                      },
+                      {
+                        label: '📖 空の章をここに作る',
+                        hint: '器を先に置いて、中身は後から書く(章の中で作れます)',
+                        run: () => createEmptyChapter(menu.pane)
                       }
                     ]
                   : menu.chapter
@@ -4122,7 +4163,7 @@ function StructureModeInner({
                       {
                         label: '🏁 この結末にする',
                         hint: 'ここまでの道を正史にする',
-                        run: () => void makeEndingCanon(menu.targets[0])
+                        run: () => void makeRouteCanon(menu.targets[0])
                       },
                       {
                         label: '名前を変更',
@@ -4156,6 +4197,23 @@ function StructureModeInner({
                         }
                       ]
                     : []),
+                  // 章の道(ルート)の切替: 分岐のシーンを右クリックしたときに出す。
+                  // 中身は make_canon(この枝の先の結末をアクティブにする)なので、
+                  // 章の中で使えば「章の道を差し替える」操作になる
+                  ...((): Array<{ label: string; hint: string; run: () => void }> => {
+                    if (menu.targets.length !== 1) return []
+                    const node = graphNodes.find((n) => n.id === menu.targets[0])
+                    if (!node || node.kind || node.status !== 'draft') return []
+                    return [
+                      {
+                        label: focusedGroup ? '★ この枝を章の道にする' : '★ この道を正史にする',
+                        hint: focusedGroup
+                          ? '鑑賞モードとまとめが、この枝を通るようになります'
+                          : 'この枝を通る道を正史にする',
+                        run: () => void makeRouteCanon(node.id)
+                      }
+                    ]
+                  })(),
                   // 章に入れる: 未分類のシーンが章の端に隣接しているときだけ出す
                   // (章の中で書いたのに未分類のまま残ったシーンを拾い直す)
                   ...((): Array<{ label: string; hint: string; run: () => void }> => {
@@ -4452,7 +4510,7 @@ function StructureModeInner({
                   <div className="mt-4 flex flex-col items-center gap-2">
                     {selectedNode.status !== 'canon' && (
                       <button
-                        onClick={() => void makeEndingCanon(selectedNode.id)}
+                        onClick={() => void makeRouteCanon(selectedNode.id)}
                         className="rounded-lg px-3 py-1.5 text-[12px] font-medium text-white"
                         style={{ background: 'var(--accent)' }}
                       >

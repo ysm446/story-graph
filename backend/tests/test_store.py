@@ -275,6 +275,25 @@ def test_group_members_need_not_be_a_chain(store):
     assert [g["id"] for g in store.list_groups()] == [g1["id"], bg["id"]]
 
 
+def test_empty_group_is_kept_as_a_container(store):
+    """メンバーが 0 の章も作れて、消えない(器を先に置いて中身は後から書く。§9)。"""
+    n1, _n2, _n3 = _three_scenes(store)
+    g = store.create_group("第三章(構想)", [])
+    assert g["node_ids"] == [] and g["route"] == []
+    assert g["on_canon"] is False and g["warning"] is None
+    assert g["id"] in [x["id"] for x in store.list_groups()]
+    # あとから島を入れれば普通の章になる
+    island = store.append_node({"beat": "作り置き", "cast": ["aya"]}, detached=True)
+    entry = store.add_node_to_group(g["id"], island["id"])
+    assert entry["node_ids"] == [island["id"]] and entry["route"] == [island["id"]]
+    # 全部外しても章は残る(解除は明示操作のみ)
+    store.remove_node_from_group(island["id"])
+    assert next(x for x in store.list_groups() if x["id"] == g["id"])["node_ids"] == []
+    store.delete_group(g["id"])
+    assert g["id"] not in [x["id"] for x in store.list_groups()]
+    assert store.get_node(n1["id"]) is not None
+
+
 def test_group_route_excludes_islands_and_branches(store):
     """章の中の分岐・島はメンバーだが、ルート(読む道)には乗らない。"""
     n1, n2, n3 = _three_scenes(store)
