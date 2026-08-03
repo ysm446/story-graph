@@ -26,6 +26,7 @@ import {
   renderStream,
   uploadAsset
 } from '../api'
+import CharAvatar from '../CharAvatar'
 import ChatDrawer from '../ChatDrawer'
 import EventsEditor from '../EventsEditor'
 import FactTimeline from '../FactTimeline'
@@ -1100,7 +1101,9 @@ function CharTab({
   }, [node.id])
 
   const charState = charId ? state?.chars[charId] : null
-  const nameOf = (id: string): string => characters.find((c) => c.id === id)?.name ?? id
+  const charOf = (id: string | null): Character | undefined =>
+    characters.find((c) => c.id === id)
+  const nameOf = (id: string): string => charOf(id)?.name ?? id
 
   const appendEvent = async (event: StoryEvent['payload'] & object, type: string): Promise<void> => {
     setError(null)
@@ -1316,22 +1319,27 @@ function CharTab({
               return (
                 <div
                   key={eventId}
-                  className="mb-1 rounded-lg border px-3 py-1.5 text-[12px] leading-relaxed"
+                  className="mb-1 flex items-start gap-2 rounded-lg border px-3 py-1.5 text-[12px] leading-relaxed"
                   style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-dim)' }}
                 >
-                  {memory?.content ?? eventId}
-                  {/* どのシーンで得た記憶か(クリックでそのシーンへ) */}
-                  {memory && (
-                    <button
-                      onClick={() => onSelectNode(memory.nodeId)}
-                      className="mt-0.5 block max-w-full truncate text-left text-[10px] hover:underline"
-                      style={{ color: memory.nodeId === node.id ? 'var(--accent)' : 'var(--text-faint)' }}
-                      title={`「${memory.title}」で得た記憶(クリックでそのシーンへ)`}
-                    >
-                      ← {memory.title}
-                      {memory.nodeId === node.id ? '(このシーン)' : ''}
-                    </button>
-                  )}
+                  {/* 誰の記憶かをアイコンで。タブの選択と同じキャラだが、
+                      並んだカードを目で追うときの手がかりになる */}
+                  {charOf(charId) && <CharAvatar char={charOf(charId)!} size={20} />}
+                  <div className="min-w-0 flex-1">
+                    {memory?.content ?? eventId}
+                    {/* どのシーンで得た記憶か(クリックでそのシーンへ) */}
+                    {memory && (
+                      <button
+                        onClick={() => onSelectNode(memory.nodeId)}
+                        className="mt-0.5 block max-w-full truncate text-left text-[10px] hover:underline"
+                        style={{ color: memory.nodeId === node.id ? 'var(--accent)' : 'var(--text-faint)' }}
+                        title={`「${memory.title}」で得た記憶(クリックでそのシーンへ)`}
+                      >
+                        ← {memory.title}
+                        {memory.nodeId === node.id ? '(このシーン)' : ''}
+                      </button>
+                    )}
+                  </div>
                 </div>
               )
             })}
@@ -1462,7 +1470,8 @@ function ChapterTab({
   // まとめの生成は LLM キューに積む(他の生成と同じ 1 件ずつの逐次実行)
   const generateQueued = useTasks().some((t) => t.label === '章のまとめ')
 
-  const nameOf = (charId: string): string => characters.find((c) => c.id === charId)?.name ?? charId
+  const charOf = (charId: string): Character | undefined => characters.find((c) => c.id === charId)
+  const nameOf = (charId: string): string => charOf(charId)?.name ?? charId
   const nodeTitle = (id: string): string => nodes.find((n) => n.id === id)?.title || '(無題)'
   // 章カードの表紙。指定が無ければ章内で最初に挿絵があるシーン(章カードと同じ導出)
   const nodeById = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes])
@@ -1715,6 +1724,10 @@ function ChapterTab({
                   style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}
                 >
                   <div className="mb-1 flex items-center gap-2 text-[11px]" style={{ color: 'var(--text-dim)' }}>
+                    {/* まとめはキャラごとの要約記憶なので、誰のものかをアイコンでも示す */}
+                    {charOf(String(e.payload.char ?? '')) && (
+                      <CharAvatar char={charOf(String(e.payload.char ?? ''))!} size={20} />
+                    )}
                     <span className="font-medium" style={{ color: 'var(--text)' }}>
                       {nameOf(String(e.payload.char ?? ''))}
                     </span>

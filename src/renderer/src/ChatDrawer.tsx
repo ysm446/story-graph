@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   api,
-  assetUrl,
   chatApi,
   chatSendStream,
   isAbortError,
@@ -9,6 +8,7 @@ import {
   type ChatStreamEvent,
   type ChatSummary
 } from './api'
+import CharAvatar from './CharAvatar'
 import { MsgActionButton, StatsLine, SystemPromptModal } from './GenMeta'
 import { Icon } from './icons'
 import { Markdown } from './Markdown'
@@ -155,34 +155,6 @@ const SIDEBAR_DEFAULT = 264 // 会話名 + キャラ名 / シーン名の 2 行�
 const USAGE_DEBOUNCE_MS = 400
 const RING_RADIUS = 10 // コンテキスト使用量リング(26px の SVG 内)
 const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS
-
-/** キャラのアイコン。画像が無いときは色付きの頭文字で代替する
- *  (プロフィール画像は装飾専用なので、無くても成り立つのが前提) */
-function CharAvatar({ char, size }: { char: Character; size: number }): React.JSX.Element {
-  const src = assetUrl(char.portrait_path)
-  const color = char.color ?? '#8a8fa8'
-  const style = { width: size, height: size, border: `1.5px solid ${color}` }
-  if (src) {
-    return (
-      <img
-        src={src}
-        alt={char.name}
-        title={char.name}
-        className="shrink-0 rounded-full object-cover"
-        style={style}
-      />
-    )
-  }
-  return (
-    <span
-      title={char.name}
-      className="flex shrink-0 items-center justify-center rounded-full font-semibold"
-      style={{ ...style, background: `${color}33`, color, fontSize: Math.round(size * 0.45) }}
-    >
-      {char.name.slice(0, 1)}
-    </span>
-  )
-}
 
 export default function ChatDrawer({
   anchorCandidateId,
