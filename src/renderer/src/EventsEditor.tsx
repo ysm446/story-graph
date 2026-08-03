@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, isAbortError } from './api'
+import CharAvatar from './CharAvatar'
 import { enqueueTask, notifyGraphChanged, useTaskFor } from './tasks'
 import type { Character, EventInput, StoryEvent, StoryNode } from './types'
 import { useElapsedSeconds } from './useElapsed'
@@ -76,6 +77,14 @@ export function eventSummary(
     default:
       return JSON.stringify(payload)
   }
+}
+
+/** そのイベントが「だれのことか」。アイコンを添える相手を決めるのに使う。
+ *  世界の事実(scope=world)と manual_override は特定のキャラに紐づかないので null。 */
+function eventCharId(type: string, payload: Payload): string | null {
+  if (type === 'fact_set' && str(payload.scope) === 'world') return null
+  const char = str(payload.char)
+  return char || null
 }
 
 function Row({ label, children }: { label: string; children: React.ReactNode }): React.JSX.Element {
@@ -529,22 +538,31 @@ export default function EventsEditor({
           className="mb-2 rounded-lg border p-2"
           style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border)' }}
         >
-          <Row label="種類">
-            <select
-              value={adding.type}
-              onChange={(e) =>
-                setAdding({ type: e.target.value, payload: { ...DEFAULT_PAYLOADS[e.target.value] } })
-              }
-              className={fieldClass}
-              style={inputStyle}
-            >
-              {ADDABLE_TYPES.map((t) => (
-                <option key={t} value={t}>
-                  {TYPE_LABELS[t]}
-                </option>
-              ))}
-            </select>
-          </Row>
+          <span className="mb-1.5 flex items-end gap-2.5">
+            {/* 「だれの」を選ぶと出る。一覧のカードと同じ位置にアイコンが立つ */}
+            {(() => {
+              const char = characters.find((c) => c.id === eventCharId(adding.type, adding.payload))
+              return char ? <CharAvatar char={char} size={28} /> : null
+            })()}
+            <span className="min-w-0 flex-1">
+              <Row label="種類">
+                <select
+                  value={adding.type}
+                  onChange={(e) =>
+                    setAdding({ type: e.target.value, payload: { ...DEFAULT_PAYLOADS[e.target.value] } })
+                  }
+                  className={fieldClass}
+                  style={inputStyle}
+                >
+                  {ADDABLE_TYPES.map((t) => (
+                    <option key={t} value={t}>
+                      {TYPE_LABELS[t]}
+                    </option>
+                  ))}
+                </select>
+              </Row>
+            </span>
+          </span>
           <EventFields
             type={adding.type}
             payload={adding.payload}
@@ -583,76 +601,82 @@ export default function EventsEditor({
 
       {node.events.map((e, index) => {
         const open = editing?.index === index
+        // 編集中は入力中の payload を見る(「だれの」を変えたらアイコンも追う)
+        const payload = open ? editing.payload : (e.payload as Payload)
+        const eventChar = characters.find((c) => c.id === eventCharId(e.type, payload))
         return (
           <div
             key={e.id}
-            className="mb-1.5 rounded-lg border px-3 py-2 text-[12px]"
+            className="mb-1.5 flex gap-2.5 rounded-lg border px-3 py-2 text-[12px]"
             style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border)' }}
           >
-            <div className="mb-0.5 flex items-center gap-2">
-              <span className="font-medium" style={{ color: 'var(--text)' }}>
-                {TYPE_LABELS[e.type] ?? e.type}
-              </span>
-              <span
-                className="rounded px-1.5 py-px text-[10px] uppercase"
-                style={
-                  e.source === 'user'
-                    ? { background: 'var(--accent-soft)', color: 'var(--accent)' }
-                    : { background: 'var(--bg-input)', color: 'var(--text-faint)' }
-                }
-              >
-                {e.source}
-              </span>
-              <button
-                onClick={() => setEditing(open ? null : { index, payload: { ...(e.payload as Payload) } })}
-                className="ml-auto text-[11px]"
-                style={{ color: open ? 'var(--accent)' : 'var(--text-faint)' }}
-                title="このイベントを編集"
-              >
-                {open ? '閉じる' : '✎ 編集'}
-              </button>
-              <button
-                onClick={() => handleDelete(index)}
-                disabled={saving || extracting}
-                className="text-[11px]"
-                style={{ color: 'var(--text-faint)' }}
-                title="このイベントを削除"
-              >
-                ✕
-              </button>
-            </div>
-            {open ? (
-              <div className="mt-1.5">
-                <EventFields
-                  type={e.type}
-                  payload={editing.payload}
-                  characters={characters}
-                  factKeys={factKeys}
-                  onChange={(payload) => setEditing({ index, payload })}
-                />
-                <div className="flex gap-2">
-                  <button
-                    onClick={handleUpdate}
-                    disabled={saving || extracting}
-                    className="rounded-md px-3 py-1 text-[12px] font-medium text-white disabled:opacity-50"
-                    style={{ background: 'var(--accent)' }}
-                  >
-                    保存
-                  </button>
-                  <button
-                    onClick={() => setEditing(null)}
-                    className="px-2 py-1 text-[12px]"
-                    style={{ color: 'var(--text-dim)' }}
-                  >
-                    取消
-                  </button>
+            {/* 記憶・事実などが「だれのことか」をアイコンで示す。
+                世界の事実のようにキャラに紐づかないものは左の列ごと出さない */}
+            {eventChar && <CharAvatar char={eventChar} size={28} />}
+            <div className="min-w-0 flex-1">
+              <div className="mb-0.5 flex items-center gap-2">
+                <span className="font-medium" style={{ color: 'var(--text)' }}>
+                  {TYPE_LABELS[e.type] ?? e.type}
+                </span>
+                <span
+                  className="rounded px-1.5 py-px text-[10px] uppercase"
+                  style={
+                    e.source === 'user'
+                      ? { background: 'var(--accent-soft)', color: 'var(--accent)' }
+                      : { background: 'var(--bg-input)', color: 'var(--text-faint)' }
+                  }
+                >
+                  {e.source}
+                </span>
+                <button
+                  onClick={() => setEditing(open ? null : { index, payload: { ...(e.payload as Payload) } })}
+                  className="ml-auto text-[11px]"
+                  style={{ color: open ? 'var(--accent)' : 'var(--text-faint)' }}
+                  title="このイベントを編集"
+                >
+                  {open ? '閉じる' : '✎ 編集'}
+                </button>
+                <button
+                  onClick={() => handleDelete(index)}
+                  disabled={saving || extracting}
+                  className="text-[11px]"
+                  style={{ color: 'var(--text-faint)' }}
+                  title="このイベントを削除"
+                >
+                  ✕
+                </button>
+              </div>
+              {open ? (
+                <div className="mt-1.5">
+                  <EventFields
+                    type={e.type}
+                    payload={editing.payload}
+                    characters={characters}
+                    factKeys={factKeys}
+                    onChange={(payload) => setEditing({ index, payload })}
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleUpdate}
+                      disabled={saving || extracting}
+                      className="rounded-md px-3 py-1 text-[12px] font-medium text-white disabled:opacity-50"
+                      style={{ background: 'var(--accent)' }}
+                    >
+                      保存
+                    </button>
+                    <button
+                      onClick={() => setEditing(null)}
+                      className="px-2 py-1 text-[12px]"
+                      style={{ color: 'var(--text-dim)' }}
+                    >
+                      取消
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ) : (
-              <div style={{ color: 'var(--text-dim)' }}>
-                {eventSummary(e.type, e.payload as Payload, nameOf)}
-              </div>
-            )}
+              ) : (
+                <div style={{ color: 'var(--text-dim)' }}>{eventSummary(e.type, payload, nameOf)}</div>
+              )}
+            </div>
           </div>
         )
       })}
