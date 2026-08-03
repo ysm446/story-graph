@@ -10,6 +10,9 @@ import llm as llm_mod
 from store import Store
 
 
+STATE_MEMORY_SAMPLE = 20  # 記憶の絞り込みを確かめるために足す件数(上限より多くする)
+
+
 @pytest.fixture
 def store(monkeypatch):
     monkeypatch.setattr(embed, "available", lambda: False)
@@ -66,6 +69,46 @@ def test_scope_upto_limits_beats(store):
     # all なら全件
     all_path = chat_agent._visible_path(store, anchor, "all")
     assert chat_agent._tool_get_beats(store, all_path, {})["total"] == 3
+
+
+def test_get_state_resolves_names_and_memory_contents(store):
+    """state の ID(キャラ / 記憶)を名前と本文に解決してから返す。"""
+    result = chat_agent._tool_get_state(store, store.canon_path(), {})
+    aya = result["chars"]["aya"]
+    assert aya["name"] == "アヤ"
+    assert aya["memories"]["total"] == 1
+    assert [m["content"] for m in aya["memories"]["recent"]] == ["石橋でケンの裏切りを知った"]
+    # char_id 指定でも同じ形(記憶は絞らない)
+    single = chat_agent._tool_get_state(store, store.canon_path(), {"char_id": "aya"})
+    assert single["char"] == "aya"
+    assert single["state"]["memories"]["recent"][0]["content"] == "石橋でケンの裏切りを知った"
+
+
+def test_get_state_relationship_target_has_name_and_no_event_ids(store):
+    store.append_node({"beat": "和解", "cast": ["aya", "ken"], "title": "第四話"}, [
+        {"type": "relationship_update",
+         "payload": {"char": "aya", "target": "ken", "delta": 0.5, "label": "許した"}},
+    ])
+    rel = chat_agent._tool_get_state(store, store.canon_path(), {})["chars"]["aya"]["relationships"]["ken"]
+    assert rel["name"] == "ケン"
+    assert rel["label"] == "許した"
+    assert rel["updates"] == 1
+    assert "reasons" not in rel  # event_id は LLM から引けないので載せない
+
+
+def test_get_state_overview_limits_memories_per_char(store):
+    for i in range(STATE_MEMORY_SAMPLE):
+        store.append_node({"beat": f"追加{i}", "cast": ["aya"], "title": f"追加{i}"}, [
+            {"type": "memory_add", "payload": {"char": "aya", "content": f"出来事{i}", "importance": 0.1}},
+        ])
+    aya = chat_agent._tool_get_state(store, store.canon_path(), {})["chars"]["aya"]["memories"]
+    shown = len(aya.get("important") or []) + len(aya["recent"])
+    assert shown <= chat_agent.STATE_OVERVIEW_MEMORIES * 2
+    assert aya["total"] == STATE_MEMORY_SAMPLE + 1
+    assert aya["omitted"] == aya["total"] - shown
+    # char_id 指定なら絞らない(キャラモードと同じ上限まで載る)
+    full = chat_agent._tool_get_state(store, store.canon_path(), {"char_id": "aya"})["state"]["memories"]
+    assert len(full.get("important") or []) + len(full["recent"]) == chat_agent.CHARACTER_MEMORY_LIMIT
 
 
 def test_tool_loop_and_persistence(store, monkeypatch):

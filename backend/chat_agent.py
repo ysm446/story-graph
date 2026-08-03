@@ -26,6 +26,7 @@ def _now() -> str:
 MAX_TOOL_STEPS = 8
 CHAT_TEMPERATURE = 0.7
 MEMORY_TOP_K = 8
+STATE_OVERVIEW_MEMORIES = 5  # 全体 state で 1 キャラあたりに載せる記憶数(char_id 指定なら絞らない)
 
 
 def _sse(data: dict[str, Any]) -> str:
@@ -52,11 +53,18 @@ def build_tools() -> list[dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "get_state",
-                "description": "fold 済みの物語状態(キャラの facts / 関係値 / 記憶参照、世界の facts)を取得する。",
+                "description": (
+                    "fold 済みの物語状態(キャラの facts / 関係値 / 記憶、世界の facts)を取得する。"
+                    "記憶は 1 キャラあたり数件に絞られるので、特定のキャラを詳しく見るときは "
+                    "char_id を指定する。"
+                ),
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "char_id": {"type": "string", "description": "指定するとそのキャラの状態のみ"},
+                        "char_id": {
+                            "type": "string",
+                            "description": "指定するとそのキャラの状態のみ(記憶も多めに返る)",
+                        },
                     },
                 },
             },
@@ -137,20 +145,107 @@ def _tool_get_beats(store: Store, path: list[str], args: dict[str, Any]) -> dict
     return {"total": len(path), "beats": beats}
 
 
+# fold の state(fold.py の StateSnapshot)は memories / reasons を event_id、キャラや
+# 勢力を ID で持つ。そのまま返すとツール結果が ID の羅列になり、LLM 側には ID から
+# 本文を引く手段が無い(search_memories はクエリ検索)。記憶は「何件あるか」しか
+# 伝わっていなかったので、キャラモードのシステムプロンプト(build_character_system)
+# と同じように、名前と本文に解決してから渡す。
+
+def _name_map(store: Store) -> dict[str, str]:
+    """char_id / faction_id → 名前。関係の相手を読める形に直すのに使う。"""
+    names = {c["id"]: c["name"] for c in store.list_characters()}
+    names.update({f["id"]: f["name"] for f in store.list_factions()})
+    return names
+
+
+def _memory_row(row: Any) -> dict[str, Any]:
+    item: dict[str, Any] = {"content": row["content"]}
+    if row["importance"] is not None:
+        item["importance"] = round(float(row["importance"]), 2)
+    return item
+
+
+def _memories_view(store: Store, memory_ids: list[str], limit: int | None) -> dict[str, Any]:
+    """記憶 ID の配列を本文に解決する。選び方はキャラモードと同じ(_select_memories)。
+
+    limit を渡すと important / recent をそれぞれその件数までに絞る(全体 state 用)。
+    載せきれなかった分は omitted で件数だけ伝える(search_memories で探せる)。
+    """
+    if not memory_ids:
+        return {"total": 0, "recent": []}
+    important, recent, total = _select_memories(store, memory_ids)
+    if limit is not None:
+        important = important[:limit]
+        recent = recent[-limit:]
+    view: dict[str, Any] = {"total": total}
+    if important:
+        view["important"] = [_memory_row(r) for r in important]
+    view["recent"] = [_memory_row(r) for r in recent]
+    omitted = total - len(important) - len(recent)
+    if omitted > 0:
+        view["omitted"] = omitted
+    return view
+
+
+def _relationships_view(names: dict[str, str], rels: dict[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for target, rel in rels.items():
+        item: dict[str, Any] = {
+            "name": names.get(target, target),
+            "score": rel.get("score", 0.0),
+            # reasons は event_id の配列で LLM からは引けない。更新回数だけ残す
+            "updates": len(rel.get("reasons") or []),
+        }
+        if rel.get("label"):
+            item["label"] = rel["label"]
+        if rel.get("target_type") and rel["target_type"] != "char":
+            item["target_type"] = rel["target_type"]
+        out[target] = item
+    return out
+
+
+def _char_state_view(
+    store: Store,
+    names: dict[str, str],
+    char_id: str,
+    cs: dict[str, Any],
+    memory_limit: int | None,
+) -> dict[str, Any]:
+    # キーは ID のまま残す(propose_beats の cast などで LLM が ID を使うため)
+    view: dict[str, Any] = {
+        "name": names.get(char_id, char_id),
+        "status": cs.get("status"),
+        "facts": cs.get("facts") or {},
+        "relationships": _relationships_view(names, cs.get("relationships") or {}),
+        "memories": _memories_view(store, list(cs.get("memories") or []), memory_limit),
+    }
+    if cs.get("retire_reason"):
+        view["retire_reason"] = cs["retire_reason"]
+    return view
+
+
 def _tool_get_state(store: Store, path: list[str], args: dict[str, Any]) -> dict[str, Any]:
     if not path:
         return {"error": "シーンがまだありません"}
     state = store.get_state(path[-1])
+    names = _name_map(store)
     char_id = args.get("char_id")
     if char_id:
         char_state = state["chars"].get(char_id)
         if char_state is None:
             return {"error": f"キャラ {char_id} はまだ登場していません"}
-        return {"char": char_id, "state": char_state}
+        return {"char": char_id, "state": _char_state_view(store, names, char_id, char_state, None)}
+    result: dict[str, Any] = {
+        "world": state["world"],
+        "chars": {
+            cid: _char_state_view(store, names, cid, cs, STATE_OVERVIEW_MEMORIES)
+            for cid, cs in state["chars"].items()
+        },
+    }
     place = store.location_context(path[-1])
-    if place is None:
-        return state
-    return {**state, "place": {"name": place["name"], "description": place.get("description")}}
+    if place is not None:
+        result["place"] = {"name": place["name"], "description": place.get("description")}
+    return result
 
 
 def _tool_search_memories(store: Store, path: list[str], scope: str, args: dict[str, Any]) -> dict[str, Any]:

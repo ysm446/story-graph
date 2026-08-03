@@ -1,7 +1,7 @@
 # 相談チャット設計
 
 作成日時: 2026-07-25 22:52
-更新日時: 2026-08-02 10:20
+更新日時: 2026-08-03 12:40
 
 物語について作者が相談する「相談チャット」の設計まとめ。仕様の出発点は
 [docs/story-graph-spec.md](../story-graph-spec.md) §8、実装は `backend/chat_agent.py` と
@@ -49,9 +49,21 @@
 | ツール | 内容 | 副作用 |
 |---|---|---|
 | `get_beats(from_index, to_index)` | 見えている範囲のシーン一覧(index は 1 始まり) | なし |
-| `get_state(char_id?)` | fold 済みの状態(キャラの facts / 関係値 / 記憶参照、世界の facts) | なし |
+| `get_state(char_id?)` | fold 済みの状態(キャラの facts / 関係値 / 記憶、世界の facts) | なし |
 | `search_memories(query, char_id?)` | 記憶のハイブリッド検索(意味 + キーワード、top 8) | なし |
 | `propose_beats(proposals)` | この先の展開を最大 3 案、シーン下書きとして提出 | なし(UI に提案カードを出すだけ) |
+
+**`get_state` は生の state をそのまま返さない**(2026-08-03)。fold の state は記憶と関係の理由を
+`event_id`、キャラと勢力を ID で持つので、素通しにするとツール結果が ID の羅列になる。LLM 側に
+ID から本文を引く手段は無い(`search_memories` はクエリ検索)ため、記憶は「何件あるか」しか
+伝わっていなかった。そこで `_char_state_view` で次の形に解決してから返す。
+
+- キャラと関係の相手に `name` を付ける(勢力もシステムプロンプトの ID 一覧に無いので同様に解決)。
+  キーは ID のまま残す — `propose_beats` の `cast` などで LLM が ID を使うため。
+- `memories` は本文に解決する。選び方はキャラモードと同じ `_select_memories`(重要 + 直近)。
+  全体 state では 1 キャラあたり `STATE_OVERVIEW_MEMORIES = 5` 件ずつに絞り、残りは `omitted` で
+  件数だけ伝える。`char_id` を指定したときは絞らない(`CHARACTER_MEMORY_LIMIT` まで)。
+- 関係の `reasons`(`event_id` の配列)は落とし、更新回数 `updates` だけ残す。
 
 `propose_beats` の結果は UI で提案カードになり、「⑂ ブランチとして挿入」でアンカーの子として
 `draft` ノードが作られる(ここだけが唯一の書き込み経路)。挿入済みの案はボタンが無効化される。
