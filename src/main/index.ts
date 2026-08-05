@@ -303,10 +303,43 @@ app.whenReady().then(async () => {
     rememberLibraryRoot(root)
     return root
   })
+  // 外部バックアップ(docs/design/backup.md)。パスを選ぶのはネイティブダイアログ、
+  // zip の読み書きはバックエンド(同じ PC にいるのでファイル本体は HTTP に流さない)
+  ipcMain.handle('backup:chooseSaveFile', async (_event, defaultName: string, defaultDir: string) => {
+    const name = defaultName || 'story-graph-backup.zip'
+    const dir = defaultDir && existsSync(defaultDir) ? defaultDir : app.getPath('documents')
+    const result = await dialog.showSaveDialog({
+      title: 'バックアップの保存先',
+      defaultPath: join(dir, name),
+      filters: [{ name: 'zip アーカイブ', extensions: ['zip'] }]
+    })
+    return result.canceled || !result.filePath ? null : result.filePath
+  })
+  ipcMain.handle('backup:chooseZip', async () => {
+    const result = await dialog.showOpenDialog({
+      title: '復元するバックアップ(zip)を選択',
+      properties: ['openFile'],
+      filters: [{ name: 'zip アーカイブ', extensions: ['zip'] }]
+    })
+    return result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0]
+  })
+  ipcMain.handle('backup:chooseDir', async (_event, title: string) => {
+    const result = await dialog.showOpenDialog({
+      title: title || 'フォルダを選択',
+      properties: ['openDirectory', 'createDirectory']
+    })
+    return result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0]
+  })
   // スクリーンショット通知のクリックから、保存先をエクスプローラーで開く
   ipcMain.handle('shell:reveal', (_event, filePath: string) => {
     if (!existsSync(filePath)) return false
     shell.showItemInFolder(filePath)
+    return true
+  })
+  // フォルダ自体を開く(バックアップの保存先など)
+  ipcMain.handle('shell:openFolder', async (_event, dirPath: string) => {
+    if (!existsSync(dirPath)) return false
+    await shell.openPath(dirPath)
     return true
   })
   createWindow()

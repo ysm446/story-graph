@@ -1,4 +1,7 @@
 import type {
+  BackupConfig,
+  BackupInfo,
+  BackupResult,
   Character,
   EventInput,
   Group,
@@ -226,6 +229,33 @@ export const api = {
     request<{ restored: string }>(`/snapshots/${id}/restore`, { method: 'POST' }),
   deleteSnapshot: (id: string) =>
     request<{ status: string }>(`/snapshots/${id}`, { method: 'DELETE' }),
+  // 外部バックアップ(zip 書き出し。docs/design/backup.md)
+  getBackupConfig: () => request<BackupConfig>('/backup/config'),
+  putBackupConfig: (values: {
+    enabled?: boolean
+    dir?: string
+    keep?: number
+    inside?: boolean
+  }) =>
+    request<BackupConfig>('/backup/config', { method: 'PUT', body: JSON.stringify(values) }),
+  suggestedBackupName: () => request<{ name: string }>('/backup/suggested_name'),
+  exportBackup: (path: string, includeSnapshots: boolean) =>
+    request<BackupResult>('/backup/export', {
+      method: 'POST',
+      body: JSON.stringify({ path, include_snapshots: includeSnapshots })
+    }),
+  runAutoBackup: () =>
+    request<{ skipped: boolean; path?: string; removed?: string[] } & Partial<BackupResult>>(
+      '/backup/auto?force=true',
+      { method: 'POST' }
+    ),
+  inspectBackup: (path: string) =>
+    request<BackupInfo>('/backup/inspect', { method: 'POST', body: JSON.stringify({ path }) }),
+  restoreBackup: (path: string, destRoot: string) =>
+    request<{ root: string; extracted: number }>('/backup/restore', {
+      method: 'POST',
+      body: JSON.stringify({ path, dest_root: destRoot })
+    }),
   debugPrompts: () =>
     request<
       Array<{

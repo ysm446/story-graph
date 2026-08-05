@@ -169,3 +169,48 @@ export interface Snapshot {
   created_at: string
   size: number
 }
+
+// 外部バックアップ(zip 書き出し。docs/design/backup.md)
+export interface BackupEntry {
+  name: string
+  path: string
+  size: number
+  modified_at: string
+  kind: 'auto' | 'manual'
+}
+
+export interface BackupConfig {
+  enabled: boolean
+  /** true でライブラリの中(<root>/backups/)に置く。false なら outside_dir */
+  inside: boolean
+  /** 実際に使われる保存先(inside なら <root>/backups/) */
+  dir: string
+  /** 外に置くときのパス(inside の間も覚えておく) */
+  outside_dir: string
+  keep: number
+  last_at: string | null
+  last_path: string | null
+  library_name: string
+  entries: BackupEntry[]
+}
+
+export interface BackupResult {
+  path: string
+  size: number
+  assets: number
+  created_at: string
+  includes_snapshots: boolean
+  kind: 'auto' | 'manual'
+}
+
+export interface BackupInfo {
+  path: string
+  size: number
+  has_db: boolean
+  assets: number
+  snapshots: number
+  created_at: string | null
+  library_name: string | null
+  kind: string | null
+  format: number | null
+}

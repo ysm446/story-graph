@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import zipfile
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile
@@ -20,6 +21,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+import backup
 import chat_agent
 import db
 import generation
@@ -85,6 +87,7 @@ async def _startup() -> None:
             print(f"[assets] 未参照ファイルを {removed} 件削除しました")
     except Exception as e:  # GC の失敗で起動を止めない
         print(f"[assets] GC に失敗: {e}")
+    asyncio.create_task(_deferred_auto_backup())
 
 
 @app.on_event("shutdown")
@@ -207,6 +210,7 @@ async def switch_library(body: LibrarySwitchIn) -> dict[str, Any]:
         store.gc_assets()
     except Exception as e:  # GC の失敗で切替を止めない
         print(f"[assets] GC に失敗: {e}")
+    asyncio.create_task(_auto_backup_quietly())  # 開いたライブラリの日次チェック
     return {"root": store.root}
 
 
@@ -1292,6 +1296,142 @@ async def delete_snapshot(snap_id: str) -> dict[str, str]:
     if not snapshots.delete(store, snap_id):
         raise HTTPException(404, "snapshot not found")
     return {"status": "deleted"}
+
+
+# ---- 外部バックアップ(zip 書き出し。docs/design/backup.md) ----------
+
+class BackupExportIn(BaseModel):
+    path: str
+    include_snapshots: bool = False
+
+
+class BackupConfigIn(BaseModel):
+    enabled: bool | None = None
+    dir: str | None = None
+    keep: int | None = None
+    inside: bool | None = None  # True でライブラリの中(<root>/backups/)に置く
+
+
+class BackupPathIn(BaseModel):
+    path: str
+
+
+class BackupRestoreIn(BaseModel):
+    path: str
+    dest_root: str
+
+
+# 自動バックアップの多重起動を防ぐ(起動直後の遅延実行とライブラリ切替が重なりうる)
+_backup_lock = asyncio.Lock()
+
+
+async def _write_backup(dest: str, *, include_snapshots: bool, kind: str) -> dict[str, Any]:
+    """DB のコピーはループ上で、zip 書き出しはスレッドで(設計 §書き出しの実装)。"""
+    root = str(store.root)  # 書き出し中のライブラリ切替で assets の出所がずれないよう控える
+    db_copy = backup.prepare_db(store)
+    try:
+        return await asyncio.to_thread(
+            backup.write_zip,
+            db_copy,
+            root,
+            dest,
+            include_snapshots=include_snapshots,
+            kind=kind,
+        )
+    finally:
+        backup.cleanup(db_copy)
+
+
+async def _run_auto_backup(force: bool = False) -> dict[str, Any]:
+    async with _backup_lock:
+        plan = backup.plan_auto(store, force=force)
+        if plan is None:
+            return {"skipped": True, "config": backup.get_config(store)}
+        result = await _write_backup(plan["dest"], include_snapshots=False, kind="auto")
+        removed = backup.record_auto(store, plan, result)
+    return {"skipped": False, "removed": removed, **result, "config": backup.get_config(store)}
+
+
+async def _auto_backup_quietly() -> None:
+    """失敗してもアプリは止めない(保存先が外付けで未接続、などが普通に起こる)。"""
+    try:
+        result = await _run_auto_backup()
+        if not result.get("skipped"):
+            print(f"[backup] 自動バックアップを保存しました: {result['path']}")
+    except Exception as e:  # noqa: BLE001
+        print(f"[backup] 自動バックアップに失敗: {e}")
+
+
+async def _deferred_auto_backup() -> None:
+    # 再利用 sidecar ではレンダラが起動直後に /library/switch を投げてくるので、
+    # 先走って別のライブラリを撮らないよう少し待つ
+    await asyncio.sleep(15)
+    await _auto_backup_quietly()
+
+
+@app.get("/backup/config")
+async def get_backup_config() -> dict[str, Any]:
+    config = backup.get_config(store)
+    return {**config, "entries": backup.list_backups(config["dir"])}
+
+
+@app.put("/backup/config")
+async def put_backup_config(body: BackupConfigIn) -> dict[str, Any]:
+    config = backup.set_config(
+        store, enabled=body.enabled, dir=body.dir, keep=body.keep, inside=body.inside
+    )
+    return {**config, "entries": backup.list_backups(config["dir"])}
+
+
+@app.get("/backup/suggested_name")
+async def backup_suggested_name() -> dict[str, str]:
+    """保存ダイアログの既定ファイル名(ライブラリ名 + 日時)。"""
+    return {"name": backup.suggested_name(store)}
+
+
+@app.post("/backup/export")
+async def export_backup(body: BackupExportIn) -> dict[str, Any]:
+    if not store.root:
+        raise HTTPException(400, "ライブラリが未設定のためバックアップできません")
+    try:
+        return await _write_backup(
+            body.path, include_snapshots=body.include_snapshots, kind="manual"
+        )
+    except OSError as e:
+        raise HTTPException(400, f"書き出せません: {e}")
+
+
+@app.post("/backup/auto")
+async def run_auto_backup(force: bool = False) -> dict[str, Any]:
+    if not store.root:
+        raise HTTPException(400, "ライブラリが未設定のためバックアップできません")
+    try:
+        return await _run_auto_backup(force=force)
+    except OSError as e:
+        raise HTTPException(400, f"書き出せません: {e}")
+
+
+@app.post("/backup/inspect")
+async def inspect_backup(body: BackupPathIn) -> dict[str, Any]:
+    try:
+        return await asyncio.to_thread(backup.inspect, body.path)
+    except KeyError:
+        raise HTTPException(404, "バックアップが見つかりません")
+    except (OSError, zipfile.BadZipFile) as e:
+        raise HTTPException(400, f"読めません: {e}")
+
+
+@app.post("/backup/restore")
+async def restore_backup(body: BackupRestoreIn) -> dict[str, Any]:
+    """新しいライブラリとして展開する。切替とリロードはフロントが行う。"""
+    try:
+        return await asyncio.to_thread(backup.restore, body.path, body.dest_root)
+    except KeyError:
+        raise HTTPException(404, "バックアップが見つかりません")
+    except FileExistsError as e:
+        raise HTTPException(409, str(e))
+    except (OSError, ValueError, zipfile.BadZipFile) as e:
+        raise HTTPException(400, f"展開できません: {e}")
 
 
 # ---- settings -------------------------------------------------------
