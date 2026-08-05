@@ -151,7 +151,8 @@ function LibraryMenu(): React.JSX.Element {
 
 export default function App(): React.JSX.Element {
   const [mode, setMode] = useState<Mode>('structure')
-  // 構造モードで選んでいたシーン。鑑賞モードを開いたときにそこへ飛ぶ
+  // モードをまたいで持ち回る「いま見ているシーン」。構造モードでは選択シーン、
+  // 鑑賞モードでは読んでいるシーンが入り、モードを切り替えるとそこへ飛ぶ
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   // 構造モードで見ていた章。鑑賞モードを開いたときのスコープになる(null = 全体)
   const [readerScopeGroupId, setReaderScopeGroupId] = useState<string | null>(null)
@@ -317,13 +318,18 @@ export default function App(): React.JSX.Element {
             {mode === 'structure' && (
               <StructureMode
                 settingsVersion={settingsVersion}
+                focusNodeId={selectedNodeId}
                 onSelectedNodeChange={setSelectedNodeId}
                 onSelectionCountChange={setSelectedCount}
                 onReaderScopeChange={setReaderScopeGroupId}
               />
             )}
             {mode === 'reader' && (
-              <ReaderMode focusNodeId={selectedNodeId} initialGroupId={readerScopeGroupId} />
+              <ReaderMode
+                focusNodeId={selectedNodeId}
+                initialGroupId={readerScopeGroupId}
+                onCurrentSceneChange={setSelectedNodeId}
+              />
             )}
             {mode === 'characters' && <CharactersMode />}
           </>

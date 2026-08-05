@@ -2040,11 +2040,13 @@ function RenderTab({
 
 function StructureModeInner({
   settingsVersion,
+  focusNodeId,
   onSelectedNodeChange,
   onSelectionCountChange,
   onReaderScopeChange
 }: {
   settingsVersion: number
+  focusNodeId?: string | null
   onSelectedNodeChange?: (nodeId: string | null) => void
   onSelectionCountChange?: (count: number) => void
   onReaderScopeChange?: (groupId: string | null) => void
@@ -2062,7 +2064,12 @@ function StructureModeInner({
   const [selectedChapterId, setSelectedChapterId] = useState<string | null>(null)
   const [characters, setCharacters] = useState<Character[]>([])
   const [places, setPlaces] = useState<Place[]>([])
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [selectedId, setSelectedId] = useState<string | null>(focusNodeId ?? null)
+  // 開いた直後に寄せるシーン(鑑賞モードで読んでいたシーン)。マウント時の値だけを使う
+  // ので、以後の選択の往復(親と同期している)でフォーカスが走り直すことはない
+  const [pendingFocusId, setPendingFocusId] = useState<string | null>(focusNodeId ?? null)
+  // 初回フォーカスを消化したか。済むまでは自動の全体表示(fitView)を止める
+  const focusDoneRef = useRef(!focusNodeId)
   const [inspectorTab, setInspectorTab] = useState<'beat' | 'render' | 'char' | 'graph' | 'facts'>('beat')
   const [validation, setValidation] = useState<string[]>([])
   const [instruction, setInstruction] = useState('')
@@ -3243,11 +3250,68 @@ function StructureModeInner({
     [effectiveView, chapterFlow, visibleIds, flowEdges]
   )
 
-  // ビューを切り替えたらノード構成が大きく変わるので、全体が見える位置へ
+  // ビューを切り替えたらノード構成が大きく変わるので、全体が見える位置へ。
+  // 開いた直後のフォーカス指定(鑑賞モードで読んでいたシーン)を消化するまでは、
+  // 全体表示で上書きしない(章の中に入る操作でもこの効果が走るため)
   useEffect(() => {
+    if (!focusDoneRef.current) return
     const timer = setTimeout(() => void reactFlow.fitView({ duration: 300, maxZoom: 1 }), 60)
     return () => clearTimeout(timer)
   }, [effectiveView, chapterView, reactFlow])
+
+  /** そのノードを選択して画面中央へ寄せる(ズームは保つ)。
+   *
+   * 矢印キーの移動と、開いた直後のフォーカス(鑑賞モードからの復帰)で共用する。
+   * 選択の持ち場所はシーンと章カードで別なので、どちらか一方だけが選ばれるようにする。
+   */
+  const focusNodeOnCanvas = useCallback(
+    (nodeId: string): void => {
+      const flow = reactFlow.getNode(nodeId)
+      if (flow) {
+        // ズームは保ったまま中央へ寄せる(F の fitBounds とは役割を分ける)
+        void reactFlow.setCenter(
+          flow.position.x + (flow.measured?.width ?? 288) / 2,
+          flow.position.y + (flow.measured?.height ?? FALLBACK_NODE_HEIGHT) / 2,
+          { zoom: reactFlow.getZoom(), duration: 300 }
+        )
+      }
+      const chapterId = nodeId.startsWith('chapter:') ? nodeId.slice('chapter:'.length) : null
+      setFlowNodes((prev) =>
+        prev.map((n) => (n.selected === (n.id === nodeId) ? n : { ...n, selected: n.id === nodeId }))
+      )
+      setChapterNodes((prev) =>
+        prev.map((n) => (n.selected === (n.id === nodeId) ? n : { ...n, selected: n.id === nodeId }))
+      )
+      setSelectedChapterId(chapterId)
+      setSelectedId(chapterId ? null : nodeId)
+    },
+    [reactFlow]
+  )
+
+  // 鑑賞モードで読んでいたシーンにフォーカスして開く(戻ったときに迷子にならない)。
+  // 章に畳まれて見えないときは、その章の中に入ってから寄せる
+  useEffect(() => {
+    // 画面に何か出てから判断する(ノードの構築前は「見えない」と区別が付かない)
+    if (!pendingFocusId || graphNodes.length === 0 || displayNodes.length === 0) return
+    const finish = (): void => {
+      focusDoneRef.current = true
+      setPendingFocusId(null)
+    }
+    const target = graphNodes.find((n) => n.id === pendingFocusId)
+    if (!target) return finish() // 鑑賞モードにいる間に消えたシーン
+    if (!displayNodes.some((n) => n.id === pendingFocusId)) {
+      // 章ビューでは章カードに畳まれている / 別の章の中を見ている
+      if (target.group_id && chapterView !== target.group_id) return setChapterView(target.group_id)
+      if (!target.group_id && chapterView !== 'flat') return setChapterView('flat')
+      return finish()
+    }
+    // ノードの実寸が入ってから寄せる(初回描画では measured が空で中心がずれる)
+    const timer = setTimeout(() => {
+      focusNodeOnCanvas(pendingFocusId)
+      finish()
+    }, 80)
+    return () => clearTimeout(timer)
+  }, [pendingFocusId, displayNodes, graphNodes, chapterView, focusNodeOnCanvas])
 
   // ---- キーボード操作 -------------------------------------------------
 
@@ -3303,28 +3367,7 @@ function StructureModeInner({
    */
   const navigateSelection = useCallback(
     (direction: 'left' | 'right' | 'up' | 'down'): void => {
-      const focus = (nextId: string): void => {
-        const flow = reactFlow.getNode(nextId)
-        if (flow) {
-          // ズームは保ったまま中央へ寄せる(F の fitBounds とは役割を分ける)
-          void reactFlow.setCenter(
-            flow.position.x + (flow.measured?.width ?? 288) / 2,
-            flow.position.y + (flow.measured?.height ?? FALLBACK_NODE_HEIGHT) / 2,
-            { zoom: reactFlow.getZoom(), duration: 300 }
-          )
-        }
-        // 選択の持ち場所はシーンと章カードで別。どちらか一方だけが選ばれるようにする
-        const chapterId = nextId.startsWith('chapter:') ? nextId.slice('chapter:'.length) : null
-        setFlowNodes((prev) =>
-          prev.map((n) => (n.selected === (n.id === nextId) ? n : { ...n, selected: n.id === nextId }))
-        )
-        setChapterNodes((prev) =>
-          prev.map((n) => (n.selected === (n.id === nextId) ? n : { ...n, selected: n.id === nextId }))
-        )
-        setSelectedChapterId(chapterId)
-        setSelectedId(chapterId ? null : nextId)
-      }
-
+      const focus = focusNodeOnCanvas
       const currentId =
         displayNodes.find((n) => n.selected)?.id ?? (selectedId ? navGraph.rep(selectedId) : null)
       if (!currentId) {
@@ -3350,7 +3393,7 @@ function StructureModeInner({
       if (!targetId) return
       focus(targetId)
     },
-    [displayNodes, selectedId, navGraph, reactFlow]
+    [displayNodes, selectedId, navGraph, focusNodeOnCanvas]
   )
 
   // キーボードショートカット(lm-graph と同じ): A = 全体表示 / F = 選択にフォーカス
@@ -4813,11 +4856,14 @@ function StructureModeInner({
 
 export default function StructureMode({
   settingsVersion = 0,
+  focusNodeId,
   onSelectedNodeChange,
   onSelectionCountChange,
   onReaderScopeChange
 }: {
   settingsVersion?: number
+  /** 開いたときにフォーカスするシーン(鑑賞モードで読んでいたシーン) */
+  focusNodeId?: string | null
   /** 選択シーンを親に伝える(鑑賞モードを開いたときにそこへ飛ぶため) */
   onSelectedNodeChange?: (nodeId: string | null) => void
   /** 範囲選択しているシーン数を親に伝える(ステータスバーの表示用) */
@@ -4829,6 +4875,7 @@ export default function StructureMode({
     <ReactFlowProvider>
       <StructureModeInner
         settingsVersion={settingsVersion}
+        focusNodeId={focusNodeId}
         onSelectedNodeChange={onSelectedNodeChange}
         onSelectionCountChange={onSelectionCountChange}
         onReaderScopeChange={onReaderScopeChange}

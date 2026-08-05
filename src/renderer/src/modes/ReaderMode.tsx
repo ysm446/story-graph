@@ -40,12 +40,15 @@ interface PageChunk {
 
 export default function ReaderMode({
   focusNodeId,
-  initialGroupId
+  initialGroupId,
+  onCurrentSceneChange
 }: {
   /** 構造モードで選んでいたシーン。開いたときにここへ飛ぶ */
   focusNodeId?: string | null
   /** 構造モードで見ていた章。開いたときのスコープになる(null = 全体) */
   initialGroupId?: string | null
+  /** いま読んでいるシーンを親に伝える(構造モードに戻ったときにそこへ寄せるため) */
+  onCurrentSceneChange?: (nodeId: string) => void
 } = {}): React.JSX.Element {
   // スタイルプリセット / POV / 本文フォントは構造モードの清書タブと共有する
   const style = useRenderStyle()
@@ -290,10 +293,15 @@ export default function ReaderMode({
   // 構造モードで選んでいたシーンへ移動する(開いた直後の一度だけ)。
   // ページモードはそのシーンを含む最初のページへ、それ以外はスクロール
   const focusedOnceRef = useRef(false)
+  // フォーカスを当て終わったか(いま読んでいるシーンの通知はこれを待つ)
+  const [focusApplied, setFocusApplied] = useState(false)
   useEffect(() => {
     if (focusedOnceRef.current || !focusNodeId || scenes.length === 0) return
     const index = scenes.findIndex((s) => s.node.id === focusNodeId)
-    if (index < 0) return // 正史外(分岐や島)のシーンは清書一覧に出ない
+    if (index < 0) {
+      setFocusApplied(true) // 正史外(分岐や島)のシーンは清書一覧に出ない
+      return
+    }
     focusedOnceRef.current = true
     if (viewMode === 'page') {
       // ページ分割の計算が終わるまで待ってから該当ページへ
@@ -303,13 +311,55 @@ export default function ReaderMode({
       }
       const page = pages.findIndex((p) => p.sceneIndex === index)
       if (page >= 0) setPageIndex(page)
+      setFocusApplied(true)
       return
     }
     // レイアウトが落ち着いてからスクロールする
     requestAnimationFrame(() => {
       document.getElementById(`reader-scene-${focusNodeId}`)?.scrollIntoView({ block: 'start' })
+      setFocusApplied(true)
     })
   }, [focusNodeId, scenes, viewMode, pages])
+
+  // いま読んでいるシーンを親に伝える(構造モードに戻ったときにそこへ寄せる)。
+  // 開いた直後のフォーカスが済むまでは黙っている(先頭シーンで上書きしないため)
+  const readyToReport = focusApplied || !focusNodeId
+
+  // ページモード: そのページが属するシーン
+  useEffect(() => {
+    if (viewMode !== 'page' || !readyToReport) return
+    const scene = currentChunk ? scenes[currentChunk.sceneIndex] : undefined
+    if (scene) onCurrentSceneChange?.(scene.node.id)
+  }, [viewMode, readyToReport, currentChunk, scenes, onCurrentSceneChange])
+
+  // 縦読み・挿絵分割: 画面の上端にあるシーン。スクロールのたびに更新する
+  useEffect(() => {
+    if (viewMode === 'page' || !readyToReport) return
+    const container = containerRef.current
+    if (!container) return
+    let frame = 0
+    const update = (): void => {
+      frame = 0
+      const top = container.getBoundingClientRect().top
+      let current: string | null = null
+      for (const scene of scenes) {
+        const section = document.getElementById(`reader-scene-${scene.node.id}`)
+        if (!section) continue
+        // 上端を少し過ぎたところで「そのシーンを読んでいる」と見なす
+        if (section.getBoundingClientRect().top > top + 80) break
+        current = scene.node.id
+      }
+      if (current) onCurrentSceneChange?.(current)
+    }
+    const onScroll = (): void => {
+      if (!frame) frame = requestAnimationFrame(update)
+    }
+    container.addEventListener('scroll', onScroll, { passive: true })
+    return () => {
+      container.removeEventListener('scroll', onScroll)
+      if (frame) cancelAnimationFrame(frame)
+    }
+  }, [viewMode, readyToReport, scenes, onCurrentSceneChange])
 
   // 清書はキューに積む(llama-server は 1 件ずつしか処理できない)。
   // 実行はステータスバーから見えて中止もできるので、ページを離れても平気
