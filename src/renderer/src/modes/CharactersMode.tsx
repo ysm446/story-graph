@@ -33,6 +33,10 @@ export default function CharactersMode(): React.JSX.Element {
     initial: CropState | null
   } | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  // プロフィール画像へのドラッグ&ドロップ。子要素をまたぐと dragleave が誤発火するので、
+  // 深さを数えて 0 になったときだけハイライトを消す(シーンの挿絵と同じ作り)
+  const [portraitDragOver, setPortraitDragOver] = useState(false)
+  const portraitDragDepth = useRef(0)
   const rowRef = useRef<HTMLDivElement | null>(null)
   // 左サイドバーの幅(ドラッグで変更。localStorage に保存)
   const [sidebarWidth, setSidebarWidth] = useState(() => {
@@ -58,6 +62,14 @@ export default function CharactersMode(): React.JSX.Element {
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
   }, [])
+
+  /** 選択・ドロップされた画像を切り抜きモーダルへ渡す(既に画像があれば差し替え)。
+   *  アイコンなので画像のみ受け付ける(挿絵と違って動画は扱わない)。 */
+  const acceptPortraitFile = (file: File | undefined): void => {
+    if (!file || !selectedId) return
+    if (!file.type.startsWith('image/')) return
+    setCropTarget({ source: file, isNewFile: true, initial: null })
+  }
 
   const openRecrop = (): void => {
     // 保存済みの元画像から切り抜き直す(前回の位置・ズームを復元)
@@ -357,9 +369,36 @@ export default function CharactersMode(): React.JSX.Element {
                   if (draft.portrait_source_path) openRecrop()
                   else fileInputRef.current?.click()
                 }}
-                className="group relative h-28 w-28 shrink-0 overflow-hidden rounded-full border-2"
-                style={{ borderColor: draft.color ?? '#8a8fa8', background: 'var(--bg-input)' }}
-                title={draft.portrait_source_path ? 'クリックで切り抜き直し' : 'クリックで画像を設定'}
+                onDragEnter={(e) => {
+                  e.preventDefault()
+                  portraitDragDepth.current += 1
+                  setPortraitDragOver(true)
+                }}
+                onDragOver={(e) => e.preventDefault()}
+                onDragLeave={() => {
+                  portraitDragDepth.current -= 1
+                  if (portraitDragDepth.current <= 0) {
+                    portraitDragDepth.current = 0
+                    setPortraitDragOver(false)
+                  }
+                }}
+                onDrop={(e) => {
+                  e.preventDefault()
+                  portraitDragDepth.current = 0
+                  setPortraitDragOver(false)
+                  acceptPortraitFile(e.dataTransfer.files?.[0])
+                }}
+                className="group relative h-28 w-28 shrink-0 overflow-hidden rounded-full border-2 transition-colors"
+                style={{
+                  borderColor: draft.color ?? '#8a8fa8',
+                  background: 'var(--bg-input)',
+                  ...(portraitDragOver ? { outline: '2px dashed var(--accent)', outlineOffset: 2 } : {})
+                }}
+                title={
+                  draft.portrait_source_path
+                    ? 'クリックで切り抜き直し / 画像をドロップで差し替え'
+                    : 'クリックで画像を設定 / 画像をドロップ'
+                }
               >
                 {assetUrl(draft.portrait_path) ? (
                   <img src={assetUrl(draft.portrait_path)!} className="h-full w-full object-cover" />
@@ -382,9 +421,8 @@ export default function CharactersMode(): React.JSX.Element {
                 onChange={(e) => {
                   const file = e.target.files?.[0]
                   e.target.value = ''
-                  if (!file || !selectedId) return
                   // 直接アップロードせず、切り抜きモーダルを挟む(元画像も保存される)
-                  setCropTarget({ source: file, isNewFile: true, initial: null })
+                  acceptPortraitFile(file)
                 }}
               />
               {/* 画像のすぐ下に画像操作(画像があるときだけ) */}
