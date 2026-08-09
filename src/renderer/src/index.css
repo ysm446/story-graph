@@ -56,6 +56,29 @@ textarea {
   resize: vertical;
 }
 
+/* フォーカス表示。キーボードで辿ったときに現在地が分かるようにする。
+   - :focus-visible なので、ボタンをマウスで押しただけでは出ない
+     (テキスト入力はクリックでも出る。編集中の欄が分かるほうが良いため)
+   - 各所で outline-none を当てているので、要素セレクタ + 擬似クラスで
+     ユーティリティクラスより強い詳細度にして上書きする
+   - 枠は内側(offset -2px)に描く。overflow:hidden の親(セグメントの外枠など)に
+     切り取られず、border-radius にも自動で沿うため */
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+[role='button']:focus-visible,
+[role='tab']:focus-visible {
+  outline: 2px solid var(--accent-border-bright);
+  outline-offset: -2px;
+}
+
+/* スライダーはつまみの色(.settings-slider:focus)で示すので枠は出さない */
+input[type='range']:focus-visible {
+  outline: none;
+}
+
 /* React Flow の暗色テーマ上書き(lm-graph から移植) */
 .react-flow__minimap {
   background: var(--bg-canvas);

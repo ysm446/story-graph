@@ -35,6 +35,8 @@
   - `更新日時: 2026-05-19 22:10`
 - `docs/changelog.md` は Git 履歴やユーザー向け変更を追うための履歴として使う。
 - `docs/reference/` 配下は設計資料、仕様メモ、調査資料を置く場所として使う。
+- `docs/design/` 配下は実装の設計ガイドを置く場所として使う。
+  全体設計(プロセス構成・データの流れ・どこに何を書くか)の入口は `docs/design/overview.md`。
 - `docs/plan/` 配下(`goals.md` / `plan.md` / `progress.md`)は進捗管理用の入口として保つ。
 
 ## バージョン管理

@@ -2,6 +2,24 @@
 
 ## 未リリース
 
+- 2026-08-09 16:20 **キーボードのフォーカス表示を付けた**(ユーザー要望。
+  [style-guide.md](design/style-guide.md) §5)。`outline-none` が 25 か所にあり `focus:` は
+  1 つも無かったため、**Tab で操作するといまどこにいるか分からなかった**。
+  - `index.css` の 1 か所で `a / button / input / textarea / select / [role=button] /
+    [role=tab]` にまとめて付けた(各所の `outline-none` は要素セレクタの詳細度で上書き)
+  - 枠は `--accent-border-bright` の 2px を**内側**(`outline-offset: -2px`)に描く。
+    セグメント切替のように `overflow-hidden` の親を持つボタンでも切り取られず、
+    角丸にも自動で沿うため
+  - `:focus-visible` を使うので、**マウスでボタンを押しただけでは出ない**。
+    テキスト入力はクリックでも出る(編集中の欄が分かるほうがよいため)
+  - スライダーは従来どおりつまみの色で示す(枠は出さない)。構造モードのキャンバスは
+    `disableKeyboardA11y` でノードをタブ順から外しているので対象外
+
+- 2026-08-09 16:00 **設計ドキュメントを 2 本追加**: [design/overview.md](design/overview.md)
+  (全体設計。プロセス構成・データの流れ・レイヤ・変更するときの指針)と
+  [design/style-guide.md](design/style-guide.md)(UI の具体値。色・タイポ・余白・部品の型・文言)。
+  どちらも既存コードの実測から起こしたもので、実装の変更は無い
+
 - 2026-08-09 15:00 **自動バックアップの保存先の既定を「ライブラリの中」にした**(ユーザー要望。
   設計: [backup.md](design/backup.md))。既定が `<ドキュメント>/story-graph-backups/` だったので、
   オンにするとライブラリの外にファイルが増えていた。
