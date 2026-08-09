@@ -431,6 +431,24 @@ function ExternalBackupSection(): React.JSX.Element {
     if (dir) await patchConfig({ dir })
   }
 
+  // 保存先を開く。まだ無いフォルダは main 側で作ってから開くので、
+  // 「押しても何も起きない」ようには見せない(開けなければ理由を出す)
+  const handleOpenDir = async (dir: string): Promise<void> => {
+    if (await window.storyGraph.openFolder(dir)) {
+      setError(null)
+      return
+    }
+    setError(`保存先フォルダを開けませんでした: ${dir}`)
+  }
+
+  const handleReveal = async (path: string): Promise<void> => {
+    if (await window.storyGraph.revealInFolder(path)) {
+      setError(null)
+      return
+    }
+    setError(`ファイルが見つかりませんでした: ${path}`)
+  }
+
   const handleRestore = async (): Promise<void> => {
     if (busy) return
     const zipPath = await window.storyGraph.chooseBackupZip()
@@ -592,7 +610,7 @@ function ExternalBackupSection(): React.JSX.Element {
                   ? { borderColor: 'var(--border-strong)', background: 'var(--accent-soft)', color: 'var(--text)' }
                   : { borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }
               }
-              title="オンにするとライブラリの中(<ライブラリ>/backups/)に置きます。ライブラリを切り替えても付いてきます"
+              title="既定はオン。ライブラリの中(<ライブラリ>/backups/)に置くので、ライブラリを切り替えても付いてきます"
             >
               {config.inside ? '☑' : '☐'} ライブラリの中
             </button>
@@ -610,7 +628,7 @@ function ExternalBackupSection(): React.JSX.Element {
               変更
             </button>
             <button
-              onClick={() => void window.storyGraph.openFolder(config.dir)}
+              onClick={() => void handleOpenDir(config.dir)}
               className="shrink-0 rounded-md border px-2 py-0.5 text-[11px]"
               style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
               title="保存先フォルダをエクスプローラーで開く"
@@ -619,8 +637,8 @@ function ExternalBackupSection(): React.JSX.Element {
             </button>
           </div>
           <p className="settings-field-hint">
-            「ライブラリの中」にすると `&lt;ライブラリ&gt;/backups/` に貯まり、フォルダを丸ごと運べば
-            バックアップも一緒に付いてきます(ライブラリを切り替えても迷子になりません)。
+            <b>既定は「ライブラリの中」</b>です。`&lt;ライブラリ&gt;/backups/` に貯まるので、
+            フォルダを丸ごと運べばバックアップも一緒に付いてきます(ライブラリを切り替えても迷子になりません)。
             ただし<b>フォルダごと失う事故には効かない</b>ので、そこまで備えるなら外のフォルダ
             (別ドライブやクラウド同期フォルダ)を選んでください。zip には画像・動画も入るため、
             中に置くとライブラリのサイズがその分ふくらみます。
@@ -647,7 +665,7 @@ function ExternalBackupSection(): React.JSX.Element {
                 {new Date(entry.modified_at).toLocaleString('ja-JP')} / {fmtSize(entry.size)}
               </span>
               <button
-                onClick={() => void window.storyGraph.revealInFolder(entry.path)}
+                onClick={() => void handleReveal(entry.path)}
                 className="shrink-0 rounded-md px-1 text-[11px]"
                 style={{ color: 'var(--text-faint)' }}
                 title="このファイルの場所を開く"

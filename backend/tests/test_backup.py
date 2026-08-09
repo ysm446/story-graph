@@ -130,15 +130,18 @@ def test_restore_ignores_zip_slip_entries(store, tmp_path):
 
 def test_config_defaults_and_update(store):
     config = backup.get_config(store)
-    assert config["enabled"] is False  # 既定は無効(勝手に外へファイルを作らない)
+    assert config["enabled"] is False  # 既定は無効(作者が保存先を確かめてから始める)
     assert config["keep"] == backup.DEFAULT_KEEP
-    assert config["dir"].endswith("lib")  # <ドキュメント>/story-graph-backups/<ライブラリ名>
+    assert config["inside"] is True  # 既定はライブラリの中(<ライブラリ>/backups/)
+    assert config["dir"] == str(Path(store.root) / backup.INSIDE_DIR)
+    assert config["outside_dir"].endswith("lib")  # <ドキュメント>/story-graph-backups/<ライブラリ名>
     assert config["last_at"] is None
 
     updated = backup.set_config(store, enabled=True, dir="D:/backups", keep=3)
     assert updated == {
         **config,
         "enabled": True,
+        "inside": False,  # フォルダを選んだ = 外に置く
         "dir": "D:/backups",
         "outside_dir": "D:/backups",
         "keep": 3,

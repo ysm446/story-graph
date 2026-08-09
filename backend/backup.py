@@ -79,11 +79,12 @@ def get_config(store: Store) -> dict[str, Any]:
         keep = int(settings.get("backup_keep") or DEFAULT_KEEP)
     except ValueError:
         keep = DEFAULT_KEEP
-    inside = settings.get("backup_inside") == "1"
+    # 既定はライブラリの中。外に置くのは作者が明示的に選んだときだけ
+    inside = (settings.get("backup_inside") or "1") == "1"
     # 外に置くときのパスは inside でも保持しておく(戻したときに選び直さなくてよい)
     outside = (settings.get("backup_dir") or "").strip() or default_dir(store.root)
     return {
-        # 既定は無効。ライブラリの外(ドキュメント配下)に勝手にファイルを作らない
+        # 既定は無効。作者が保存先を確かめてから始める
         "enabled": settings.get("backup_auto") == "1",
         "inside": inside,
         "dir": inside_dir(store.root) if inside else outside,

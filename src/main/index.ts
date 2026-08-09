@@ -336,11 +336,18 @@ app.whenReady().then(async () => {
     shell.showItemInFolder(filePath)
     return true
   })
-  // フォルダ自体を開く(バックアップの保存先など)
+  // フォルダ自体を開く(バックアップの保存先など)。
+  // 保存先はまだ一度もバックアップしていないと存在しないので、その場で作ってから開く
+  // (作れない・開けないときは false を返し、呼び出し側がその旨を出す)
   ipcMain.handle('shell:openFolder', async (_event, dirPath: string) => {
-    if (!existsSync(dirPath)) return false
-    await shell.openPath(dirPath)
-    return true
+    if (!dirPath) return false
+    try {
+      if (!existsSync(dirPath)) mkdirSync(dirPath, { recursive: true })
+    } catch {
+      return false
+    }
+    const error = await shell.openPath(dirPath)
+    return !error
   })
   createWindow()
   void ensureSidecar().catch((error) => console.error('[sidecar] 起動失敗:', error))
