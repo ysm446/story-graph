@@ -429,6 +429,33 @@ export interface RenderStreamEvent {
   error?: string
 }
 
+/** 清書が 1 シーン書き上がったことを知らせる購読口(戻り値を呼ぶと解除)。
+ *
+ * 清書はモードをまたいで残るタスクキュー(tasks.ts)で走るので、**走らせた画面と
+ * 読んでいる画面が違うことがある**(構造モードで一括清書 → 鑑賞モードへ移動、など)。
+ * 誰が走らせても届くよう、HTTP の窓口である renderStream から配る。
+ */
+type RenderSavedListener = (nodeId: string) => void
+
+const renderSavedListeners = new Set<RenderSavedListener>()
+
+export function onRenderSaved(listener: RenderSavedListener): () => void {
+  renderSavedListeners.add(listener)
+  return () => {
+    renderSavedListeners.delete(listener)
+  }
+}
+
+function emitRenderSaved(nodeId: string): void {
+  for (const listener of [...renderSavedListeners]) {
+    try {
+      listener(nodeId)
+    } catch {
+      // 購読側の失敗で清書のストリームを止めない
+    }
+  }
+}
+
 export function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === 'AbortError'
 }
@@ -573,7 +600,10 @@ export async function renderStream(
       for (const part of parts) {
         const line = part.trim()
         if (line.startsWith('data: ')) {
-          onEvent(JSON.parse(line.slice(6)) as RenderStreamEvent)
+          const data = JSON.parse(line.slice(6)) as RenderStreamEvent
+          onEvent(data)
+          // 保存が済んだシーンは、走らせた画面以外にも知らせる(鑑賞モードの読み直し)
+          if (data.scene_done) emitRenderSaved(data.scene_done)
         }
       }
     }

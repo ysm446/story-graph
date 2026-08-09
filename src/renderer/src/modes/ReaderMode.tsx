@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { api, assetUrl, isAbortError, isVideoAsset, renderStream } from '../api'
+import { api, assetUrl, isAbortError, isVideoAsset, onRenderSaved, renderStream } from '../api'
 import { CrossfadeLoopVideo, DEFAULT_VIDEO_CROSSFADE_SECONDS } from '../CrossfadeLoopVideo'
 import { FONT_OPTIONS, FONT_SIZES, RenderStyleControls, useRenderStyle } from '../RenderStyle'
 import { cancelTask, enqueueTask, useTasks } from '../tasks'
@@ -242,13 +242,18 @@ export default function ReaderMode({
     return () => window.removeEventListener('keydown', onKey)
   }, [viewMode, pages.length])
 
+  // 読み直しが重なったとき(清書が連続で書き上がる等)、遅れて届いた古い結果で
+  // 新しい結果を上書きしないよう、最後に始めたものだけを採る
+  const reloadSeqRef = useRef(0)
   const reloadScenes = useCallback(async (): Promise<void> => {
     if (!presetId) return
+    const seq = ++reloadSeqRef.current
     try {
       const [sceneList, groupList] = await Promise.all([
         api.listRenders(presetId, povChar, scopeGroupId),
         api.listGroups()
       ])
+      if (seq !== reloadSeqRef.current) return
       setScenes(sceneList)
       setGroups(groupList)
       // 章を解除された等でスコープの章が無くなっていたら全体に戻す
@@ -289,6 +294,12 @@ export default function ReaderMode({
   useEffect(() => {
     void reloadScenes()
   }, [reloadScenes])
+
+  // 清書が書き上がったら、その場で読み直す。
+  // 清書はモードをまたぐタスクキューで走るので、**構造モードで走らせた清書が
+  // 読んでいる最中に届く**ことがある(自分で走らせた分もここで拾う)。
+  // 読んでいる位置(スクロール・ページ)は動かさない
+  useEffect(() => onRenderSaved(() => void reloadScenes()), [reloadScenes])
 
   // 構造モードで選んでいたシーンへ移動する(開いた直後の一度だけ)。
   // ページモードはそのシーンを含む最初のページへ、それ以外はスクロール
@@ -406,7 +417,7 @@ export default function ReaderMode({
                 setLiveNodeId(null)
                 setLiveText('')
                 doneCount += 1
-                void reloadScenes()
+                // 読み直しは onRenderSaved の購読が拾う(走らせた画面を問わないため)
               } else if (e.error) {
                 setStatus(`エラー: ${e.error}`)
               } else if (e.done) {
