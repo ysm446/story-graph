@@ -1067,15 +1067,25 @@ export default function ChatDrawer({
                   {item.proposals.map((p, j) => (
                     <div
                       key={j}
-                      className="w-60 rounded-xl border p-2.5"
+                      className="flex w-60 flex-col rounded-xl border p-2.5"
                       style={{ background: 'var(--bg-card)', borderColor: 'var(--accent-border)' }}
                     >
                       <div className="mb-1 text-[12px] font-semibold" style={{ color: 'var(--text)' }}>
                         {p.title}
                       </div>
-                      <div className="mb-1.5 line-clamp-4 text-[11px] leading-relaxed" style={{ color: 'var(--text-dim)' }}>
+                      {/* ビートは省略せず全文出す(挿入されるのはこの文章そのものなので、
+                          読み切ってから決められるようにする)。改行も保つ */}
+                      <div
+                        className="mb-1.5 whitespace-pre-wrap text-[11px] leading-relaxed"
+                        style={{ color: 'var(--text-dim)' }}
+                      >
                         {p.beat}
                       </div>
+                      {p.emotional_core && (
+                        <div className="mb-1.5 text-[10px] leading-relaxed" style={{ color: 'var(--text-faint)' }}>
+                          感情の核: {p.emotional_core}
+                        </div>
+                      )}
                       {p.cast && p.cast.length > 0 && (
                         <div className="mb-1.5 text-[10px]" style={{ color: 'var(--text-faint)' }}>
                           {p.cast.map(nameOf).join(', ')}
@@ -1085,7 +1095,7 @@ export default function ChatDrawer({
                       <button
                         onClick={() => void insertProposal(p)}
                         disabled={inserting || insertedTitles.has(p.title)}
-                        className="w-full rounded-md px-2 py-1 text-[11px] font-medium text-white disabled:opacity-50"
+                        className="mt-auto w-full rounded-md px-2 py-1 text-[11px] font-medium text-white disabled:opacity-50"
                         style={{ background: 'var(--accent)' }}
                       >
                         {insertedTitles.has(p.title) ? '挿入済み' : '⑂ ブランチとして挿入'}
