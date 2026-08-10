@@ -273,10 +273,8 @@ export default function ProofreadTextarea({
             onMouseDown={(e) => e.preventDefault()} // 選択を保ったまま押せるように
             onClick={run}
             disabled={busy || !value.trim()}
-            // 枠だけだと本文に埋もれて気付かれなかったので、アクセントの下地を敷いて
-            // hover で塗りつぶす(押せるものだと一目で分かる強さにする)。
-            // 色は class 側に置く —— style に書くと hover: が効かないため
-            className="inline-flex items-center gap-1.5 rounded-md border border-[var(--accent-border)] bg-[var(--accent-soft)] px-2.5 py-1 text-[12px] font-medium text-[var(--accent)] transition-colors hover:enabled:bg-[var(--accent)] hover:enabled:text-white disabled:opacity-40"
+            // 色は index.css の .accent-action(LLM を走らせるボタン共通)
+            className="accent-action inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[12px] font-medium disabled:opacity-40"
             title={
               !value.trim()
                 ? '文章を入力すると校正できます'

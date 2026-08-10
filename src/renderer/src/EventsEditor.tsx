@@ -521,8 +521,9 @@ export default function EventsEditor({
           <button
             onClick={runExtract}
             disabled={saving || extractTask !== null}
-            className="rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-50"
-            style={{ borderColor: 'var(--accent-border)', color: 'var(--accent)' }}
+            // 色は index.css の .accent-action(校正・自動生成と同じ「LLM を走らせる」見た目)
+            className="accent-action rounded-md border px-2 py-0.5 text-[11px] font-medium disabled:opacity-50"
+            title="シーン本文から、この場面で起きたこと(イベント)を LLM に取り出させます"
           >
             {extracting
               ? `処理中… (${extractElapsed}s)`

@@ -1,7 +1,7 @@
 # UI スタイルガイド(色・タイポ・余白・部品)
 
 作成日時: 2026-08-09 16:00
-更新日時: 2026-08-09 16:20
+更新日時: 2026-08-10 12:30
 
 新しい画面や部品を足すときに **見た目を揃えるための具体値** をまとめる。
 [overview.md](overview.md) がアーキテクチャの入口なら、本書は UI の入口。
@@ -144,6 +144,29 @@ Tailwind の既定スケール(`1 = 4px`)をそのまま使う。**使う段は�
   追加
 </button>
 ```
+
+### LLM を走らせるボタン(校正 / 自動生成 / 抽出 / 分岐生成)
+
+色は `index.css` の `.accent-action` に持たせる。**大きさは持たせない**ので、
+角丸・余白・文字サイズは置く場所に合わせて Tailwind 側で決める。
+
+```tsx
+<button
+  className="accent-action inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium disabled:opacity-40"
+  title="シーン本文からタイトルを自動生成"
+>
+  <Icon name="sparkle" size={11} /> 自動生成
+</button>
+```
+
+- 下地 `--accent-soft` + 枠 `--accent-border` + 文字 `--accent`、**hover で `--accent` に塗りつぶす**
+  (枠と文字だけだと本文に埋もれて気付かれない)
+- 大きさの目安: ラベルの横 `text-[11px] px-2 py-0.5` / 単独で置くもの `text-[12px] px-2.5 py-1` /
+  パネル内の横幅いっぱい `text-[13px] px-3 py-1.5`
+- **塗りつぶし固定(主ボタン)にはしない。** 同じ画面に何個も並ぶので、「保存」「まとめを作る」
+  のような 1 つだけの主ボタンと強さが並んでしまう
+- hover を CSS 側に置くのは、**インラインの `style` が `:hover` より強い**ため。
+  `style={{ color: ... }}` と書くと hover の色が効かない
 
 ### トグル(チェックの意味を持つボタン)
 
@@ -291,7 +314,9 @@ Tailwind の既定スケール(`1 = 4px`)をそのまま使う。**使う段は�
 2. **外部ライブラリの上書き**(React Flow、スクロールバー、`input[type=color]` など、
    自分では要素を書けないもの)
 3. **繰り返し使う複合部品**(`settings-*`、`chat-md`、`node-busy-ring` のように
-   擬似要素・keyframes・子孫セレクタが要るもの)
+   擬似要素・keyframes・子孫セレクタが要るもの)。
+   `accent-action` のように **`:hover` で色が変わるもの**もここに置く
+   (インラインの `style` は `:hover` より強いため、`style` に書くと hover が効かない)
 
 ## 9. 既知のブレ(直すときのメモ)
 

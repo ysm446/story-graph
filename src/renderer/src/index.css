@@ -169,6 +169,26 @@ input[type='range']:focus-visible {
   background: #40465b;
 }
 
+/* LLM を走らせる実行ボタン(校正 / 自動生成 / イベント抽出 / 分岐生成)の色。
+ *
+ * 枠と文字だけのアクセント色だと本文に埋もれて気付かれなかったので、下地を敷いて
+ * hover で塗りつぶす。**色だけ**をここに持ち、大きさ・角丸・余白は各所の Tailwind に任せる
+ * (同じ役割でも、ラベル横の小さいものと生成パネルの横幅いっぱいのものがあるため)。
+ * hover は style 属性では書けない(インラインの style が :hover より強い)ので CSS 側に置く。 */
+.accent-action {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+  color: var(--accent);
+  transition:
+    background-color 0.15s,
+    color 0.15s;
+}
+
+.accent-action:hover:not(:disabled) {
+  background: var(--accent);
+  color: #fff;
+}
+
 /* 設定画面のスライダー・カード(lm-chat の styles.css から移植) */
 .settings-field {
   display: flex;

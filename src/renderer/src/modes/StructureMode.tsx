@@ -698,8 +698,8 @@ function BeatTab({
               suggestField('title')
             }}
             disabled={suggesting !== null || !(draft.beat ?? '').trim()}
-            className="inline-flex items-center gap-1 rounded-md border px-1.5 py-px text-[10px] disabled:opacity-40"
-            style={{ borderColor: 'var(--accent-border)', color: 'var(--accent)' }}
+            // 色は index.css の .accent-action(校正ボタンなど LLM を走らせるボタン共通)
+            className="accent-action inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium disabled:opacity-40"
             title="シーン本文からタイトルを自動生成"
           >
             {suggesting === 'title' ? (
@@ -744,8 +744,8 @@ function BeatTab({
               suggestField('emotional_core')
             }}
             disabled={suggesting !== null || !(draft.beat ?? '').trim()}
-            className="inline-flex items-center gap-1 rounded-md border px-1.5 py-px text-[10px] disabled:opacity-40"
-            style={{ borderColor: 'var(--accent-border)', color: 'var(--accent)' }}
+            // 色は index.css の .accent-action(校正ボタンなど LLM を走らせるボタン共通)
+            className="accent-action inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium disabled:opacity-40"
             title="シーン本文から感情の核を自動生成"
           >
             {suggesting === 'emotional_core' ? (
@@ -4241,8 +4241,7 @@ function StructureModeInner({
                           handleGenerate(selectedId)
                         }}
                         disabled={!selectedId}
-                        className="w-full rounded-lg border px-3 py-1.5 text-[13px] font-medium disabled:opacity-40"
-                        style={{ borderColor: 'var(--accent-border)', color: 'var(--accent)' }}
+                        className="accent-action w-full rounded-lg border px-3 py-1.5 text-[13px] font-medium disabled:opacity-40"
                         title="選択ノードから what-if 分岐を draft として生成"
                       >
                         ⑂ 選択ノードから分岐を生成
