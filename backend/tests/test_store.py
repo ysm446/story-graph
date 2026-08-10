@@ -1116,3 +1116,84 @@ def test_graph_matches_get_node_shape(store):
         assert node == store.get_node(node["id"])
     n1_in_graph = next(n for n in graph["nodes"] if n["id"] == n1["id"])
     assert n1_in_graph["events"] == store.list_events(n1["id"])
+
+
+def test_remove_tail_member_then_resync_keeps_canon(store):
+    """章の末尾メンバーを外した後の resync が、間のシーンを正史から抜かないこと。
+
+    外したシーンは tail(章の最後の正史メンバー)と出口の間に挟まる形になるが、
+    出口自体は正史に乗っているので配線は正しい。_realign_boundaries がここで
+    挟み直すと、間のシーンが正史から黙って抜け落ちていた(2026-08-10 修正)。
+    """
+    n1, n2, n3 = _three_scenes(store)
+    store.create_group("第一章", [n1["id"], n2["id"], n3["id"]])
+    store.remove_node_from_group(n3["id"])
+    # 何かグラフ操作をすると _resync_canon → _realign_boundaries が走る
+    n4 = store.append_node({"beat": "b4", "cast": ["aya"]})
+    assert store.canon_path() == [n1["id"], n2["id"], n3["id"], n4["id"]]
+
+
+def test_append_after_detaching_ending_keeps_single_canon_chain(store):
+    """結末を切り離したまま末尾に + シーンしても canon エッジが二重にならないこと。
+
+    章があると canon_path(マーカー除外)の末尾には出口マーカーへの canon エッジが
+    残っており、無条件に canon で足すと正史の導出(fetchone)が不定になっていた。
+    """
+    n1, n2, n3 = _three_scenes(store)
+    store.create_group("第一章", [n1["id"], n2["id"], n3["id"]])
+    store.detach_node(store.active_ending())
+    store.append_node({"beat": "b4", "cast": ["aya"]})
+    dup = store.conn.execute(
+        "SELECT from_node, COUNT(*) AS c FROM edges WHERE is_canon = 1"
+        " GROUP BY from_node HAVING c > 1"
+    ).fetchall()
+    assert dup == []
+
+
+def test_membership_and_route_changes_mark_digest_stale(store):
+    """メンバーの出入り・ルート差し替えで、まとめに「要更新」が立つこと。"""
+    n1, n2, n3, g = _chapter_with_digest(store)
+    assert store.get_group(g["id"])["digest_stale"] == 0
+    island = store.append_node({"beat": "島", "cast": ["aya"]}, detached=True)
+    store.add_node_to_group(g["id"], island["id"])
+    assert store.get_group(g["id"])["digest_stale"] == 1
+    store.save_group_digest(g["id"], store.get_group(g["id"])["digest_events"])  # リセット
+    assert store.get_group(g["id"])["digest_stale"] == 0
+    store.remove_node_from_group(island["id"])
+    assert store.get_group(g["id"])["digest_stale"] == 1
+    store.save_group_digest(g["id"], store.get_group(g["id"])["digest_events"])  # リセット
+    branch = store.append_node({"beat": "if", "cast": ["aya"]}, parent_id=n1["id"], force_draft=True)
+    store.set_group_route(g["id"], branch["id"])
+    assert store.get_group(g["id"])["digest_stale"] == 1
+
+
+def test_delete_group_removes_digest_memories(store):
+    """章を解除したら、まとめの記憶行も消え、下流は生の状態に戻ること。
+
+    残すと検索・文脈に「亡霊の要約記憶」として出続けていた(2026-08-10 修正)。
+    """
+    n1, n2, n3, g = _chapter_with_digest(store)
+    digest_id = g["digest_events"][0]["id"]
+    assert store.conn.execute("SELECT 1 FROM memories WHERE id = ?", (digest_id,)).fetchone()
+    assert store.get_state(n3["id"])["chars"]["aya"]["memories"] == [digest_id]
+    store.delete_group(g["id"])
+    assert store.conn.execute("SELECT 1 FROM memories WHERE id = ?", (digest_id,)).fetchone() is None
+    assert len(store.get_state(n3["id"])["chars"]["aya"]["memories"]) == 2
+
+
+def test_replace_events_broken_payload_completes(store):
+    """壊れた payload でも置換が半端に止まらないこと(境界チェックは全波及に倒す)。"""
+    n1, n2, n3, g = _chapter_with_digest(store)
+    store.replace_events(n1["id"], [
+        {"type": "fact_set", "payload": {"scope": "char", "key": "k", "value": "v"}},  # char 欠落
+    ])
+    assert [e["type"] for e in store.list_events(n1["id"])] == ["fact_set"]
+
+
+def test_save_render_stale_flag(store):
+    """save_render(stale=True) は最初から stale で保存される(清書中の編集検知用)。"""
+    _setup_chars(store)
+    n1 = store.append_node({"beat": "b1", "cast": ["aya"]})
+    store.seed_presets()
+    store.save_render(n1["id"], "default-third", None, "散文", stale=True)
+    assert store.latest_render(n1["id"], "default-third", None)["stale"] == 1

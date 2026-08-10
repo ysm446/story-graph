@@ -61,6 +61,17 @@ def _rollback_pending() -> None:
         pass
 
 
+# create_task の戻りは握っておく(イベントループはタスクを弱参照しか持たず、
+# 参照ゼロのタスクは GC で途中終了することがある)
+_bg_tasks: set[asyncio.Task] = set()
+
+
+def _spawn_bg(coro) -> None:
+    task = asyncio.create_task(coro)
+    _bg_tasks.add(task)
+    task.add_done_callback(_bg_tasks.discard)
+
+
 @app.exception_handler(StarletteHTTPException)
 async def _http_error_rollback(request: Request, exc: StarletteHTTPException):
     _rollback_pending()
@@ -87,7 +98,7 @@ async def _startup() -> None:
             print(f"[assets] 未参照ファイルを {removed} 件削除しました")
     except Exception as e:  # GC の失敗で起動を止めない
         print(f"[assets] GC に失敗: {e}")
-    asyncio.create_task(_deferred_auto_backup())
+    _spawn_bg(_deferred_auto_backup())
 
 
 @app.on_event("shutdown")
@@ -210,7 +221,7 @@ async def switch_library(body: LibrarySwitchIn) -> dict[str, Any]:
         store.gc_assets()
     except Exception as e:  # GC の失敗で切替を止めない
         print(f"[assets] GC に失敗: {e}")
-    asyncio.create_task(_auto_backup_quietly())  # 開いたライブラリの日次チェック
+    _spawn_bg(_auto_backup_quietly())  # 開いたライブラリの日次チェック
     return {"root": store.root}
 
 
@@ -1344,11 +1355,18 @@ async def _write_backup(dest: str, *, include_snapshots: bool, kind: str) -> dic
 
 async def _run_auto_backup(force: bool = False) -> dict[str, Any]:
     async with _backup_lock:
+        root = store.root
         plan = backup.plan_auto(store, force=force)
         if plan is None:
             return {"skipped": True, "config": backup.get_config(store)}
         result = await _write_backup(plan["dest"], include_snapshots=False, kind="auto")
-        removed = backup.record_auto(store, plan, result)
+        if store.root != root:
+            # zip 書き出し中にライブラリが切り替わった。settings への記録は今の
+            # (別の)ライブラリに落ちてしまうので諦める(元のライブラリは次回の
+            # 契機で撮り直される)。古い zip の整理だけは plan の対象で行う
+            removed = backup.rotate(plan["dir"], plan["name"], plan["keep"])
+        else:
+            removed = backup.record_auto(store, plan, result)
     return {"skipped": False, "removed": removed, **result, "config": backup.get_config(store)}
 
 

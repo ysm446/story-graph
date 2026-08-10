@@ -40,7 +40,7 @@ export default function ImageCropModal({
   title: string
   initial?: CropState | null
   onCancel: () => void
-  onCropped: (blob: Blob, state: CropState) => void
+  onCropped: (blob: Blob, state: CropState) => void | Promise<void>
 }): React.JSX.Element {
   const [imageUrl, setImageUrl] = useState<string | null>(null)
   const [crop, setCrop] = useState(initial?.crop ?? { x: 0, y: 0 })
@@ -69,9 +69,12 @@ export default function ImageCropModal({
     setError(null)
     try {
       const blob = await cropToBlob(imageUrl, croppedArea)
-      onCropped(blob, { crop, zoom })
+      await onCropped(blob, { crop, zoom })
     } catch (e) {
       setError(String(e))
+    } finally {
+      // 保存に失敗すると親はモーダルを残す。busy を戻さないと「処理中…」の
+      // まま二度と押せなくなる(成功時は親が閉じるので戻しても害はない)
       setBusy(false)
     }
   }

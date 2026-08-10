@@ -205,7 +205,7 @@ export default function CharactersMode(): React.JSX.Element {
           initial={cropTarget.initial}
           title="プロフィール画像の切り抜き"
           onCancel={() => setCropTarget(null)}
-          onCropped={(blob, state) => void handleCropped(blob, state)}
+          onCropped={handleCropped}
         />
       )}
       <aside

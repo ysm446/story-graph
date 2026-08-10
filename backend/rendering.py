@@ -244,14 +244,20 @@ async def render_stream(
                 return
             if node.get("kind"):
                 continue  # はじまり / 結末マーカーは清書しない
-            # 直前シーンの散文末尾(スライディングウィンドウ)
+            # 直前シーンの散文末尾(スライディングウィンドウ)。正史ならその並び、
+            # 分岐・島・非正史の章も自分の道の 1 つ前のシーンに接続する
             prev_tail = None
             if node_id in canon:
                 idx = canon.index(node_id)
-                if idx > 0:
-                    prev = store.latest_render(canon[idx - 1], preset_id, pov_char)
-                    if prev:
-                        prev_tail = prev["prose"][-PREV_TAIL_CHARS:]
+                prev_id = canon[idx - 1] if idx > 0 else None
+            else:
+                path = [n for n in store.path_to(node_id) if store._node_kind(n) is None]
+                idx = path.index(node_id) if node_id in path else 0
+                prev_id = path[idx - 1] if idx > 0 else None
+            if prev_id:
+                prev = store.latest_render(prev_id, preset_id, pov_char)
+                if prev:
+                    prev_tail = prev["prose"][-PREV_TAIL_CHARS:]
             yield _sse({"scene_start": node_id, "title": node["title"]})
             chars = effective_target_chars(node, target_chars)
             messages = build_render_messages(store, node, preset, pov_char, prev_tail, chars)
@@ -268,12 +274,30 @@ async def render_stream(
                 prose_parts.append(delta)
                 yield _sse({"delta": delta})
             prose = "".join(prose_parts).strip()
+            # ストリーム中(await の合間)にシーンが編集されると、mark_dirty_downstream は
+            # 既存の清書行しか stale にできず、この後の保存が「編集前のビートの清書」を
+            # 最新(stale=0)として上書きしてしまう。編集を検知したら stale で保存する
+            current = store.get_node(node_id)
+            if current is None:
+                yield _sse({"error": f"清書中にシーンが削除されました: {node_id}"})
+                return
+            edited = current["updated_at"] != node["updated_at"] or [
+                (e["type"], e["payload"]) for e in current["events"]
+            ] != [(e["type"], e["payload"]) for e in node["events"]]
             # 統計はチャットの meta と同じ形に整えて保存する(UI の StatsLine を共用)。
             # 送った messages も控えとして丸ごと保存し、清書タブから確認できるようにする
             meta = _render_stats(raw_stats)
-            render = store.save_render(node_id, preset_id, pov_char, prose, meta=meta, prompt_messages=messages)
+            render = store.save_render(
+                node_id, preset_id, pov_char, prose, meta=meta, prompt_messages=messages, stale=edited
+            )
             yield _sse({"scene_done": node_id, "render": render})
         yield _sse({"done": True})
     except Exception as e:  # noqa: BLE001
+        # エラー時に半端な書き込みを次のリクエストへ持ち越さない(app.py の
+        # ロールバックハンドラは SSE 生成器内の例外には届かない)
+        try:
+            store.conn.rollback()
+        except Exception:  # noqa: BLE001
+            pass
         yield _sse({"error": f"{type(e).__name__}: {e}"})
 

@@ -70,14 +70,23 @@ export default function FactTimeline({
 }): React.JSX.Element {
   // 表示対象。null = 世界の facts
   const [target, setTarget] = useState<string | null>(() => characters[0]?.id ?? null)
-  const { keys, bands } = useMemo(() => buildBands(path, target), [path, target])
+  // 削除済み・読み込み前のキャラを指したままにしない(select に該当の option が
+  // 無いと先頭のキャラが選ばれて見えるのに、帯は居ないキャラで計算されてしまう)
+  const effectiveTarget =
+    target !== null && !characters.some((c) => c.id === target)
+      ? (characters[0]?.id ?? null)
+      : target
+  const { keys, bands } = useMemo(
+    () => buildBands(path, effectiveTarget),
+    [path, effectiveTarget]
+  )
   const gridWidth = Math.max(path.length, 1) * COLUMN_WIDTH
 
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center gap-2">
         <select
-          value={target ?? '__world__'}
+          value={effectiveTarget ?? '__world__'}
           onChange={(e) => setTarget(e.target.value === '__world__' ? null : e.target.value)}
           className="rounded-md border px-2 py-1 text-[12px]"
           style={{ background: 'var(--bg-input)', borderColor: 'var(--border)', color: 'var(--text-dim)' }}

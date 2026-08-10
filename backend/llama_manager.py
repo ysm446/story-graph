@@ -131,8 +131,12 @@ class LlamaManager:
     async def _wait_healthy(self, base_url: str, timeout_sec: float) -> bool:
         deadline = asyncio.get_event_loop().time() + timeout_sec
         while asyncio.get_event_loop().time() < deadline:
-            if self.proc is not None and self.proc.poll() is not None:
-                raise RuntimeError(f"llama-server が終了しました (exit {self.proc.returncode})")
+            proc = self.proc
+            if proc is None:
+                # ロード待ちの最中に stop()(/llm/stop)が proc を手放した
+                raise RuntimeError("llama-server は停止されました")
+            if proc.poll() is not None:
+                raise RuntimeError(f"llama-server が終了しました (exit {proc.returncode})")
             if await llm.health(base_url):
                 return True
             await asyncio.sleep(1.0)

@@ -572,7 +572,13 @@ function ExternalBackupSection(): React.JSX.Element {
                 max={99}
                 value={config.keep}
                 onChange={(e) => setConfig({ ...config, keep: Number(e.target.value) })}
-                onBlur={(e) => void patchConfig({ keep: Number(e.target.value) })}
+                // min/max はスピナーにしか効かない。空欄(Number('') = 0)や範囲外を
+                // そのまま送ると、保持数 0 = 自動バックアップが全部消える
+                onBlur={(e) => {
+                  const keep = Math.min(99, Math.max(1, Math.round(Number(e.target.value)) || 1))
+                  setConfig({ ...config, keep })
+                  void patchConfig({ keep })
+                }}
                 className="w-14 rounded-md border px-2 py-0.5 text-[12px] outline-none"
                 style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
               />
@@ -749,11 +755,14 @@ function SnapshotsSection(): React.JSX.Element {
   const handleDelete = async (snap: Snapshot): Promise<void> => {
     if (busy) return
     if (!window.confirm(`スナップショット「${snap.label}」を削除しますか?`)) return
+    setBusy(true) // 連打すると 2 発目の DELETE が 404 でエラー表示になる
     try {
       await api.deleteSnapshot(snap.id)
       await reload()
     } catch (e) {
       setError(String(e))
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -965,6 +974,9 @@ function LlamaInstaller(): React.JSX.Element {
 
   useEffect(() => {
     void refreshStatus()
+    // セクションを離れたら進行中のダウンロードを止める(残すと画面から見えない
+    // まま何 GB も落とし続け、止める手段もなくなる)
+    return () => abortRef.current?.abort()
   }, [])
 
   const selectedRelease = releases.find((r) => r.tag === selectedTag) ?? releases[0]

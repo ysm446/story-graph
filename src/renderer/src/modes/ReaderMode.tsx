@@ -81,6 +81,9 @@ export default function ReaderMode({
   // (rendering は実行が始まるまで立たないので、待機中はキューから引く)
   const renderQueued = useTasks().some((t) => t.label === '清書')
 
+  // 表示設定の復元が済んだか(scroll / page が確定する前にフォーカスを当てると、
+  // 直後のモード切替でフォーカスが失われる)
+  const [viewReady, setViewReady] = useState(false)
   // 鑑賞モードだけの表示設定(共有しないもの)
   useEffect(() => {
     void api
@@ -99,6 +102,7 @@ export default function ReaderMode({
       .catch(() => {
         /* 取れなければ既定の表示設定のまま */
       })
+      .finally(() => setViewReady(true))
   }, [])
 
   // ---- ページモード: 画面に収まる分量でページ分割する ----------------
@@ -295,6 +299,14 @@ export default function ReaderMode({
     void reloadScenes()
   }, [reloadScenes])
 
+  // タスクキューの runner はエンキュー時の closure を掴んだまま走るので、
+  // 実行中にプリセット / POV / スコープが変わっても最新の条件で読み直せるよう
+  // ref 経由で呼ぶ(古い closure の reloadScenes は古い条件の結果で上書きする)
+  const reloadScenesRef = useRef(reloadScenes)
+  useEffect(() => {
+    reloadScenesRef.current = reloadScenes
+  }, [reloadScenes])
+
   // 清書が書き上がったら、その場で読み直す。
   // 清書はモードをまたぐタスクキューで走るので、**構造モードで走らせた清書が
   // 読んでいる最中に届く**ことがある(自分で走らせた分もここで拾う)。
@@ -307,10 +319,14 @@ export default function ReaderMode({
   // フォーカスを当て終わったか(いま読んでいるシーンの通知はこれを待つ)
   const [focusApplied, setFocusApplied] = useState(false)
   useEffect(() => {
-    if (focusedOnceRef.current || !focusNodeId || scenes.length === 0) return
+    if (focusedOnceRef.current || !focusNodeId || scenes.length === 0 || !viewReady) return
     const index = scenes.findIndex((s) => s.node.id === focusNodeId)
     if (index < 0) {
-      setFocusApplied(true) // 正史外(分岐や島)のシーンは清書一覧に出ない
+      // 正史外(分岐や島)のシーンは清書一覧に出ない。一度きりの機会は使い切った
+      // ことにする(この後の「いま読んでいるシーン」の通知が focusNodeId として
+      // 戻ってきたとき、読んでいる位置へ飛び直さないため)
+      focusedOnceRef.current = true
+      setFocusApplied(true)
       return
     }
     focusedOnceRef.current = true
@@ -330,7 +346,7 @@ export default function ReaderMode({
       document.getElementById(`reader-scene-${focusNodeId}`)?.scrollIntoView({ block: 'start' })
       setFocusApplied(true)
     })
-  }, [focusNodeId, scenes, viewMode, pages])
+  }, [focusNodeId, scenes, viewMode, pages, viewReady])
 
   // いま読んでいるシーンを親に伝える(構造モードに戻ったときにそこへ寄せる)。
   // 開いた直後のフォーカスが済むまでは黙っている(先頭シーンで上書きしないため)
@@ -431,7 +447,7 @@ export default function ReaderMode({
         } finally {
           setRendering(false)
           setLiveNodeId(null)
-          void reloadScenes()
+          void reloadScenesRef.current()
         }
       }
     })
@@ -439,14 +455,22 @@ export default function ReaderMode({
   }
 
   const exportMarkdown = (): void => {
-    // 章に属すシーンは `# 章 / ## シーン` の階層で書き出す(未分類は ## のまま)
-    const parts = scenes
-      .filter((s) => s.render)
-      .map((s) => {
-        const chapter = chapterByFirstScene.get(s.node.id)
-        const head = chapter ? `# ${chapterLabel(chapter.number)} ${chapter.title}\n\n` : ''
-        return `${head}## ${s.node.title || '(無題)'}\n\n${s.render!.prose}`
-      })
+    // 章に属すシーンは `# 章 / ## シーン` の階層で書き出す(未分類は ## のまま)。
+    // 見出しは章の先頭シーンに付くが、そのシーンが未清書でも見出しは落とさず、
+    // 同じ章の次の清書済みシーンの前に出す
+    const parts: string[] = []
+    let pending: { id: string; title: string; number: number } | null = null
+    for (const s of scenes) {
+      const chapter = chapterByFirstScene.get(s.node.id)
+      if (chapter) pending = chapter
+      if (!s.render) continue
+      const head =
+        pending && s.node.group_id === pending.id
+          ? `# ${chapterLabel(pending.number)} ${pending.title}\n\n`
+          : ''
+      pending = null
+      parts.push(`${head}## ${s.node.title || '(無題)'}\n\n${s.render.prose}`)
+    }
     const blob = new Blob([parts.join('\n\n---\n\n')], { type: 'text/markdown;charset=utf-8' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')

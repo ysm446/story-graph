@@ -440,9 +440,11 @@ class Store:
             nxt = chain[pos[tail] + 1] if pos[tail] + 1 < len(chain) else None
             if nxt is None or nxt == out["id"]:
                 continue  # 既に出口を通って外へ出ている
-            if out["id"] in pos and pos[out["id"]] < pos[tail]:
-                # 出口が章の途中に取り残されている(道が章の外を通る形)。ここで
-                # 動かすと出口の下流が自分の上流になって循環するので警告に任せる
+            if out["id"] in pos:
+                # 出口自体は正史に乗っている。tail より上流に取り残されている形は
+                # 動かすと循環するので警告に任せる。tail より下流にある形(章から
+                # 外したシーンが tail と出口の間に挟まっている)も配線は正しく、
+                # ここで挟み直すと間のシーンが正史から抜け落ちるので触らない
                 continue
             self.conn.execute("DELETE FROM edges WHERE to_node = ?", (out["id"],))
             self.conn.execute("DELETE FROM edges WHERE to_node = ?", (nxt,))
@@ -601,14 +603,24 @@ class Store:
             as_canon = False
             on_canon_path = False
         elif parent_id is None and not force_draft:
-            # 正史末尾への追加 = アクティブな結末の直前に挿す(結末は末尾に居続ける)
+            # 正史末尾への追加 = アクティブな結末の直前に挿す(結末は末尾に居続ける)。
+            # 結末が浮いている(切り離して付け替えている最中)ときは、その親は
+            # 島の中なので使わない(見えているタイムラインの末尾へ足す)
             ending = self.active_ending()
-            ending_parent = self.parent_of(ending) if ending else None
+            ending_parent = (
+                self.parent_of(ending) if ending and self._ending_is_rooted(ending) else None
+            )
             if ending_parent is not None:
                 return self.insert_node_after(ending_parent, data, events, source=source)
             parent_id = canon[-1] if canon else None
-            as_canon = True
-            on_canon_path = True
+            # 末尾に既に canon の子が居る(切り離された結末への出口マーカー等)なら
+            # 分岐として足す。無条件に canon にすると canon エッジが二重になり、
+            # 正史の導出(fetchone)が不定になる
+            has_canon_child = self.conn.execute(
+                "SELECT 1 FROM edges WHERE from_node = ? AND is_canon = 1", (parent_id,)
+            ).fetchone() if parent_id else None
+            as_canon = has_canon_child is None
+            on_canon_path = as_canon
         else:
             if parent_id is None:
                 parent_id = canon[-1] if canon else None
@@ -1409,7 +1421,15 @@ class Store:
         # 章境界の early cutoff: まとめ済みの章の中の編集で、章末尾の状態が
         # 変わらないなら(記憶の文面修正など。ID 引き継ぎが前提)、境界の先の
         # 入力は凍結された digest ごと変わらないので、清書の stale を章内に閉じる
-        if boundary is not None and fold_mod.state_hash(self.get_state(boundary[0])) == boundary[1]:
+        cutoff = False
+        if boundary is not None:
+            try:
+                cutoff = fold_mod.state_hash(self.get_state(boundary[0])) == boundary[1]
+            except Exception:  # noqa: BLE001
+                # 新イベントが壊れていて fold できない: ここで例外を漏らすと置換が
+                # 半端なまま次のリクエストの commit で確定してしまう。全波及に倒す
+                cutoff = False
+        if cutoff:
             self._stale_renders_within_group(node_id)
         else:
             self.mark_dirty_downstream(node_id, commit=False)
@@ -1922,6 +1942,7 @@ class Store:
         if node_id not in group["node_ids"]:
             raise ValueError("その章のシーンではありません")
         self._realign_group_out(node_id)
+        self._mark_group_digest_stale(group_id)  # 読む道が変わる = まとめの材料が変わる
         self.conn.commit()
         ending = self.active_ending()
         out_id = group["out_id"]
@@ -1952,6 +1973,13 @@ class Store:
 
     def delete_group(self, group_id: str) -> None:
         """章を解除する(シーン自体はそのまま残る)。入口 / 出口は抜いて鎖を繋ぎ直す。"""
+        group = self.get_group(group_id)
+        old_digest = (group.get("digest_events") or []) if group else []
+        if group and old_digest:
+            # まとめの記憶行・索引を残すと、章が消えた後も検索・文脈に亡霊として
+            # 出続ける。下流は生の状態に戻るので波及もさせる(マーカー撤去の前に)
+            self._sync_digest_memories(group, old_digest, [])
+            self._propagate_from_boundary(group)
         markers = self.conn.execute(
             "SELECT id FROM nodes WHERE group_id = ? AND kind IN ('chapter_in','chapter_out')",
             (group_id,),
@@ -2006,6 +2034,7 @@ class Store:
         self.conn.executemany(
             "UPDATE nodes SET group_id = ? WHERE id = ?", [(group_id, n) for n in targets]
         )
+        self._mark_group_digest_stale(group_id)  # 材料(ルート)が変わりうる
         self.conn.commit()
         return next(g for g in self.list_groups() if g["id"] == group_id)
 
@@ -2016,6 +2045,7 @@ class Store:
             raise KeyError(f"node not found: {node_id}")
         if not node.get("group_id"):
             return
+        self._mark_digest_stale(node_id)  # group_id を消す前に(材料が減る)
         self.conn.execute("UPDATE nodes SET group_id = NULL WHERE id = ?", (node_id,))
         self.conn.commit()
 
@@ -2139,10 +2169,14 @@ class Store:
         (まとめが作られている章のみ)。commit は呼び出し側。"""
         row = self.conn.execute("SELECT group_id FROM nodes WHERE id = ?", (node_id,)).fetchone()
         if row and row["group_id"]:
-            self.conn.execute(
-                "UPDATE groups SET digest_stale = 1 WHERE id = ? AND digest_events IS NOT NULL",
-                (row["group_id"],),
-            )
+            self._mark_group_digest_stale(row["group_id"])
+
+    def _mark_group_digest_stale(self, group_id: str) -> None:
+        """章 ID 指定版(メンバーの出入り・ルート差し替え用)。commit は呼び出し側。"""
+        self.conn.execute(
+            "UPDATE groups SET digest_stale = 1 WHERE id = ? AND digest_events IS NOT NULL",
+            (group_id,),
+        )
 
     def _digest_boundary_for(self, node_id: str) -> tuple[str, str] | None:
         """node_id が「まとめ済みの章」のメンバーなら(章の境界ノード, 境界の状態ハッシュ)。
@@ -2447,17 +2481,19 @@ class Store:
         prose: str,
         meta: dict[str, Any] | None = None,
         prompt_messages: list[dict[str, Any]] | None = None,
+        stale: bool = False,
     ) -> dict[str, Any]:
         render_id = _new_id()
         self.conn.execute(
             "INSERT INTO renders(id, node_id, preset_id, pov_char, prose, stale, created_at, meta, prompt_messages)"
-            " VALUES(?,?,?,?,?,0,?,?,?)",
+            " VALUES(?,?,?,?,?,?,?,?,?)",
             (
                 render_id,
                 node_id,
                 preset_id,
                 pov_char,
                 prose,
+                1 if stale else 0,
                 _now(),
                 json.dumps(meta, ensure_ascii=False) if meta else None,
                 json.dumps(prompt_messages, ensure_ascii=False) if prompt_messages else None,

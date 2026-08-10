@@ -22,6 +22,7 @@ import {
   generateBeatStream,
   isAbortError,
   isVideoAsset,
+  onRenderSaved,
   reextractNodesStream,
   renderStream,
   uploadAsset
@@ -1455,8 +1456,11 @@ function ChapterTab({
   const [dirty, setDirty] = useState(false) // ローカル編集が未保存
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  // まとめの生成は LLM キューに積む(他の生成と同じ 1 件ずつの逐次実行)
-  const generateQueued = useTasks().some((t) => t.label === '章のまとめ')
+  // まとめの生成は LLM キューに積む(他の生成と同じ 1 件ずつの逐次実行)。
+  // ラベルだけで見ると別の章の生成待ちでもこの章のボタンが待機中になる
+  const generateQueued = useTasks().some(
+    (t) => t.kind === 'digest' && t.nodeId === group.id
+  )
 
   const charOf = (charId: string): Character | undefined => characters.find((c) => c.id === charId)
   const nameOf = (charId: string): string => charOf(charId)?.name ?? charId
@@ -1491,6 +1495,8 @@ function ChapterTab({
     enqueueTask({
       label: '章のまとめ',
       detail: group.title,
+      kind: 'digest',
+      nodeId: group.id, // 章 ID を目印にする(useTasks の絞り込み用)
       runner: async () => {
         await api.generateGroupDigest(group.id)
         notifyGraphChanged()
@@ -1851,6 +1857,26 @@ function RenderTab({
     }
     // updated_at はシーン編集後に stale 表示を取り直すために見る
   }, [node.id, node.updated_at, presetId, povChar])
+
+  // 自分以外が書いた清書(右クリックの一括清書・鑑賞モード発の清書)も
+  // 書き上がった時点で反映する。runner の setRender は積んだインスタンス
+  // にしか届かないので、保存通知から取り直す
+  useEffect(
+    () =>
+      onRenderSaved((savedNodeId) => {
+        if (savedNodeId !== node.id || !presetId) return
+        void api
+          .getRender(node.id, presetId, povChar)
+          .then((r) => {
+            const shown = shownRef.current
+            if (shown.nodeId === node.id && shown.presetId === presetId && shown.povChar === povChar) {
+              setRender(r.render)
+            }
+          })
+          .catch(() => undefined)
+      }),
+    [node.id, presetId, povChar]
+  )
 
   // 生成中は末尾に追従する
   const liveText = live?.nodeId === node.id ? live.text : null
@@ -4065,7 +4091,10 @@ function StructureModeInner({
             maxZoom={2}
             // ダブルクリックズームは章カードの「開く」と競合するので切る
             zoomOnDoubleClick={false}
-            fitView
+            // 鑑賞モードからの復帰でフォーカス予約があるときは初期の全体表示を
+            // 止める(描画が遅いと init の fitView が setCenter の後に走って、
+            // 当てたフォーカスを全体表示で上書きすることがある)
+            fitView={!pendingFocusId}
             panOnDrag={[1]}
             selectionOnDrag
             selectionMode={SelectionMode.Partial}
@@ -4755,6 +4784,9 @@ function StructureModeInner({
               />
             ) : chapterForPanel ? (
               <ChapterTab
+                // 章を切り替えたら state ごと作り直す(使い回すと、前の章の
+                // まとめの取得が遅れて届いたとき別の章のまとめとして表示・保存される)
+                key={chapterForPanel.id}
                 group={chapterForPanel}
                 number={groups.indexOf(chapterForPanel) + 1}
                 nodes={graphNodes}

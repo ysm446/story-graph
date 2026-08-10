@@ -168,19 +168,24 @@ def restore(store: Store, snap_id: str) -> None:
     src = _snapshot_path(root, snap_id)
     if not src.exists():
         raise KeyError(f"snapshot not found: {snap_id}")
-    create(store, "復元の前", kind="auto")
     db_path = Path(root) / "story-graph.db"
-    store.conn.commit()
-    store.conn.close()
+    tmp = db_path.with_name(db_path.name + ".restoring")
+    # 「復元の前」の自動保存が _prune を走らせ、復元対象(最古の auto)自身を
+    # 消すことがある。先に複製を確保してから自動保存する
+    shutil.copyfile(src, tmp)
     try:
-        # クローズで WAL はチェックポイント済みのはずだが、残骸があれば消す
-        for suffix in ("-wal", "-shm"):
-            Path(str(db_path) + suffix).unlink(missing_ok=True)
-        tmp = db_path.with_name(db_path.name + ".restoring")
-        shutil.copyfile(src, tmp)
-        os.replace(tmp, db_path)
+        create(store, "復元の前", kind="auto")
+        store.conn.commit()
+        store.conn.close()
+        try:
+            # クローズで WAL はチェックポイント済みのはずだが、残骸があれば消す
+            for suffix in ("-wal", "-shm"):
+                Path(str(db_path) + suffix).unlink(missing_ok=True)
+            os.replace(tmp, db_path)
+        finally:
+            store.conn = db_mod.connect(db_path)
     finally:
-        store.conn = db_mod.connect(db_path)
+        tmp.unlink(missing_ok=True)  # os.replace 済みなら存在しない
 
 
 def collect_asset_references(root: str, sqls: tuple[str, ...]) -> set[str]:

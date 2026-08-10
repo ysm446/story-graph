@@ -350,6 +350,12 @@ async def generate_beat_stream(
         async for chunk in _generate_beat_impl(store, base_url, instruction, parent_id, after_id):
             yield chunk
     except Exception as e:  # noqa: BLE001
+        # エラー時に半端な書き込みを次のリクエストへ持ち越さない(app.py の
+        # ロールバックハンドラは SSE 生成器内の例外には届かない)
+        try:
+            store.conn.rollback()
+        except Exception:  # noqa: BLE001
+            pass
         yield _sse({"error": f"{type(e).__name__}: {e}"})
 
 
@@ -770,6 +776,12 @@ async def _reextract(
         try:
             await extract_events(store, base_url, nid, keep_user_events)
         except Exception as e:  # noqa: BLE001
+            # replace_events が途中で失敗していると半端な置換が残っている。捨てて
+            # から次のノードへ(次の成功時の commit で確定してしまうのを防ぐ)
+            try:
+                store.conn.rollback()
+            except Exception:  # noqa: BLE001
+                pass
             failed.append({"node_id": nid, "title": title, "error": f"{type(e).__name__}: {e}"})
     yield _sse({"stage": "done", "total": len(order), "failed": failed})
 

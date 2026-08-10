@@ -382,7 +382,9 @@ export default function EventsEditor({
   onBusyChange: (busy: boolean) => void // キャンバス側のノードを光らせる
 }): React.JSX.Element {
   const [adding, setAdding] = useState<{ type: string; payload: Payload } | null>(null)
-  const [editing, setEditing] = useState<{ index: number; payload: Payload } | null>(null)
+  // 編集対象は添字でなく id で持つ(抽出などで events が入れ替わると添字は
+  // 別のイベントを指し、保存で無関係なイベントを上書きしてしまう)
+  const [editing, setEditing] = useState<{ id: string; payload: Payload } | null>(null)
   const [saving, setSaving] = useState(false) // 手動編集の保存中(このシーンだけの状態)
   const [error, setError] = useState<string | null>(null)
   const [validation, setValidation] = useState<string[]>([])
@@ -402,6 +404,11 @@ export default function EventsEditor({
     setAdding(null)
     setEditing(null)
   }, [node.id])
+
+  // 抽出などで events が入れ替わり、編集中のイベントが消えたらフォームを閉じる
+  useEffect(() => {
+    setEditing((cur) => (cur && !node.events.some((e) => e.id === cur.id) ? null : cur))
+  }, [node.events])
 
   const nameOf = (id: string): string =>
     characters.find((c) => c.id === id)?.name ?? (id || '(未選択)')
@@ -446,14 +453,20 @@ export default function EventsEditor({
     }
   }
 
+  // saving は save() の中でも立つが、latestEvents(getNode)の往復中が無防備に
+  // なる。連打すると 2 発目が 1 発目の反映前のイベント列を土台にして、全件置換で
+  // 打ち消してしまうので、各ハンドラの入口で同期的に立てる
   const handleDelete = (index: number): void => {
+    if (saving) return
     const targetId = node.events[index]?.id
     setEditing(null)
+    setSaving(true)
     void latestEvents().then((base) => save(toInputs(base.filter((e) => e.id !== targetId))))
   }
 
   const handleAdd = (): void => {
-    if (!adding) return
+    if (!adding || saving) return
+    setSaving(true)
     void latestEvents().then(async (base) => {
       const ok = await save([...toInputs(base), { type: adding.type, payload: adding.payload, source: 'user' }])
       if (ok) setAdding(null)
@@ -461,12 +474,13 @@ export default function EventsEditor({
   }
 
   const handleUpdate = (): void => {
-    if (!editing) return
-    const targetId = node.events[editing.index]?.id
+    if (!editing || saving) return
+    const targetId = editing.id
     const payload = editing.payload
+    setSaving(true)
     void latestEvents().then(async (base) => {
-      const events = toInputs(base).map((e, i) =>
-        base[i].id === targetId ? { ...e, payload, source: 'user' as const } : e
+      const events = toInputs(base).map((e) =>
+        e.id === targetId ? { ...e, payload, source: 'user' as const } : e
       )
       const ok = await save(events)
       if (ok) setEditing(null)
@@ -601,7 +615,7 @@ export default function EventsEditor({
       )}
 
       {node.events.map((e, index) => {
-        const open = editing?.index === index
+        const open = editing?.id === e.id
         // 編集中は入力中の payload を見る(「だれの」を変えたらアイコンも追う)
         const payload = open ? editing.payload : (e.payload as Payload)
         const eventChar = characters.find((c) => c.id === eventCharId(e.type, payload))
@@ -630,7 +644,7 @@ export default function EventsEditor({
                   {e.source}
                 </span>
                 <button
-                  onClick={() => setEditing(open ? null : { index, payload: { ...(e.payload as Payload) } })}
+                  onClick={() => setEditing(open ? null : { id: e.id, payload: { ...(e.payload as Payload) } })}
                   className="ml-auto text-[11px]"
                   style={{ color: open ? 'var(--accent)' : 'var(--text-faint)' }}
                   title="このイベントを編集"
@@ -654,7 +668,7 @@ export default function EventsEditor({
                     payload={editing.payload}
                     characters={characters}
                     factKeys={factKeys}
-                    onChange={(payload) => setEditing({ index, payload })}
+                    onChange={(payload) => setEditing({ id: e.id, payload })}
                   />
                   <div className="flex gap-2">
                     <button

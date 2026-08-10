@@ -430,6 +430,7 @@ export default function ChatDrawer({
     setChatId(null)
     setItems([])
     setInsertedTitles(new Set())
+    setEditingTurn(null) // 開きっぱなしの編集欄を前の会話から持ち越さない
     // アンカーは空に戻す(= 選択に追従する)。ここで埋めてしまうと、会話を
     // 始める前にシーンを選び直してもアンカーが動かなくなる
     setAnchorNode(null)
@@ -446,6 +447,7 @@ export default function ChatDrawer({
     setItems([])
     setInsertedTitles(new Set())
     setDynamicQuestions([])
+    setEditingTurn(null)
     setTemplateOffset(0)
     // 会話の途中で相手を変えたときは、その会話の時点(アンカー)を引き継ぐ。
     // まだ会話が始まっていなければ空に戻して選択に追従させる
@@ -469,6 +471,9 @@ export default function ChatDrawer({
     setRoleplay(chat.mode === 'roleplay')
     setInsertedTitles(new Set())
     setDynamicQuestions([])
+    // turn は会話ごとの添字なので、別の会話に持ち越すと同じ位置のメッセージに
+    // 前の会話の編集欄(と本文)が現れてしまう
+    setEditingTurn(null)
     if (!chat.char_id) void refreshSuggestions(chat.id, chat.anchor_node)
     void refreshUsage(chat.id, chat.anchor_node, chat.char_id ?? null)
     setItems(buildDisplay(chat.messages))
@@ -569,6 +574,9 @@ export default function ChatDrawer({
       abortRef.current = null
       setBusy(false)
       setLiveText('')
+      // 最初の送信が失敗して会話が作られなかったら、確定しかけたアンカーを
+      // 解いて選択への追従に戻す(凍ったままだと以後の送信が古いアンカーを使う)
+      if (!latestChatId) setAnchorNode(null)
       // 回答後に、会話を踏まえたフォローアップ質問へ差し替え、使用量も更新する。
       // 履歴一覧も取り直して、いま話したチャットを選び直せるようにする
       void refreshSuggestions(latestChatId, effectiveAnchor)

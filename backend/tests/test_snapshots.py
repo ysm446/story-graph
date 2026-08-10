@@ -76,6 +76,18 @@ def test_auto_without_root_is_noop():
         snapshots.create(store, "x")
 
 
+def test_restore_oldest_auto_at_capacity(store, monkeypatch):
+    """auto が満杯のとき最古の auto を復元しても、「復元の前」の自動保存の
+    prune が復元対象そのものを消さないこと(2026-08-10 修正)。"""
+    monkeypatch.setattr(snapshots, "MAX_AUTO", 2)
+    store.create_character({"name": "アヤ", "id": "aya"})
+    oldest = snapshots.create(store, "最古", kind="auto")
+    store.create_character({"name": "ケン", "id": "ken"})
+    snapshots.create(store, "新しい", kind="auto")
+    snapshots.restore(store, oldest["id"])
+    assert store.known_char_ids() == {"aya"}
+
+
 def test_prune_keeps_manual(store, monkeypatch):
     monkeypatch.setattr(snapshots, "MAX_AUTO", 3)
     manual = snapshots.create(store, "手動", kind="manual")

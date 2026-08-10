@@ -158,15 +158,22 @@ export function notifyGraphChanged(): void {
   for (const listener of graphChangeListeners) listener()
 }
 
-// LLM 処理中のノード(枠が時計まわりに光る)。再マウントしても復元される
+// LLM 処理中のノード(枠が時計まわりに光る)。再マウントしても復元される。
+// 同じシーンを対象にするタスクが重なる(単発の抽出 + 一括の作り直し等)ことが
+// あるので参照カウントで持つ。真偽だけだと先に終わった方が枠を消してしまう
+const busyCounts = new Map<string, number>()
 let busyNodeIds: ReadonlySet<string> = new Set<string>()
 const busyListeners = new Set<() => void>()
 
 export function setNodeBusy(nodeId: string | null, busy: boolean): void {
   if (!nodeId) return
-  if (busy === busyNodeIds.has(nodeId)) return
+  const count = Math.max(0, (busyCounts.get(nodeId) ?? 0) + (busy ? 1 : -1))
+  if (count > 0) busyCounts.set(nodeId, count)
+  else busyCounts.delete(nodeId)
+  const shouldGlow = count > 0
+  if (shouldGlow === busyNodeIds.has(nodeId)) return
   const next = new Set(busyNodeIds)
-  if (busy) next.add(nodeId)
+  if (shouldGlow) next.add(nodeId)
   else next.delete(nodeId)
   busyNodeIds = next
   for (const listener of busyListeners) listener()
