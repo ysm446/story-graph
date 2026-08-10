@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, isAbortError, proofreadStream } from './api'
+import { Icon } from './icons'
 import { useElapsedSeconds } from './useElapsed'
 
 /** 校正つきテキストエリア(アプリ共通)。
  *
  * - 内容に合わせて高さが伸びる(rows は最小の高さとして効く)
- * - テキストを選択すると「✎ 校正」ボタンが出る。選択がなければ全文が対象
+ * - 校正ボタンは**テキストエリアの下に常に出す**。選択していれば選択範囲、
+ *   していなければ全文が対象で、それがボタンの文言に出る
+ *   (以前は選択中しかボタンが出ず、全文校正できることに気付けなかった)
  * - 結果はポップアップにストリーミング表示し、「置換」で本文に反映する
  *   (反映後は「↩ 元に戻す」で校正前に戻せる)
  *
@@ -241,36 +244,55 @@ export default function ProofreadTextarea({
         onSelect={syncSelection}
         onKeyUp={syncSelection}
         onMouseUp={syncSelection}
+        // 別の欄へ移ったら選択は消えて見えるので、ボタンの文言も全文に戻す
+        // (校正ボタンは onMouseDown で既定動作を止めているため blur しない)
+        onBlur={() => setSelection(null)}
         className={`w-full resize-none overflow-hidden rounded-lg border px-3 py-2 text-[13px] leading-relaxed outline-none ${className}`}
         style={style}
       />
-      {/* 選択中に出る校正ボタン(選択が無いときは全文校正として使える) */}
-      {selection && !result && !busy && (
-        <button
-          type="button"
-          onMouseDown={(e) => e.preventDefault()} // 選択を保ったまま押せるように
-          onClick={run}
-          className="absolute bottom-2 right-2 rounded-md border px-2 py-0.5 text-[11px] shadow-lg shadow-black/30"
-          style={{ background: 'var(--bg-card)', borderColor: 'var(--accent-border)', color: 'var(--accent)' }}
-          title="選択した範囲を校正する"
-        >
-          ✎ 校正
-        </button>
-      )}
-      {/* 本文に重ねると 1 行目が読めなくなるので、テキストエリアの下に出す */}
-      {backup !== null && !result && (
-        <span className="mt-1 flex justify-end">
+      {/* 校正の操作列。本文に重ねると読めなくなるので、テキストエリアの下に置く。
+          ボタンは常に出し、いま何を校正するのか(選択範囲 / 全文)を文言で示す */}
+      {!disabled && (
+        <span className="mt-1 flex items-center justify-end gap-2">
+          {backup !== null && !result && (
+            <button
+              type="button"
+              onClick={() => {
+                onChange(backup)
+                setBackup(null)
+              }}
+              className="rounded-md border px-1.5 py-px text-[10px]"
+              style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }}
+              title="校正前の文章に戻す"
+            >
+              ↩ 元に戻す
+            </button>
+          )}
           <button
             type="button"
-            onClick={() => {
-              onChange(backup)
-              setBackup(null)
-            }}
-            className="rounded-md border px-1.5 py-px text-[10px]"
-            style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }}
-            title="校正前の文章に戻す"
+            onMouseDown={(e) => e.preventDefault()} // 選択を保ったまま押せるように
+            onClick={run}
+            disabled={busy || !value.trim()}
+            // 枠だけだと本文に埋もれて気付かれなかったので、アクセントの下地を敷いて
+            // hover で塗りつぶす(押せるものだと一目で分かる強さにする)。
+            // 色は class 側に置く —— style に書くと hover: が効かないため
+            className="inline-flex items-center gap-1.5 rounded-md border border-[var(--accent-border)] bg-[var(--accent-soft)] px-2.5 py-1 text-[12px] font-medium text-[var(--accent)] transition-colors hover:enabled:bg-[var(--accent)] hover:enabled:text-white disabled:opacity-40"
+            title={
+              !value.trim()
+                ? '文章を入力すると校正できます'
+                : selection
+                  ? '選択した部分だけを校正します(選択を外すと全文が対象になります)'
+                  : '全文を校正します(直したい部分を選んでから押すと、その部分だけを校正します)'
+            }
           >
-            ↩ 元に戻す
+            {busy ? (
+              `校正中… (${elapsed}s)`
+            ) : (
+              <>
+                <Icon name="pen" size={12} />
+                {selection ? '選択した部分を校正' : '全文を校正'}
+              </>
+            )}
           </button>
         </span>
       )}

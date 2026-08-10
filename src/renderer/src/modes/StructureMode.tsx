@@ -720,15 +720,10 @@ function BeatTab({
         />
       </label>
       <label className="block">
-        <span className="mb-1 flex items-center justify-between gap-1">
-          <span className={labelClass.replace('mb-1 block ', '')} style={{ color: 'var(--text-faint)' }}>
-            シーン(出来事の仕様書)
-          </span>
-          <span className="text-[10px]" style={{ color: 'var(--text-faint)' }}>
-            テキストを選ぶと校正できます
-          </span>
+        <span className={labelClass} style={{ color: 'var(--text-faint)' }}>
+          シーン(出来事の仕様書)
         </span>
-        {/* 高さの自動調整と「選択して校正」は共通コンポーネント側で行う。
+        {/* 高さの自動調整と校正ボタンは共通コンポーネント側で行う(ボタンは本文の下に常に出る)。
             長いシーン本文の一部を直すことがあるので、前後を文脈として渡す */}
         <ProofreadTextarea
           rows={4}

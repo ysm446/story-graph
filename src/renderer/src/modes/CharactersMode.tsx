@@ -480,7 +480,7 @@ export default function CharactersMode(): React.JSX.Element {
                 <span className="mb-1 block text-[12px]" style={{ color: 'var(--text-dim)' }}>
                   {f.label}
                 </span>
-                {/* 高さの自動調整と「選択して校正」は共通コンポーネントに任せる */}
+                {/* 高さの自動調整と校正ボタン(本文の下に常に出る)は共通コンポーネントに任せる */}
                 <ProofreadTextarea
                   rows={f.rows}
                   value={(draft[f.key] as string | null) ?? ''}
