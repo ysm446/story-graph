@@ -3744,9 +3744,10 @@ function StructureModeInner({
 
   const selectedNode = graphNodes.find((n) => n.id === selectedId) ?? null
   const selectedCount = flowNodes.filter((n) => n.selected).length // ⟲ の対象(2 つ以上で部分整列)
-  // インスペクタに章パネルを出す章。シーンを選んでいるときはシーン優先。
-  // 章内ビューで何も選んでいないときは、その章のパネルを出しておく
-  const chapterForPanel = selectedNode
+  // 「いまどの章を指しているか」。シーンを選んでいるときはシーン優先(= null)、
+  // 章カードを選んでいればその章、章内ビューで何も選んでいなければその章。
+  // インスペクタの章パネル、相談チャットのアンカー、生成・追加の足し先で共用する
+  const activeGroup = selectedNode
     ? null
     : (groups.find((g) => g.id === selectedChapterId) ?? focusedGroup)
 
@@ -3763,7 +3764,7 @@ function StructureModeInner({
   // 章を選んでいるときは**その章の末尾シーン**を候補にする
   // (ヘッダーの「アンカー: ○○ まで」= その章の終わりまで、と読める)
   const chatAnchorId =
-    selectedId ?? (chapterForPanel ? (chapterForPanel.route.at(-1) ?? null) : null)
+    selectedId ?? (activeGroup ? (activeGroup.route.at(-1) ?? null) : null)
 
   /** 作ったばかりのシーンを、**実際に繋がった場所**へ置く(親が手動配置のときだけ)。
    *
@@ -3836,19 +3837,19 @@ function StructureModeInner({
         await handleAddDetached(undefined, focusedGroup.id)
         return
       }
-      // 章の中で何も選んでいないときは**その章の末尾**へ割り込ませる。
-      // 従来は正史の末尾(= 章の外)に付いていたので、章の中で足したつもりの
-      // シーンが章の外にできていた。シーンを選んでいるときは従来どおりその子
-      // (章の途中なら分岐になる)
-      const chapterTail = selectedId ? null : (focusedGroup?.route.at(-1) ?? null)
+      // 章を指しているときは**その章の末尾**へ割り込ませる(中に入っている章か、
+      // 選んでいる章カード)。従来は正史の末尾(= 章の外)に付いていたので、
+      // 章に足したつもりのシーンが章の外にできていた。シーンを選んでいるときは
+      // 従来どおりその子(章の途中なら分岐になる)
+      const chapterTail = selectedId ? null : (activeGroup?.route.at(-1) ?? activeGroup?.in_id ?? null)
       const draft = { beat: '(ここに出来事の仕様を書く)', cast: [] }
       const node = chapterTail
         ? await api.insertNodeAfter(chapterTail, draft)
         : await api.createNode({ ...draft, parent_id: selectedId ?? undefined })
       // 章の末尾に足したシーンはその章のものにする(未分類のままだと
       // 章ビューで章カードの外に出てしまう)
-      if (focusedGroup && chapterTail) {
-        await api.addNodeToGroup(focusedGroup.id, node.id).catch(() => undefined)
+      if (activeGroup && chapterTail) {
+        await api.addNodeToGroup(activeGroup.id, node.id).catch(() => undefined)
       }
       await placeCreatedNode(node.id)
       await reload()
@@ -3917,19 +3918,26 @@ function StructureModeInner({
   // 指示文は積んだ時点のものを使うので、入力欄はすぐ空にする
   const handleGenerate = (parentId: string | null, insertAfterId: string | null = null): void => {
     const promptText = instruction.trim() || null
-    // insertAfterId 指定時はそのシーンの直後に挟む(補間生成。
-    // docs/design/interpolation.md)。それ以外は、章の中では**その章の末尾
-    // (出口の手前)**に足す。渡さないと正史の末尾(= 物語の最後、章の外)に
-    // できてしまう。空の章では入口の直後へ
+    // insertAfterId(選択中のシーン)の直後へ足す。後続が居れば「間のシーン」に、
+    // 居なければその続きになる(どちらもサーバーの insert_node_after 任せ。
+    // docs/design/interpolation.md)。シーンを選んでいないときは、指している章の
+    // 末尾(出口の手前)へ。空の章では入口の直後へ。どれでもなければ渡さず、
+    // 正史の末尾(= 物語の最後)に足す
+    // 結末の先には繋げない(サーバーが拒否する)ので、結末マーカーを選んでいるときは
+    // 渡さず、従来どおり物語の末尾(= 結末の手前)への追加として扱う
+    const anchorId =
+      insertAfterId && graphNodes.find((n) => n.id === insertAfterId)?.kind !== 'ending'
+        ? insertAfterId
+        : null
     const afterId = parentId
       ? null
-      : (insertAfterId ?? focusedGroup?.route.at(-1) ?? focusedGroup?.in_id ?? null)
+      : (anchorId ?? activeGroup?.route.at(-1) ?? activeGroup?.in_id ?? null)
     // 生成されるノードはまだ存在しないので、続きを書く元のノードを光らせる
     const originId =
       parentId ?? afterId ?? (canonPath.length > 0 ? canonPath[canonPath.length - 1].id : null)
     setInstruction('')
     const taskId = enqueueTask({
-      label: parentId ? '分岐生成' : insertAfterId ? '間のシーン生成' : 'シーン生成',
+      label: parentId ? '分岐生成' : afterId && nextSceneOf(afterId) ? '間のシーン生成' : 'シーン生成',
       detail: promptText ?? '(指示なし)',
       runner: async ({ update, signal }) => {
         // 中止ボタンは「実行中」の生成を止める。最後に積んだ ID ではなく、
@@ -4287,14 +4295,20 @@ function StructureModeInner({
                       <button
                         onClick={() => {
                           setGenPanelOpen(false) // 生成中はキャンバスを広く使えるよう畳む
-                          handleGenerate(null, interpolateNext ? selectedId : null)
+                          // 選んでいるシーンの直後へ。後続が居れば間のシーン、居なければ
+                          // その続き(分岐の先端を選んでいれば、その枝が伸びる)
+                          handleGenerate(null, selectedId)
                         }}
                         className="w-full rounded-lg px-3 py-1.5 text-[13px] font-medium text-white"
                         style={{ background: 'var(--accent)' }}
                         title={
                           interpolateNext
                             ? `選択シーンと「${interpolateNext.title || '(無題)'}」の間に起こったことを推測して挟む`
-                            : '物語の末尾に次のシーンを生成'
+                            : selectedNode
+                              ? `「${selectedNode.title || '(無題)'}」の続きを生成`
+                              : activeGroup
+                                ? `「${activeGroup.title}」の末尾に次のシーンを生成`
+                                : '物語の末尾に次のシーンを生成'
                         }
                       >
                         {interpolateNext ? '▶ 間のシーンを生成' : '▶ 次のシーンを生成'}
@@ -4839,24 +4853,24 @@ function StructureModeInner({
                 selectedNodeId={selectedId}
                 onSelectNode={(nodeId) => setSelectedId(nodeId)}
               />
-            ) : chapterForPanel ? (
+            ) : activeGroup ? (
               <ChapterTab
                 // 章を切り替えたら state ごと作り直す(使い回すと、前の章の
                 // まとめの取得が遅れて届いたとき別の章のまとめとして表示・保存される)
-                key={chapterForPanel.id}
-                group={chapterForPanel}
-                number={groups.indexOf(chapterForPanel) + 1}
+                key={activeGroup.id}
+                group={activeGroup}
+                number={groups.indexOf(activeGroup) + 1}
                 nodes={graphNodes}
                 characters={characters}
                 onSelectScene={(nodeId) => {
                   // 章ビューから選んだ場合は章の中に入ってから選択する
-                  if (effectiveView === 'chapters') setChapterView(chapterForPanel.id)
+                  if (effectiveView === 'chapters') setChapterView(activeGroup.id)
                   setSelectedId(nodeId)
                 }}
                 onChanged={() => void reload()}
-                onRename={() => void renameChapter(chapterForPanel)}
-                onDissolve={() => void dissolveChapter(chapterForPanel)}
-                onSetCover={(nodeId) => void setChapterCover(chapterForPanel.id, nodeId)}
+                onRename={() => void renameChapter(activeGroup)}
+                onDissolve={() => void dissolveChapter(activeGroup)}
+                onSetCover={(nodeId) => void setChapterCover(activeGroup.id, nodeId)}
               />
             ) : selectedNode?.kind ? (
               // はじまり / 結末マーカーの簡易パネル
