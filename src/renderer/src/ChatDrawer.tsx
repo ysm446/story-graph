@@ -172,7 +172,9 @@ export default function ChatDrawer({
   canonTailId: string | null
   nodesById: Record<string, StoryNode>
   characters: Character[]
-  onGraphChanged: () => void
+  /** グラフを変えたことを親へ知らせる。シーンを作ったときはその ID も渡す
+   *  (親が実際の繋がりを見て置き場所を決める) */
+  onGraphChanged: (createdNodeId?: string) => void
   // 開閉と高さは親(構造モード)が持つ。相談チャットはノードエリアとの
   // 分割ペインなので、レイアウトの権限を親側に集約している
   open: boolean
@@ -645,7 +647,7 @@ export default function ChatDrawer({
       .map((entry) => characters.find((c) => c.id === entry || c.name === entry)?.id)
       .filter((id): id is string => !!id)
     try {
-      await api.createNode({
+      const node = await api.createNode({
         title: proposal.title,
         beat: proposal.beat,
         emotional_core: proposal.emotional_core,
@@ -655,7 +657,7 @@ export default function ChatDrawer({
         draft: true
       })
       setInsertedTitles((prev) => new Set(prev).add(proposal.title))
-      onGraphChanged()
+      onGraphChanged(node.id)
     } catch {
       setStatus('シーンの挿入に失敗しました')
     } finally {

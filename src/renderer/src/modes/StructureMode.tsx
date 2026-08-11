@@ -73,6 +73,7 @@ const GRID_SIZE = 20
 const COLUMN_GAP_X = 340 // カード幅(w-72 = 288)+ 余白。グリッドの倍数にする
 const LANE_GAP_Y = 60 // レーン間の余白(同上)
 const FALLBACK_NODE_HEIGHT = 160
+const NODE_WIDTH = 288 // カード幅(w-72)。重なり判定に使う
 
 /** グリッドに合わせた座標。整列や自動配置の結果も、手で動かしたときと同じ目に乗せる */
 const snapped = (value: number): number => Math.round(value / GRID_SIZE) * GRID_SIZE
@@ -133,6 +134,28 @@ function layoutDag(
     positions[id] = { x: p.depth * COLUMN_GAP_X, y: laneY[p.lane] ?? 0 }
   }
   return positions
+}
+
+/** desired に置くと既存のカードに重なるとき、下のレーンへ逃がした座標を返す。
+ *
+ *  つながりだけを見て置くと、同じ列に居る別の島や分岐のカードの真上に出てしまう
+ *  (下敷きになったカードは消えたように見える)。重なりが解けるまで下へ送る。
+ */
+function avoidingOverlap(
+  desired: { x: number; y: number },
+  height: number,
+  others: Array<{ x: number; y: number; height: number }>
+): { x: number; y: number } {
+  let y = desired.y
+  // 重なりを解くたびに y は必ず増えるので、この繰り返しは必ず終わる
+  for (let i = 0; i < 40; i += 1) {
+    const hit = others.find(
+      (o) => Math.abs(o.x - desired.x) < NODE_WIDTH && y < o.y + o.height && o.y < y + height
+    )
+    if (!hit) break
+    y = snapped(hit.y + hit.height + LANE_GAP_Y)
+  }
+  return { x: desired.x, y }
 }
 
 /** rootId とその下流のうち、**手動配置のノードだけ**を dx だけ右へずらす座標を返す。
@@ -3302,6 +3325,25 @@ function StructureModeInner({
     [reactFlow]
   )
 
+  /** 作ったばかりのシーンへ画面を寄せる。
+   *
+   * 物語は右へ伸びていくので、末尾や章の中に足したシーンは画面の外にできることが多い。
+   * 反映(reload → 再描画)が何回目で届くかは決まらないので、現れるまで数回試す。
+   * 章ビューなどで畳まれていて出てこないときは、そのまま何もしない。
+   */
+  const focusWhenReady = useCallback(
+    (nodeId: string): void => {
+      let tries = 0
+      const tick = (): void => {
+        if (reactFlow.getNode(nodeId)) return focusNodeOnCanvas(nodeId)
+        tries += 1
+        if (tries < 15) window.setTimeout(tick, 200)
+      }
+      window.setTimeout(tick, 200)
+    },
+    [reactFlow, focusNodeOnCanvas]
+  )
+
   // 鑑賞モードで読んでいたシーンにフォーカスして開く(戻ったときに迷子にならない)。
   // 章に畳まれて見えないときは、その章の中に入ってから寄せる
   useEffect(() => {
@@ -3726,73 +3768,65 @@ function StructureModeInner({
   const chatAnchorId =
     selectedId ?? (chapterForPanel ? (chapterForPanel.route.at(-1) ?? null) : null)
 
-  /** 新しいシーンを親の右隣に手動配置する(**親が手動配置のときだけ**)。
+  /** 作ったばかりのシーンを、**実際に繋がった場所**へ置く(親が手動配置のときだけ)。
    *
-   * 自動レイアウトの座標は「原点からの深さ」で決まるので、ドラッグで動かした
-   * ノードや画面中央に置いた島の子は、そのままだと親から遠く離れた場所
-   * (たいてい左)に出てしまう。親が自動配置なら何もしない — 自動レイアウトに
-   * 任せたほうが全体が揃うため。
+   * 親と後続は「作ったあとのグラフ」から読む。画面側で見当をつけた親(生成の起点や
+   * 選択中のシーン)と、サーバーが実際に繋いだ親は食い違う — 正史の末尾に足したつもりでも
+   * 結末マーカーの手前に挿さるし、章の中では章の出口マーカーの手前に挿さる。マーカーは
+   * 正史のシーン列から除いてあるので、見当をつけた親は 1 つ手前のシーンになり、
+   * その右隣(= マーカーが既に居る列)へ置いていた。結果、繋がっている場所とはまるで
+   * 別のところ、たいてい別の島のカードの上に新しいシーンが現れていた。
+   *
+   * 親が自動配置(pos が NULL)なら何もしない — 自動レイアウトに任せたほうが全体が揃う。
    */
-  const placeNextToParent = useCallback(
-    async (newNodeId: string, parentId: string | null): Promise<void> => {
-      if (!parentId) return
-      const parent = reactFlow.getNode(parentId) as BeatFlowNode | undefined
-      if (!parent || parent.data.storyNode.pos_x == null || parent.data.storyNode.pos_y == null) return
-      const height = parent.measured?.height ?? FALLBACK_NODE_HEIGHT
-      // 既にいる子の数だけ下のレーンへ(自動レイアウトと同じ考え方。重ならないように)
-      const siblings = reactFlow
-        .getEdges()
-        .filter((e) => e.source === parentId && e.target !== newNodeId).length
-      await api.setNodePosition(
-        newNodeId,
-        snapped(parent.position.x + COLUMN_GAP_X),
-        snapped(parent.position.y + siblings * (height + LANE_GAP_Y))
-      )
-    },
-    [reactFlow]
-  )
-
-  /** 割り込ませたシーンを「親と後続のあいだ」に置く(**親が手動配置のときだけ**)。
-   *
-   * 親が自動配置なら何もしない — 自動レイアウトは深さで並べるので、割り込んだ
-   * 時点で後続ごと右にずれ、放っておいても間に入る。
-   *
-   * 手動配置の領域では後続が動かないので、隙間が 1 列ぶんに足りなければ
-   * **後続から下流の手動配置ノードを 1 列ぶん右へ押し出して**場所を作る
-   * (2026-08-03 ユーザー要望。従来は重なりを避けて「後続の 1 レーン下」へ
-   * 逃がしていたが、割り込んだシーンが列から外れて見えていた)。
-   */
-  const placeBetween = useCallback(
-    async (parentId: string, newNodeId: string): Promise<void> => {
-      const parent = reactFlow.getNode(parentId) as BeatFlowNode | undefined
-      if (!parent || parent.data.storyNode.pos_x == null || parent.data.storyNode.pos_y == null) return
-      // 後続は「新しいシーンの子」。割り込みの向き先はサーバーが決めるので、
-      // ここで連鎖の規則を推測せず、繋がった結果を読む
+  const placeCreatedNode = useCallback(
+    async (newNodeId: string): Promise<void> => {
       const graph = await api.getGraph()
+      const parentId = graph.edges.find((e) => e.to_node === newNodeId)?.from_node ?? null
+      if (!parentId) return // どこにも繋がっていない島。位置は作った側が決める
+      const byId = new Map(graph.nodes.map((n) => [n.id, n]))
+      const parent = byId.get(parentId)
+      if (!parent || parent.pos_x == null || parent.pos_y == null) return
+      const heightOf = (id: string): number =>
+        reactFlow.getNode(id)?.measured?.height ?? FALLBACK_NODE_HEIGHT
+
+      // 割り込みなら親と後続のあいだへ。後続が居なければ親の右隣(末尾への追加)
       const successorId = graph.edges.find((e) => e.from_node === newNodeId)?.to_node ?? null
-      const successor = successorId
-        ? (reactFlow.getNode(successorId) as BeatFlowNode | undefined)
-        : undefined
-      if (!successorId || !successor) {
-        // 後続が居ない = 末尾への追加と同じ。親の右隣へ
-        await api.setNodePosition(
-          newNodeId,
-          snapped(parent.position.x + COLUMN_GAP_X),
-          snapped(parent.position.y)
-        )
-        return
+      const successor = successorId ? byId.get(successorId) : undefined
+      const shifted = new Map<string, { x: number; y: number }>()
+      let desired: { x: number; y: number }
+      if (successorId && successor && successor.pos_x != null && successor.pos_y != null) {
+        let successorX = successor.pos_x
+        // 手動配置の領域では後続が自分から動かないので、隙間が 1 列ぶんに足りなければ
+        // **後続から下流を 1 列ぶん右へ押し出して**場所を作る
+        if (successorX - parent.pos_x < COLUMN_GAP_X * 2) {
+          const moved = shiftDownstreamX(graph, successorId, COLUMN_GAP_X)
+          if (moved.length > 0) {
+            await api.setNodePositions(moved)
+            for (const m of moved) shifted.set(m.id, m)
+          }
+          successorX = shifted.get(successorId)?.x ?? successorX
+        }
+        desired = {
+          x: snapped((parent.pos_x + successorX) / 2),
+          y: snapped((parent.pos_y + successor.pos_y) / 2)
+        }
+      } else {
+        desired = { x: snapped(parent.pos_x + COLUMN_GAP_X), y: snapped(parent.pos_y) }
       }
-      let successorX = successor.position.x
-      if (successorX - parent.position.x < COLUMN_GAP_X * 2) {
-        const moved = shiftDownstreamX(graph, successorId, COLUMN_GAP_X)
-        if (moved.length > 0) await api.setNodePositions(moved)
-        successorX += COLUMN_GAP_X
-      }
-      await api.setNodePosition(
-        newNodeId,
-        snapped((parent.position.x + successorX) / 2),
-        snapped((parent.position.y + successor.position.y) / 2)
-      )
+
+      // 同じ列に既にカードが居るなら下のレーンへ(分岐や、隣に並んだ島の上に重ねない)
+      const others = graph.nodes
+        .filter((n) => n.id !== newNodeId)
+        .map((n) => {
+          const moved = shifted.get(n.id)
+          const x = moved?.x ?? n.pos_x
+          const y = moved?.y ?? n.pos_y
+          return x == null || y == null ? null : { x, y, height: heightOf(n.id) }
+        })
+        .filter((r): r is { x: number; y: number; height: number } => r !== null)
+      const at = avoidingOverlap(desired, heightOf(newNodeId), others)
+      await api.setNodePosition(newNodeId, at.x, at.y)
     },
     [reactFlow]
   )
@@ -3810,7 +3844,6 @@ function StructureModeInner({
       // シーンが章の外にできていた。シーンを選んでいるときは従来どおりその子
       // (章の途中なら分岐になる)
       const chapterTail = selectedId ? null : (focusedGroup?.route.at(-1) ?? null)
-      const parentId = selectedId ?? chapterTail ?? canonPath[canonPath.length - 1]?.id ?? null
       const draft = { beat: '(ここに出来事の仕様を書く)', cast: [] }
       const node = chapterTail
         ? await api.insertNodeAfter(chapterTail, draft)
@@ -3820,10 +3853,11 @@ function StructureModeInner({
       if (focusedGroup && chapterTail) {
         await api.addNodeToGroup(focusedGroup.id, node.id).catch(() => undefined)
       }
-      await placeNextToParent(node.id, parentId)
+      await placeCreatedNode(node.id)
       await reload()
       setSelectedId(node.id)
       setInspectorTab('beat')
+      focusWhenReady(node.id)
     } catch (e) {
       setGenStatus(`シーンを追加できません: ${String(e)}`)
     }
@@ -3872,10 +3906,11 @@ function StructureModeInner({
         beat: '(ここに出来事の仕様を書く)',
         cast: []
       })
-      await placeBetween(selectedId, node.id)
+      await placeCreatedNode(node.id)
       await reload()
       setSelectedId(node.id)
       setInspectorTab('beat')
+      focusWhenReady(node.id)
     } catch (e) {
       setGenStatus(`シーンを割り込ませられません: ${String(e)}`)
     }
@@ -3923,7 +3958,7 @@ function StructureModeInner({
                   e.validation && e.validation.length > 0 ? `警告付きで採用: ${e.validation.join(' / ')}` : null
                 )
                 const newId = e.node.id
-                void placeNextToParent(newId, originId)
+                void placeCreatedNode(newId)
                   .catch(() => undefined)
                   .then(() => {
                     // reload はこの runner を積んだ時点のインスタンスを握るため、
@@ -3931,6 +3966,7 @@ function StructureModeInner({
                     notifyGraphChanged()
                     setSelectedId(newId)
                     setInspectorTab('beat')
+                    focusWhenReady(newId)
                   })
               }
             },
@@ -4738,7 +4774,13 @@ function StructureModeInner({
                 canonTailId={canonPath.length > 0 ? canonPath[canonPath.length - 1].id : null}
                 nodesById={Object.fromEntries(graphNodes.map((n) => [n.id, n]))}
                 characters={characters}
-                onGraphChanged={() => void reload()}
+                onGraphChanged={(createdNodeId) => {
+                  void (async () => {
+                    // 提案カードから作ったシーンも、繋がった場所の隣へ置いてから映す
+                    if (createdNodeId) await placeCreatedNode(createdNodeId).catch(() => undefined)
+                    await reload()
+                  })()
+                }}
                 dynamicSuggestions={chatDynamicSuggestions}
               />
             </div>
