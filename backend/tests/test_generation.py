@@ -86,6 +86,53 @@ def test_generate_beat_after_id_inserts_inside_the_chapter(store, monkeypatch):
     assert store.canon_path() == [first["id"], new_id, later["id"]]
 
 
+def test_next_scene_after_skips_markers(store):
+    """補間の「次のシーン」解決(docs/design/interpolation.md §3)。"""
+    n1 = store.append_node({"beat": "b1", "cast": ["aya"], "title": "第1話"})
+    n2 = store.append_node({"beat": "b2", "cast": ["aya"], "title": "第2話"})
+    n3 = store.append_node({"beat": "b3", "cast": ["aya"], "title": "第3話"})
+    store.create_group("第一章", [n1["id"], n2["id"]])
+    store.create_group("第二章", [n3["id"]])
+    # 通常の後続
+    assert generation.next_scene_after(store, n1["id"])["id"] == n2["id"]
+    # 章末 → 出口・次章の入口を読み飛ばして次章の先頭シーン
+    assert generation.next_scene_after(store, n2["id"])["id"] == n3["id"]
+    # 最終シーンの先は結末マーカーのみ → 次のシーンは無い
+    assert generation.next_scene_after(store, n3["id"]) is None
+    # 島の一本道は唯一の子を辿る(canon エッジが無くても補間できる)
+    i1 = store.append_node({"beat": "島1", "cast": ["aya"]}, detached=True)
+    i2 = store.append_node({"beat": "島2", "cast": ["aya"]}, parent_id=i1["id"])
+    assert generation.next_scene_after(store, i1["id"])["id"] == i2["id"]
+    # 分岐していてどの間か決められないときは None(従来の末尾追加になる)
+    store.append_node({"beat": "島3", "cast": ["aya"]}, parent_id=i1["id"], force_draft=True)
+    assert generation.next_scene_after(store, i1["id"]) is None
+
+
+def test_generate_between_scenes_uses_next_scene_context(store, monkeypatch):
+    """補間生成(after_id に後続がある)は次のシーンを文脈に入れ、間に挿入される。"""
+    sent: list[list[dict[str, str]]] = []
+
+    async def fake_chat_json(messages, **kwargs):
+        sent.append(messages)
+        return _valid_result()
+
+    monkeypatch.setattr(llm_mod, "chat_json", fake_chat_json)
+    n1 = store.append_node({"beat": "アヤが旅立つ", "cast": ["aya"], "title": "旅立ち"})
+    n2 = store.append_node({"beat": "アヤが都に着く", "cast": ["aya"], "title": "到着"})
+    events = collect_sse(
+        generation.generate_beat_stream(store, "http://fake", None, after_id=n1["id"])
+    )
+    new_id = events[-1]["node"]["id"]
+    assert store.canon_path() == [n1["id"], new_id, n2["id"]]  # 間に挟まる
+    body = sent[-1][1]["content"]
+    next_block = body.split("## 次のシーン(この後に起こること)")[1].split("## 指示")[0]
+    assert "アヤが都に着く" in next_block
+    assert "先取り" in body  # 橋渡しの制約が指示に付く
+    # 末尾への通常の追加には「次のシーン」は入らない
+    collect_sse(generation.generate_beat_stream(store, "http://fake", None))
+    assert "## 次のシーン" not in sent[-1][1]["content"]
+
+
 def test_generation_context_excludes_markers(store, monkeypatch):
     """章の入口 / 出口が「直近のビート」に混ざらない(2026-08-02 発見)。
 

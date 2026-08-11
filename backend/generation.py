@@ -271,13 +271,74 @@ def _scene_path(store: Store, node_id: str) -> list[str]:
     return [n for n in store.path_to(node_id) if store._node_kind(n) is None]
 
 
+def next_scene_after(store: Store, node_id: str) -> dict[str, Any] | None:
+    """after_id で割り込んだとき、新ノードの直後に来る「次のシーン」。
+
+    子の選び方は `insert_node_after` の chain_edge と同じ規則(canon の子 →
+    同じ章の出口 → 唯一の子)。マーカー(章の入口 / 出口)は読み飛ばして
+    最初のシーンを返す。結末に当たった・分岐して決められないときは None
+    (= 次のシーンは無い。従来どおりの末尾追加の文脈になる)。
+    """
+    cur = node_id
+    seen = {cur}
+    while True:
+        rows = store.conn.execute(
+            """SELECT e.to_node, e.is_canon, n.kind, n.group_id
+               FROM edges e JOIN nodes n ON n.id = e.to_node
+               WHERE e.from_node = ?""",
+            (cur,),
+        ).fetchall()
+        if not rows:
+            return None
+        nxt = next((r for r in rows if r["is_canon"]), None)
+        if nxt is None:
+            cur_group_row = store.conn.execute(
+                "SELECT group_id FROM nodes WHERE id = ?", (cur,)
+            ).fetchone()
+            cur_group = cur_group_row["group_id"] if cur_group_row else None
+            nxt = next(
+                (r for r in rows if r["kind"] == "chapter_out" and r["group_id"] == cur_group),
+                None,
+            )
+        if nxt is None and len(rows) == 1:
+            nxt = rows[0]
+        if nxt is None or nxt["to_node"] in seen:
+            return None
+        if nxt["kind"] is None:
+            return store.get_node(nxt["to_node"])
+        if nxt["kind"] == "ending":
+            return None
+        cur = nxt["to_node"]  # 章の入口 / 出口 / はじまりは読み飛ばす
+        seen.add(cur)
+
+
+def _format_next_scene(store: Store, node: dict[str, Any]) -> str:
+    """補間生成の「## 次のシーン」ブロック(直近のビートと同じ体裁)。"""
+    cast = ", ".join(node["cast"])
+    place = store.place_name(store.effective_location(node["id"])[0])
+    return f"[{node['title'] or '無題'}] ({cast} @ {place or '?'})\n{node['beat']}"
+
+
 def _build_messages(store: Store, instruction: str | None, path: list[str],
-                    branching: bool = False) -> list[dict[str, str]]:
+                    branching: bool = False,
+                    next_scene: dict[str, Any] | None = None) -> list[dict[str, str]]:
     tail = path[-1] if path else None
-    default_instruction = (
-        "直前のビートの時点から分岐する、もう一つの展開(what-if)を 1 つ設計してください。"
-        if branching
-        else "物語の流れに沿って、次のビートを 1 つ設計してください。"
+    if branching:
+        default_instruction = "直前のビートの時点から分岐する、もう一つの展開(what-if)を 1 つ設計してください。"
+    elif next_scene is not None:
+        default_instruction = "直前のビートと次のシーンの間に起こった出来事を 1 つ設計してください。"
+    else:
+        default_instruction = "物語の流れに沿って、次のビートを 1 つ設計してください。"
+    # 補間(間に挟む)のときは、ユーザー指示があっても橋渡しの制約を必ず付ける
+    bridge_note = (
+        ""
+        if next_scene is None
+        else (
+            "\n\n制約: これは既にある「次のシーン」の直前に挟むビートです。"
+            "次のシーンの出来事を先取りしたり、矛盾したりしないでください。"
+            "このビートの終わりの状況(場所・居合わせる顔ぶれ)が、"
+            "次のシーンの冒頭へ自然につながるようにしてください。"
+        )
     )
     memories_text = _format_retrieved_memories(store, path, instruction)
     places_text = _format_places(store)
@@ -295,8 +356,13 @@ def _build_messages(store: Store, instruction: str | None, path: list[str],
         "## 直近のビート",
         _format_recent_beats(store, path),
         "",
+        *(
+            ["## 次のシーン(この後に起こること)", _format_next_scene(store, next_scene), ""]
+            if next_scene is not None
+            else []
+        ),
         "## 指示",
-        instruction or default_instruction,
+        (instruction or default_instruction) + bridge_note,
     ]
     return [
         {"role": "system", "content": generation_system_prompt(store)},
@@ -339,8 +405,9 @@ async def generate_beat_stream(
     """SSE イベント列を返す。最後に done(node + validation) または error。
 
     - parent_id 指定時はそのノードからのブランチ生成(コンテキストは分岐元パス)
-    - after_id 指定時はそのノードの直後へ割り込ませる(章の中への追加。
-      章の出口の手前に入るので、生成したシーンがその章のものになる)
+    - after_id 指定時はそのノードの直後へ割り込ませる(章の中への追加と、
+      間のシーンの補間生成。docs/design/interpolation.md)。後続シーンが
+      あればそれをプロンプトに入れ、橋渡しの制約を付ける
     - どちらも無ければ正史の末尾に足す
 
     生成器の途中で例外が漏れると StreamingResponse が接続を切ってしまうため、
@@ -380,11 +447,16 @@ async def _generate_beat_impl(
     if parent_id:
         path = _scene_path(store, parent_id)  # 分岐生成: その枝までの道が文脈
     elif after_id:
-        path = _scene_path(store, after_id)  # 章の中への追加: そのノードまでの道
+        path = _scene_path(store, after_id)  # 割り込み: そのノードまでの道
     else:
         path = store.canon_path()
+    # 割り込みで後続シーンがあるなら、補間(間に起こったことの推測)として生成する。
+    # 次のシーンをプロンプトに入れないと、後続と矛盾するシーンが平気で出る
+    next_scene = next_scene_after(store, after_id) if after_id else None
     schema = beat_schema(char_ids, sorted(store.known_place_ids()))
-    messages = _build_messages(store, instruction, path, branching=parent_id is not None)
+    messages = _build_messages(
+        store, instruction, path, branching=parent_id is not None, next_scene=next_scene
+    )
     state_before = store.get_state(path[-1]) if path else None
 
     result: dict[str, Any] | None = None

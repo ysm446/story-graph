@@ -2309,6 +2309,48 @@ function StructureModeInner({
     return resolved
   }, [graphNodes, graphEdges])
 
+  // 「次のシーン」の解決(補間生成の対象。docs/design/interpolation.md §3)。
+  // 子の選び方はサーバーの next_scene_after / insert_node_after と同じ規則:
+  // canon の子 → 同じ章の出口 → 唯一の子。マーカーは読み飛ばし、結末なら null。
+  // 表示(ボタンの文言)用の判定で、実際の挿入位置と文脈はサーバー側が決める
+  const nextSceneOf = useCallback(
+    (nodeId: string): StoryNode | null => {
+      const byId = new Map(graphNodes.map((n) => [n.id, n]))
+      let cur = byId.get(nodeId)
+      const seen = new Set([nodeId])
+      while (cur) {
+        const children = graphEdges.filter((e) => e.from_node === cur!.id)
+        if (children.length === 0) return null
+        let edge = children.find((e) => e.is_canon === 1) ?? null
+        if (!edge) {
+          edge =
+            children.find((e) => {
+              const child = byId.get(e.to_node)
+              return child?.kind === 'chapter_out' && child.group_id === cur!.group_id
+            }) ?? null
+        }
+        if (!edge && children.length === 1) edge = children[0]
+        if (!edge) return null // 分岐していてどの間か決められない
+        const next = byId.get(edge.to_node)
+        if (!next || seen.has(next.id)) return null
+        if (!next.kind) return next
+        if (next.kind === 'ending') return null
+        seen.add(next.id)
+        cur = next // 章の入口 / 出口は読み飛ばす
+      }
+      return null
+    },
+    [graphNodes, graphEdges]
+  )
+
+  // 選択シーンに後続があれば「▶ 間のシーンを生成」(補間)に切り替わる
+  const interpolateNext = useMemo(() => {
+    if (!selectedId) return null
+    const sel = graphNodes.find((n) => n.id === selectedId)
+    if (!sel || sel.kind) return null
+    return nextSceneOf(selectedId)
+  }, [selectedId, graphNodes, nextSceneOf])
+
   // 選択シーンで location を空欄にしたときに引き継がれる場所(= 親の実効ロケーション)
   const inheritedPlaceName = useMemo(() => {
     if (!selectedId) return null
@@ -3890,17 +3932,21 @@ function StructureModeInner({
 
   // 生成もキューに積む(連続して指示を出しても取りこぼさない)。
   // 指示文は積んだ時点のものを使うので、入力欄はすぐ空にする
-  const handleGenerate = (parentId: string | null): void => {
+  const handleGenerate = (parentId: string | null, insertAfterId: string | null = null): void => {
     const promptText = instruction.trim() || null
-    // 章の中では**その章の末尾(出口の手前)**に足す。渡さないと正史の末尾
-    // (= 物語の最後、章の外)にできてしまう。空の章では入口の直後へ
-    const afterId = parentId ? null : (focusedGroup?.route.at(-1) ?? focusedGroup?.in_id ?? null)
+    // insertAfterId 指定時はそのシーンの直後に挟む(補間生成。
+    // docs/design/interpolation.md)。それ以外は、章の中では**その章の末尾
+    // (出口の手前)**に足す。渡さないと正史の末尾(= 物語の最後、章の外)に
+    // できてしまう。空の章では入口の直後へ
+    const afterId = parentId
+      ? null
+      : (insertAfterId ?? focusedGroup?.route.at(-1) ?? focusedGroup?.in_id ?? null)
     // 生成されるノードはまだ存在しないので、続きを書く元のノードを光らせる
     const originId =
       parentId ?? afterId ?? (canonPath.length > 0 ? canonPath[canonPath.length - 1].id : null)
     setInstruction('')
     const taskId = enqueueTask({
-      label: parentId ? '分岐生成' : 'シーン生成',
+      label: parentId ? '分岐生成' : insertAfterId ? '間のシーン生成' : 'シーン生成',
       detail: promptText ?? '(指示なし)',
       runner: async ({ update, signal }) => {
         // 中止ボタンは「実行中」の生成を止める。最後に積んだ ID ではなく、
@@ -4257,12 +4303,17 @@ function StructureModeInner({
                       <button
                         onClick={() => {
                           setGenPanelOpen(false) // 生成中はキャンバスを広く使えるよう畳む
-                          handleGenerate(null)
+                          handleGenerate(null, interpolateNext ? selectedId : null)
                         }}
                         className="w-full rounded-lg px-3 py-1.5 text-[13px] font-medium text-white"
                         style={{ background: 'var(--accent)' }}
+                        title={
+                          interpolateNext
+                            ? `選択シーンと「${interpolateNext.title || '(無題)'}」の間に起こったことを推測して挟む`
+                            : '物語の末尾に次のシーンを生成'
+                        }
                       >
-                        ▶ 次のシーンを生成
+                        {interpolateNext ? '▶ 間のシーンを生成' : '▶ 次のシーンを生成'}
                       </button>
                       <button
                         onClick={() => {
@@ -4502,6 +4553,22 @@ function StructureModeInner({
                         }
                       ]
                     : []),
+                  // 間のシーンを生成: 後続シーンのある単一シーンで(補間。
+                  // docs/design/interpolation.md)。前後の内容から間の出来事を推測する
+                  ...((): Array<{ label: string; hint: string; run: () => void }> => {
+                    if (menu.targets.length !== 1) return []
+                    const node = graphNodes.find((n) => n.id === menu.targets[0])
+                    if (!node || node.kind) return []
+                    const next = nextSceneOf(node.id)
+                    if (!next) return []
+                    return [
+                      {
+                        label: '▶ 間のシーンを生成',
+                        hint: `「${next.title || '(無題)'}」との間に起こったことを推測して挟む`,
+                        run: () => handleGenerate(null, node.id)
+                      }
+                    ]
+                  })(),
                   // 章の道(ルート)の差し替え: **章の中で**分岐のシーンを右クリックしたとき。
                   // 出口の繋ぎ替えとして扱う(島の章で正史を巻き込まないよう、正史を
                   // 追従させるかはサーバー側が判断する)。
