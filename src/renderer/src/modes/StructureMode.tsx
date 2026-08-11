@@ -273,8 +273,8 @@ function BeatNodeCard({ data, selected }: NodeProps<BeatFlowNode>): React.JSX.El
         style={{
           background: 'var(--bg-card)',
           borderColor: active ? 'var(--accent-border)' : 'var(--border-strong)',
+          // アクティブでない結末も淡くしない(破線と「アクティブ」表示で足りる)
           borderStyle: active ? 'solid' : 'dashed',
-          opacity: active ? 1 : 0.85,
           ['--tw-ring-color' as string]: 'var(--accent-border)'
         }}
         title={
@@ -309,18 +309,15 @@ function BeatNodeCard({ data, selected }: NodeProps<BeatFlowNode>): React.JSX.El
       style={{
         background: 'var(--bg-card)',
         borderColor: busy ? 'var(--accent-border)' : selected ? 'var(--accent-border)' : 'var(--border-strong)',
+        // 正史でないシーンは**破線とバッジだけ**で示し、淡くしない。分岐ルートも
+        // 書きかけの本編であって「無効な項目」ではないため(2026-08-11 ユーザー判断)
         borderStyle: isDraft ? 'dashed' : 'solid',
-        opacity: isDraft ? 0.85 : 1,
         ['--tw-ring-color' as string]: 'var(--accent-border)'
       }}
     >
       {/* 当たり判定と見た目は index.css の .react-flow__handle で調整している */}
       <Handle type="target" position={Position.Left} />
-      <NodeThumb
-        node={storyNode}
-        className="mx-auto mb-2 max-h-40 max-w-full rounded-xl"
-        style={{ opacity: isDraft ? 0.8 : 1 }}
-      />
+      <NodeThumb node={storyNode} className="mx-auto mb-2 max-h-40 max-w-full rounded-xl" />
       <div className="mb-1 flex items-center gap-2">
         <span className="min-w-0 flex-1 truncate text-[13px] font-semibold" style={{ color: 'var(--text)' }}>
           {storyNode.title || '(無題のシーン)'}
@@ -417,8 +414,8 @@ function ChapterNodeCard({ data, selected }: NodeProps<ChapterFlowNode>): React.
         background: dropTarget ? 'var(--accent-soft)' : 'var(--bg-card)',
         borderColor: dropTarget ? 'var(--accent)' : group.color || 'var(--border-strong)',
         // 島・分岐の章は draft ノードと同じく破線で「別の可能性」を示す
+        // (淡くはしない。見出しの「別ルートの章」と破線で足りる)
         borderStyle: group.on_canon ? 'solid' : 'dashed',
-        opacity: group.on_canon ? 1 : 0.9,
         ['--tw-ring-color' as string]: 'var(--accent-border)'
       }}
       title="ダブルクリックで章の中を開く(シーンをここに落とすとこの章に入ります)"
