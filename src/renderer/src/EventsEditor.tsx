@@ -537,7 +537,13 @@ export default function EventsEditor({
             disabled={saving || extractTask !== null}
             // 色は index.css の .accent-action(校正・自動生成と同じ「LLM を走らせる」見た目)
             className="accent-action rounded-md border px-2 py-0.5 text-[11px] font-medium disabled:opacity-50"
-            title="シーン本文から、この場面で起きたこと(イベント)を LLM に取り出させます"
+            // 何を見て抽出しているかを書く(見ないものまで整えても結果が変わらないため)。
+            // 素の title なので折り返しは効かない。1 行ずつ改行で区切る
+            title={[
+              'この場面で起きたこと(イベント)を LLM に取り出させます。',
+              '渡すのは ①シーン本文 + 登場キャラ(Cast) + 場所 ②直前までの状態 ③キャラクター一覧 の 3 つ。',
+              'タイトル・芯・清書は見ません(未保存の編集も渡らないので、先に保存してください)'
+            ].join('\n')}
           >
             {extracting
               ? `処理中… (${extractElapsed}s)`
