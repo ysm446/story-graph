@@ -79,6 +79,16 @@ function repoRoot(): string {
   return app.getAppPath()
 }
 
+function appIconPath(): string | undefined {
+  // dev はリポジトリ直下、将来のパッケージ版は resources または app.asar 内を探す。
+  const candidates = [
+    join(process.resourcesPath, 'icon.png'),
+    join(app.getAppPath(), 'resources', 'icon.png'),
+    join(repoRoot(), 'resources', 'icon.png')
+  ]
+  return candidates.find((candidate) => existsSync(candidate))
+}
+
 async function findAvailablePort(startPort: number): Promise<number> {
   for (let port = startPort; port < startPort + 20; port += 1) {
     const available = await new Promise<boolean>((resolve) => {
@@ -234,6 +244,7 @@ function createWindow(): void {
     useContentSize: true, // コンテンツ領域基準で 1920x1080
     minWidth: 1200,
     minHeight: 800,
+    icon: appIconPath(),
     backgroundColor: '#0d0f14',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
