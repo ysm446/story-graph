@@ -8,6 +8,7 @@ import {
   type LlamaReleaseVariant,
   type LlamaServerStatus
 } from '../api'
+import AutoTextarea from '../AutoTextarea'
 import { DEFAULT_VIDEO_CROSSFADE_SECONDS } from '../CrossfadeLoopVideo'
 import { PresetEditorModal, type PresetDraft } from '../RenderStyle'
 import type { BackupConfig, Snapshot, StylePreset } from '../types'
@@ -1539,11 +1540,12 @@ export default function SettingsMode(): React.JSX.Element {
                 <div className="settings-field-header">
                   <span className="settings-field-label">カスタム校正プロンプト</span>
                 </div>
-                <textarea
-                  rows={4}
+                {/* 長い指示でも中でスクロールさせず、内容に合わせて伸ばす */}
+                <AutoTextarea
+                  minRows={4}
                   value={values.proofread_custom_prompt ?? ''}
                   placeholder={'例: あなたはハードボイルド小説の編集者です。感傷的な表現を削り、\n短く乾いた文に整えてください。修正後の文章だけを返してください。'}
-                  onChange={(e) => setValues((v) => ({ ...v, proofread_custom_prompt: e.target.value }))}
+                  onChange={(v) => setValues((prev) => ({ ...prev, proofread_custom_prompt: v }))}
                   onBlur={() => void save({ proofread_custom_prompt: values.proofread_custom_prompt ?? '' })}
                   className="w-full rounded-lg border px-3 py-2 text-[13px] leading-relaxed outline-none"
                   style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
