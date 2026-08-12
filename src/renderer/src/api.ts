@@ -301,6 +301,11 @@ export const api = {
     request<{ base_url: string; healthy: boolean; model_path: string | null }>('/llm/load', { method: 'POST' }),
   llamaReleases: () => request<{ releases: LlamaRelease[] }>('/llama/releases'),
   llamaServerStatus: () => request<LlamaServerStatus>('/llama/server_status'),
+  llamaUninstall: (installDir: string) =>
+    request<LlamaServerStatus & { removed_dir: string; freed_bytes: number }>('/llama/uninstall', {
+      method: 'POST',
+      body: JSON.stringify({ install_dir: installDir })
+    }),
   // signal はキュー(tasks.ts)からの中止用
   extractEvents: (nodeId: string, signal?: AbortSignal) =>
     request<{ events: StoryEvent[]; validation: string[] }>(`/nodes/${nodeId}/extract_events`, {
@@ -491,6 +496,10 @@ export interface LlamaServerInstall {
   build: string | null
   dir: string
   path: string
+  /** runtime/ 配下に自動インストールしたもの = アプリから削除してよい */
+  removable: boolean
+  /** フォルダの占有サイズ。/llama/server_status からのみ付く */
+  size_bytes?: number
 }
 
 export interface LlamaServerStatus {
@@ -500,6 +509,7 @@ export interface LlamaServerStatus {
   install_dir: string | null
   runtime_dir: string
   installs: LlamaServerInstall[]
+  total_size_bytes: number
 }
 
 export type LlamaInstallProgress =

@@ -1,3 +1,5 @@
+import pytest
+
 import llama_installer as inst
 
 
@@ -51,3 +53,65 @@ def test_find_server_installs_prefers_higher_build(tmp_path, monkeypatch):
     # build 番号が大きい b200 が先頭
     assert installs[0]["build"] == "b200"
     assert inst.resolve_server_path() == installs[0]["path"]
+
+
+def _make_install(runtime, name, payload=b"xxxx"):
+    d = runtime / name
+    d.mkdir(parents=True)
+    (d / "llama-server.exe").write_bytes(payload)
+    return d
+
+
+def test_find_server_installs_skips_removal_leftovers(tmp_path, monkeypatch):
+    runtime = tmp_path / "runtime"
+    _make_install(runtime, "llama-b100-bin-win-cpu-x64")
+    # 削除に失敗して残った残骸は起動候補に混ぜない
+    _make_install(runtime, ".removing-deadbeef")
+    monkeypatch.setattr(inst, "RUNTIME_DIR", runtime)
+    monkeypatch.setattr(inst, "LEGACY_BIN_DIR", tmp_path / "nonexistent")
+
+    installs = inst.find_server_installs()
+    assert [c["build"] for c in installs] == ["b100"]
+    assert installs[0]["removable"] is True
+
+
+def test_status_reports_sizes(tmp_path, monkeypatch):
+    runtime = tmp_path / "runtime"
+    _make_install(runtime, "llama-b100-bin-win-cpu-x64", b"x" * 10)
+    _make_install(runtime, "llama-b200-bin-win-cuda-13-x64", b"x" * 30)
+    monkeypatch.setattr(inst, "RUNTIME_DIR", runtime)
+    monkeypatch.setattr(inst, "LEGACY_BIN_DIR", tmp_path / "nonexistent")
+
+    st = inst.status()
+    assert st["total_size_bytes"] == 40
+    assert {c["build"]: c["size_bytes"] for c in st["installs"]} == {"b100": 10, "b200": 30}
+
+
+def test_uninstall_removes_only_runtime_installs(tmp_path, monkeypatch):
+    runtime = tmp_path / "runtime"
+    legacy = tmp_path / "bin" / "llama-server"
+    target = _make_install(runtime, "llama-b100-bin-win-cpu-x64", b"x" * 12)
+    kept = _make_install(runtime, "llama-b200-bin-win-cuda-13-x64")
+    borrowed = _make_install(legacy, "b9496-win-cuda13-x64")
+    monkeypatch.setattr(inst, "RUNTIME_DIR", runtime)
+    monkeypatch.setattr(inst, "LEGACY_BIN_DIR", legacy)
+
+    result = inst.uninstall(str(target))
+    assert result["freed_bytes"] == 12
+    assert not target.exists()
+    assert kept.exists()
+    # 残骸(.removing-*)も残さない
+    assert [p.name for p in runtime.iterdir()] == ["llama-b200-bin-win-cuda-13-x64"]
+
+    # レガシー配置(移植元からの流用)は他プロジェクトの資産なので消さない
+    with pytest.raises(ValueError):
+        inst.uninstall(str(borrowed))
+    assert borrowed.exists()
+
+    # 存在しない・exe の無いフォルダも拒否する
+    with pytest.raises(ValueError):
+        inst.uninstall(str(runtime / "no-such-build"))
+    empty = runtime / "llama-b300-bin-win-cpu-x64"
+    empty.mkdir()
+    with pytest.raises(ValueError):
+        inst.uninstall(str(empty))

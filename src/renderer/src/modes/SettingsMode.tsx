@@ -6,6 +6,7 @@ import {
   type LlamaInstallProgress,
   type LlamaRelease,
   type LlamaReleaseVariant,
+  type LlamaServerInstall,
   type LlamaServerStatus
 } from '../api'
 import AutoTextarea from '../AutoTextarea'
@@ -1007,6 +1008,7 @@ function LlamaInstaller(): React.JSX.Element {
   const [selectedVariantKey, setSelectedVariantKey] = useState<string>('')
   const [loadingReleases, setLoadingReleases] = useState(false)
   const [installing, setInstalling] = useState(false)
+  const [removingDir, setRemovingDir] = useState<string | null>(null)
   const [progress, setProgress] = useState<LlamaInstallProgress | null>(null)
   const [error, setError] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
@@ -1073,6 +1075,22 @@ function LlamaInstaller(): React.JSX.Element {
     }
   }
 
+  const handleUninstall = async (install: LlamaServerInstall): Promise<void> => {
+    const name = install.dir.split(/[\\/]/).pop() || install.dir
+    const freed = install.size_bytes != null ? `${fmtBytes(install.size_bytes)} を空けます。` : ''
+    if (!window.confirm(`「${name}」を削除しますか?\n${freed}\n必要になったら同じビルドを入れ直せます。`)) return
+    setRemovingDir(install.dir)
+    setError(null)
+    try {
+      setServerStatus(await api.llamaUninstall(install.dir))
+    } catch (e) {
+      setError(String(e))
+      await refreshStatus()
+    } finally {
+      setRemovingDir(null)
+    }
+  }
+
   const totalSize = selectedVariant ? selectedVariant.size_bytes + (selectedVariant.cudart_size_bytes ?? 0) : 0
 
   return (
@@ -1089,8 +1107,53 @@ function LlamaInstaller(): React.JSX.Element {
           </span>
         </div>
       </div>
-      {serverStatus?.installed && serverStatus.path && (
-        <p className="settings-field-hint break-all">{serverStatus.path}</p>
+      {serverStatus && serverStatus.installs.length > 0 && (
+        <div className="flex flex-col gap-1">
+          {serverStatus.installs.map((ins) => {
+            const name = ins.dir.split(/[\\/]/).pop() || ins.dir
+            const isDefault = ins.path === serverStatus.path
+            return (
+              <div
+                key={ins.path}
+                className="flex items-center gap-2 rounded-lg border px-3 py-1.5 text-[12px]"
+                style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border)' }}
+              >
+                {isDefault && (
+                  <span
+                    className="shrink-0 rounded px-1 text-[10px]"
+                    style={{ background: 'var(--accent-soft)', color: 'var(--accent)' }}
+                    title="実行ファイルのパスが未入力のとき、このビルドが使われます"
+                  >
+                    既定
+                  </span>
+                )}
+                <span className="min-w-0 flex-1 truncate" style={{ color: 'var(--text)' }} title={ins.path}>
+                  {name}
+                </span>
+                <span className="shrink-0 tabular-nums" style={{ color: 'var(--text-faint)' }}>
+                  {fmtBytes(ins.size_bytes ?? null)}
+                </span>
+                <button
+                  onClick={() => void handleUninstall(ins)}
+                  disabled={!ins.removable || installing || removingDir !== null}
+                  className="shrink-0 rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-40"
+                  style={{ borderColor: 'rgba(239,68,68,0.5)', color: 'var(--danger)' }}
+                  title={
+                    ins.removable
+                      ? 'このフォルダを丸ごと消して容量を空けます'
+                      : `自動インストール先(${serverStatus.runtime_dir})の外にあるので、このアプリからは消しません`
+                  }
+                >
+                  {removingDir === ins.dir ? '削除中…' : '削除'}
+                </button>
+              </div>
+            )
+          })}
+          <p className="settings-field-hint">
+            インストール済み {serverStatus.installs.length} 件・合計 {fmtBytes(serverStatus.total_size_bytes)}。
+            起動中のサーバは削除できません(先に停止してください)。
+          </p>
+        </div>
       )}
 
       <div className="flex flex-wrap items-center gap-2">

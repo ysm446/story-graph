@@ -6,12 +6,16 @@ Python バックエンドが llama を管理しているため、こちら側に
 - Windows x64 の zip(llama-...-x64.zip)をバリアントとして抽出、CUDA 系には cudart を紐付け
 - ダウンロード → 一時 zip → runtime/<build>/ へ展開(zipfile。tar 依存なし)
 - 進捗は dict(phase 別)で yield し、app.py が SSE で配信する
+- 溜まったビルドは uninstall() で消せる(runtime/ 直下のものだけ。移植元の
+  lm-graph などから流用しているバイナリは他プロジェクトの資産なので触らない)
 """
 
 from __future__ import annotations
 
 import asyncio
 import re
+import shutil
+import uuid
 import zipfile
 from pathlib import Path
 from typing import Any, AsyncIterator
@@ -163,6 +167,18 @@ def _extract_build(dir_name: str) -> str | None:
     return m.group(1) if m else None
 
 
+def is_removable(install_dir: str | Path) -> bool:
+    """このアプリから削除してよいインストールか。
+
+    自動インストール先である runtime/<asset名>/ だけを許す。レガシーの bin/ や
+    設定で手入力した外部パスは他プロジェクトの資産なので、当アプリからは消さない。
+    """
+    try:
+        return Path(install_dir).resolve().parent == RUNTIME_DIR.resolve()
+    except OSError:
+        return False
+
+
 def find_server_installs() -> list[dict[str, Any]]:
     """runtime/ とレガシー bin/ 配下の llama-server.exe を列挙する。"""
     candidates: list[dict[str, Any]] = []
@@ -174,7 +190,8 @@ def find_server_installs() -> list[dict[str, Any]]:
         if direct.exists():
             candidates.append({"build": _extract_build(root.name), "dir": str(root), "path": str(direct)})
         for sub in root.iterdir():
-            if not sub.is_dir():
+            # 削除中に落ちた残骸(.removing-*)は起動候補に混ぜない
+            if not sub.is_dir() or sub.name.startswith("."):
                 continue
             exe = sub / "llama-server.exe"
             if exe.exists():
@@ -199,6 +216,7 @@ def find_server_installs() -> list[dict[str, Any]]:
         if c["path"] in seen:
             continue
         seen.add(c["path"])
+        c["removable"] = is_removable(c["dir"])
         unique.append(c)
     return unique
 
@@ -208,8 +226,27 @@ def resolve_server_path() -> str | None:
     return installs[0]["path"] if installs else None
 
 
+def _dir_size(path: Path) -> int:
+    """フォルダ配下のファイルサイズ合計(消したときに空く量の表示用)。"""
+    total = 0
+    for p in path.rglob("*"):
+        try:
+            if p.is_file():
+                total += p.stat().st_size
+        except OSError:
+            continue
+    return total
+
+
 def status() -> dict[str, Any]:
+    """一覧 + 各インストールの占有サイズ。
+
+    サイズは毎回数え直す(rglob)。1 インストールあたり数十ファイルなので安く、
+    resolve_server_path()(生成のたびに走る)からは呼ばないので影響しない。
+    """
     installs = find_server_installs()
+    for c in installs:
+        c["size_bytes"] = _dir_size(Path(c["dir"]))
     best = installs[0] if installs else None
     return {
         "installed": best is not None,
@@ -218,7 +255,36 @@ def status() -> dict[str, Any]:
         "install_dir": best["dir"] if best else None,
         "runtime_dir": str(RUNTIME_DIR),
         "installs": installs,
+        "total_size_bytes": sum(c["size_bytes"] for c in installs),
     }
+
+
+def uninstall(install_dir: str) -> dict[str, Any]:
+    """インストール済みのビルドを 1 つ削除する。
+
+    先に別名へ rename してから消す。使用中(exe をロック中)なら rename の時点で
+    失敗するので、DLL だけ消えた壊れたフォルダを残さずに済む。
+    """
+    target = Path(install_dir)
+    if not target.is_dir():
+        raise ValueError(f"フォルダが見つかりません: {install_dir}")
+    if not is_removable(target):
+        raise ValueError(
+            f"自動インストール先(runtime/)の外にあるため削除できません: {install_dir}"
+        )
+    if not (target / "llama-server.exe").exists():
+        raise ValueError(f"llama-server.exe が無いフォルダは削除しません: {install_dir}")
+
+    freed = _dir_size(target)
+    trash = target.with_name(f".removing-{uuid.uuid4().hex}")
+    try:
+        target.rename(trash)
+    except OSError as e:
+        raise RuntimeError(
+            f"削除できませんでした(このサーバを使用中の可能性があります): {install_dir} — {e}"
+        )
+    shutil.rmtree(trash, ignore_errors=True)
+    return {"removed_dir": str(target), "freed_bytes": freed}
 
 
 # ---- ダウンロード + 展開 --------------------------------------------
@@ -270,7 +336,6 @@ async def install_variant(variant: dict[str, Any]) -> AsyncIterator[dict[str, An
     asyncio.CancelledError が飛ぶ想定。一時 zip は finally で必ず削除する。
     """
     import tempfile
-    import uuid
 
     asset_name = variant["asset_name"]
     dest_dir = RUNTIME_DIR / re.sub(r"\.zip$", "", asset_name, flags=re.IGNORECASE)
@@ -307,8 +372,6 @@ async def install_variant(variant: dict[str, Any]) -> AsyncIterator[dict[str, An
         # 失敗・キャンセルで DLL 欠落などの不完全な展開先を残さない
         # (find_server_installs は exe の存在しか見ないため、残すと壊れた
         # サーバが自動選択されて原因不明の起動失敗になる)
-        import shutil
-
         shutil.rmtree(dest_dir, ignore_errors=True)
         raise
     finally:

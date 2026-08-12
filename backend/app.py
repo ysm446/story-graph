@@ -906,6 +906,35 @@ async def llama_install(body: LlamaInstallIn) -> StreamingResponse:
     return StreamingResponse(stream(), media_type="text/event-stream")
 
 
+class LlamaUninstallIn(BaseModel):
+    install_dir: str
+
+
+@app.post("/llama/uninstall")
+async def llama_uninstall(body: LlamaUninstallIn) -> dict[str, Any]:
+    """インストール済みの llama-server を 1 つ削除する(runtime/ 配下のみ)。"""
+    from pathlib import Path
+
+    import llama_installer
+
+    running = llama.status()
+    if running.get("spawned") and running.get("server_path"):
+        try:
+            in_use = Path(running["server_path"]).resolve().parent == Path(body.install_dir).resolve()
+        except OSError:
+            in_use = False
+        if in_use:
+            raise HTTPException(409, "起動中の llama-server です。停止してから削除してください。")
+
+    try:
+        result = await asyncio.to_thread(llama_installer.uninstall, body.install_dir)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except (RuntimeError, OSError) as e:
+        raise HTTPException(500, str(e))
+    return {**result, **llama_installer.status()}
+
+
 @app.post("/generate/beat")
 async def generate_beat(body: GenerateBeatIn) -> StreamingResponse:
     try:

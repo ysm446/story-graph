@@ -30,6 +30,8 @@ class LlamaManager:
         self.proc: subprocess.Popen | None = None
         self.base_url: str | None = None
         self.model_path: str | None = None
+        # spawn に使った exe。インストール済みビルドの削除可否の判定に使う
+        self.server_path: str | None = None
         # 並行リクエスト(生成 + チャット等)が同時に spawn して proc を
         # 上書きし合わないための排他。ensure_running / switch 全体に掛ける
         self._lock = asyncio.Lock()
@@ -40,6 +42,7 @@ class LlamaManager:
             "spawned": running,
             "base_url": self.base_url,
             "model_path": self.model_path if running else None,
+            "server_path": self.server_path if running else None,
         }
 
     async def ensure_running(self, settings: dict[str, str]) -> str:
@@ -123,6 +126,7 @@ class LlamaManager:
         )
         self.model_path = model_path
         self.base_url = base_url
+        self.server_path = server_path
         if not await self._wait_healthy(base_url, 180):
             self.stop()
             raise RuntimeError("llama-server のヘルスチェックがタイムアウトしました(モデルロード失敗の可能性)")
