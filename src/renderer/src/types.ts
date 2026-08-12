@@ -79,6 +79,9 @@ export interface Group {
   digest_stale: number
   /** 章じまいのまとめ(digest)が保存されているか */
   has_digest: boolean
+  /** まとめの中身(memory_compress / fact_set)。**ノードの events には居ない**ので、
+   *  記憶の本文を引くときはここも見る(docs/design/chapters.md §4) */
+  digest_events: Array<{ id: string; type: string; payload: Record<string, unknown> }> | null
   /** 章の前提が崩れているときの警告(鎖が途切れている)。null = 正常 */
   warning: string | null
   /** 正史ルート上の章か(false = 島・分岐の章。並べ替え・鑑賞の見出し対象外) */

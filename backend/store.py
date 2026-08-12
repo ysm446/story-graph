@@ -1834,6 +1834,9 @@ class Store:
                     "color": row["color"],
                     "digest_stale": row["digest_stale"],
                     "has_digest": bool(row["digest_events"]),
+                    # まとめの中身も返す。digest はノードの events に居ないので、
+                    # 画面が記憶の本文を引くにはここから拾うしかない(記憶一覧の表示)
+                    "digest_events": json.loads(row["digest_events"]) if row["digest_events"] else None,
                     "warning": warning,
                     "on_canon": on_canon,
                     "pos_x": row["pos_x"],

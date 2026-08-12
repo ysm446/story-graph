@@ -1055,6 +1055,16 @@ function BeatTab({
 
 // ---- キャラタブ(状態閲覧 + 手動イベント化する編集) -------------------
 
+/** 記憶 1 件の本文と出どころ。まとめ(digest)の記憶はシーンではなく章に属する */
+type MemorySource = {
+  kind: 'scene' | 'digest'
+  content: string
+  /** 出どころのシーン(digest は章の最後のシーン。無ければ null) */
+  nodeId: string | null
+  /** シーン名(kind: 'scene')または章名(kind: 'digest') */
+  title: string
+}
+
 function CharTab({
   node,
   characters,
@@ -1064,8 +1074,8 @@ function CharTab({
 }: {
   node: StoryNode
   characters: Character[]
-  /** 記憶イベント ID → 本文とどのシーンの記憶か */
-  memoryContents: Record<string, { content: string; nodeId: string; title: string }>
+  /** 記憶イベント ID → 本文と出どころ */
+  memoryContents: Record<string, MemorySource>
   onChanged: () => void
   onSelectNode: (nodeId: string) => void
 }): React.JSX.Element {
@@ -1337,19 +1347,37 @@ function CharTab({
                   className="mb-1 rounded-lg border px-3 py-1.5 text-[12px] leading-relaxed"
                   style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-dim)' }}
                 >
-                  {memory?.content ?? eventId}
-                  {/* どのシーンで得た記憶か(クリックでそのシーンへ) */}
-                  {memory && (
-                    <button
-                      onClick={() => onSelectNode(memory.nodeId)}
-                      className="mt-0.5 block max-w-full truncate text-left text-[10px] hover:underline"
-                      style={{ color: memory.nodeId === node.id ? 'var(--accent)' : 'var(--text-faint)' }}
-                      title={`「${memory.title}」で得た記憶(クリックでそのシーンへ)`}
-                    >
-                      ← {memory.title}
-                      {memory.nodeId === node.id ? '(このシーン)' : ''}
-                    </button>
+                  {/* 本文が引けないときも ID は出さない(読めない文字列が並ぶだけなので) */}
+                  {memory?.content || (
+                    <span style={{ color: 'var(--text-faint)' }} title={eventId}>
+                      (本文が見つかりません)
+                    </span>
                   )}
+                  {/* どこで得た記憶か。シーンなら押すとそのシーンへ、章のまとめなら章の最後のシーンへ */}
+                  {memory &&
+                    (memory.nodeId ? (
+                      <button
+                        onClick={() => onSelectNode(memory.nodeId!)}
+                        className="mt-0.5 block max-w-full truncate text-left text-[10px] hover:underline"
+                        style={{ color: memory.nodeId === node.id ? 'var(--accent)' : 'var(--text-faint)' }}
+                        title={
+                          memory.kind === 'digest'
+                            ? `章「${memory.title}」のまとめ(クリックでその章の最後のシーンへ)`
+                            : `「${memory.title}」で得た記憶(クリックでそのシーンへ)`
+                        }
+                      >
+                        ← {memory.kind === 'digest' ? `${memory.title}(章のまとめ)` : memory.title}
+                        {memory.nodeId === node.id ? '(このシーン)' : ''}
+                      </button>
+                    ) : (
+                      <span
+                        className="mt-0.5 block max-w-full truncate text-[10px]"
+                        style={{ color: 'var(--text-faint)' }}
+                        title={`章「${memory.title}」のまとめ`}
+                      >
+                        ← {memory.title}(章のまとめ)
+                      </span>
+                    ))}
                 </div>
               )
             })}
@@ -2331,13 +2359,14 @@ function StructureModeInner({
     return placeMap[eff.placeId]?.name ?? eff.placeId
   }, [selectedId, graphEdges, effectiveLocations, placeMap])
 
-  // 記憶(イベント ID)→ 本文とどのシーンの記憶か。キャラタブの一覧で使う
+  // 記憶(イベント ID)→ 本文と出どころ。キャラタブの一覧で使う
   const memoryContents = useMemo(() => {
-    const map: Record<string, { content: string; nodeId: string; title: string }> = {}
+    const map: Record<string, MemorySource> = {}
     for (const node of graphNodes) {
       for (const e of node.events) {
         if (e.type === 'memory_add' || e.type === 'memory_compress') {
           map[e.id] = {
+            kind: 'scene',
             content: String(e.payload.content ?? e.payload.summary ?? ''),
             nodeId: node.id,
             title: node.title || '(無題)'
@@ -2345,8 +2374,22 @@ function StructureModeInner({
         }
       }
     }
+    // 章のまとめ(digest)の記憶。ノードの events には居ないので groups から拾う。
+    // これを入れないと、まとめ済みの章より後ろのシーンでイベント ID が並んでしまう
+    for (const group of groups) {
+      for (const e of group.digest_events ?? []) {
+        if (e.type !== 'memory_compress') continue
+        map[e.id] = {
+          kind: 'digest',
+          content: String(e.payload.summary ?? ''),
+          // クリックの行き先は章の最後のシーン(まとめはそこまでの記憶なので)
+          nodeId: group.route[group.route.length - 1] ?? null,
+          title: group.title
+        }
+      }
+    }
     return map
-  }, [graphNodes])
+  }, [graphNodes, groups])
 
   // グラフデータの変化時のみノード配列を再構築。ドラッグ・選択は
   // applyNodeChanges の差分適用に任せる(毎フレーム再構築するとチラつく)
