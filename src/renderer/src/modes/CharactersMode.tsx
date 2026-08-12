@@ -12,15 +12,18 @@ const FIELD_DEFS: Array<{ key: 'profile' | 'appearance' | 'voice'; label: string
   { key: 'voice', label: '口調・一人称', rows: 3 }
 ]
 
-type Tab = 'characters' | 'places' | 'relations'
+/** 資料の種類。「関係図」はこれと別の軸(キャラクターの見せ方)なので、タブには入れない */
+type Tab = 'characters' | 'places'
 
 /** 資料庫。キャラクターと場所を同じシェル(リサイズ可能なサイドバー + 編集ペイン)で扱う。
  *  場所も登録制のエンティティなので、庫としては同じ性格のもの(docs/design/places.md)。 */
 export default function CharactersMode(): React.JSX.Element {
   const [tab, setTab] = useState<Tab>('characters')
+  // キャラクターの見せ方(一覧+編集 ⇄ 関係図)。場所には無い切り替えなので、タブとは別に持つ
+  const [showRelations, setShowRelations] = useState(false)
   const [characters, setCharacters] = useState<Character[]>([])
   const [places, setPlaces] = useState<Place[]>([])
-  // 関係図タブ用: ノードグラフ(正史パスの導出と履歴表示に使う)とエゴ選択
+  // 関係図用: ノードグラフ(正史パスの導出と履歴表示に使う)とエゴ選択
   const [graph, setGraph] = useState<StoryGraph | null>(null)
   const [egoCharId, setEgoCharId] = useState<string | null>(null)
   const [selectedPlaceId, setSelectedPlaceId] = useState<string | null>(null)
@@ -41,7 +44,8 @@ export default function CharactersMode(): React.JSX.Element {
   // 左サイドバーの幅(ドラッグで変更。localStorage に保存)
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     const saved = Number(localStorage.getItem('charactersSidebarWidth'))
-    return saved >= 180 && saved <= 520 ? saved : 256
+    // 既定はタブ 3 つ + 追加ボタンが余裕をもって並ぶ幅にする
+    return saved >= 180 && saved <= 520 ? saved : 288
   })
 
   const beginSidebarResize = useCallback((event: React.PointerEvent): void => {
@@ -158,6 +162,9 @@ export default function CharactersMode(): React.JSX.Element {
   }, [selectedId, selected?.id])
 
 
+  // 関係図はキャラクターの見せ方なので、場所を見ている間は出さない
+  const relationsView = tab === 'characters' && showRelations
+
   const handleCreate = async (): Promise<void> => {
     if (tab === 'places') {
       const created = await api.createPlace({ name: '新しい場所', color: '#5a8fa7' })
@@ -212,19 +219,20 @@ export default function CharactersMode(): React.JSX.Element {
         className="flex shrink-0 flex-col"
         style={{ background: 'var(--bg-sidebar)', width: sidebarWidth }}
       >
-        <div className="flex items-center justify-between px-3 py-2">
-          <div className="flex items-center gap-1">
+        <div className="flex items-center justify-between gap-1 px-3 py-2">
+          {/* サイドバーは幅を狭められるので、タブは折り返さずに横へ逃がす
+              (スクロールバーは 1 行の高さを崩すので隠す) */}
+          <div className="flex min-w-0 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             {(
               [
                 ['characters', 'キャラクター'],
-                ['places', '場所'],
-                ['relations', '関係図']
+                ['places', '場所']
               ] as Array<[Tab, string]>
             ).map(([id, label]) => (
               <button
                 key={id}
                 onClick={() => setTab(id)}
-                className="rounded-md px-2 py-0.5 text-[12px] transition-colors"
+                className="shrink-0 whitespace-nowrap rounded-md px-2 py-0.5 text-[12px] transition-colors"
                 style={
                   tab === id
                     ? { background: 'var(--accent-soft)', color: 'var(--text)' }
@@ -235,15 +243,38 @@ export default function CharactersMode(): React.JSX.Element {
               </button>
             ))}
           </div>
-          {tab !== 'relations' && (
-            <button
-              onClick={() => void handleCreate()}
-              className="rounded-md px-2 py-0.5 text-[12px]"
-              style={{ background: 'var(--accent-soft)', color: 'var(--text)' }}
-            >
-              + 追加
-            </button>
-          )}
+          {/* 見せ方の切り替えと追加。タブ(資料の種類)とは別の軸なので右側へ寄せる */}
+          <div className="flex shrink-0 items-center gap-1">
+            {tab === 'characters' && (
+              <button
+                onClick={() => setShowRelations((v) => !v)}
+                className="shrink-0 whitespace-nowrap rounded-md px-2 py-0.5 text-[12px] transition-colors"
+                style={
+                  showRelations
+                    ? { background: 'var(--accent-soft)', color: 'var(--text)' }
+                    : { color: 'var(--text-faint)' }
+                }
+                title={
+                  showRelations
+                    ? 'キャラクターの一覧と編集に戻す'
+                    : 'キャラクターどうしの関係を図で見る(一覧で中心にする人を選べます)'
+                }
+              >
+                関係図
+              </button>
+            )}
+            {!relationsView && (
+              <button
+                onClick={() => void handleCreate()}
+                className="shrink-0 rounded-md px-2 py-0.5 text-[12px]"
+                style={{ background: 'var(--accent-soft)', color: 'var(--text)' }}
+                title={tab === 'places' ? '場所を追加' : 'キャラクターを追加'}
+                aria-label={tab === 'places' ? '場所を追加' : 'キャラクターを追加'}
+              >
+                +
+              </button>
+            )}
+          </div>
         </div>
         <div className="inspector-scrollbar min-h-0 flex-1 overflow-y-auto px-2 pb-2">
           {tab === 'places' &&
@@ -273,18 +304,19 @@ export default function CharactersMode(): React.JSX.Element {
               シーンは登録した場所から 1 つ選びます。
             </div>
           )}
-          {(tab === 'characters' || tab === 'relations') &&
+          {tab === 'characters' &&
             characters.map((c) => (
             <button
               key={c.id}
+              // 関係図を出している間は、一覧は図の中心(エゴ)を選ぶためのものになる
               onClick={() =>
-                tab === 'relations'
+                relationsView
                   ? setEgoCharId((prev) => (prev === c.id ? null : c.id))
                   : setSelectedId(c.id)
               }
               className="mb-1 flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-[15px]"
               style={
-                (tab === 'relations' ? c.id === egoCharId : c.id === selectedId)
+                (relationsView ? c.id === egoCharId : c.id === selectedId)
                   ? { background: 'rgba(124, 90, 247, 0.18)', color: 'var(--text)' }
                   : { color: 'var(--text-dim)' }
               }
@@ -311,7 +343,7 @@ export default function CharactersMode(): React.JSX.Element {
               <span className="truncate">{c.name}</span>
             </button>
           ))}
-          {(tab === 'characters' || tab === 'relations') && characters.length === 0 && (
+          {tab === 'characters' && characters.length === 0 && (
             <div className="px-2 py-4 text-[12px]" style={{ color: 'var(--text-faint)' }}>
               まだキャラクターがいません
             </div>
@@ -331,7 +363,7 @@ export default function CharactersMode(): React.JSX.Element {
         />
       </div>
       <main className="inspector-scrollbar min-w-0 flex-1 overflow-y-auto p-6">
-        {tab === 'relations' ? (
+        {relationsView ? (
           <div className="mx-auto max-w-5xl">
             <RelationGraph
               characters={characters}

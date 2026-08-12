@@ -4147,8 +4147,9 @@ function StructureModeInner({
             <Background gap={GRID_SIZE} size={1.4} color="#394154" />
             {minimapVisible && <MiniMap pannable zoomable nodeColor={() => '#2e3140'} />}
             <Panel position="top-left">
-              {/* 畳んでいるときは幅を詰める(パネルの領域はキャンバスのクリックを奪うため) */}
-              <div className={`flex flex-col gap-2 ${genPanelOpen || genStatus ? 'w-72' : 'w-fit'}`}>
+              {/* 幅は中身に合わせる(パネルの領域はキャンバスのクリックを奪うため)。
+                  生成パネルとステータスの幅は各要素側で持たせ、ツールバーの並びを潰さない */}
+              <div className="flex w-fit flex-col gap-2">
                 {/* 章内ビューのパンくず(章名 / 名前の変更 / 解除) */}
                 {effectiveView === 'focused' && focusedGroup && (
                   <div
@@ -4185,8 +4186,9 @@ function StructureModeInner({
                     </button>
                   </div>
                 )}
-                {/* ツールバー: 補助操作はアイコンだけにして面積を詰める */}
-                <div className="flex gap-1.5">
+                {/* ツールバー: 補助操作はアイコンだけにして面積を詰める。
+                    下にステータスが出ても折り返さないよう、幅は中身なりに固定する */}
+                <div className="flex w-fit gap-1.5 whitespace-nowrap">
                   {/* 章がある間だけ、章ビュー ⇄ 全シーンの切替を出す */}
                   {groups.length > 0 && effectiveView !== 'focused' && (
                     <button
@@ -4279,7 +4281,7 @@ function StructureModeInner({
                 </div>
                 {genPanelOpen && (
                   <div
-                    className={`rounded-2xl border p-3 shadow-lg shadow-black/30 ${generating ? 'node-generating-border' : ''}`}
+                    className={`w-72 rounded-2xl border p-3 shadow-lg shadow-black/30 ${generating ? 'node-generating-border' : ''}`}
                     style={{ background: 'var(--bg-card)', borderColor: 'var(--border)' }}
                   >
                     <textarea
@@ -4350,7 +4352,7 @@ function StructureModeInner({
                 {/* パネルを畳んでいる間の進捗表示。中止もここから行える */}
                 {!genPanelOpen && genStatus && (
                   <div
-                    className={`flex items-start gap-2 rounded-xl border px-2.5 py-1.5 text-[11px] leading-relaxed shadow-lg shadow-black/30 ${
+                    className={`flex w-72 items-start gap-2 rounded-xl border px-2.5 py-1.5 text-[11px] leading-relaxed shadow-lg shadow-black/30 ${
                       generating ? 'node-generating-border' : ''
                     }`}
                     style={{ background: 'var(--bg-card)', borderColor: 'var(--border)', color: 'var(--text-dim)' }}
