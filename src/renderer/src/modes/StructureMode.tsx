@@ -1631,14 +1631,16 @@ function ChapterTab({
                       ? '表紙の指定を外す(自動に戻す)'
                       : 'このシーンの挿絵を章の表紙にする'
                   }
-                  className={`shrink-0 rounded px-1.5 py-1 text-[11px] ${
+                  className={`shrink-0 rounded px-1.5 py-1 ${
                     group.cover_node_id === id ? '' : 'opacity-0 group-hover/scene:opacity-100'
                   }`}
                   style={
-                    group.cover_node_id === id ? { background: 'var(--accent-soft)' } : undefined
+                    group.cover_node_id === id
+                      ? { background: 'var(--accent-soft)', color: 'var(--accent)' }
+                      : { color: 'var(--text-faint)' }
                   }
                 >
-                  🖼
+                  <Icon name="image" size={12} />
                 </button>
               )}
             </div>

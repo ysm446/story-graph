@@ -13,6 +13,7 @@ type IconName =
   | 'tool' // ツールのステップ数
   | 'insert' // 線の途中に挿し込む(シーンの割り込み追加)
   | 'pen' // 文章に手を入れる(校正)
+  | 'image' // 挿絵(章の表紙にする)
 
 const PATHS: Record<IconName, React.JSX.Element> = {
   chat: <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />,
@@ -71,6 +72,14 @@ const PATHS: Record<IconName, React.JSX.Element> = {
     <>
       <path d="M12 20h9" />
       <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" />
+    </>
+  ),
+  // 枠 + 太陽 + 山。絵柄を減らしても「絵」に見える最小の形
+  image: (
+    <>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <circle cx="8.5" cy="8.5" r="1.5" />
+      <path d="m21 15-4.5-4.5L6 21" />
     </>
   )
 }
