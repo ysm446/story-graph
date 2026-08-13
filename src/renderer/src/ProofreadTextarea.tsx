@@ -11,6 +11,7 @@ import { useElapsedSeconds } from './useElapsed'
  *   (以前は選択中しかボタンが出ず、全文校正できることに気付けなかった)
  * - 結果はポップアップにストリーミング表示し、「置換」で本文に反映する
  *   (反映後は「↩ 元に戻す」で校正前に戻せる)
+ * - ポップアップの中でプリセットを変えて「もう一度」を押せば、同じ範囲を校正し直せる
  *
  * 校正プリセットの選択は localStorage('proofreadPreset')でアプリ全体で共有する。
  */
@@ -148,24 +149,23 @@ export default function ProofreadTextarea({
     return { top, bottom: endTop + lineHeight }
   }
 
-  const run = (): void => {
-    if (!value.trim() || busy) return
-    const range = selection ?? { start: 0, end: value.length }
-    const target = value.slice(range.start, range.end)
+  /** 実際に校正を走らせる。base と範囲を渡すのは、やり直しのときに
+   *  結果ポップアップが持っている範囲(選択が外れた後でも残る)を使うため。 */
+  const execute = (base: string, range: { start: number; end: number }): void => {
+    const target = base.slice(range.start, range.end)
     if (!target.trim()) return
-    setAnchor(selection ? measureSelection(range) : null)
     const controller = new AbortController()
     abortRef.current = controller
     setBusy(true)
     setError(null)
-    setResult({ value: '', base: value, start: range.start, end: range.end, done: false })
-    const partial = withContext && selection !== null
+    setResult({ value: '', base, start: range.start, end: range.end, done: false })
+    const partial = withContext && (range.start > 0 || range.end < base.length)
     void proofreadStream(
       {
         text: target,
         preset_id: presetId,
-        context_before: partial ? value.slice(0, range.start) : '',
-        context_after: partial ? value.slice(range.end) : ''
+        context_before: partial ? base.slice(0, range.start) : '',
+        context_after: partial ? base.slice(range.end) : ''
       },
       (e) => {
         if (e.delta) {
@@ -193,6 +193,19 @@ export default function ProofreadTextarea({
         abortRef.current = null
         setBusy(false)
       })
+  }
+
+  const run = (): void => {
+    if (!value.trim() || busy) return
+    const range = selection ?? { start: 0, end: value.length }
+    setAnchor(selection ? measureSelection(range) : null)
+    execute(value, range)
+  }
+
+  /** プリセットを変えてから、同じ範囲をもう一度校正する(ポップアップを開いたまま) */
+  const rerun = (): void => {
+    if (!result || busy) return
+    execute(result.base, { start: result.start, end: result.end })
   }
 
   const apply = (): void => {
@@ -347,6 +360,21 @@ export default function ProofreadTextarea({
               style={{ color: 'var(--text-dim)' }}
             >
               {busy ? `■ 中止 (${elapsed}s)` : '閉じる'}
+            </button>
+            {/* 校正の種類(プリセット)を変えて同じ範囲をやり直すためのボタン。
+                いちど閉じて選び直さずに済むよう、中止と置換の間に置く */}
+            <button
+              type="button"
+              onClick={rerun}
+              disabled={busy}
+              className="accent-action rounded-md border px-2 py-0.5 text-[11px] font-medium disabled:opacity-40"
+              title={
+                busy
+                  ? '校正が終わってから、もう一度校正できます'
+                  : '上のプリセットを変えてから押すと、同じ範囲を校正し直します'
+              }
+            >
+              もう一度
             </button>
             <button
               type="button"
