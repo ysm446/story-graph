@@ -114,7 +114,8 @@ export default function StatusBar({
               onClick={() => cancelTask(running.id)}
               className="shrink-0 rounded border px-1"
               style={{ borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }}
-              title="この処理を中止する"
+              aria-label="この処理を中止する"
+              data-tip="この処理を中止する"
             >
               ■
             </button>
@@ -126,7 +127,7 @@ export default function StatusBar({
               onClick={() => setQueueOpen((v) => !v)}
               className="shrink-0 rounded border px-1.5 text-[11px]"
               style={{ borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }}
-              title="待機中の処理(クリックで一覧)"
+              data-tip="待機中の処理(クリックで一覧)"
             >
               待機 {pending.length} {queueOpen ? '▾' : '▴'}
             </button>
@@ -150,7 +151,8 @@ export default function StatusBar({
                       onClick={() => cancelTask(t.id)}
                       className="shrink-0 rounded border px-1"
                       style={{ borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }}
-                      title="キューから取り消す"
+                      aria-label="キューから取り消す"
+                      data-tip="キューから取り消す"
                     >
                       ✕
                     </button>

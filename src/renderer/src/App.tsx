@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { api, initApi } from './api'
 import ModelBar from './ModelBar'
 import StatusBar from './StatusBar'
+import TooltipHost from './Tooltip'
 import StructureMode from './modes/StructureMode'
 import ReaderMode from './modes/ReaderMode'
 import CharactersMode from './modes/CharactersMode'
@@ -97,7 +98,7 @@ function LibraryMenu(): React.JSX.Element {
         onClick={() => setOpen((v) => !v)}
         className="flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[12px]"
         style={{ background: 'var(--bg-elevated)', color: 'var(--text-dim)' }}
-        title={current ?? ''}
+        data-tip={current ?? undefined}
       >
         <span className="flex" style={{ color: 'var(--text-faint)' }}>
           <FolderIcon />
@@ -124,7 +125,7 @@ function LibraryMenu(): React.JSX.Element {
                 }}
                 className="block w-full truncate rounded-lg px-2 py-1.5 text-left text-[12px]"
                 style={isCurrent ? { background: 'var(--accent-soft)', color: 'var(--text)' } : { color: 'var(--text-dim)' }}
-                title={root}
+                data-tip={root}
               >
                 {baseName(root)}
                 <span className="ml-1.5 text-[10px]" style={{ color: 'var(--text-faint)' }}>
@@ -271,7 +272,8 @@ export default function App(): React.JSX.Element {
             disabled={backendReady !== true}
             className="rounded-lg p-1.5 transition-colors disabled:opacity-40"
             style={{ color: 'var(--text-dim)' }}
-            title="設定"
+            aria-label="設定"
+            data-tip="設定"
           >
             <GearIcon />
           </button>
@@ -336,6 +338,8 @@ export default function App(): React.JSX.Element {
         )}
       </div>
       <StatusBar backendReady={backendReady === true} selectedCount={selectedCount} />
+      {/* ツールチップの共有ホスト。アプリ全体で 1 つだけ置く(Tooltip.tsx) */}
+      <TooltipHost />
       {/* 設定ポップアップ */}
       {settingsOpen && (
         <div
@@ -359,7 +363,8 @@ export default function App(): React.JSX.Element {
                 onClick={closeSettings}
                 className="rounded-md px-2 py-1 text-[15px] leading-none"
                 style={{ color: 'var(--text-dim)' }}
-                title="閉じる"
+                aria-label="閉じる"
+                data-tip="閉じる"
               >
                 ✕
               </button>
@@ -379,7 +384,7 @@ export default function App(): React.JSX.Element {
             onClick={openToastPath}
             disabled={!toast.path}
             className="min-w-0 flex-1 text-left"
-            title={toast.path ?? undefined}
+            data-tip={toast.path ?? undefined}
           >
             <div className="truncate font-medium">{toast.title}</div>
             {toast.detail && (
@@ -397,7 +402,8 @@ export default function App(): React.JSX.Element {
             onClick={dismissToast}
             className="shrink-0 rounded-md px-1 leading-none"
             style={{ color: 'var(--text-faint)' }}
-            title="閉じる"
+            aria-label="閉じる"
+            data-tip="閉じる"
           >
             ✕
           </button>

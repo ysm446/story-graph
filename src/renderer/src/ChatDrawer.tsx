@@ -62,7 +62,7 @@ function TimeLabel({
     <div
       className={`mb-0.5 text-[10px] ${align === 'right' ? 'text-right' : ''}`}
       style={{ color: 'var(--text-faint)', marginLeft: indent || undefined }}
-      title={date.toLocaleString()}
+      data-tip={date.toLocaleString()}
     >
       {label}
     </div>
@@ -677,7 +677,7 @@ export default function ChatDrawer({
           disabled={busy}
           className="m-2 rounded-lg border px-2 py-1 text-[12px] disabled:opacity-50"
           style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-          title="選択中のシーンをアンカーに新しい会話を始める"
+          data-tip="選択中のシーンをアンカーに新しい会話を始める"
         >
           + 新しい会話
         </button>
@@ -734,7 +734,7 @@ export default function ChatDrawer({
                       onClick={() => void loadChat(h.id)}
                       disabled={busy}
                       className="flex min-w-0 flex-1 items-center gap-1.5 px-1.5 py-1 text-left disabled:opacity-50"
-                      title={`${h.char_name ? h.char_name + ' / ' : ''}${h.anchor_title || '(シーンなし)'} まで`}
+                      data-tip={`${h.char_name ? h.char_name + ' / ' : ''}${h.anchor_title || '(シーンなし)'} まで`}
                     >
                       {/* 相手の目印。キャラ会話はアバター、相談チャットは吹き出し。
                           幅を揃えて見出しの開始位置がずれないようにする */}
@@ -773,7 +773,8 @@ export default function ChatDrawer({
                       }}
                       className="shrink-0 rounded px-1 text-[13px] opacity-0 group-hover:opacity-100"
                       style={{ color: 'var(--text-faint)', opacity: menuOpenId === h.id ? 1 : undefined }}
-                      title="この会話の操作"
+                      aria-label="この会話の操作"
+                      data-tip="この会話の操作"
                     >
                       ⋯
                     </button>
@@ -813,7 +814,7 @@ export default function ChatDrawer({
       <div
         className="relative w-px shrink-0 cursor-col-resize transition-colors hover:bg-[var(--accent-border)]"
         style={{ background: 'var(--border)' }}
-        title="ドラッグで幅を変更"
+        data-tip="ドラッグで幅を変更"
       >
         <div
           onPointerDown={beginSidebarResize}
@@ -837,7 +838,7 @@ export default function ChatDrawer({
                 borderColor: activeChar?.color || 'var(--border)',
                 color: 'var(--text-dim)'
               }}
-              title="話す相手。キャラを選ぶと、アンカー時点のそのキャラ本人と話せます"
+              data-tip="話す相手。キャラを選ぶと、アンカー時点のそのキャラ本人と話せます"
             >
               {/* option には SVG を置けないので、ここだけは文字だけで区別する */}
               <option value="">相談(編集者)</option>
@@ -863,7 +864,7 @@ export default function ChatDrawer({
                         ? { background: 'var(--accent-soft)', color: 'var(--text)' }
                         : { color: 'var(--text-faint)' }
                     }
-                    title={
+                    data-tip={
                       chatId
                         ? '枠組みはチャット開始時に固定されます(変えるには新規)'
                         : rp
@@ -888,7 +889,7 @@ export default function ChatDrawer({
                         ? { background: 'var(--accent-soft)', color: 'var(--text)' }
                         : { color: 'var(--text-faint)' }
                     }
-                    title={chatId ? 'スコープはチャット開始時に固定されます(変えるには新規)' : s === 'upto' ? 'アンカーまでの情報のみ' : '物語全体'}
+                    data-tip={chatId ? 'スコープはチャット開始時に固定されます(変えるには新規)' : s === 'upto' ? 'アンカーまでの情報のみ' : '物語全体'}
                   >
                     {s === 'upto' ? 'ここまで' : '全体'}
                   </button>
@@ -899,7 +900,7 @@ export default function ChatDrawer({
               onClick={onClose}
               className="ml-auto rounded-md border px-2 py-0.5"
               style={{ borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }}
-              title="相談チャットを閉じる(履歴は残ります)"
+              data-tip="相談チャットを閉じる(履歴は残ります)"
             >
               ✕ 閉じる
             </button>
@@ -987,17 +988,17 @@ export default function ChatDrawer({
                       <div className="mt-0.5 flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
                         <MsgActionButton
                           kind="edit"
-                          title="この発言を編集して送り直す"
+                          tip="この発言を編集して送り直す"
                           onClick={() => startEditTurn(turn, item.text)}
                         />
                         <MsgActionButton
                           kind="regenerate"
-                          title="この発言から返事を作り直す"
+                          tip="この発言から返事を作り直す"
                           onClick={() => regenerateTurn(turn, item.text)}
                         />
                         <MsgActionButton
                           kind="delete"
-                          title="このやり取りを削除"
+                          tip="このやり取りを削除"
                           onClick={() => void deleteTurn(turn, false)}
                         />
                       </div>
@@ -1034,14 +1035,14 @@ export default function ChatDrawer({
                               {item.promptMessages && (
                                 <MsgActionButton
                                   kind="prompt"
-                                  title="この返事の生成に送った内容(システムプロンプトと履歴)を見る"
+                                  tip="この返事の生成に送った内容(システムプロンプトと履歴)を見る"
                                   onClick={() => setPromptView(item.promptMessages!)}
                                 />
                               )}
                               {item.turn !== undefined && !busy && (
                                 <MsgActionButton
                                   kind="delete"
-                                  title="この返事を削除(発言は残す)"
+                                  tip="この返事を削除(発言は残す)"
                                   onClick={() => void deleteTurn(item.turn!, true)}
                                 />
                               )}
@@ -1158,7 +1159,7 @@ export default function ChatDrawer({
                     borderColor: c.dynamic ? 'var(--accent-border)' : 'var(--border-strong)',
                     color: c.dynamic ? 'var(--text)' : 'var(--text-dim)'
                   }}
-                  title={c.dynamic ? `${c.text}(物語の内容から作られた質問)` : c.text}
+                  data-tip={c.dynamic ? `${c.text}(物語の内容から作られた質問)` : c.text}
                 >
                   {c.dynamic && <Icon name="sparkle" size={11} className="shrink-0" />}
                   <span className="truncate">{c.text}</span>
@@ -1171,7 +1172,7 @@ export default function ChatDrawer({
                 onClick={() => setTemplateOffset((v) => (v + TEMPLATE_WINDOW) % templates.length)}
                 className="flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px]"
                 style={{ color: 'var(--text-faint)' }}
-                title="ほかの候補を見る"
+                data-tip="ほかの候補を見る"
               >
                 ⟳ ほかの候補
               </button>
@@ -1200,7 +1201,7 @@ export default function ChatDrawer({
             {usage && (
               <div
                 className="flex shrink-0 items-center gap-1"
-                title={
+                data-tip={
                   `会話トークン: ${usage.tokens.toLocaleString()}${usage.estimated ? '(概算)' : ''}\n` +
                   `コンテキスト上限: ${usage.ctx.toLocaleString()}\n` +
                   `${usagePct.toFixed(1)}% 使用中(${(100 - usagePct).toFixed(1)}% 残り)`

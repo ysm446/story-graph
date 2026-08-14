@@ -302,7 +302,7 @@ export default function ModelBar({ refreshKey }: { refreshKey: number }): React.
                 } as React.CSSProperties)
               : null)
           }}
-          title={
+          data-tip={
             hasError
               ? error!
               : switching
@@ -336,7 +336,8 @@ export default function ModelBar({ refreshKey }: { refreshKey: number }): React.
             onClick={() => void handleEject()}
             className="rounded-lg border p-1.5 transition-colors"
             style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-            title="モデルをアンロード(停止)"
+            aria-label="モデルをアンロード(停止)"
+            data-tip="モデルをアンロード(停止)"
           >
             <EjectIcon />
           </button>

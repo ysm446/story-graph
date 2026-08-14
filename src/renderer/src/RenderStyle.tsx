@@ -61,14 +61,15 @@ export function LengthSelect({
   onChange,
   zeroLabel,
   className = '',
-  title
+  tip
 }: {
   value: number
   onChange: (chars: number) => void
   /** 0 のときの選択肢の文言 */
   zeroLabel: string
   className?: string
-  title?: string
+  /** ツールチップ(Tooltip.tsx)。素の title ではないので名前を分けている */
+  tip?: string
 }): React.JSX.Element {
   const isCustom = value > 0 && !LENGTH_PRESETS.some((p) => p.value === value)
   const [customOpen, setCustomOpen] = useState(isCustom)
@@ -107,7 +108,7 @@ export function LengthSelect({
         }}
         className={`rounded-lg border px-2 py-1 text-[12px] ${className}`}
         style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
-        title={title}
+        data-tip={tip}
       >
         <option value={0}>{zeroLabel}</option>
         {LENGTH_PRESETS.map((p) => (
@@ -132,7 +133,7 @@ export function LengthSelect({
             }}
             className="w-20 rounded-lg border px-2 py-1 text-[12px] tabular-nums outline-none"
             style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
-            title={`${LENGTH_MIN}〜${LENGTH_MAX} 字`}
+            data-tip={`${LENGTH_MIN}〜${LENGTH_MAX} 字`}
           />
           <span className="text-[11px]" style={{ color: 'var(--text-faint)' }}>
             字
@@ -418,7 +419,7 @@ export function RenderStyleControls({
         onChange={(e) => style.setPresetId(e.target.value)}
         className={`rounded-lg border px-2 py-1 text-[12px] ${compact ? 'min-w-0 flex-1' : ''}`}
         style={selectStyle}
-        title="スタイルプリセット(人称と文体)"
+        data-tip="スタイルプリセット(人称と文体)"
       >
         {style.presets.map((p) => (
           <option key={p.id} value={p.id}>
@@ -440,7 +441,7 @@ export function RenderStyleControls({
         disabled={!style.presetId}
         className={buttonClass}
         style={buttonStyle}
-        title={
+        data-tip={
           style.preset?.builtin
             ? '組み込みプリセットは編集できません。複製して新規作成します'
             : '選択中のプリセットを編集'
@@ -452,7 +453,7 @@ export function RenderStyleControls({
         onClick={() => setEditor({ name: '', person: 'third', tone: '' })}
         className={buttonClass}
         style={buttonStyle}
-        title="スタイルプリセットを新規作成"
+        data-tip="スタイルプリセットを新規作成"
       >
         {compact ? '+' : '+ 新規'}
       </button>
@@ -461,7 +462,7 @@ export function RenderStyleControls({
         onChange={(e) => style.setPovChar(e.target.value || null)}
         className={`rounded-lg border px-2 py-1 text-[12px] ${compact ? 'min-w-0 flex-1 basis-40' : ''}`}
         style={selectStyle}
-        title="視点キャラクター(そのキャラが知らないことは書かれない)"
+        data-tip="視点キャラクター(そのキャラが知らないことは書かれない)"
       >
         <option value="">三人称(POVなし)</option>
         {style.characters.map((c) => (
@@ -476,7 +477,7 @@ export function RenderStyleControls({
           onChange={style.setTargetChars}
           zeroLabel="分量: おまかせ"
           className={compact ? 'min-w-0 flex-1 basis-40' : ''}
-          title="全シーン共通の目安の字数。シーンごとの指定があればそちらが優先する"
+          tip="全シーン共通の目安の字数。シーンごとの指定があればそちらが優先する"
         />
       )}
       {editor && (

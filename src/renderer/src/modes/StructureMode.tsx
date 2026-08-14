@@ -246,7 +246,7 @@ function BeatNodeCard({ data, selected }: NodeProps<BeatFlowNode>): React.JSX.El
           borderColor: 'var(--accent-border)',
           ['--tw-ring-color' as string]: 'var(--accent-border)'
         }}
-        title={
+        data-tip={
           isIn
             ? '章の入口。前の章(や前のシーン)からの線はここに繋ぐ'
             : '章の出口。ここに繋がっている道が、この章の読む道になる'
@@ -277,7 +277,7 @@ function BeatNodeCard({ data, selected }: NodeProps<BeatFlowNode>): React.JSX.El
           borderStyle: active ? 'solid' : 'dashed',
           ['--tw-ring-color' as string]: 'var(--accent-border)'
         }}
-        title={
+        data-tip={
           isEnding
             ? active
               ? 'アクティブな結末(ここまでが正史)'
@@ -363,7 +363,7 @@ function BeatNodeCard({ data, selected }: NodeProps<BeatFlowNode>): React.JSX.El
           <span
             className="text-[11px]"
             style={{ color: 'var(--text-faint)', opacity: place.inherited ? 0.55 : 1 }}
-            title={place.inherited ? '前のシーンから引き継いだ場所' : undefined}
+            data-tip={place.inherited ? '前のシーンから引き継いだ場所' : undefined}
           >
             @{place.name}
           </span>
@@ -418,7 +418,7 @@ function ChapterNodeCard({ data, selected }: NodeProps<ChapterFlowNode>): React.
         borderStyle: group.on_canon ? 'solid' : 'dashed',
         ['--tw-ring-color' as string]: 'var(--accent-border)'
       }}
-      title="ダブルクリックで章の中を開く(シーンをここに落とすとこの章に入ります)"
+      data-tip="ダブルクリックで章の中を開く(シーンをここに落とすとこの章に入ります)"
       onDoubleClick={(e) => {
         // React Flow のダブルクリックズームに任せず、カード自身で確実に開く
         e.stopPropagation()
@@ -440,7 +440,7 @@ function ChapterNodeCard({ data, selected }: NodeProps<ChapterFlowNode>): React.
           <span
             className="rounded px-1.5 py-px text-[10px]"
             style={{ background: 'rgba(239,68,68,0.12)', color: '#f2a3a3' }}
-            title={group.warning}
+            data-tip={group.warning}
           >
             ⚠ 要確認
           </span>
@@ -450,7 +450,7 @@ function ChapterNodeCard({ data, selected }: NodeProps<ChapterFlowNode>): React.
             <span
               className="rounded px-1.5 py-px text-[10px]"
               style={{ background: 'rgba(239,68,68,0.12)', color: '#f2a3a3' }}
-              title="章の中が編集されたので、まとめが古くなっている可能性があります"
+              data-tip="章の中が編集されたので、まとめが古くなっている可能性があります"
             >
               まとめ要更新
             </span>
@@ -722,7 +722,7 @@ function BeatTab({
             disabled={suggesting !== null || !(draft.beat ?? '').trim()}
             // 色は index.css の .accent-action(校正ボタンなど LLM を走らせるボタン共通)
             className="accent-action inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium disabled:opacity-40"
-            title="シーン本文からタイトルを自動生成"
+            data-tip="シーン本文からタイトルを自動生成"
           >
             {suggesting === 'title' ? (
               `生成中… (${suggestElapsed}s)`
@@ -768,7 +768,7 @@ function BeatTab({
             disabled={suggesting !== null || !(draft.beat ?? '').trim()}
             // 色は index.css の .accent-action(校正ボタンなど LLM を走らせるボタン共通)
             className="accent-action inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium disabled:opacity-40"
-            title="シーン本文から感情の核を自動生成"
+            data-tip="シーン本文から感情の核を自動生成"
           >
             {suggesting === 'emotional_core' ? (
               `生成中… (${suggestElapsed}s)`
@@ -827,7 +827,7 @@ function BeatTab({
                     }}
                     className="rounded-full px-1 text-[11px]"
                     style={{ color: retired ? 'var(--accent)' : 'var(--text-faint)' }}
-                    title={
+                    data-tip={
                       retired
                         ? 'このシーンでの退場を取り消す'
                         : 'このシーンで退場させる(以降 cast に入れると警告)'
@@ -1030,7 +1030,7 @@ function BeatTab({
           disabled={!dirty}
           className="rounded-lg px-4 py-1.5 text-[13px] font-medium text-white disabled:opacity-40"
           style={{ background: 'var(--accent)' }}
-          title={dirty ? undefined : '変更はありません'}
+          data-tip={dirty ? undefined : '変更はありません'}
         >
           保存
         </button>
@@ -1214,7 +1214,8 @@ function CharTab({
                 }}
                 className="rounded-md px-2 text-[12px] text-white"
                 style={{ background: 'var(--accent)' }}
-                title="fact_set イベントとして記録"
+                aria-label="fact_set イベントとして記録"
+                data-tip="fact_set イベントとして記録"
               >
                 +
               </button>
@@ -1233,7 +1234,7 @@ function CharTab({
                 <div
                   className="relative h-1.5 flex-1 overflow-hidden rounded-full"
                   style={{ background: 'var(--bg-input)' }}
-                  title={`${nameOf(target)} への好感度 ${rel.score.toFixed(2)}`}
+                  data-tip={`${nameOf(target)} への好感度 ${rel.score.toFixed(2)}`}
                 >
                   <div
                     className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2"
@@ -1292,7 +1293,7 @@ function CharTab({
                 onChange={(e) => setRelLabel(e.target.value)}
                 className="w-28 rounded-md border px-2 py-1 text-[12px]"
                 style={inputStyle}
-                title="相関図の矢印に添える一言(例: 幼なじみ)"
+                data-tip="相関図の矢印に添える一言(例: 幼なじみ)"
               />
               <button
                 onClick={() => {
@@ -1311,7 +1312,7 @@ function CharTab({
                 }}
                 className="rounded-md px-2 text-[12px] text-white"
                 style={{ background: 'var(--accent)' }}
-                title="relationship_set イベントとして記録"
+                data-tip="relationship_set イベントとして記録"
               >
                 set
               </button>
@@ -1332,7 +1333,7 @@ function CharTab({
                   }}
                   className="text-[10px] hover:underline"
                   style={{ color: 'var(--text-faint)' }}
-                  title="並び順を切り替える"
+                  data-tip="並び順を切り替える"
                 >
                   {memNewestFirst ? '新 → 古' : '古 → 新'}
                 </button>
@@ -1349,7 +1350,7 @@ function CharTab({
                 >
                   {/* 本文が引けないときも ID は出さない(読めない文字列が並ぶだけなので) */}
                   {memory?.content || (
-                    <span style={{ color: 'var(--text-faint)' }} title={eventId}>
+                    <span style={{ color: 'var(--text-faint)' }} data-tip={eventId}>
                       (本文が見つかりません)
                     </span>
                   )}
@@ -1360,7 +1361,7 @@ function CharTab({
                         onClick={() => onSelectNode(memory.nodeId!)}
                         className="mt-0.5 block max-w-full truncate text-left text-[10px] hover:underline"
                         style={{ color: memory.nodeId === node.id ? 'var(--accent)' : 'var(--text-faint)' }}
-                        title={
+                        data-tip={
                           memory.kind === 'digest'
                             ? `章「${memory.title}」のまとめ(クリックでその章の最後のシーンへ)`
                             : `「${memory.title}」で得た記憶(クリックでそのシーンへ)`
@@ -1373,7 +1374,7 @@ function CharTab({
                       <span
                         className="mt-0.5 block max-w-full truncate text-[10px]"
                         style={{ color: 'var(--text-faint)' }}
-                        title={`章「${memory.title}」のまとめ`}
+                        data-tip={`章「${memory.title}」のまとめ`}
                       >
                         ← {memory.title}(章のまとめ)
                       </span>
@@ -1400,7 +1401,8 @@ function CharTab({
                 }}
                 className="rounded-md px-2 text-[12px] text-white"
                 style={{ background: 'var(--accent)' }}
-                title="memory_add イベントとして記録"
+                aria-label="memory_add イベントとして記録"
+                data-tip="memory_add イベントとして記録"
               >
                 +
               </button>
@@ -1548,7 +1550,8 @@ function ChapterTab({
         </span>
         <button
           onClick={onRename}
-          title="章の名前を変更"
+          aria-label="章の名前を変更"
+          data-tip="章の名前を変更"
           className="rounded p-0.5 hover:bg-[var(--accent-soft)]"
           style={{ color: 'var(--text-faint)' }}
         >
@@ -1556,7 +1559,7 @@ function ChapterTab({
         </button>
         <button
           onClick={onDissolve}
-          title="章を解除する(シーンは残る)"
+          data-tip="章を解除する(シーンは残る)"
           className="rounded p-0.5 text-[11px] hover:bg-[var(--accent-soft)]"
           style={{ color: 'var(--text-faint)' }}
         >
@@ -1581,7 +1584,7 @@ function ChapterTab({
             {group.cover_node_id && (
               <button
                 onClick={() => onSetCover(null)}
-                title="表紙の指定を外して、章内で最初に挿絵があるシーンに戻す"
+                data-tip="表紙の指定を外して、章内で最初に挿絵があるシーンに戻す"
                 className="shrink-0 rounded px-1 text-[11px] hover:bg-[var(--accent-soft)]"
                 style={{ color: 'var(--text-faint)' }}
               >
@@ -1617,7 +1620,7 @@ function ChapterTab({
                 <span
                   className="shrink-0 px-1 text-[10px]"
                   style={{ color: 'var(--text-faint)' }}
-                  title="この章のシーンですが、読む道(鑑賞モード・まとめ)には乗っていません"
+                  data-tip="この章のシーンですが、読む道(鑑賞モード・まとめ)には乗っていません"
                 >
                   別の道
                 </span>
@@ -1626,7 +1629,8 @@ function ChapterTab({
               {nodeById.get(id)?.image_path && (
                 <button
                   onClick={() => onSetCover(group.cover_node_id === id ? null : id)}
-                  title={
+                  aria-label="章の表紙にする"
+                  data-tip={
                     group.cover_node_id === id
                       ? '表紙の指定を外す(自動に戻す)'
                       : 'このシーンの挿絵を章の表紙にする'
@@ -1657,7 +1661,7 @@ function ChapterTab({
               <span
                 className="rounded px-1.5 py-px text-[10px]"
                 style={{ background: 'rgba(239,68,68,0.12)', color: '#f2a3a3' }}
-                title="章の中が編集されたので、まとめが古くなっている可能性があります"
+                data-tip="章の中が編集されたので、まとめが古くなっている可能性があります"
               >
                 要更新
               </span>
@@ -1681,7 +1685,7 @@ function ChapterTab({
             disabled={generateQueued}
             className="rounded-lg px-2.5 py-1 text-[12px] font-medium text-white disabled:opacity-50"
             style={{ background: 'var(--accent)' }}
-            title="LLM で章のまとめを作る(既存のまとめは置き換え)"
+            data-tip="LLM で章のまとめを作る(既存のまとめは置き換え)"
           >
             {generateQueued ? '生成待ち…' : hasDigest ? '⟳ まとめを作り直す' : '▶ まとめを作る'}
           </button>
@@ -1970,7 +1974,7 @@ function RenderTab({
           onChange={saveNodeChars}
           zeroLabel={`分量: 共通に従う(${lengthLabel(style.targetChars)})`}
           className="min-w-0 flex-1 basis-40"
-          title="このシーンだけの目安の字数。共通の設定より優先される(鑑賞モードの全編清書にも効く)"
+          tip="このシーンだけの目安の字数。共通の設定より優先される(鑑賞モードの全編清書にも効く)"
         />
       </div>
       <div className="flex items-center gap-1.5">
@@ -1988,7 +1992,7 @@ function RenderTab({
             disabled={!presetId}
             className="rounded-lg px-2.5 py-1 text-[12px] font-medium text-white disabled:opacity-40"
             style={{ background: 'var(--accent)' }}
-            title={
+            data-tip={
               (render ? '同じ条件で書き直す(前の清書は履歴として残る)' : 'このシーンを散文にする') +
               '\n\n' +
               RENDER_INPUTS_HELP
@@ -2001,7 +2005,7 @@ function RenderTab({
           <span
             className="rounded px-1.5 py-px text-[10px] uppercase"
             style={{ background: 'rgba(239,68,68,0.12)', color: '#f2a3a3' }}
-            title="このシーンか上流が編集されたので、清書が古くなっています"
+            data-tip="このシーンか上流が編集されたので、清書が古くなっています"
           >
             stale
           </span>
@@ -2010,7 +2014,7 @@ function RenderTab({
           <span
             className="ml-auto text-[11px] tabular-nums"
             style={{ color: 'var(--text-faint)' }}
-            title={
+            data-tip={
               effectiveChars
                 ? `目安は ${effectiveChars} 字(${nodeChars ? 'このシーンの指定' : '共通の設定'})`
                 : undefined
@@ -2065,7 +2069,7 @@ function RenderTab({
           {render.prompt_messages && (
             <MsgActionButton
               kind="prompt"
-              title="この清書の生成に送った内容(システムプロンプトなど)を見る"
+              tip="この清書の生成に送った内容(システムプロンプトなど)を見る"
               onClick={() => setPromptView(render.prompt_messages!)}
             />
           )}
@@ -4223,7 +4227,7 @@ function StructureModeInner({
                       onClick={() => setChapterView('chapters')}
                       className="rounded-md px-1.5 py-0.5 hover:bg-[var(--accent-soft)]"
                       style={{ color: 'var(--text-dim)' }}
-                      title="章ビューへ戻る"
+                      data-tip="章ビューへ戻る"
                     >
                       ← 章一覧
                     </button>
@@ -4235,7 +4239,8 @@ function StructureModeInner({
                       onClick={() => void renameChapter(focusedGroup)}
                       className="rounded-md px-1 py-0.5 hover:bg-[var(--accent-soft)]"
                       style={{ color: 'var(--text-faint)' }}
-                      title="章の名前を変更"
+                      aria-label="章の名前を変更"
+                      data-tip="章の名前を変更"
                     >
                       ✎
                     </button>
@@ -4243,7 +4248,7 @@ function StructureModeInner({
                       onClick={() => void dissolveChapter(focusedGroup)}
                       className="rounded-md px-1 py-0.5 hover:bg-[var(--accent-soft)]"
                       style={{ color: 'var(--text-faint)' }}
-                      title="章を解除する(シーンは残る)"
+                      data-tip="章を解除する(シーンは残る)"
                     >
                       解散
                     </button>
@@ -4262,7 +4267,7 @@ function StructureModeInner({
                         borderColor: effectiveView === 'chapters' ? 'var(--accent-border)' : 'var(--border-strong)',
                         color: 'var(--text-dim)'
                       }}
-                      title={
+                      data-tip={
                         effectiveView === 'chapters'
                           ? '全シーンのフラット表示に切り替える'
                           : '章ビュー(章単位の俯瞰)に切り替える'
@@ -4275,7 +4280,7 @@ function StructureModeInner({
                     onClick={() => void handleAddBeat()}
                     className="rounded-lg px-3 py-1.5 text-[13px] font-medium text-white shadow-lg shadow-black/30"
                     style={{ background: 'var(--accent)' }}
-                    title={
+                    data-tip={
                       selectedId
                         ? '選択ノードの子としてシーンを追加'
                         : focusedGroup
@@ -4290,7 +4295,8 @@ function StructureModeInner({
                     onClick={() => void handleAddDetached(undefined, focusedGroup?.id)}
                     className="rounded-lg border px-2.5 py-1.5 text-[13px] shadow-lg shadow-black/30"
                     style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-                    title={
+                    aria-label="どこにも繋がらないシーンを追加"
+                    data-tip={
                       focusedGroup
                         ? `どこにも繋がらないシーンを「${focusedGroup.title}」に追加(あとでハンドルのドラッグで繋げます)`
                         : 'どこにも繋がらないシーンを画面の中央に追加(あとでハンドルのドラッグで繋げます)'
@@ -4303,7 +4309,7 @@ function StructureModeInner({
                       onClick={() => void handleInsertAfter()}
                       className="flex items-center rounded-lg border px-2.5 py-2 shadow-lg shadow-black/30"
                       style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-                      title="選択ノードと後続シーンの間に新しいシーンを割り込ませる"
+                      data-tip="選択ノードと後続シーンの間に新しいシーンを割り込ませる"
                       aria-label="選択ノードの後ろに割り込ませる"
                     >
                       <Icon name="insert" size={15} />
@@ -4313,7 +4319,7 @@ function StructureModeInner({
                     onClick={() => void realignLayout()}
                     className="rounded-lg border px-2.5 py-1.5 text-[13px] shadow-lg shadow-black/30"
                     style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-                    title={
+                    data-tip={
                       effectiveView === 'chapters'
                         ? '章カードと未分類のノードだけを整列する(章の中は変えません)'
                         : effectiveView === 'focused'
@@ -4337,7 +4343,7 @@ function StructureModeInner({
                       borderColor: genPanelOpen ? 'var(--accent-border)' : 'var(--border-strong)',
                       color: 'var(--accent)'
                     }}
-                    title={genPanelOpen ? '生成パネルを閉じる' : 'LLM でシーンを生成する'}
+                    data-tip={genPanelOpen ? '生成パネルを閉じる' : 'LLM でシーンを生成する'}
                   >
                     ▶ 生成 {genPanelOpen ? '▴' : '▾'}
                   </button>
@@ -4366,7 +4372,7 @@ function StructureModeInner({
                         }}
                         className="w-full rounded-lg px-3 py-1.5 text-[13px] font-medium text-white"
                         style={{ background: 'var(--accent)' }}
-                        title={
+                        data-tip={
                           interpolateNext
                             ? `選択シーンと「${interpolateNext.title || '(無題)'}」の間に起こったことを推測して挟む`
                             : selectedNode
@@ -4385,7 +4391,7 @@ function StructureModeInner({
                         }}
                         disabled={!selectedId}
                         className="accent-action w-full rounded-lg border px-3 py-1.5 text-[13px] font-medium disabled:opacity-40"
-                        title="選択ノードから what-if 分岐を draft として生成"
+                        data-tip="選択ノードから what-if 分岐を draft として生成"
                       >
                         ⑂ 選択ノードから分岐を生成
                       </button>
@@ -4433,7 +4439,8 @@ function StructureModeInner({
                         onClick={() => genTaskIdRef.current && cancelTask(genTaskIdRef.current)}
                         className="shrink-0 rounded-md border px-1.5"
                         style={{ borderColor: 'rgba(239,68,68,0.5)', color: 'var(--danger)' }}
-                        title="生成を中止"
+                        aria-label="生成を中止"
+                        data-tip="生成を中止"
                       >
                         ■
                       </button>
@@ -4442,7 +4449,8 @@ function StructureModeInner({
                         onClick={() => setGenStatus(null)}
                         className="shrink-0 px-1"
                         style={{ color: 'var(--text-faint)' }}
-                        title="表示を消す"
+                        aria-label="表示を消す"
+                        data-tip="表示を消す"
                       >
                         ✕
                       </button>
@@ -4461,7 +4469,8 @@ function StructureModeInner({
                   borderColor: chatOpen ? 'var(--accent-border)' : 'var(--border-strong)',
                   color: chatOpen ? 'var(--accent)' : 'var(--text-dim)'
                 }}
-                title={chatOpen ? '相談チャットを閉じる' : '相談チャットを下段に開く'}
+                aria-label={chatOpen ? '相談チャットを閉じる' : '相談チャットを下段に開く'}
+                data-tip={chatOpen ? '相談チャットを閉じる' : '相談チャットを下段に開く'}
               >
                 <Icon name="chat" size={18} />
               </button>
@@ -4834,7 +4843,7 @@ function StructureModeInner({
             <div
               className="relative h-px shrink-0 cursor-row-resize transition-colors hover:bg-[var(--accent-border)]"
               style={{ background: 'var(--border)' }}
-              title="ドラッグで高さを変更"
+              data-tip="ドラッグで高さを変更"
             >
               <div
                 onPointerDown={beginChatResize}
@@ -4867,7 +4876,7 @@ function StructureModeInner({
         <div
           className="relative w-px shrink-0 cursor-col-resize transition-colors hover:bg-[var(--accent-border)]"
           style={{ background: 'var(--border)' }}
-          title="ドラッグで幅を変更"
+          data-tip="ドラッグで幅を変更"
         >
           <div
             onPointerDown={beginInspectorResize}

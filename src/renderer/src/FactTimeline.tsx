@@ -126,7 +126,7 @@ export default function FactTimeline({
                     background: node.id === selectedNodeId ? 'var(--accent-soft)' : 'transparent',
                     color: node.id === selectedNodeId ? 'var(--text)' : 'var(--text-faint)'
                   }}
-                  title={node.title || '(無題)'}
+                  data-tip={node.title || '(無題)'}
                 >
                   {index + 1}. {node.title || '(無題)'}
                 </button>
@@ -156,7 +156,7 @@ export default function FactTimeline({
                             band.nodeId === selectedNodeId ? 'var(--accent-border)' : 'var(--border-strong)',
                           color: 'var(--text)'
                         }}
-                        title={`${key} = ${band.value}(${band.start + 1} 話目から${
+                        data-tip={`${key} = ${band.value}(${band.start + 1} 話目から${
                           band.end < path.length ? ` ${band.end} 話目まで` : '現在まで'
                         })`}
                       >

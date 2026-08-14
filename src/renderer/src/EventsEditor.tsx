@@ -537,11 +537,15 @@ export default function EventsEditor({
             disabled={saving || extractTask !== null}
             // 色は index.css の .accent-action(校正・自動生成と同じ「LLM を走らせる」見た目)
             className="accent-action rounded-md border px-2 py-0.5 text-[11px] font-medium disabled:opacity-50"
-            // 何を見て抽出しているかを書く(見ないものまで整えても結果が変わらないため)。
-            // 素の title なので折り返しは効かない。1 行ずつ改行で区切る
-            title={[
+            // 何を見て抽出しているかを書く(見ないものまで整えても結果が変わらないため)
+            data-tip={[
               'この場面で起きたこと(イベント)を LLM に取り出させます。',
-              '渡すのは ①シーン本文 + 登場キャラ(Cast) + 場所 ②直前までの状態 ③キャラクター一覧 の 3 つ。',
+              '',
+              '抽出に使うもの:',
+              '・シーン本文と、登場キャラ(Cast)・場所',
+              '・直前までの状態',
+              '・キャラクター一覧',
+              '',
               'タイトル・芯・清書は見ません(未保存の編集も渡らないので、先に保存してください)'
             ].join('\n')}
           >
@@ -653,7 +657,7 @@ export default function EventsEditor({
                   onClick={() => setEditing(open ? null : { id: e.id, payload: { ...(e.payload as Payload) } })}
                   className="ml-auto text-[11px]"
                   style={{ color: open ? 'var(--accent)' : 'var(--text-faint)' }}
-                  title="このイベントを編集"
+                  data-tip="このイベントを編集"
                 >
                   {open ? '閉じる' : '✎ 編集'}
                 </button>
@@ -662,7 +666,8 @@ export default function EventsEditor({
                   disabled={saving || extracting}
                   className="text-[11px]"
                   style={{ color: 'var(--text-faint)' }}
-                  title="このイベントを削除"
+                  aria-label="このイベントを削除"
+                  data-tip="このイベントを削除"
                 >
                   ✕
                 </button>

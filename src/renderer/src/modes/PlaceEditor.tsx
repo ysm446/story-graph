@@ -111,7 +111,7 @@ export default function PlaceEditor({
             background: 'var(--bg-input)',
             ...(imageDragOver ? { outline: '2px dashed var(--accent)', outlineOffset: 2 } : {})
           }}
-          title={draft.image_path ? '画像をドロップで差し替え' : 'クリックで画像を設定 / 画像をドロップ'}
+          data-tip={draft.image_path ? '画像をドロップで差し替え' : 'クリックで画像を設定 / 画像をドロップ'}
         >
           {assetUrl(draft.image_path) ? (
             <img src={assetUrl(draft.image_path)!} className="block max-h-72 w-full object-cover" />
@@ -137,11 +137,11 @@ export default function PlaceEditor({
         />
         {draft.image_path && (
           <div className="flex items-center gap-2 text-[11px]" style={{ color: 'var(--text-faint)' }}>
-            <button onClick={() => fileInputRef.current?.click()} title="別の画像に差し替える">
+            <button onClick={() => fileInputRef.current?.click()} data-tip="別の画像に差し替える">
               {uploading ? 'アップロード中…' : '画像を差し替え'}
             </button>
             <span>・</span>
-            <button onClick={() => void removeImage()} title="画像を外す">
+            <button onClick={() => void removeImage()} data-tip="画像を外す">
               画像を外す
             </button>
           </div>
@@ -168,7 +168,7 @@ export default function PlaceEditor({
             value={draft.color ?? '#5a8fa7'}
             onChange={(e) => setDraft((d) => ({ ...d, color: e.target.value }))}
             className="color-swatch block h-11 w-12 cursor-pointer"
-            title="シーンカードの場所表示に使う色"
+            data-tip="シーンカードの場所表示に使う色"
           />
         </label>
       </div>
@@ -194,7 +194,7 @@ export default function PlaceEditor({
           disabled={saving || !dirty}
           className="rounded-lg px-4 py-1.5 text-[13px] font-medium text-white disabled:opacity-40"
           style={{ background: saving ? 'var(--accent-hover)' : 'var(--accent)' }}
-          title={dirty ? undefined : '変更はありません'}
+          data-tip={dirty ? undefined : '変更はありません'}
         >
           {saving ? '保存中…' : '保存'}
         </button>

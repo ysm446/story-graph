@@ -237,7 +237,7 @@ function StylePresetsSection(): React.JSX.Element {
             }
             className="shrink-0 rounded-md border px-2 py-0.5 text-[11px]"
             style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-            title={p.builtin ? '組み込みは編集できません。複製して新規作成します' : 'このプリセットを編集'}
+            data-tip={p.builtin ? '組み込みは編集できません。複製して新規作成します' : 'このプリセットを編集'}
           >
             {p.builtin ? '⧉ 複製して編集' : '✎ 編集'}
           </button>
@@ -552,7 +552,7 @@ function ExternalBackupSection(): React.JSX.Element {
                 ? { borderColor: 'var(--border-strong)', background: 'var(--accent-soft)', color: 'var(--text)' }
                 : { borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }
             }
-            title="スナップショット(ライブラリ内の時点保存)も zip に含めます。サイズが数十倍になります"
+            data-tip="スナップショット(ライブラリ内の時点保存)も zip に含めます。サイズが数十倍になります"
           >
             {includeSnapshots ? '☑' : '☐'} スナップショットも含める
           </button>
@@ -569,7 +569,7 @@ function ExternalBackupSection(): React.JSX.Element {
             disabled={busy}
             className="rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-50"
             style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-            title="zip を新しいライブラリとして展開して開きます(今のライブラリは変更しません)"
+            data-tip="zip を新しいライブラリとして展開して開きます(今のライブラリは変更しません)"
           >
             zip から復元
           </button>
@@ -653,7 +653,7 @@ function ExternalBackupSection(): React.JSX.Element {
             <span className="shrink-0" style={{ color: 'var(--text-faint)' }}>
               保存先
             </span>
-            <span className="min-w-0 flex-1 truncate" style={{ color: 'var(--text)' }} title={config.dir}>
+            <span className="min-w-0 flex-1 truncate" style={{ color: 'var(--text)' }} data-tip={config.dir}>
               {config.dir}
             </span>
             <button
@@ -664,7 +664,7 @@ function ExternalBackupSection(): React.JSX.Element {
                   ? { borderColor: 'var(--border-strong)', background: 'var(--accent-soft)', color: 'var(--text)' }
                   : { borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }
               }
-              title="既定はオン。ライブラリの中(<ライブラリ>/backups/)に置くので、ライブラリを切り替えても付いてきます"
+              data-tip="既定はオン。ライブラリの中(<ライブラリ>/backups/)に置くので、ライブラリを切り替えても付いてきます"
             >
               {config.inside ? '☑' : '☐'} ライブラリの中
             </button>
@@ -673,7 +673,7 @@ function ExternalBackupSection(): React.JSX.Element {
               disabled={config.inside}
               className="shrink-0 rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-40"
               style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-              title={
+              data-tip={
                 config.inside
                   ? 'ライブラリの中に置く設定です。外のフォルダを使うにはオフにしてください'
                   : '保存先のフォルダを選びます'
@@ -685,7 +685,7 @@ function ExternalBackupSection(): React.JSX.Element {
               onClick={() => void handleOpenDir(config.dir)}
               className="shrink-0 rounded-md border px-2 py-0.5 text-[11px]"
               style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-              title="保存先フォルダをエクスプローラーで開く"
+              data-tip="保存先フォルダをエクスプローラーで開く"
             >
               開く
             </button>
@@ -722,7 +722,8 @@ function ExternalBackupSection(): React.JSX.Element {
                 onClick={() => void handleReveal(entry.path)}
                 className="shrink-0 rounded-md px-1 text-[11px]"
                 style={{ color: 'var(--text-faint)' }}
-                title="このファイルの場所を開く"
+                aria-label="このファイルの場所を開く"
+                data-tip="このファイルの場所を開く"
               >
                 ⧉
               </button>
@@ -879,7 +880,8 @@ function SnapshotsSection(): React.JSX.Element {
             disabled={busy}
             className="shrink-0 rounded-md px-1 text-[11px] disabled:opacity-50"
             style={{ color: 'var(--danger)' }}
-            title="このスナップショットを削除"
+            aria-label="このスナップショットを削除"
+            data-tip="このスナップショットを削除"
           >
             ✕
           </button>
@@ -1122,12 +1124,12 @@ function LlamaInstaller(): React.JSX.Element {
                   <span
                     className="shrink-0 rounded px-1 text-[10px]"
                     style={{ background: 'var(--accent-soft)', color: 'var(--accent)' }}
-                    title="実行ファイルのパスが未入力のとき、このビルドが使われます"
+                    data-tip="実行ファイルのパスが未入力のとき、このビルドが使われます"
                   >
                     既定
                   </span>
                 )}
-                <span className="min-w-0 flex-1 truncate" style={{ color: 'var(--text)' }} title={ins.path}>
+                <span className="min-w-0 flex-1 truncate" style={{ color: 'var(--text)' }} data-tip={ins.path}>
                   {name}
                 </span>
                 <span className="shrink-0 tabular-nums" style={{ color: 'var(--text-faint)' }}>
@@ -1138,7 +1140,7 @@ function LlamaInstaller(): React.JSX.Element {
                   disabled={!ins.removable || installing || removingDir !== null}
                   className="shrink-0 rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-40"
                   style={{ borderColor: 'rgba(239,68,68,0.5)', color: 'var(--danger)' }}
-                  title={
+                  data-tip={
                     ins.removable
                       ? 'このフォルダを丸ごと消して容量を空けます'
                       : `自動インストール先(${serverStatus.runtime_dir})の外にあるので、このアプリからは消しません`
@@ -1487,7 +1489,7 @@ export default function SettingsMode(): React.JSX.Element {
                 <div className="settings-field-header">
                   <span
                     className="settings-field-label"
-                    title="一度に扱える最大トークン数です。大きいほど長いコンテキストを保持できますが、VRAM 使用量も増えます。"
+                    data-tip="一度に扱える最大トークン数です。大きいほど長いコンテキストを保持できますが、VRAM 使用量も増えます。"
                   >
                     Context Length
                   </span>
@@ -1495,7 +1497,8 @@ export default function SettingsMode(): React.JSX.Element {
                     {ctxSize !== DEFAULT_CTX_SIZE && (
                       <button
                         className="settings-reset-btn"
-                        title="デフォルトに戻す"
+                        aria-label="デフォルトに戻す"
+                        data-tip="デフォルトに戻す"
                         onClick={() => void save({ llm_ctx_size: String(DEFAULT_CTX_SIZE) })}
                       >
                         <svg
@@ -1556,7 +1559,8 @@ export default function SettingsMode(): React.JSX.Element {
                     {(values.generation_system_prompt ?? '') !== '' && (
                       <button
                         className="settings-reset-btn"
-                        title="デフォルトに戻す"
+                        aria-label="デフォルトに戻す"
+                        data-tip="デフォルトに戻す"
                         onClick={() => void save({ generation_system_prompt: '' })}
                       >
                         <svg
@@ -1742,7 +1746,7 @@ export default function SettingsMode(): React.JSX.Element {
                 <div className="settings-field-header">
                   <span
                     className="settings-field-label"
-                    title="動画の挿絵をループ再生するとき、終端と先頭をクロスディゾルブで重ねて継ぎ目を目立たなくします。"
+                    data-tip="動画の挿絵をループ再生するとき、終端と先頭をクロスディゾルブで重ねて継ぎ目を目立たなくします。"
                   >
                     動画ループのつなぎ(クロスディゾルブ)
                   </span>
@@ -1750,7 +1754,8 @@ export default function SettingsMode(): React.JSX.Element {
                     {videoFade !== DEFAULT_VIDEO_CROSSFADE_SECONDS && (
                       <button
                         className="settings-reset-btn"
-                        title="デフォルトに戻す"
+                        aria-label="デフォルトに戻す"
+                        data-tip="デフォルトに戻す"
                         onClick={() => void save({ video_crossfade_seconds: String(DEFAULT_VIDEO_CROSSFADE_SECONDS) })}
                       >
                         <svg

@@ -1,7 +1,7 @@
 # UI スタイルガイド(色・タイポ・余白・部品)
 
 作成日時: 2026-08-09 16:00
-更新日時: 2026-08-11 21:20
+更新日時: 2026-08-14 12:40
 
 新しい画面や部品を足すときに **見た目を揃えるための具体値** をまとめる。
 [overview.md](overview.md) がアーキテクチャの入口なら、本書は UI の入口。
@@ -19,8 +19,8 @@
    影・グラデーション・大きな余白でカードを飾らない
 4. **強い色は意味があるときだけ。** アクセント紫は「いま選んでいる / これから実行する」、
    赤は「壊れている・消える」、緑は「動いている」。それ以外は無彩色で並べる
-5. **クリックできるものには `title` を付ける。** アイコンだけのボタンは特に。
-   日本語で「何が起きるか」を書く
+5. **クリックできるものには `data-tip` を付ける。** アイコンだけのボタンは特に。
+   日本語で「何が起きるか」を書く(素の `title` は使わない。§4 のツールチップを参照)
 
 ## 1. 色
 
@@ -128,7 +128,7 @@ Tailwind の既定スケール(`1 = 4px`)をそのまま使う。**使う段は�
   disabled={busy}
   className="rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-50"
   style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-  title="何が起きるか"
+  data-tip="何が起きるか"
 >
   書き出す
 </button>
@@ -153,7 +153,7 @@ Tailwind の既定スケール(`1 = 4px`)をそのまま使う。**使う段は�
 ```tsx
 <button
   className="accent-action inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium disabled:opacity-40"
-  title="シーン本文からタイトルを自動生成"
+  data-tip="シーン本文からタイトルを自動生成"
 >
   <Icon name="sparkle" size={11} /> 自動生成
 </button>
@@ -250,6 +250,32 @@ Tailwind の既定スケール(`1 = 4px`)をそのまま使う。**使う段は�
 
 幅は `w-[520px] max-w-[92vw]` のように**固定幅 + ビューポート上限**。`z-50` を使う。
 
+### ツールチップ(`Tooltip.tsx`)
+
+**素の `title` は使わない。`data-tip` を書く。**
+
+```tsx
+<button data-tip="何が起きるか">…</button>
+
+// 複数行。行頭 `・` は箇条書きとして字下げして折り返す
+<button
+  data-tip={['清書に使うもの:', '・スタイルプリセット — 文体と人称', '・このシーンの本文'].join('\n')}
+/>
+```
+
+- 実体は `App` に 1 つだけ置いた `<TooltipHost />`(`src/renderer/src/Tooltip.tsx`)。
+  document の `pointermove` を 1 本だけ購読して座標から `[data-tip]` を引き、
+  出ている間だけ portal に 1 個描く。**ボタン側は属性 1 つで、state もエフェクトも増えない**
+- 見た目はポップオーバーと同じ(`--bg-card` + `rounded-xl` + `shadow-lg`、`text-[11px]`)。
+  ただし**モーダル・ポップオーバー(`z-50`)より上に出す必要があるので `z-[100]`**
+- 出るまでの間は 400ms(既に出ているとき隣へ移ったら 80ms)
+- 座標から引いているのは、**`disabled` の要素がイベントを出さない**ため。素の `title` は
+  押せないボタンで出ないが、押せない理由こそ読みたいので、そこを拾えるようにしてある
+- **`data-tip` はアクセシブルな名前にはならない。** アイコンだけのボタンには
+  `aria-label` も併記する(文言は同じでよい)
+- 部品に文字列を渡して中で `data-tip` にする場合、プロパティ名は **`title` ではなく `tip`**
+  にする(`LengthSelect` / `MsgActionButton`)。`title` のままだと素の `title` と紛れる
+
 ### 設定画面の枠(`index.css` のクラス)
 
 `settings-card` / `settings-group-title` / `settings-field` / `settings-field-header` /
@@ -267,7 +293,7 @@ Tailwind の既定スケール(`1 = 4px`)をそのまま使う。**使う段は�
 ## 5. 状態の見せ方
 
 - **無効**: `disabled:opacity-50`(通常)/ `disabled:opacity-40`(押せない理由が別にある)。
-  **無効にしたら `title` に理由を書く**
+  **無効にしたら `data-tip` に理由を書く**(素の `title` と違い、押せないボタンでも読める)
 - **選択中**: `--accent-soft` の下地 + `--text`。枠を足すなら `--accent-border`
 - **フォーカス**: `index.css` の 1 か所で `a / button / input / textarea / select /
   [role=button] / [role=tab]` にまとめて付けてある。`--accent-border-bright` の 2px を

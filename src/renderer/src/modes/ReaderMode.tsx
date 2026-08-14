@@ -605,7 +605,7 @@ export default function ReaderMode({
                   ? { background: 'var(--accent-soft)', color: 'var(--text)' }
                   : { color: 'var(--text-faint)' }
               }
-              title={v.title}
+              data-tip={v.title}
             >
               {v.label}
             </button>
@@ -616,7 +616,7 @@ export default function ReaderMode({
           onChange={(e) => style.setFontId(e.target.value)}
           className="rounded-lg border px-2 py-1 text-[12px]"
           style={selectStyle}
-          title="本文フォント(ローカルにインストールされているものが使われます)"
+          data-tip="本文フォント(ローカルにインストールされているものが使われます)"
         >
           {FONT_OPTIONS.map((f) => (
             <option key={f.id} value={f.id}>
@@ -629,7 +629,7 @@ export default function ReaderMode({
           onChange={(e) => style.setFontSize(Number(e.target.value))}
           className="rounded-lg border px-2 py-1 text-[12px]"
           style={selectStyle}
-          title="本文の文字サイズ"
+          data-tip="本文の文字サイズ"
         >
           {FONT_SIZES.map((s) => (
             <option key={s.value} value={s.value}>
@@ -647,7 +647,7 @@ export default function ReaderMode({
             }}
             className="rounded-lg border px-2 py-1 text-[12px]"
             style={selectStyle}
-            title="読む範囲。章を選ぶとその章だけを流します(別ルートの章も読めます)"
+            data-tip="読む範囲。章を選ぶとその章だけを流します(別ルートの章も読めます)"
           >
             <option value="">全体(正史)</option>
             {groups.map((g) => {
@@ -676,7 +676,7 @@ export default function ReaderMode({
             }}
             className="rounded-lg border px-2 py-1 text-[12px]"
             style={selectStyle}
-            title="章の先頭へ移動"
+            data-tip="章の先頭へ移動"
           >
             <option value="">目次</option>
             {headingGroups.map((g, i) => (
@@ -697,7 +697,7 @@ export default function ReaderMode({
             }}
             className="rounded-lg border px-2 py-1 text-[12px]"
             style={selectStyle}
-            title="ページを開いたときに文字が流れる速さ。クリックすればいつでも全文表示できます"
+            data-tip="ページを開いたときに文字が流れる速さ。クリックすればいつでも全文表示できます"
           >
             {TYPING_SPEEDS.map((s) => (
               <option key={s.id} value={s.id}>
@@ -781,7 +781,7 @@ export default function ReaderMode({
                           <div
                             className={`relative min-h-0 flex-1 overflow-hidden ${isLive ? 'overflow-y-auto' : ''}`}
                             onClick={() => typing && text && skipTyping(text.length)}
-                            title={typing ? 'クリックで全文表示' : undefined}
+                            data-tip={typing ? 'クリックで全文表示' : undefined}
                             style={typing ? { cursor: 'pointer' } : undefined}
                           >
                             {isLive || text === null
@@ -813,7 +813,7 @@ export default function ReaderMode({
                         value={Math.min(pageIndex, Math.max(pages.length - 1, 0))}
                         onChange={(e) => setPageIndex(Number(e.target.value))}
                         className="settings-slider active min-w-0 flex-1"
-                        title="ドラッグで任意のページへジャンプ"
+                        data-tip="ドラッグで任意のページへジャンプ"
                       />
                       <span className="shrink-0 tabular-nums text-[12px]" style={{ color: 'var(--text-faint)' }}>
                         {Math.min(pageIndex, Math.max(pages.length - 1, 0)) + 1} / {Math.max(pages.length, 1)}

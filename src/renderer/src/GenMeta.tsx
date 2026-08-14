@@ -8,17 +8,19 @@ import { Icon } from './icons'
 /** ホバーで出るメッセージ操作アイコン(lm-chat の msg-action-btn を移植) */
 export function MsgActionButton({
   kind,
-  title,
+  tip,
   onClick
 }: {
   kind: 'edit' | 'regenerate' | 'delete' | 'prompt'
-  title: string
+  /** ツールチップ(Tooltip.tsx)。素の title ではないので名前を分けている */
+  tip: string
   onClick: () => void
 }): React.JSX.Element {
   return (
     <button
       onClick={onClick}
-      title={title}
+      aria-label={tip}
+      data-tip={tip}
       className="rounded p-0.5 hover:bg-[var(--accent-soft)]"
       style={{ color: 'var(--text-faint)' }}
     >

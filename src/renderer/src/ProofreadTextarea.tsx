@@ -276,7 +276,7 @@ export default function ProofreadTextarea({
               }}
               className="rounded-md border px-1.5 py-px text-[10px]"
               style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }}
-              title="校正前の文章に戻す"
+              data-tip="校正前の文章に戻す"
             >
               ↩ 元に戻す
             </button>
@@ -288,7 +288,7 @@ export default function ProofreadTextarea({
             disabled={busy || !value.trim()}
             // 色は index.css の .accent-action(LLM を走らせるボタン共通)
             className="accent-action inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[12px] font-medium disabled:opacity-40"
-            title={
+            data-tip={
               !value.trim()
                 ? '文章を入力すると校正できます'
                 : selection
@@ -330,7 +330,7 @@ export default function ProofreadTextarea({
               disabled={busy}
               className="rounded-md border px-1 py-px text-[10px]"
               style={{ background: 'var(--bg-input)', borderColor: 'var(--border)', color: 'var(--text-dim)' }}
-              title="校正のプリセット(変更後にもう一度校正すると反映されます)"
+              data-tip="校正のプリセット(変更後にもう一度校正すると反映されます)"
             >
               {presets.map((p) => (
                 <option key={p.id} value={p.id}>
@@ -368,7 +368,7 @@ export default function ProofreadTextarea({
               onClick={rerun}
               disabled={busy}
               className="accent-action rounded-md border px-2 py-0.5 text-[11px] font-medium disabled:opacity-40"
-              title={
+              data-tip={
                 busy
                   ? '校正が終わってから、もう一度校正できます'
                   : '上のプリセットを変えてから押すと、同じ範囲を校正し直します'

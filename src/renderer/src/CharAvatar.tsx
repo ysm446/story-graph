@@ -21,7 +21,7 @@ export default function CharAvatar({
       <img
         src={src}
         alt={char.name}
-        title={char.name}
+        data-tip={char.name}
         className="shrink-0 rounded-full object-cover"
         style={style}
       />
@@ -29,7 +29,8 @@ export default function CharAvatar({
   }
   return (
     <span
-      title={char.name}
+      aria-label={char.name}
+      data-tip={char.name}
       className="flex shrink-0 items-center justify-center rounded-full font-semibold"
       style={{ ...style, background: `${color}33`, color, fontSize: Math.round(size * 0.45) }}
     >

@@ -254,7 +254,7 @@ export default function CharactersMode(): React.JSX.Element {
                     ? { background: 'var(--accent-soft)', color: 'var(--text)' }
                     : { color: 'var(--text-faint)' }
                 }
-                title={
+                data-tip={
                   showRelations
                     ? 'キャラクターの一覧と編集に戻す'
                     : 'キャラクターどうしの関係を図で見る(一覧で中心にする人を選べます)'
@@ -268,7 +268,7 @@ export default function CharactersMode(): React.JSX.Element {
                 onClick={() => void handleCreate()}
                 className="shrink-0 rounded-md px-2 py-0.5 text-[12px]"
                 style={{ background: 'var(--accent-soft)', color: 'var(--text)' }}
-                title={tab === 'places' ? '場所を追加' : 'キャラクターを追加'}
+                data-tip={tab === 'places' ? '場所を追加' : 'キャラクターを追加'}
                 aria-label={tab === 'places' ? '場所を追加' : 'キャラクターを追加'}
               >
                 +
@@ -354,7 +354,7 @@ export default function CharactersMode(): React.JSX.Element {
       <div
         className="relative w-px shrink-0 cursor-col-resize transition-colors hover:bg-[var(--accent-border)]"
         style={{ background: 'var(--border)' }}
-        title="ドラッグで幅を変更"
+        data-tip="ドラッグで幅を変更"
       >
         <div
           onPointerDown={beginSidebarResize}
@@ -426,7 +426,7 @@ export default function CharactersMode(): React.JSX.Element {
                   background: 'var(--bg-input)',
                   ...(portraitDragOver ? { outline: '2px dashed var(--accent)', outlineOffset: 2 } : {})
                 }}
-                title={
+                data-tip={
                   draft.portrait_source_path
                     ? 'クリックで切り抜き直し / 画像をドロップで差し替え'
                     : 'クリックで画像を設定 / 画像をドロップ'
@@ -460,7 +460,7 @@ export default function CharactersMode(): React.JSX.Element {
               {/* 画像のすぐ下に画像操作(画像があるときだけ) */}
               {draft.portrait_path && (
                 <div className="flex items-center gap-2 text-[11px]" style={{ color: 'var(--text-faint)' }}>
-                  <button onClick={() => fileInputRef.current?.click()} title="別の画像に差し替える">
+                  <button onClick={() => fileInputRef.current?.click()} data-tip="別の画像に差し替える">
                     画像を差し替え
                   </button>
                   <span>・</span>
@@ -473,7 +473,7 @@ export default function CharactersMode(): React.JSX.Element {
                         await reload()
                       })
                     }}
-                    title="画像を外す"
+                    data-tip="画像を外す"
                   >
                     画像を外す
                   </button>
@@ -502,7 +502,7 @@ export default function CharactersMode(): React.JSX.Element {
                     value={draft.color ?? '#7c5af7'}
                     onChange={(e) => setDraft((d) => ({ ...d, color: e.target.value }))}
                     className="color-swatch block h-11 w-12 cursor-pointer"
-                    title="ノード・関係図・チャットで使われるキャラの色"
+                    data-tip="ノード・関係図・チャットで使われるキャラの色"
                   />
                 </label>
               </div>
@@ -527,7 +527,7 @@ export default function CharactersMode(): React.JSX.Element {
                 disabled={saving || !dirty}
                 className="rounded-lg px-4 py-1.5 text-[13px] font-medium text-white disabled:opacity-40"
                 style={{ background: saving ? 'var(--accent-hover)' : 'var(--accent)' }}
-                title={dirty ? undefined : '変更はありません'}
+                data-tip={dirty ? undefined : '変更はありません'}
               >
                 {saving ? '保存中…' : '保存'}
               </button>
