@@ -1774,6 +1774,20 @@ function ChapterTab({
   )
 }
 
+/** 清書ボタンのヘルプ。何が材料として LLM に渡るかを並べる
+ *  (backend/rendering.py の `build_render_messages` と対応させる)。 */
+const RENDER_INPUTS_HELP = [
+  '清書に使うもの:',
+  '・スタイルプリセット — 文体と人称。選んでいないと清書できません',
+  '・このシーンの本文 — タイトル / 場所 / 時間 / 感情の核も渡します',
+  '・登場するキャラクター — 資料庫に書いた外見と口調',
+  '・場所 — 資料庫に書いた説明と雰囲気(空欄のシーンは親から引き継ぎます)',
+  '・このシーン適用後の状態 — facts、関係値、記憶(前章までのまとめを含む)',
+  '・視点キャラ(POV) — 指定するとそのキャラが知っていることだけを渡します',
+  '・直前シーンの清書の末尾 — 文体と場面をつなぎます(同じ条件で清書済みのときだけ)',
+  '・分量の目安 — このシーンの指定があれば共通の設定より優先します'
+].join('\n')
+
 function RenderTab({
   node,
   style,
@@ -1974,7 +1988,11 @@ function RenderTab({
             disabled={!presetId}
             className="rounded-lg px-2.5 py-1 text-[12px] font-medium text-white disabled:opacity-40"
             style={{ background: 'var(--accent)' }}
-            title={render ? '同じ条件で書き直す(前の清書は履歴として残る)' : 'このシーンを散文にする'}
+            title={
+              (render ? '同じ条件で書き直す(前の清書は履歴として残る)' : 'このシーンを散文にする') +
+              '\n\n' +
+              RENDER_INPUTS_HELP
+            }
           >
             {render ? '⟳ 清書し直す' : '▶ このシーンを清書'}
           </button>
