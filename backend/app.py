@@ -885,6 +885,10 @@ async def llama_server_status() -> dict[str, Any]:
 class LlamaInstallIn(BaseModel):
     # フロントの variant をそのまま受け取る(asset_url / cudart_url / asset_name などを含む)
     variant: dict[str, Any]
+    # CUDA ランタイム DLL を本体と一緒に落とすか(CUDA Toolkit 導入済みなら不要)
+    include_cudart: bool = True
+    # 本体は落とさず、既存インストールに CUDA ランタイム DLL だけ足す
+    cudart_only: bool = False
 
 
 @app.post("/llama/install")
@@ -895,7 +899,11 @@ async def llama_install(body: LlamaInstallIn) -> StreamingResponse:
 
     async def stream():
         try:
-            async for progress in llama_installer.install_variant(body.variant):
+            if body.cudart_only:
+                source = llama_installer.install_cudart(body.variant)
+            else:
+                source = llama_installer.install_variant(body.variant, body.include_cudart)
+            async for progress in source:
                 yield f"data: {_json.dumps(progress, ensure_ascii=False)}\n\n"
         except asyncio.CancelledError:
             # クライアント切断でキャンセル。ここでの yield は届かないので何もしない

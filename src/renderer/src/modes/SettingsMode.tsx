@@ -1009,6 +1009,8 @@ function LlamaInstaller(): React.JSX.Element {
   const [selectedTag, setSelectedTag] = useState<string>('')
   const [selectedVariantKey, setSelectedVariantKey] = useState<string>('')
   const [loadingReleases, setLoadingReleases] = useState(false)
+  // null = 自動判定(システムに CUDA ランタイムがあれば同梱しない)
+  const [cudartChoice, setCudartChoice] = useState<boolean | null>(null)
   const [installing, setInstalling] = useState(false)
   const [removingDir, setRemovingDir] = useState<string | null>(null)
   const [progress, setProgress] = useState<LlamaInstallProgress | null>(null)
@@ -1034,6 +1036,23 @@ function LlamaInstaller(): React.JSX.Element {
   const selectedVariant: LlamaReleaseVariant | undefined =
     selectedRelease?.variants.find((v) => v.key === selectedVariantKey) ?? selectedRelease?.variants[0]
 
+  const cudartSize = selectedVariant?.cudart_size_bytes ?? null
+  const hasCudartAsset = selectedVariant?.family === 'cuda' && selectedVariant.cudart_url != null
+  // 同じメジャーバージョンの CUDA ランタイムが PATH にあれば、DLL の同梱は要らない
+  const systemHasCudart =
+    selectedVariant?.cuda_version != null &&
+    (serverStatus?.system_cudart ?? []).includes(selectedVariant.cuda_version)
+  const includeCudart = hasCudartAsset ? cudartChoice ?? !systemHasCudart : false
+  // 選択中のバリアントが既に入っていて、DLL だけ足りない状態か
+  const selectedInstall = selectedVariant
+    ? serverStatus?.installs.find(
+        (i) =>
+          (i.dir.split(/[\\/]/).pop() || '').toLowerCase() ===
+          selectedVariant.asset_name.replace(/\.zip$/i, '').toLowerCase()
+      )
+    : undefined
+  const canAddCudart = hasCudartAsset && selectedInstall != null && !selectedInstall.has_cudart
+
   const handleFetch = async (): Promise<void> => {
     setLoadingReleases(true)
     setError(null)
@@ -1052,7 +1071,7 @@ function LlamaInstaller(): React.JSX.Element {
     }
   }
 
-  const handleInstall = async (): Promise<void> => {
+  const handleInstall = async (cudartOnly = false): Promise<void> => {
     if (!selectedVariant) return
     const controller = new AbortController()
     abortRef.current = controller
@@ -1066,7 +1085,8 @@ function LlamaInstaller(): React.JSX.Element {
           setProgress(p)
           if (p.phase === 'error') setError(p.message)
         },
-        controller.signal
+        controller.signal,
+        { includeCudart, cudartOnly }
       )
       await refreshStatus()
     } catch (e) {
@@ -1093,7 +1113,7 @@ function LlamaInstaller(): React.JSX.Element {
     }
   }
 
-  const totalSize = selectedVariant ? selectedVariant.size_bytes + (selectedVariant.cudart_size_bytes ?? 0) : 0
+  const totalSize = selectedVariant ? selectedVariant.size_bytes + (includeCudart ? cudartSize ?? 0 : 0) : 0
 
   return (
     <div className="settings-field">
@@ -1132,6 +1152,19 @@ function LlamaInstaller(): React.JSX.Element {
                 <span className="min-w-0 flex-1 truncate" style={{ color: 'var(--text)' }} data-tip={ins.path}>
                   {name}
                 </span>
+                {ins.is_cuda && !ins.has_cudart && (
+                  <span
+                    className="shrink-0 rounded px-1 text-[10px]"
+                    style={{ background: 'var(--bg-input)', color: 'var(--text-faint)' }}
+                    data-tip={
+                      serverStatus.system_cudart.includes(ins.cuda_version ?? '')
+                        ? `CUDA ランタイム DLL は同梱していません(この PC の CUDA ${ins.cuda_version} を使います)`
+                        : 'CUDA ランタイム DLL は同梱していません。起動に失敗するときは、リリース一覧から同じビルドを選んで「CUDA ランタイムだけ追加」してください'
+                    }
+                  >
+                    DLL 未同梱
+                  </span>
+                )}
                 <span className="shrink-0 tabular-nums" style={{ color: 'var(--text-faint)' }}>
                   {fmtBytes(ins.size_bytes ?? null)}
                 </span>
@@ -1178,6 +1211,7 @@ function LlamaInstaller(): React.JSX.Element {
                 setSelectedTag(e.target.value)
                 const rel = releases.find((r) => r.tag === e.target.value)
                 setSelectedVariantKey(rel?.variants[0]?.key ?? '')
+                setCudartChoice(null)
               }}
               disabled={installing}
               className="rounded-lg border px-2 py-1.5 text-[13px]"
@@ -1192,22 +1226,42 @@ function LlamaInstaller(): React.JSX.Element {
             </select>
             <select
               value={selectedVariant?.key ?? ''}
-              onChange={(e) => setSelectedVariantKey(e.target.value)}
+              onChange={(e) => {
+                setSelectedVariantKey(e.target.value)
+                setCudartChoice(null)
+              }}
               disabled={installing}
               className="min-w-0 flex-1 rounded-lg border px-2 py-1.5 text-[13px]"
               style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
             >
               {selectedRelease?.variants.map((v) => (
                 <option key={v.key} value={v.key}>
-                  {v.label}・{fmtBytes(v.size_bytes + (v.cudart_size_bytes ?? 0))}
+                  {v.label}・{fmtBytes(v.size_bytes)}
                 </option>
               ))}
             </select>
           </div>
-          {selectedVariant?.family === 'cuda' && (
-            <p className="settings-field-hint">
-              CUDA 版は cudart(ランタイム DLL)も同時に取得して同じフォルダに配置します。NVIDIA GPU 向けです。
-            </p>
+          {hasCudartAsset && (
+            <div className="flex flex-col gap-1">
+              <button
+                onClick={() => setCudartChoice(!includeCudart)}
+                disabled={installing}
+                className="self-start rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-40"
+                style={
+                  includeCudart
+                    ? { borderColor: 'var(--border-strong)', background: 'var(--accent-soft)', color: 'var(--text)' }
+                    : { borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }
+                }
+                data-tip="CUDA ランタイム DLL(cudart / cublas)を llama-server.exe と同じフォルダに置きます"
+              >
+                {includeCudart ? '☑' : '☐'} CUDA ランタイム DLL も一緒に落とす({fmtBytes(cudartSize)})
+              </button>
+              <p className="settings-field-hint">
+                {systemHasCudart
+                  ? `CUDA ${selectedVariant?.cuda_version} のランタイムがこの PC の PATH にあるので、通常は不要です。動かないときだけ入れてください。`
+                  : 'CUDA Toolkit を入れている場合は外せます。外して起動に失敗したら、あとから DLL だけ追加できます。'}
+              </p>
+            </div>
           )}
 
           {installing || progress ? (
@@ -1237,14 +1291,26 @@ function LlamaInstaller(): React.JSX.Element {
               </div>
             </div>
           ) : (
-            <button
-              onClick={() => void handleInstall()}
-              disabled={!selectedVariant}
-              className="self-start rounded-lg px-4 py-1.5 text-[13px] font-medium text-white disabled:opacity-50"
-              style={{ background: 'var(--accent)' }}
-            >
-              ⬇ インストール({totalSize ? fmtBytes(totalSize) : '—'})
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={() => void handleInstall()}
+                disabled={!selectedVariant}
+                className="rounded-lg px-4 py-1.5 text-[13px] font-medium text-white disabled:opacity-50"
+                style={{ background: 'var(--accent)' }}
+              >
+                ⬇ インストール({totalSize ? fmtBytes(totalSize) : '—'})
+              </button>
+              {canAddCudart && (
+                <button
+                  onClick={() => void handleInstall(true)}
+                  className="rounded-lg border px-3 py-1.5 text-[13px] disabled:opacity-40"
+                  style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+                  data-tip="このビルドはインストール済みです。本体は落とし直さず、CUDA ランタイム DLL だけ同じフォルダに足します"
+                >
+                  CUDA ランタイムだけ追加({fmtBytes(cudartSize)})
+                </button>
+              )}
+            </div>
           )}
         </div>
       )}

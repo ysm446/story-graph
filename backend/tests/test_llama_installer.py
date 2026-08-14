@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 import llama_installer as inst
@@ -27,11 +29,13 @@ def test_build_release_extracts_variants_and_pairs_cudart():
     assert rel["variants"][0]["family"] == "cuda"
     cuda = rel["variants"][0]
     assert cuda["label"] == "CUDA 13 (NVIDIA)"
+    assert cuda["cuda_version"] == "13"
     assert cuda["cudart_url"].endswith("cudart-llama-bin-win-cuda-13-x64.zip")
     assert cuda["cudart_size_bytes"] == 50
     # cpu バリアントには cudart は付かない
     cpu = next(v for v in rel["variants"] if v["family"] == "cpu")
     assert cpu["cudart_url"] is None
+    assert cpu["cuda_version"] is None
 
 
 def test_build_release_returns_none_without_variants():
@@ -81,10 +85,47 @@ def test_status_reports_sizes(tmp_path, monkeypatch):
     _make_install(runtime, "llama-b200-bin-win-cuda-13-x64", b"x" * 30)
     monkeypatch.setattr(inst, "RUNTIME_DIR", runtime)
     monkeypatch.setattr(inst, "LEGACY_BIN_DIR", tmp_path / "nonexistent")
+    monkeypatch.setattr(inst, "system_cudart_versions", lambda: [])
 
     st = inst.status()
     assert st["total_size_bytes"] == 40
     assert {c["build"]: c["size_bytes"] for c in st["installs"]} == {"b100": 10, "b200": 30}
+
+
+def test_status_reports_cudart_presence(tmp_path, monkeypatch):
+    runtime = tmp_path / "runtime"
+    with_dll = _make_install(runtime, "llama-b200-bin-win-cuda-13-x64")
+    (with_dll / "cudart64_13.dll").write_bytes(b"x")
+    _make_install(runtime, "llama-b100-bin-win-cuda-12-x64")
+    _make_install(runtime, "llama-b100-bin-win-cpu-x64")
+    monkeypatch.setattr(inst, "RUNTIME_DIR", runtime)
+    monkeypatch.setattr(inst, "LEGACY_BIN_DIR", tmp_path / "nonexistent")
+    monkeypatch.setattr(inst, "system_cudart_versions", lambda: ["12"])
+
+    st = inst.status()
+    by_dir = {Path(c["dir"]).name: c for c in st["installs"]}
+    cuda13 = by_dir["llama-b200-bin-win-cuda-13-x64"]
+    assert (cuda13["is_cuda"], cuda13["cuda_version"], cuda13["has_cudart"]) == (True, "13", True)
+    # DLL 未同梱の CUDA ビルド(システム側の CUDA ランタイム頼り)
+    cuda12 = by_dir["llama-b100-bin-win-cuda-12-x64"]
+    assert (cuda12["is_cuda"], cuda12["has_cudart"]) == (True, False)
+    cpu = by_dir["llama-b100-bin-win-cpu-x64"]
+    assert (cpu["is_cuda"], cpu["has_cudart"]) == (False, False)
+    assert st["system_cudart"] == ["12"]
+
+
+def test_system_cudart_versions_needs_both_dlls(tmp_path, monkeypatch):
+    both = tmp_path / "cuda13"
+    both.mkdir()
+    for name in ("cudart64_13.dll", "cublas64_13.dll", "cudart64_12.dll"):
+        (both / name).write_bytes(b"x")
+    monkeypatch.setenv("PATH", str(both))
+    monkeypatch.delenv("CUDA_PATH", raising=False)
+    inst.system_cudart_versions.cache_clear()
+
+    # cublas の無い 12 は数えない(llama-server が動かないため)
+    assert inst.system_cudart_versions() == ["13"]
+    inst.system_cudart_versions.cache_clear()
 
 
 def test_uninstall_removes_only_runtime_installs(tmp_path, monkeypatch):

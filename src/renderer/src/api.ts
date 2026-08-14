@@ -476,6 +476,8 @@ export interface LlamaReleaseVariant {
   key: string
   label: string
   family: 'cuda' | 'cpu' | 'vulkan' | 'hip' | 'sycl' | 'other'
+  /** CUDA のメジャーバージョン("13" など)。CUDA 以外は null */
+  cuda_version: string | null
   asset_name: string
   asset_url: string
   size_bytes: number
@@ -500,6 +502,11 @@ export interface LlamaServerInstall {
   removable: boolean
   /** フォルダの占有サイズ。/llama/server_status からのみ付く */
   size_bytes?: number
+  /** CUDA ビルドか。以下 2 つは /llama/server_status からのみ付く */
+  is_cuda?: boolean
+  /** CUDA ランタイム DLL が同居しているか(無い場合はシステム側の CUDA 頼り) */
+  has_cudart?: boolean
+  cuda_version?: string | null
 }
 
 export interface LlamaServerStatus {
@@ -510,6 +517,8 @@ export interface LlamaServerStatus {
   runtime_dir: string
   installs: LlamaServerInstall[]
   total_size_bytes: number
+  /** PATH 上に見つかった CUDA ランタイムのメジャーバージョン(["13"] など) */
+  system_cudart: string[]
 }
 
 export type LlamaInstallProgress =
@@ -518,17 +527,29 @@ export type LlamaInstallProgress =
   | { phase: 'done'; build: string | null; path: string }
   | { phase: 'error'; message: string }
 
+export interface LlamaInstallOptions {
+  /** CUDA ランタイム DLL を本体と一緒に落とすか(既定 true) */
+  includeCudart?: boolean
+  /** 本体は落とさず、既存インストールに CUDA ランタイム DLL だけ足す */
+  cudartOnly?: boolean
+}
+
 /** llama.cpp のインストールを開始し、進捗イベントを逐次受け取る。abort でキャンセル。 */
 export async function llamaInstallStream(
   variant: LlamaReleaseVariant,
   onProgress: (p: LlamaInstallProgress) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  options: LlamaInstallOptions = {}
 ): Promise<void> {
   if (!baseUrl) throw new Error('backend not ready')
   const res = await fetch(`${baseUrl}/llama/install`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ variant }),
+    body: JSON.stringify({
+      variant,
+      include_cudart: options.includeCudart ?? true,
+      cudart_only: options.cudartOnly ?? false
+    }),
     signal
   })
   if (!res.ok || !res.body) {

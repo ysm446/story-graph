@@ -4,6 +4,7 @@ lm-graph は Electron の main プロセス(Node)で完結していたが、stor
 Python バックエンドが llama を管理しているため、こちら側に移植する。
 - リリースは GitHub `ggml-org/llama.cpp/releases` から取得
 - Windows x64 の zip(llama-...-x64.zip)をバリアントとして抽出、CUDA 系には cudart を紐付け
+  (cudart は本体と別扱い。同梱するかは呼び出し側が選べ、後から足すこともできる)
 - ダウンロード → 一時 zip → runtime/<build>/ へ展開(zipfile。tar 依存なし)
 - 進捗は dict(phase 別)で yield し、app.py が SSE で配信する
 - 溜まったビルドは uninstall() で消せる(runtime/ 直下のものだけ。移植元の
@@ -13,6 +14,8 @@ Python バックエンドが llama を管理しているため、こちら側に
 from __future__ import annotations
 
 import asyncio
+import functools
+import os
 import re
 import shutil
 import uuid
@@ -34,6 +37,8 @@ USER_AGENT = "story-graph"
 LLAMA_ASSET_RE = re.compile(r"^llama-(b\d+)-bin-win-(.+)-x64\.zip$", re.IGNORECASE)
 CUDART_ASSET_RE = re.compile(r"^cudart-llama-bin-win-cuda-(.+)-x64\.zip$", re.IGNORECASE)
 BUILD_RE = re.compile(r"(b\d+)", re.IGNORECASE)
+# cudart zip の中身。llama-server.exe と同居していれば CUDA Toolkit 無しでも動く
+CUDART_DLL_RE = re.compile(r"^(cudart64|cublas64|cublasLt64)_(\d+)\.dll$", re.IGNORECASE)
 
 
 # ---- リリース取得 ----------------------------------------------------
@@ -57,11 +62,17 @@ def _backend_family(backend: str) -> str:
 _FAMILY_RANK = {"cuda": 0, "vulkan": 1, "hip": 2, "sycl": 3, "cpu": 4, "other": 5}
 
 
+def _cuda_major(text: str) -> str | None:
+    """`cuda-13` `cuda13` などから CUDA のメジャーバージョンを取り出す。"""
+    m = re.search(r"cuda-?(\d+)", text.lower())
+    return m.group(1) if m else None
+
+
 def _backend_label(backend: str, family: str) -> str:
     b = backend.lower()
     if family == "cuda":
-        m = re.search(r"cuda-?(\d+)", b)
-        return f"CUDA {m.group(1)} (NVIDIA)" if m else "CUDA (NVIDIA)"
+        v = _cuda_major(b)
+        return f"CUDA {v} (NVIDIA)" if v else "CUDA (NVIDIA)"
     if family == "vulkan":
         return "Vulkan"
     if family == "sycl":
@@ -77,10 +88,10 @@ def _match_cudart(cudarts: list[dict[str, Any]], backend: str) -> dict[str, Any]
     """CUDA バリアントに対応する cudart を選ぶ(バージョン一致優先、無ければ先頭)。"""
     if not cudarts:
         return None
-    m = re.search(r"cuda-?(\d+)", backend.lower())
-    if m:
+    v = _cuda_major(backend)
+    if v:
         for c in cudarts:
-            if m.group(1) in c["version"]:
+            if v in c["version"]:
                 return c
     return cudarts[0]
 
@@ -114,6 +125,8 @@ def _build_release(raw: dict[str, Any]) -> dict[str, Any] | None:
                 "key": f"{tag}:{backend}",
                 "label": _backend_label(backend, family),
                 "family": family,
+                # CUDA ランタイムを別途落とすか判断するため、メジャーバージョンを渡す
+                "cuda_version": _cuda_major(backend) if family == "cuda" else None,
                 "asset_name": a["name"],
                 "asset_url": a["browser_download_url"],
                 "size_bytes": a.get("size", 0),
@@ -177,6 +190,48 @@ def is_removable(install_dir: str | Path) -> bool:
         return Path(install_dir).resolve().parent == RUNTIME_DIR.resolve()
     except OSError:
         return False
+
+
+def has_cudart(install_dir: str | Path) -> bool:
+    """インストール先に CUDA ランタイム DLL が同居しているか。"""
+    try:
+        return any(CUDART_DLL_RE.match(p.name) for p in Path(install_dir).iterdir() if p.is_file())
+    except OSError:
+        return False
+
+
+@functools.lru_cache(maxsize=1)
+def system_cudart_versions() -> list[str]:
+    """PATH / CUDA_PATH から見つかる CUDA ランタイムのメジャーバージョン一覧。
+
+    llama-server.exe は DLL が同居していなくても、PATH 上に cudart64_XX.dll と
+    cublas64_XX.dll があれば動く(CUDA Toolkit 導入済みの環境)。その場合は
+    cudart zip(数百 MB)を落とさずに済むので、UI の既定を決めるのに使う。
+    プロセス中に PATH は変わらない前提でキャッシュする。
+    """
+    dirs: list[Path] = []
+    cuda_path = os.environ.get("CUDA_PATH")
+    if cuda_path:
+        dirs.append(Path(cuda_path) / "bin")
+    dirs += [Path(p) for p in os.environ.get("PATH", "").split(os.pathsep) if p.strip()]
+
+    found: dict[str, set[str]] = {}
+    seen_dirs: set[str] = set()
+    for d in dirs:
+        key = str(d).lower()
+        if key in seen_dirs:
+            continue
+        seen_dirs.add(key)
+        try:
+            entries = list(d.iterdir())
+        except OSError:
+            continue
+        for p in entries:
+            m = CUDART_DLL_RE.match(p.name)
+            if m:
+                found.setdefault(m.group(2), set()).add(m.group(1).lower())
+    # cudart だけでは足りない(cublas も要る)ので、両方揃ったバージョンだけ返す
+    return sorted(v for v, kinds in found.items() if {"cudart64", "cublas64"} <= kinds)
 
 
 def find_server_installs() -> list[dict[str, Any]]:
@@ -247,6 +302,10 @@ def status() -> dict[str, Any]:
     installs = find_server_installs()
     for c in installs:
         c["size_bytes"] = _dir_size(Path(c["dir"]))
+        c["cuda_version"] = _cuda_major(Path(c["dir"]).name)
+        c["is_cuda"] = c["cuda_version"] is not None
+        # CUDA ビルドなのに DLL が無い場合は、システム側の CUDA ランタイム頼りになる
+        c["has_cudart"] = has_cudart(c["dir"]) if c["is_cuda"] else False
     best = installs[0] if installs else None
     return {
         "installed": best is not None,
@@ -256,6 +315,7 @@ def status() -> dict[str, Any]:
         "runtime_dir": str(RUNTIME_DIR),
         "installs": installs,
         "total_size_bytes": sum(c["size_bytes"] for c in installs),
+        "system_cudart": system_cudart_versions(),
     }
 
 
@@ -329,39 +389,65 @@ def _extract(zip_path: Path, dest_dir: Path) -> None:
         zf.extractall(dest_dir)
 
 
-async def install_variant(variant: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
+def _dest_dir(asset_name: str) -> Path:
+    return RUNTIME_DIR / re.sub(r"\.zip$", "", asset_name, flags=re.IGNORECASE)
+
+
+def _tmp_zip(suffix: str) -> Path:
+    import tempfile
+
+    return Path(tempfile.gettempdir()) / f"story-graph-{uuid.uuid4().hex}-{suffix}.zip"
+
+
+def _http_client() -> httpx.AsyncClient:
+    # 総時間は無制限(巨大 zip)だが、無通信ストールでは read タイムアウトで切る
+    timeout = httpx.Timeout(30.0, read=120.0)
+    return httpx.AsyncClient(timeout=timeout, headers={"User-Agent": USER_AGENT})
+
+
+async def _fetch_and_extract(
+    client: httpx.AsyncClient, url: str, tmp_zip: Path, label: str, dest_dir: Path
+) -> AsyncIterator[dict[str, Any]]:
+    async for p in _download(client, url, tmp_zip, label):
+        yield p
+    yield {"phase": "extract", "file_label": label}
+    await asyncio.to_thread(_extract, tmp_zip, dest_dir)
+
+
+async def install_variant(
+    variant: dict[str, Any], include_cudart: bool = True
+) -> AsyncIterator[dict[str, Any]]:
     """バリアントをダウンロード・展開して runtime/<assetName>/ に配置する。
+
+    include_cudart=False なら CUDA ランタイム DLL は落とさない(CUDA Toolkit が
+    入っていれば PATH 側の DLL で動くため、数百 MB を節約できる)。後から
+    install_cudart() で足せる。
 
     進捗 dict を yield する。キャンセルは呼び出し側(SSE)の切断で
     asyncio.CancelledError が飛ぶ想定。一時 zip は finally で必ず削除する。
     """
-    import tempfile
-
     asset_name = variant["asset_name"]
-    dest_dir = RUNTIME_DIR / re.sub(r"\.zip$", "", asset_name, flags=re.IGNORECASE)
+    dest_dir = _dest_dir(asset_name)
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
     dest_dir.mkdir(parents=True, exist_ok=True)
 
-    tmp_dir = Path(tempfile.gettempdir())
-    server_zip = tmp_dir / f"story-graph-{uuid.uuid4().hex}.zip"
-    cudart_zip = tmp_dir / f"story-graph-{uuid.uuid4().hex}-cudart.zip"
+    server_zip = _tmp_zip("server")
+    cudart_zip = _tmp_zip("cudart")
 
     try:
-        # 総時間は無制限(巨大 zip)だが、無通信ストールでは read タイムアウトで切る
-        timeout = httpx.Timeout(30.0, read=120.0)
-        async with httpx.AsyncClient(timeout=timeout, headers={"User-Agent": USER_AGENT}) as client:
+        async with _http_client() as client:
             # サーバ本体
-            async for p in _download(client, variant["asset_url"], server_zip, "llama-server"):
+            async for p in _fetch_and_extract(
+                client, variant["asset_url"], server_zip, "llama-server", dest_dir
+            ):
                 yield p
-            yield {"phase": "extract", "file_label": "llama-server"}
-            await asyncio.to_thread(_extract, server_zip, dest_dir)
 
-            # CUDA なら cudart を同じフォルダへ上書き展開(DLL を exe と同居させる)
-            if variant.get("cudart_url"):
-                async for p in _download(client, variant["cudart_url"], cudart_zip, "cudart"):
+            # CUDA ランタイムを同梱するときだけ、同じフォルダへ上書き展開する
+            if include_cudart and variant.get("cudart_url"):
+                async for p in _fetch_and_extract(
+                    client, variant["cudart_url"], cudart_zip, "cudart", dest_dir
+                ):
                     yield p
-                yield {"phase": "extract", "file_label": "cudart"}
-                await asyncio.to_thread(_extract, cudart_zip, dest_dir)
 
         exe = dest_dir / "llama-server.exe"
         if not exe.exists():
@@ -380,3 +466,32 @@ async def install_variant(variant: dict[str, Any]) -> AsyncIterator[dict[str, An
                 z.unlink(missing_ok=True)
             except OSError:
                 pass
+
+
+async def install_cudart(variant: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
+    """既にある同ビルドのインストール先へ、CUDA ランタイム DLL だけ後から足す。
+
+    本体は落とし直さない。失敗しても展開先は消さない(本体は無事なので、消すと
+    動いていたサーバまで失う)。
+    """
+    if not variant.get("cudart_url"):
+        raise RuntimeError("このバリアントに CUDA ランタイムはありません")
+
+    dest_dir = _dest_dir(variant["asset_name"])
+    exe = dest_dir / "llama-server.exe"
+    if not exe.exists():
+        raise RuntimeError("先に llama.cpp 本体をインストールしてください")
+
+    cudart_zip = _tmp_zip("cudart")
+    try:
+        async with _http_client() as client:
+            async for p in _fetch_and_extract(
+                client, variant["cudart_url"], cudart_zip, "cudart", dest_dir
+            ):
+                yield p
+        yield {"phase": "done", "build": _extract_build(variant["asset_name"]), "path": str(exe)}
+    finally:
+        try:
+            cudart_zip.unlink(missing_ok=True)
+        except OSError:
+            pass
