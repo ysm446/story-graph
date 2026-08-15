@@ -2750,55 +2750,35 @@ function StructureModeInner({
     [markNodeBusy]
   )
 
-  // 整合取り(LLM なし)。重複した登場イベントの掃除 + 検証
-  const normalizeNodes = useCallback(
-    async (nodeIds: string[]): Promise<void> => {
-      let removed = 0
-      const warnings: Array<{ title: string; errors: string[] }> = []
-      for (const id of nodeIds) {
-        try {
-          const r = await api.normalizeChain(id)
-          removed += r.removed
-          warnings.push(...r.warnings)
-        } catch {
-          /* 個々の失敗は無視して続ける */
-        }
+  // 選択したシーンとその子孫(分岐も章もまたいで結末まで)。「この先すべて」の対象数を出すのに使う
+  const withDownstream = useCallback(
+    (nodeIds: string[]): string[] => {
+      const children: Record<string, string[]> = {}
+      for (const e of graphEdges) (children[e.from_node] ??= []).push(e.to_node)
+      const seen = new Set<string>()
+      const stack = [...nodeIds]
+      while (stack.length > 0) {
+        const id = stack.pop()!
+        if (seen.has(id)) continue
+        seen.add(id)
+        for (const c of children[id] ?? []) stack.push(c)
       }
-      await reload()
-      setGenStatus(
-        `整合を取りました(登場イベント ${removed} 件を整理)` +
-          (warnings.length > 0 ? ` / 要確認 ${warnings.length} 件: ${warnings[0].errors[0]}` : '')
-      )
+      return [...seen]
     },
-    [reload]
+    [graphEdges]
   )
 
-  // 選択したシーンを一括清書(条件は鑑賞モードの選択をそのまま使う)
+  // 選択したシーンを一括清書(条件は鑑賞モードの選択をそのまま使う。清書済みも上書きする)
   const runRenderNodes = useCallback(
-    (nodeIds: string[], skipExisting: boolean, includeDownstream = false): void => {
+    (nodeIds: string[]): void => {
       const presetId = renderStyle.presetId
       if (!presetId || nodeIds.length === 0) return
-      let targets = nodeIds
-      if (includeDownstream) {
-        // 下流(全子孫)を集める。順序はサーバーが正史・深さ順に並べ直す
-        const children: Record<string, string[]> = {}
-        for (const e of graphEdges) (children[e.from_node] ??= []).push(e.to_node)
-        const seen = new Set<string>()
-        const stack = [...nodeIds]
-        while (stack.length > 0) {
-          const id = stack.pop()!
-          if (seen.has(id)) continue
-          seen.add(id)
-          for (const c of children[id] ?? []) stack.push(c)
-        }
-        targets = [...seen]
-      }
       const pov = renderStyle.povChar
       const chars = renderStyle.targetChars
       enqueueTask({
         label: '清書',
-        total: targets.length,
-        detail: `${targets.length} シーン${skipExisting ? '(未清書のみ)' : ''}`,
+        total: nodeIds.length,
+        detail: `${nodeIds.length} シーン`,
         runner: async ({ update, signal }) => {
           let current: string | null = null
           let done = 0
@@ -2807,12 +2787,12 @@ function StructureModeInner({
               {
                 preset_id: presetId,
                 pov_char: pov,
-                node_ids: targets,
-                skip_existing: skipExisting,
+                node_ids: nodeIds,
+                skip_existing: false,
                 target_chars: chars
               },
               (e) => {
-                // 実際に書くシーン数(未清書のみの絞り込み後)はサーバーが返す
+                // 実際に書くシーン数はサーバーが返す
                 if (e.stage === 'start') update({ total: e.total })
                 if (e.scene_start) {
                   markNodeBusy(current, false)
@@ -2825,9 +2805,7 @@ function StructureModeInner({
                   done += 1
                 }
                 if (e.error) setGenStatus(`清書エラー: ${e.error}`)
-                if (e.done) {
-                  setGenStatus(done > 0 ? `${done} シーンを清書しました` : '清書済みのため何もしませんでした')
-                }
+                if (e.done) setGenStatus(`${done} シーンを清書しました`)
               },
               signal
             )
@@ -2839,7 +2817,7 @@ function StructureModeInner({
         }
       })
     },
-    [markNodeBusy, renderStyle.presetId, renderStyle.povChar, renderStyle.targetChars, graphEdges]
+    [markNodeBusy, renderStyle.presetId, renderStyle.povChar, renderStyle.targetChars]
   )
 
   // 選択したシーンをまとめて切り離す / 削除する
@@ -4712,45 +4690,29 @@ function StructureModeInner({
                       ]
                     : []),
                   {
-                    label: '整合を取る(LLM なし)',
-                    hint: '重複した登場イベントを掃除して検証',
-                    run: () => void normalizeNodes(menu.targets)
-                  },
-                  {
-                    label: 'イベントを作り直す(LLM)',
-                    hint: '選択したシーンだけ(親から順に逐次)',
+                    label: 'イベントを作り直す',
+                    hint: `選択した ${menu.targets.length} シーンだけ(親から順に。この先は変えない)`,
                     run: () => void runReextractNodes(menu.targets, false)
                   },
-                  {
-                    label: 'イベントを作り直す(この先も / LLM)',
-                    hint: '選択したシーンと、その下流すべて',
-                    run: () => void runReextractNodes(menu.targets, true)
-                  },
-                  {
-                    label: `清書(未清書のみ)`,
-                    hint: `${renderStyle.preset?.name ?? '未設定'}${
-                      renderStyle.povChar ? ` / POV: ${nameOfChar(renderStyle.povChar)}` : ''
-                    }`,
-                    disabled: !renderStyle.presetId,
-                    run: () => void runRenderNodes(menu.targets, true)
-                  },
+                  // この先も作り直す: 選択の先に何も無ければ上の項目と同じになるので出さない
+                  ...((): Array<{ label: string; hint: string; run: () => void }> => {
+                    const ahead = withDownstream(menu.targets).length - menu.targets.length
+                    if (ahead === 0) return []
+                    return [
+                      {
+                        label: 'イベントを作り直す(この先すべて)',
+                        hint: `選択 ${menu.targets.length} + この先 ${ahead} シーン。分岐も章もまたいで結末まで`,
+                        run: () => void runReextractNodes(menu.targets, true)
+                      }
+                    ]
+                  })(),
                   {
                     label: '清書し直す(上書き)',
-                    hint: '清書済みのシーンも作り直す',
+                    hint: `${renderStyle.preset?.name ?? '未設定'}${
+                      renderStyle.povChar ? ` / POV: ${nameOfChar(renderStyle.povChar)}` : ''
+                    } — 清書済みのシーンも作り直す`,
                     disabled: !renderStyle.presetId,
-                    run: () => void runRenderNodes(menu.targets, false)
-                  },
-                  {
-                    label: '清書(この先も / 未清書のみ)',
-                    hint: '選択したシーンと下流の、未清書か要更新のもの',
-                    disabled: !renderStyle.presetId,
-                    run: () => void runRenderNodes(menu.targets, true, true)
-                  },
-                  {
-                    label: '清書し直す(この先も / 上書き)',
-                    hint: '選択したシーンと、その下流すべて',
-                    disabled: !renderStyle.presetId,
-                    run: () => void runRenderNodes(menu.targets, false, true)
+                    run: () => void runRenderNodes(menu.targets)
                   },
                   {
                     label: 'まとめて切り離す',
