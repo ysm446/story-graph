@@ -1015,6 +1015,7 @@ function LlamaInstaller(): React.JSX.Element {
   const [removingDir, setRemovingDir] = useState<string | null>(null)
   const [progress, setProgress] = useState<LlamaInstallProgress | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [doneMsg, setDoneMsg] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
 
   const refreshStatus = async (): Promise<void> => {
@@ -1077,6 +1078,7 @@ function LlamaInstaller(): React.JSX.Element {
     abortRef.current = controller
     setInstalling(true)
     setError(null)
+    setDoneMsg(null)
     setProgress(null)
     try {
       await llamaInstallStream(
@@ -1084,6 +1086,7 @@ function LlamaInstaller(): React.JSX.Element {
         (p) => {
           setProgress(p)
           if (p.phase === 'error') setError(p.message)
+          if (p.phase === 'done') setDoneMsg(`インストールが完了しました(${p.build ?? selectedVariant.label})`)
         },
         controller.signal,
         { includeCudart, cudartOnly }
@@ -1094,6 +1097,9 @@ function LlamaInstaller(): React.JSX.Element {
     } finally {
       abortRef.current = null
       setInstalling(false)
+      // 進捗表示を畳んでボタン列へ戻す。ここで消さないと、中止・エラーの後に
+      // 進捗ブロックだけが残ってインストールし直せなくなる(ボタンが出ない)
+      setProgress(null)
     }
   }
 
@@ -1318,6 +1324,11 @@ function LlamaInstaller(): React.JSX.Element {
       {error && (
         <p className="text-[12px]" style={{ color: 'var(--danger)' }}>
           {error}
+        </p>
+      )}
+      {doneMsg && !error && (
+        <p className="text-[12px]" style={{ color: 'var(--text-dim)' }}>
+          ✓ {doneMsg}
         </p>
       )}
       <p className="settings-field-hint">

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import {
   forceCollide,
   forceLink,
@@ -445,23 +445,28 @@ export default function RelationGraph({
   }, [pathKey])
 
   // 基準時点が変わったら取り直す。時間スクラブや矢印キーで次々に変わると
-  // 取得が複数走るので、古い応答は捨てる(捨てないと前の時点の関係が残る)
+  // 取得が複数走るので、少し待ってから取り(スライダーのドラッグ中に 1 ステップ
+  // ごとのリクエストを積まない)、古い応答は捨てる(捨てないと前の時点の関係が残る)
   useEffect(() => {
     if (!scrubNode) {
       setState(null)
       return
     }
     let ignore = false
-    void api
-      .getState(scrubNode.id)
-      .then((s) => {
-        if (!ignore) setState(s)
-      })
-      .catch(() => {
-        if (!ignore) setState(null)
-      })
+    const id = scrubNode.id
+    const timer = setTimeout(() => {
+      void api
+        .getState(id)
+        .then((s) => {
+          if (!ignore) setState(s)
+        })
+        .catch(() => {
+          if (!ignore) setState(null)
+        })
+    }, 120)
     return () => {
       ignore = true
+      clearTimeout(timer)
     }
   }, [scrubNode?.id, scrubNode?.updated_at])
 
@@ -542,10 +547,13 @@ export default function RelationGraph({
     }
   }, [visibleChars.join(','), edges.length])
 
-  // 直角ルーティング(フル版)。位置・エッジが変わるたびに引き直す
+  // 直角ルーティング(フル版)。位置・エッジが変わるたびに引き直す。
+  // A* は全エッジぶん回して重いので、ドラッグ中の毎フレームには追従させず
+  // deferred な座標で計算する(ノードは即時に動き、線は半歩遅れて付いてくる)
+  const deferredPositions = useDeferredValue(positions)
   const routes = useMemo(
-    () => (orthogonal ? routeOrthogonal(edges, positions, visibleChars) : null),
-    [orthogonal, edges, positions, visibleChars]
+    () => (orthogonal ? routeOrthogonal(edges, deferredPositions, visibleChars) : null),
+    [orthogonal, edges, deferredPositions, visibleChars]
   )
 
   // フィット表示: ノード全体の外接矩形が中央に収まるようズーム・パンを合わせる

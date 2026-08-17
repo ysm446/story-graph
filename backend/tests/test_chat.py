@@ -390,6 +390,23 @@ def test_set_chat_title_and_list(store):
     assert store.get_chat(chat["id"])["title"] is None
 
 
+def test_list_chats_backfills_legacy_snippet(store):
+    """snippet 列の無かった頃のデータは、一覧を開いたとき一度だけ埋める
+    (以後は messages をパースしない)。"""
+    chat = store.create_chat(store.canon_path()[-1], "upto")
+    store.save_chat_messages(chat["id"], [{"role": "user", "content": "昔の質問"}])
+    # 旧データを再現(保存時の snippet を消す)
+    store.conn.execute("UPDATE chats SET snippet = NULL WHERE id = ?", (chat["id"],))
+    store.conn.commit()
+    row = next(h for h in store.list_chats() if h["id"] == chat["id"])
+    assert row["snippet"] == "昔の質問"
+    # 埋め戻されている(次回からパース不要)
+    stored = store.conn.execute(
+        "SELECT snippet FROM chats WHERE id = ?", (chat["id"],)
+    ).fetchone()
+    assert stored["snippet"] == "昔の質問"
+
+
 # ---- メッセージ操作(編集 / 再生成 / 削除) ----------------------------
 
 def _two_turn_chat(store):

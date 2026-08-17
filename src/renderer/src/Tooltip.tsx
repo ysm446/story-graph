@@ -33,7 +33,9 @@ export default function TooltipHost(): React.JSX.Element | null {
   const boxRef = useRef<HTMLDivElement | null>(null)
   const targetRef = useRef<Element | null>(null)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const trailingRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastMoveRef = useRef(0)
+  const lastPointRef = useRef({ x: 0, y: 0 })
   const shownRef = useRef(false)
 
   useEffect(() => {
@@ -49,11 +51,8 @@ export default function TooltipHost(): React.JSX.Element | null {
       setPos(null)
     }
 
-    const onMove = (e: PointerEvent): void => {
-      const now = performance.now()
-      if (now - lastMoveRef.current < MOVE_INTERVAL) return
-      lastMoveRef.current = now
-      const hit = document.elementFromPoint(e.clientX, e.clientY)
+    const hitTest = (x: number, y: number): void => {
+      const hit = document.elementFromPoint(x, y)
       const el = hit?.closest<HTMLElement>('[data-tip]') ?? null
       if (el === targetRef.current) return
       targetRef.current = el
@@ -65,12 +64,38 @@ export default function TooltipHost(): React.JSX.Element | null {
       }
       timerRef.current = setTimeout(
         () => {
+          // 待っている間にボタンが消えた(タスク完了などで DOM が変わった)ら出さない。
+          // 外れた要素の rect は (0,0) の 0×0 になり、画面の左上に出てしまう
+          if (!el.isConnected) {
+            targetRef.current = null
+            return
+          }
           shownRef.current = true
           setPos(null)
           setAnchor({ text, rect: el.getBoundingClientRect() })
         },
         shownRef.current ? REOPEN_DELAY : OPEN_DELAY
       )
+    }
+
+    const onMove = (e: PointerEvent): void => {
+      lastPointRef.current = { x: e.clientX, y: e.clientY }
+      const now = performance.now()
+      const wait = MOVE_INTERVAL - (now - lastMoveRef.current)
+      if (wait > 0) {
+        // 間引きで捨てた**最後の 1 発**は遅延して実行する。捨てたままだと、
+        // 止まった位置と違うボタンの文が出たり、離れたのに消え残ったりする
+        if (trailingRef.current == null) {
+          trailingRef.current = setTimeout(() => {
+            trailingRef.current = null
+            lastMoveRef.current = performance.now()
+            hitTest(lastPointRef.current.x, lastPointRef.current.y)
+          }, wait)
+        }
+        return
+      }
+      lastMoveRef.current = now
+      hitTest(e.clientX, e.clientY)
     }
 
     // 押した / 巻いた / 打った / 窓から出た ときは引っ込める。スクロールは capture で
@@ -80,14 +105,18 @@ export default function TooltipHost(): React.JSX.Element | null {
     document.addEventListener('wheel', hide, { capture: true, passive: true })
     document.addEventListener('scroll', hide, true)
     document.addEventListener('keydown', hide, true)
+    document.addEventListener('mouseleave', hide) // カーソルがウィンドウの外へ出た
     window.addEventListener('blur', hide)
     return () => {
       clearTimer()
+      if (trailingRef.current) clearTimeout(trailingRef.current)
+      trailingRef.current = null
       document.removeEventListener('pointermove', onMove)
       document.removeEventListener('pointerdown', hide, true)
       document.removeEventListener('wheel', hide, true)
       document.removeEventListener('scroll', hide, true)
       document.removeEventListener('keydown', hide, true)
+      document.removeEventListener('mouseleave', hide)
       window.removeEventListener('blur', hide)
     }
   }, [])

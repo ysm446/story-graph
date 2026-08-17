@@ -96,6 +96,7 @@ def test_status_reports_cudart_presence(tmp_path, monkeypatch):
     runtime = tmp_path / "runtime"
     with_dll = _make_install(runtime, "llama-b200-bin-win-cuda-13-x64")
     (with_dll / "cudart64_13.dll").write_bytes(b"x")
+    (with_dll / "cublas64_13.dll").write_bytes(b"x")
     _make_install(runtime, "llama-b100-bin-win-cuda-12-x64")
     _make_install(runtime, "llama-b100-bin-win-cpu-x64")
     monkeypatch.setattr(inst, "RUNTIME_DIR", runtime)
@@ -112,6 +113,59 @@ def test_status_reports_cudart_presence(tmp_path, monkeypatch):
     cpu = by_dir["llama-b100-bin-win-cpu-x64"]
     assert (cpu["is_cuda"], cpu["has_cudart"]) == (False, False)
     assert st["system_cudart"] == ["12"]
+
+
+def test_has_cudart_needs_full_dll_set(tmp_path, monkeypatch):
+    runtime = tmp_path / "runtime"
+    # 展開が途中で失敗して cudart だけ残ったケースは「無い」扱い
+    # (UI が追加ダウンロードの導線を出せるように)
+    partial = _make_install(runtime, "llama-b100-bin-win-cuda-13-x64")
+    (partial / "cudart64_13.dll").write_bytes(b"x")
+    assert inst.has_cudart(partial) is False
+    (partial / "cublas64_13.dll").write_bytes(b"x")
+    assert inst.has_cudart(partial) is True
+
+
+def test_dest_dir_for_rejects_path_traversal():
+    ok = inst.dest_dir_for("llama-b9496-bin-win-cuda-13-x64.zip")
+    assert ok.parent == inst.RUNTIME_DIR
+    assert ok.name == "llama-b9496-bin-win-cuda-13-x64"
+    for bad in (
+        "..\\..\\evil.zip",
+        "../evil.zip",
+        "C:\\Users\\x\\evil.zip",
+        "a/b.zip",
+        "..zip",
+        "",
+    ):
+        with pytest.raises(ValueError):
+            inst.dest_dir_for(bad)
+
+
+def test_swap_into_place_replaces_existing_install(tmp_path):
+    dest = tmp_path / "llama-b100-bin-win-cpu-x64"
+    dest.mkdir()
+    (dest / "llama-server.exe").write_bytes(b"old")
+    staging = tmp_path / ".installing-x"
+    staging.mkdir()
+    (staging / "llama-server.exe").write_bytes(b"new")
+
+    inst._swap_into_place(staging, dest)
+    assert (dest / "llama-server.exe").read_bytes() == b"new"
+    assert not staging.exists()
+    # 置き換えの残骸(.removing-*)も残らない
+    assert [p.name for p in tmp_path.iterdir()] == [dest.name]
+
+
+def test_cleanup_leftovers_removes_hidden_dirs(tmp_path, monkeypatch):
+    runtime = tmp_path / "runtime"
+    keep = _make_install(runtime, "llama-b100-bin-win-cpu-x64")
+    _make_install(runtime, ".removing-deadbeef")
+    _make_install(runtime, ".installing-cafebabe")
+    monkeypatch.setattr(inst, "RUNTIME_DIR", runtime)
+
+    inst.cleanup_leftovers()
+    assert [p.name for p in runtime.iterdir()] == [keep.name]
 
 
 def test_system_cudart_versions_needs_both_dlls(tmp_path, monkeypatch):

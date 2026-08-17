@@ -11,6 +11,7 @@ undo の代わりに「時点に戻す」を提供する(設計: docs/design/sna
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import shutil
@@ -75,11 +76,8 @@ def list_snapshots(store: Store) -> list[dict[str, Any]]:
     return sorted(alive, key=lambda e: e["created_at"], reverse=True)
 
 
-def create(store: Store, label: str, kind: str = "manual") -> dict[str, Any]:
-    """現在の DB を snapshots/ に複製し、index に登録して返す。"""
-    root = store.root
-    if not root:
-        raise RuntimeError("ライブラリが未設定のためスナップショットを保存できません")
+def _reserve_path(root: str) -> tuple[str, Path]:
+    """保存先のファイル名(id とパス)を決める。"""
     sdir = _snapshot_dir(root)
     sdir.mkdir(parents=True, exist_ok=True)
     base = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -88,10 +86,10 @@ def create(store: Store, label: str, kind: str = "manual") -> dict[str, Any]:
     while _snapshot_path(root, snap_id).exists():
         n += 1
         snap_id = f"{base}-{n}"
-    path = _snapshot_path(root, snap_id)
-    # VACUUM は進行中のトランザクションがあると失敗するので先に確定する
-    store.conn.commit()
-    store.conn.execute("VACUUM INTO ?", (str(path),))
+    return snap_id, _snapshot_path(root, snap_id)
+
+
+def _register(root: str, snap_id: str, label: str, kind: str, path: Path) -> dict[str, Any]:
     entry = {
         "id": snap_id,
         "label": (label or "").strip() or "(名前なし)",
@@ -103,6 +101,52 @@ def create(store: Store, label: str, kind: str = "manual") -> dict[str, Any]:
     entries = _prune(root, entries)
     _save_index(root, entries)
     return {**entry, "size": path.stat().st_size}
+
+
+def create(store: Store, label: str, kind: str = "manual") -> dict[str, Any]:
+    """現在の DB を snapshots/ に複製し、index に登録して返す(同期版)。
+
+    restore の「復元の前」とテストが使う。API ハンドラからは、イベントループを
+    塞がない create_async / auto を使うこと。
+    """
+    root = store.root
+    if not root:
+        raise RuntimeError("ライブラリが未設定のためスナップショットを保存できません")
+    snap_id, path = _reserve_path(root)
+    # VACUUM は進行中のトランザクションがあると失敗するので先に確定する
+    store.conn.commit()
+    store.conn.execute("VACUUM INTO ?", (str(path),))
+    return _register(root, snap_id, label, kind, path)
+
+
+def _vacuum_ro(db_path: Path, dest: Path) -> None:
+    """読み取り専用の別接続で VACUUM INTO する(ワーカースレッド用)。
+
+    書き込みは store.conn でループ上に直列、という前提を崩さないための読み取り接続。
+    WAL なのでループ側の読み書きと並行しても、コピーは開始時点の一貫した姿になる。
+    vec0(sqlite-vec)の仮想テーブルは VACUUM がスキーマを作り直すときに
+    モジュールが要るので、この接続にもロードする。
+    """
+    conn = sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro", uri=True)
+    try:
+        db_mod._try_load_vec(conn)
+        conn.execute("VACUUM INTO ?", (str(dest),))
+    finally:
+        conn.close()
+
+
+async def create_async(store: Store, label: str, kind: str = "manual") -> dict[str, Any]:
+    """create の非同期版。DB 丸ごとのコピー(数十 MB で 100〜500ms)をスレッドに
+    逃がし、コピー中も他の API(ステータスポーリングや SSE)を止めない。
+    呼び出し元のハンドラ自身は await で完了を待つので、「操作の前の保存」という
+    意味は同期版と変わらない。"""
+    root = store.root
+    if not root:
+        raise RuntimeError("ライブラリが未設定のためスナップショットを保存できません")
+    snap_id, path = _reserve_path(root)
+    store.conn.commit()  # コミット済みの姿をコピーする(commit はループ上で)
+    await asyncio.to_thread(_vacuum_ro, Path(root) / "story-graph.db", path)
+    return _register(root, snap_id, label, kind, path)
 
 
 def _prune(root: str, entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -120,11 +164,13 @@ def _prune(root: str, entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [e for e in entries if e["id"] not in drop_ids]
 
 
-def auto(store: Store, label: str, min_interval_sec: float = 60.0) -> None:
+async def auto(store: Store, label: str, min_interval_sec: float = 60.0) -> None:
     """危険な操作の前の自動保存。失敗しても操作は止めない。
 
     同じ契機(label)の連打で埋まらないよう最短間隔を持つ。複数シーンの
     一括削除のような「API 連打」の実装では、最初の 1 回だけ保存される。
+    コピーはスレッドで行う(create_async)。await が返るまで操作は始まらないので、
+    「操作の前の保存」であることは変わらない。
     """
     root = store.root
     if not root:
@@ -134,7 +180,7 @@ def auto(store: Store, label: str, min_interval_sec: float = 60.0) -> None:
     if min_interval_sec > 0 and now - _last_auto.get(key, float("-inf")) < min_interval_sec:
         return
     try:
-        create(store, label, kind="auto")
+        await create_async(store, label, kind="auto")
         _last_auto[key] = now
     except Exception as e:  # noqa: BLE001
         print(f"[snapshots] 自動スナップショットに失敗: {e}")

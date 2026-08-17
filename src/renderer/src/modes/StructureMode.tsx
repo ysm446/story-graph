@@ -2218,9 +2218,12 @@ function StructureModeInner({
     [inspectorWidth, shiftViewportForShrink]
   )
 
-  const reload = useCallback(async (): Promise<void> => {
+  // prefetchedGraph: 直前の処理(placeCreatedNode)が取得済みのグラフを使い回す。
+  // /graph は全ノード + 全イベント入りで大きいので、シーン作成のたびに 2 回
+  // 取り直さない
+  const reload = useCallback(async (prefetchedGraph?: StoryGraph): Promise<void> => {
     const [graph, chars, placeList, groupList] = await Promise.all([
-      api.getGraph(),
+      prefetchedGraph ?? api.getGraph(),
       api.listCharacters(),
       api.listPlaces(),
       api.listGroups()
@@ -2750,11 +2753,14 @@ function StructureModeInner({
     [markNodeBusy]
   )
 
-  // 選択したシーンとその子孫(分岐も章もまたいで結末まで)。「この先すべて」の対象数を出すのに使う
+  // 選択したシーンとその子孫(分岐も章もまたいで結末まで)。「この先すべて」の対象数を出すのに使う。
+  // マーカー(はじまり / 結末 / 章の入口・出口)は辿るが数えない
+  // (シーンではなく、サーバ側の作り直しも kind 付きノードは飛ばすため)
   const withDownstream = useCallback(
     (nodeIds: string[]): string[] => {
       const children: Record<string, string[]> = {}
       for (const e of graphEdges) (children[e.from_node] ??= []).push(e.to_node)
+      const kinds = new Map(graphNodes.map((n) => [n.id, n.kind]))
       const seen = new Set<string>()
       const stack = [...nodeIds]
       while (stack.length > 0) {
@@ -2763,9 +2769,9 @@ function StructureModeInner({
         seen.add(id)
         for (const c of children[id] ?? []) stack.push(c)
       }
-      return [...seen]
+      return [...seen].filter((id) => !kinds.get(id))
     },
-    [graphEdges]
+    [graphEdges, graphNodes]
   )
 
   // 選択したシーンを一括清書(条件は鑑賞モードの選択をそのまま使う。清書済みも上書きする)
@@ -3823,13 +3829,15 @@ function StructureModeInner({
    * 親が自動配置(pos が NULL)なら何もしない — 自動レイアウトに任せたほうが全体が揃う。
    */
   const placeCreatedNode = useCallback(
-    async (newNodeId: string): Promise<void> => {
+    async (newNodeId: string): Promise<StoryGraph> => {
+      // 取得したグラフは決めた座標を書き込んで返す(呼び出し側が reload に
+      // 使い回せるように。/graph は大きいので 2 回取り直さない)
       const graph = await api.getGraph()
       const parentId = graph.edges.find((e) => e.to_node === newNodeId)?.from_node ?? null
-      if (!parentId) return // どこにも繋がっていない島。位置は作った側が決める
+      if (!parentId) return graph // どこにも繋がっていない島。位置は作った側が決める
       const byId = new Map(graph.nodes.map((n) => [n.id, n]))
       const parent = byId.get(parentId)
-      if (!parent || parent.pos_x == null || parent.pos_y == null) return
+      if (!parent || parent.pos_x == null || parent.pos_y == null) return graph
       const heightOf = (id: string): number =>
         reactFlow.getNode(id)?.measured?.height ?? FALLBACK_NODE_HEIGHT
 
@@ -3846,7 +3854,14 @@ function StructureModeInner({
           const moved = shiftDownstreamX(graph, successorId, COLUMN_GAP_X)
           if (moved.length > 0) {
             await api.setNodePositions(moved)
-            for (const m of moved) shifted.set(m.id, m)
+            for (const m of moved) {
+              shifted.set(m.id, m)
+              const n = byId.get(m.id)
+              if (n) {
+                n.pos_x = m.x
+                n.pos_y = m.y
+              }
+            }
           }
           successorX = shifted.get(successorId)?.x ?? successorX
         }
@@ -3858,18 +3873,27 @@ function StructureModeInner({
         desired = { x: snapped(parent.pos_x + COLUMN_GAP_X), y: snapped(parent.pos_y) }
       }
 
-      // 同じ列に既にカードが居るなら下のレーンへ(分岐や、隣に並んだ島の上に重ねない)
+      // 同じ列に既にカードが居るなら下のレーンへ(分岐や、隣に並んだ島の上に重ねない)。
+      // 自動配置のカード(pos が NULL)も画面には描かれているので、描画中の位置で
+      // 重なりを見る(DB 座標だけ見ると、自動レイアウトの島の上に重ねてしまう)
       const others = graph.nodes
         .filter((n) => n.id !== newNodeId)
         .map((n) => {
           const moved = shifted.get(n.id)
-          const x = moved?.x ?? n.pos_x
-          const y = moved?.y ?? n.pos_y
+          const screen = reactFlow.getNode(n.id)?.position
+          const x = moved?.x ?? n.pos_x ?? screen?.x
+          const y = moved?.y ?? n.pos_y ?? screen?.y
           return x == null || y == null ? null : { x, y, height: heightOf(n.id) }
         })
         .filter((r): r is { x: number; y: number; height: number } => r !== null)
       const at = avoidingOverlap(desired, heightOf(newNodeId), others)
       await api.setNodePosition(newNodeId, at.x, at.y)
+      const created = byId.get(newNodeId)
+      if (created) {
+        created.pos_x = at.x
+        created.pos_y = at.y
+      }
+      return graph
     },
     [reactFlow]
   )
@@ -3896,8 +3920,7 @@ function StructureModeInner({
       if (activeGroup && chapterTail) {
         await api.addNodeToGroup(activeGroup.id, node.id).catch(() => undefined)
       }
-      await placeCreatedNode(node.id)
-      await reload()
+      await reload(await placeCreatedNode(node.id))
       setSelectedId(node.id)
       setInspectorTab('beat')
       focusWhenReady(node.id)
@@ -3949,8 +3972,7 @@ function StructureModeInner({
         beat: '(ここに出来事の仕様を書く)',
         cast: []
       })
-      await placeCreatedNode(node.id)
-      await reload()
+      await reload(await placeCreatedNode(node.id))
       setSelectedId(node.id)
       setInspectorTab('beat')
       focusWhenReady(node.id)
@@ -3968,12 +3990,11 @@ function StructureModeInner({
     // docs/design/interpolation.md)。シーンを選んでいないときは、指している章の
     // 末尾(出口の手前)へ。空の章では入口の直後へ。どれでもなければ渡さず、
     // 正史の末尾(= 物語の最後)に足す
-    // 結末の先には繋げない(サーバーが拒否する)ので、結末マーカーを選んでいるときは
-    // 渡さず、従来どおり物語の末尾(= 結末の手前)への追加として扱う
-    const anchorId =
-      insertAfterId && graphNodes.find((n) => n.id === insertAfterId)?.kind !== 'ending'
-        ? insertAfterId
-        : null
+    // マーカー(はじまり / 結末 / 章の入口・出口)はシーンではないので「選んでいる
+    // ものの続き」の対象にしない(はじまりを選んだまま押すと物語の先頭に割り込んで
+    // しまう)。従来どおり物語の末尾(= 結末の手前)への追加として扱う
+    const anchorNode = insertAfterId ? graphNodes.find((n) => n.id === insertAfterId) : undefined
+    const anchorId = anchorNode && anchorNode.kind == null ? anchorNode.id : null
     const afterId = parentId
       ? null
       : (anchorId ?? activeGroup?.route.at(-1) ?? activeGroup?.in_id ?? null)
@@ -4261,8 +4282,8 @@ function StructureModeInner({
                     data-tip={
                       selectedId
                         ? '選択ノードの子としてシーンを追加'
-                        : focusedGroup
-                          ? `「${focusedGroup.title}」の末尾(出口の手前)にシーンを追加`
+                        : activeGroup
+                          ? `「${activeGroup.title}」の末尾(出口の手前)にシーンを追加`
                           : '正史の末尾にシーンを追加'
                     }
                   >
@@ -4491,7 +4512,11 @@ function StructureModeInner({
                   ? [
                       {
                         label: '＋ シーンを追加',
-                        hint: selectedNode ? '選択中のシーンの子として追加' : '正史の末尾(結末の手前)に追加',
+                        hint: selectedNode
+                          ? '選択中のシーンの子として追加'
+                          : activeGroup
+                            ? `「${activeGroup.title}」の末尾(出口の手前)に追加`
+                            : '正史の末尾(結末の手前)に追加',
                         run: () => void handleAddBeat()
                       },
                       {
@@ -4824,8 +4849,10 @@ function StructureModeInner({
                 onGraphChanged={(createdNodeId) => {
                   void (async () => {
                     // 提案カードから作ったシーンも、繋がった場所の隣へ置いてから映す
-                    if (createdNodeId) await placeCreatedNode(createdNodeId).catch(() => undefined)
-                    await reload()
+                    const g = createdNodeId
+                      ? await placeCreatedNode(createdNodeId).catch(() => undefined)
+                      : undefined
+                    await reload(g ?? undefined)
                   })()
                 }}
                 dynamicSuggestions={chatDynamicSuggestions}

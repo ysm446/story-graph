@@ -382,17 +382,19 @@ class Store:
         ending = self.active_ending()
         if ending is None:
             return
+        parents = self._parents_map()
         # 結末が浮いている間(付け替え中)は、はじまりから辿れる canon 連鎖を正史とする
         chain = (
-            self.path_to(ending)  # はじまり〜結末のマーカー込みチェーン
-            if self._ending_is_rooted(ending)
+            self.path_to(ending, parents)  # はじまり〜結末のマーカー込みチェーン
+            if self._ending_is_rooted(ending, parents)
             else self._canon_chain_from_start()
         )
         # 正史が章の出口を飛ばして外へ出ていたら、先に境界へ挟み直す(読み順は不変)
         if self._realign_boundaries(chain):
+            parents = self._parents_map()  # エッジが変わったので取り直す
             chain = (
-                self.path_to(ending)
-                if self._ending_is_rooted(ending)
+                self.path_to(ending, parents)
+                if self._ending_is_rooted(ending, parents)
                 else self._canon_chain_from_start()
             )
         chain_set = set(chain)
@@ -476,12 +478,12 @@ class Store:
                 self.set_settings({"active_ending": r["id"]})
                 return
 
-    def _ending_is_rooted(self, ending_id: str) -> bool:
+    def _ending_is_rooted(self, ending_id: str, parents: dict[str, str] | None = None) -> bool:
         """結末が「はじまり」から辿れるか(切り離されて浮いていないか)。"""
         start = self.conn.execute("SELECT id FROM nodes WHERE kind = 'start'").fetchone()
         if start is None:
             return True  # はじまりが無いライブラリでは判定しない
-        return self.path_to(ending_id)[0] == start["id"]
+        return self.path_to(ending_id, parents)[0] == start["id"]
 
     def _canon_chain_from_start(self) -> list[str]:
         """「はじまり」から canon エッジを辿れるところまでの列(マーカー込み)。
@@ -503,7 +505,7 @@ class Store:
             chain.append(row["to_node"])
             seen.add(row["to_node"])
 
-    def canon_path(self) -> list[str]:
+    def canon_path(self, parents: dict[str, str] | None = None) -> list[str]:
         """正史パスのシーン ID 列(アクティブな結末から根へさかのぼる。マーカーは除く)。
 
         結末を切り離して付け替えている最中(浮いている)は、直前の正史
@@ -511,10 +513,10 @@ class Store:
         """
         ending = self.active_ending()
         kinds = {r["id"]: r["kind"] for r in self.conn.execute("SELECT id, kind FROM nodes")}
-        if ending is None or not self._ending_is_rooted(ending):
+        if ending is None or not self._ending_is_rooted(ending, parents):
             # 移行前(結末なし)/ 結末が浮いている間: はじまりからの canon 連鎖
             return [nid for nid in self._canon_chain_from_start() if kinds.get(nid) is None]
-        return [nid for nid in self.path_to(ending) if kinds.get(nid) is None]
+        return [nid for nid in self.path_to(ending, parents) if kinds.get(nid) is None]
 
     def _legacy_canon_path(self) -> list[str]:
         """旧方式の正史導出(canon エッジ辿り)。移行時と結末なしの互換にだけ使う。"""
@@ -555,13 +557,26 @@ class Store:
         ).fetchone()
         return row["from_node"] if row else None
 
-    def path_to(self, node_id: str) -> list[str]:
-        """ルートから node_id までのパス(親エッジを遡る。分岐ノードでも有効)。"""
+    def _parents_map(self) -> dict[str, str]:
+        """全エッジの子→親マップ。パス遡上を繰り返す処理(list_groups /
+        _resync_canon など)が、1 ホップ 1 SELECT の parent_of をループで
+        呼ばずに済むよう、先に 1 クエリで取っておく。"""
+        parents: dict[str, str] = {}
+        for r in self.conn.execute("SELECT from_node, to_node FROM edges"):
+            # 多重親はガード済みだが、万一あっても parent_of(最初の行)と揃える
+            parents.setdefault(r["to_node"], r["from_node"])
+        return parents
+
+    def path_to(self, node_id: str, parents: dict[str, str] | None = None) -> list[str]:
+        """ルートから node_id までのパス(親エッジを遡る。分岐ノードでも有効)。
+
+        parents に _parents_map() を渡すと SELECT なしで遡る(呼び出し側が
+        多数のノードのパスをまとめて引くとき用)。"""
         path = [node_id]
         seen = {node_id}
         current = node_id
         while True:
-            parent = self.parent_of(current)
+            parent = parents.get(current) if parents is not None else self.parent_of(current)
             if parent is None or parent in seen:
                 break
             path.append(parent)
@@ -1523,17 +1538,23 @@ class Store:
         return ids
 
     def _resync_memory_orders(self, commit: bool = True) -> None:
-        """正史切替後に全 memories の story_order を再計算する。"""
+        """正史切替後に memories の story_order を再計算する。
+
+        構造のミューテーションのたびに呼ばれるので、値が実際に変わる行だけ
+        UPDATE する(通常は変更点より下流の一部だけ。全記憶の書き直しにしない)。
+        """
         path = self.canon_path()
         order = {nid: i for i, nid in enumerate(path)}
         rows = self.conn.execute(
-            "SELECT m.id, e.node_id FROM memories m JOIN events e ON m.event_id = e.id"
+            "SELECT m.id, m.story_order, e.node_id FROM memories m JOIN events e ON m.event_id = e.id"
         ).fetchall()
-        for r in rows:
-            self.conn.execute(
-                "UPDATE memories SET story_order = ? WHERE id = ?",
-                (order.get(r["node_id"], -1), r["id"]),
-            )
+        updates = [
+            (order.get(r["node_id"], -1), r["id"])
+            for r in rows
+            if r["story_order"] != order.get(r["node_id"], -1)
+        ]
+        if updates:
+            self.conn.executemany("UPDATE memories SET story_order = ? WHERE id = ?", updates)
         if commit:
             self.conn.commit()
 
@@ -1695,7 +1716,7 @@ class Store:
                     "UPDATE nodes SET group_id = ? WHERE id = ?", [(row["id"], n) for n in orphans]
                 )
 
-    def _legacy_route(self, members: list[str]) -> list[str]:
+    def _legacy_route(self, members: list[str], parents: dict[str, str] | None = None) -> list[str]:
         """マーカーが無い(移行前・配線前)ときの読む道。
 
         正史パスに乗っているメンバーを正史順に。1 つも無ければメンバーの中の一続き。
@@ -1703,14 +1724,20 @@ class Store:
         """
         if not members:
             return []
-        order = {nid: i for i, nid in enumerate(self.canon_path())}
+        if parents is None:
+            parents = self._parents_map()
+        order = {nid: i for i, nid in enumerate(self.canon_path(parents))}
         on_canon = [n for n in members if n in order]
         if on_canon:
             return sorted(on_canon, key=lambda n: order[n])
-        return self._member_chain(sorted(members, key=lambda n: len(self.path_to(n))))
+        return self._member_chain(sorted(members, key=lambda n: len(self.path_to(n, parents))))
 
     def _route_from_markers(
-        self, in_id: str | None, out_id: str | None, members: set[str]
+        self,
+        in_id: str | None,
+        out_id: str | None,
+        members: set[str],
+        parents: dict[str, str] | None = None,
     ) -> tuple[list[str], str | None]:
         """**出口に繋がっている道**を辿って章の読む道を返す((route, warning))。
 
@@ -1720,7 +1747,9 @@ class Store:
         """
         if not out_id:
             return [], None
-        current = self.parent_of(out_id)
+        if parents is None:
+            parents = self._parents_map()
+        current = parents.get(out_id)
         if current is None:
             return [], "章の出口に何も繋がっていません(読む道が決まりません)"
         route: list[str] = []
@@ -1737,7 +1766,7 @@ class Store:
                 warning = "この章に入っていないシーンが、章の道の途中にあります(そのシーンを章に入れてください)"
                 break
             route.append(current)
-            current = self.parent_of(current)
+            current = parents.get(current)
         if current is None and in_id is not None and route:
             warning = "章の道が入口まで繋がっていません"
         route.reverse()
@@ -1788,7 +1817,13 @@ class Store:
         章ラベルは切り離しや正史切替で**自動では消さない**。ルートが正史の上で
         分断されている章は warning を付けて返し、UI がバッジで知らせる。
         """
-        path = self.canon_path()
+        # パス遡上と canon 子の照会はメンバー数ぶん繰り返すので、エッジは先に
+        # 1 クエリで取ってメモリ上で辿る(章×メンバーの N+1 SELECT を避ける)
+        parents = self._parents_map()
+        canon_child: dict[str, str] = {}
+        for r in self.conn.execute("SELECT from_node, to_node FROM edges WHERE is_canon = 1"):
+            canon_child.setdefault(r["from_node"], r["to_node"])
+        path = self.canon_path(parents)
         order = {nid: i for i, nid in enumerate(path)}
         members: dict[str, list[str]] = {}
         markers: dict[str, dict[str, str]] = {}
@@ -1804,24 +1839,22 @@ class Store:
         for gi, row in enumerate(self.conn.execute("SELECT * FROM groups ORDER BY created_at").fetchall()):
             # メンバーが 0 の章もそのまま返す(空の章を器として先に作れる。§9)
             all_ids = members.get(row["id"], [])
-            ordered = sorted(all_ids, key=lambda n: len(self.path_to(n)))  # 深さ順
+            ordered = sorted(all_ids, key=lambda n: len(self.path_to(n, parents)))  # 深さ順
             in_id = markers.get(row["id"], {}).get("chapter_in")
             out_id = markers.get(row["id"], {}).get("chapter_out")
             # 読む道は**出口に繋がっている道**。マーカーがまだ無い章(移行前)だけ、
             # 従来どおり「正史に乗っているメンバー」から導出する
             if out_id:
-                route, warning = self._route_from_markers(in_id, out_id, set(all_ids))
+                route, warning = self._route_from_markers(in_id, out_id, set(all_ids), parents)
             else:
-                route, warning = self._legacy_route(ordered), None
+                route, warning = self._legacy_route(ordered, parents), None
             if out_id and warning is None:
                 # 「章の外へ出るときは必ず出口を通る」= 境界の不変条件。
                 # 正史の流れがそれを迂回していたら知らせる(分岐は迂回してよい)
                 member_set = set(all_ids)
                 for m in all_ids:
-                    child = self.conn.execute(
-                        "SELECT to_node FROM edges WHERE from_node = ? AND is_canon = 1", (m,)
-                    ).fetchone()
-                    if child and child["to_node"] not in member_set and child["to_node"] != out_id:
+                    child = canon_child.get(m)
+                    if child and child not in member_set and child != out_id:
                         warning = "章の外へ、出口を通らずに繋がっているシーンがあります"
                         break
             on_canon = bool(route) and all(n in order for n in route)
@@ -2322,12 +2355,29 @@ class Store:
         """ルートからのパス順に fold し、途中経過は state_cache に保存する(遅延再計算)。
 
         分岐ノードは分岐点までの state を共有し、以降は独立に fold される(spec §5)。
+
+        キャッシュヒット中は state 本体をパースしない: 妥当性キー(input_hash)の
+        計算に要るのは親状態の「ハッシュ」だけなので、state_cache に保存してある
+        state_hash を引き継ぎ、実体の JSON はミスした時点(fold の再開点)と
+        最終ノードでだけパースする。パスが長くなっても全ヒットなら
+        「イベントのハッシュ計算 × パス長 + パース 1 回」で済む。
         """
-        if self.get_node(node_id) is None:
+        if self.conn.execute("SELECT 1 FROM nodes WHERE id = ?", (node_id,)).fetchone() is None:
             raise KeyError(f"node not found: {node_id}")
         path = self.path_to(node_id)
         digests = self._digest_by_tail()
-        state = fold_mod.empty_state()
+        # cast は列だけまとめて引く(get_node はイベントまで読み直すので重い)
+        cast_by_id: dict[str, list[str]] = {}
+        for i in range(0, len(path), 500):
+            chunk = path[i : i + 500]
+            marks = ",".join("?" * len(chunk))
+            for r in self.conn.execute(
+                f'SELECT id, "cast" FROM nodes WHERE id IN ({marks})', chunk
+            ):
+                cast_by_id[r["id"]] = json.loads(r["cast"])
+
+        state: dict[str, Any] | None = fold_mod.empty_state()  # None = パースを遅延中
+        pending_text: str | None = None  # 遅延中の state の JSON(直前ノードのキャッシュ)
         parent_hash = fold_mod.state_hash(state)
         prev: str | None = None
         for nid in path:
@@ -2339,25 +2389,44 @@ class Store:
             digest = digests.get(prev) if prev is not None else None
             if digest:
                 events = [*digest, *events]
-            node = self.get_node(nid)
-            cast = node["cast"] if node else []
+            cast = cast_by_id.get(nid, [])
             ihash = fold_mod.input_hash(parent_hash, fold_mod.events_hash(events), cast)
             cached = self.conn.execute(
-                "SELECT state, input_hash, dirty FROM state_cache WHERE node_id = ?", (nid,)
+                "SELECT state, input_hash, dirty, state_hash FROM state_cache WHERE node_id = ?",
+                (nid,),
             ).fetchone()
             if cached and not cached["dirty"] and cached["input_hash"] == ihash:
-                state = json.loads(cached["state"])
+                if cached["state_hash"]:
+                    pending_text = cached["state"]
+                    state = None
+                    parent_hash = cached["state_hash"]
+                else:
+                    # 旧形式のキャッシュ(state_hash 列が無かった頃)。一度だけ
+                    # パースしてハッシュを埋め、次回からは読み飛ばせるようにする
+                    state = json.loads(cached["state"])
+                    pending_text = None
+                    parent_hash = fold_mod.state_hash(state)
+                    self.conn.execute(
+                        "UPDATE state_cache SET state_hash = ? WHERE node_id = ?",
+                        (parent_hash, nid),
+                    )
             else:
+                if state is None:
+                    state = json.loads(pending_text) if pending_text is not None else fold_mod.empty_state()
                 state = fold_mod.fold(state, events, cast)
+                pending_text = None
+                parent_hash = fold_mod.state_hash(state)
                 self.conn.execute(
-                    "INSERT OR REPLACE INTO state_cache(node_id, state, input_hash, dirty) VALUES(?,?,?,0)",
-                    (nid, fold_mod.canonical_json(state), ihash),
+                    "INSERT OR REPLACE INTO state_cache(node_id, state, input_hash, dirty, state_hash)"
+                    " VALUES(?,?,?,0,?)",
+                    (nid, fold_mod.canonical_json(state), ihash, parent_hash),
                 )
-            parent_hash = fold_mod.state_hash(state)
             prev = nid
             if nid == node_id:
                 break
         self.conn.commit()
+        if state is None:
+            state = json.loads(pending_text) if pending_text is not None else fold_mod.empty_state()
         return state
 
     def state_before(self, node_id: str) -> dict[str, Any]:
@@ -2520,10 +2589,40 @@ class Store:
             node_ids = group["route"] if group else []
         else:
             node_ids = self.canon_path()
+        if not node_ids:
+            return []
+        # ノード・イベント・最新レンダーをまとめて引く(シーンごとの
+        # get_node + latest_render は N+1 で、清書 1 件保存のたびの再取得が重い)
+        nodes_by_id: dict[str, dict[str, Any]] = {}
+        events_by_node: dict[str, list[dict[str, Any]]] = {}
+        renders_by_node: dict[str, dict[str, Any]] = {}
+        for i in range(0, len(node_ids), 500):
+            chunk = node_ids[i : i + 500]
+            marks = ",".join("?" * len(chunk))
+            for r in self.conn.execute(f"SELECT * FROM nodes WHERE id IN ({marks})", chunk):
+                nodes_by_id[r["id"]] = dict(r)
+            for r in self.conn.execute(
+                f"SELECT * FROM events WHERE node_id IN ({marks}) ORDER BY node_id, seq", chunk
+            ):
+                e = dict(r)
+                e["payload"] = json.loads(e["payload"])
+                events_by_node.setdefault(e["node_id"], []).append(e)
+            # created_at 降順で走査し、ノードごとに最初の行 = 最新だけ採る
+            for r in self.conn.execute(
+                f"""SELECT * FROM renders
+                    WHERE node_id IN ({marks}) AND preset_id = ? AND pov_char IS ?
+                    ORDER BY created_at DESC""",
+                [*chunk, preset_id, pov_char],
+            ):
+                if r["node_id"] not in renders_by_node:
+                    renders_by_node[r["node_id"]] = self._render_row(r)  # type: ignore[assignment]
         result = []
         for nid in node_ids:
-            node = self.get_node(nid)
-            result.append({"node": node, "render": self.latest_render(nid, preset_id, pov_char)})
+            node = nodes_by_id.get(nid)
+            if node is not None:
+                node["cast"] = json.loads(node["cast"])
+                node["events"] = events_by_node.get(nid, [])
+            result.append({"node": node, "render": renders_by_node.get(nid)})
         return result
 
     # ---- 相談チャット -----------------------------------------------
@@ -2553,34 +2652,69 @@ class Store:
         chat["messages"] = json.loads(chat["messages"])
         return chat
 
+    @staticmethod
+    def _chat_snippet(messages: list[dict[str, Any]]) -> str:
+        first_user = next((m.get("content", "") for m in messages if m.get("role") == "user"), "")
+        return first_user[:60]
+
     def list_chats(self) -> list[dict[str, Any]]:
-        """履歴一覧(新しい順)。最初のユーザー発言をスニペットとして返す。"""
-        chats = []
-        for row in self.conn.execute("SELECT * FROM chats ORDER BY updated_at DESC"):
-            messages = json.loads(row["messages"])
-            first_user = next((m.get("content", "") for m in messages if m.get("role") == "user"), "")
-            anchor = self.get_node(row["anchor_node"]) if row["anchor_node"] else None
-            char = self.get_character(row["char_id"]) if row["char_id"] else None
-            chats.append(
-                {
-                    "id": row["id"],
-                    "anchor_node": row["anchor_node"],
-                    "anchor_title": anchor["title"] if anchor else None,
-                    "scope": row["scope"],
-                    "char_id": row["char_id"],
-                    "char_name": char["name"] if char else None,
-                    "mode": row["mode"],
-                    "title": row["title"],
-                    "snippet": first_user[:60],
-                    "updated_at": row["updated_at"],
-                }
-            )
-        return chats
+        """履歴一覧(新しい順)。最初のユーザー発言をスニペットとして返す。
+
+        スニペットは保存時に列へ控えてあるので、一覧では messages(ツール往復込みの
+        長い履歴は MB 級)をパースしない。旧データ(列が NULL)だけここで一度埋める。
+        アンカーのタイトルとキャラ名も列だけ引く(get_node は全イベントまで読む)。
+        """
+        rows = self.conn.execute(
+            "SELECT id, anchor_node, scope, char_id, mode, title, snippet, updated_at"
+            " FROM chats ORDER BY updated_at DESC"
+        ).fetchall()
+        snippets: dict[str, str] = {}
+        backfill = [r["id"] for r in rows if r["snippet"] is None]
+        for cid in backfill:
+            raw = self.conn.execute("SELECT messages FROM chats WHERE id = ?", (cid,)).fetchone()
+            snip = self._chat_snippet(json.loads(raw["messages"]))
+            self.conn.execute("UPDATE chats SET snippet = ? WHERE id = ?", (snip, cid))
+            snippets[cid] = snip
+        if backfill:
+            self.conn.commit()
+
+        def _lookup(ids: list[str], sql: str) -> dict[str, Any]:
+            found: dict[str, Any] = {}
+            for i in range(0, len(ids), 500):
+                chunk = ids[i : i + 500]
+                marks = ",".join("?" * len(chunk))
+                for r in self.conn.execute(sql.format(marks=marks), chunk):
+                    found[r[0]] = r[1]
+            return found
+
+        titles = _lookup(
+            [r["anchor_node"] for r in rows if r["anchor_node"]],
+            "SELECT id, title FROM nodes WHERE id IN ({marks})",
+        )
+        names = _lookup(
+            [r["char_id"] for r in rows if r["char_id"]],
+            "SELECT id, name FROM characters WHERE id IN ({marks})",
+        )
+        return [
+            {
+                "id": row["id"],
+                "anchor_node": row["anchor_node"],
+                "anchor_title": titles.get(row["anchor_node"]),
+                "scope": row["scope"],
+                "char_id": row["char_id"],
+                "char_name": names.get(row["char_id"]),
+                "mode": row["mode"],
+                "title": row["title"],
+                "snippet": row["snippet"] if row["snippet"] is not None else snippets.get(row["id"], ""),
+                "updated_at": row["updated_at"],
+            }
+            for row in rows
+        ]
 
     def save_chat_messages(self, chat_id: str, messages: list[dict[str, Any]]) -> None:
         self.conn.execute(
-            "UPDATE chats SET messages = ?, updated_at = ? WHERE id = ?",
-            (json.dumps(messages, ensure_ascii=False), _now(), chat_id),
+            "UPDATE chats SET messages = ?, snippet = ?, updated_at = ? WHERE id = ?",
+            (json.dumps(messages, ensure_ascii=False), self._chat_snippet(messages), _now(), chat_id),
         )
         self.conn.commit()
 

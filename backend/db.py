@@ -141,6 +141,15 @@ CREATE TABLE IF NOT EXISTS chats(
 
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT);
 
+-- 頻出クエリの索引。parent_of / 子の列挙(edges)、最新清書の取得と stale 化(renders)、
+-- イベント削除に伴う記憶の削除(memories)はどれもミューテーションや画面更新の
+-- たびに走るので、全表走査にしない
+CREATE INDEX IF NOT EXISTS idx_edges_to ON edges(to_node);
+CREATE INDEX IF NOT EXISTS idx_edges_from ON edges(from_node);
+CREATE INDEX IF NOT EXISTS idx_renders_node ON renders(node_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_memories_event ON memories(event_id);
+CREATE INDEX IF NOT EXISTS idx_memories_char ON memories(char_id, story_order);
+
 -- 記憶の全文索引(trigram: 日本語の分かち書き不要。lm-chat の方式)
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
   id UNINDEXED, content, tokenize='trigram'
@@ -219,11 +228,20 @@ def init_schema(conn: sqlite3.Connection) -> None:
         "ALTER TABLE renders ADD COLUMN meta TEXT",  # 生成統計(JSON。tokens / elapsed_sec など)
         # 生成時に LLM へ送った messages の控え(JSON。UI の閲覧用。チャットの prompt_messages と同趣旨)
         "ALTER TABLE renders ADD COLUMN prompt_messages TEXT",
+        # fold 済み状態のハッシュ。キャッシュヒット時に state 全体を parse し直して
+        # ハッシュを取り直さずに済ませる(NULL = 旧キャッシュ。次の get_state で埋まる)
+        "ALTER TABLE state_cache ADD COLUMN state_hash TEXT",
+        # 一覧用スニペット(最初のユーザー発言の先頭 60 字)。保存時に控えることで、
+        # 一覧を開くたびに全チャットの messages JSON(長い履歴は MB 級)を
+        # パースしない(NULL = 旧データ。次の list_chats で埋まる)
+        "ALTER TABLE chats ADD COLUMN snippet TEXT",
     ):
         try:
             conn.execute(ddl)
         except sqlite3.OperationalError:
             pass  # 既に存在する
+    # group_id は ALTER で足す列なので、索引も列が揃ってから作る
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_nodes_group ON nodes(group_id)")
     version = conn.execute("PRAGMA user_version").fetchone()[0]
     if version < SCHEMA_VERSION:
         # 一回限りのデータ変換(lm-chat の作法)

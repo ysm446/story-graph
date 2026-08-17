@@ -49,13 +49,17 @@ export default function ProofreadTextarea({
   const popupRef = useRef<HTMLSpanElement | null>(null)
   const [popupHeight, setPopupHeight] = useState(0)
   // 校正結果。base はリクエスト時点の全文(座標ズレを防ぐため)
-  const [result, setResult] = useState<{
+  type ProofResult = {
     value: string
     base: string
     start: number
     end: number
     done: boolean
-  } | null>(null)
+  }
+  const [result, setResult] = useState<ProofResult | null>(null)
+  // 「もう一度」の直前の結果。やり直しが空振り(直すところなし)だったとき、
+  // 前の結果を消さずに戻すために取っておく
+  const prevResultRef = useRef<ProofResult | null>(null)
 
   useEffect(() => {
     void api
@@ -173,21 +177,28 @@ export default function ProofreadTextarea({
         } else if (e.done) {
           const corrected = (e.value ?? '').trim()
           if (!corrected || corrected === target) {
-            setResult(null)
-            setError('直すところは見つかりませんでした')
+            // やり直しの空振りでは前の結果へ戻す(消すと取り戻せない)
+            const prev = prevResultRef.current
+            setResult(prev)
+            setError(
+              prev
+                ? '直すところは見つかりませんでした(前の結果を残しています)'
+                : '直すところは見つかりませんでした'
+            )
           } else {
+            prevResultRef.current = null
             setResult((c) => (c ? { ...c, value: corrected, done: true } : c))
           }
         } else if (e.error) {
           setError(e.error)
-          setResult(null)
+          setResult(prevResultRef.current) // やり直しの失敗なら前の結果へ戻す
         }
       },
       controller.signal
     )
       .catch((e) => {
         if (!isAbortError(e)) setError(String(e))
-        setResult(null)
+        setResult(prevResultRef.current)
       })
       .finally(() => {
         abortRef.current = null
@@ -197,21 +208,45 @@ export default function ProofreadTextarea({
 
   const run = (): void => {
     if (!value.trim() || busy) return
+    prevResultRef.current = null
     const range = selection ?? { start: 0, end: value.length }
     setAnchor(selection ? measureSelection(range) : null)
     execute(value, range)
   }
 
+  /** ポップアップを開いている間も本文は編集できるので、結果の座標(base 基準)を
+   *  いまの本文に合わせ直す。元の文がそのまま一意に残っていれば新しい位置を返す。 */
+  const relocate = (r: ProofResult): { start: number; end: number } | null => {
+    const original = r.base.slice(r.start, r.end)
+    if (value === r.base) return { start: r.start, end: r.end }
+    const first = value.indexOf(original)
+    if (first < 0 || value.indexOf(original, first + original.length) >= 0) return null
+    return { start: first, end: first + original.length }
+  }
+
   /** プリセットを変えてから、同じ範囲をもう一度校正する(ポップアップを開いたまま) */
   const rerun = (): void => {
     if (!result || busy) return
-    execute(result.base, { start: result.start, end: result.end })
+    const range = relocate(result)
+    if (!range) {
+      setError('校正のあとに本文が変わったため、やり直せません。もう一度校正してください')
+      return
+    }
+    prevResultRef.current = result.done ? result : null
+    execute(value, range)
   }
 
   const apply = (): void => {
     if (!result?.done) return
-    setBackup(result.base)
-    onChange(result.base.slice(0, result.start) + result.value + result.base.slice(result.end))
+    // 校正中・確認中の編集を巻き戻さないよう、base ではなく**いまの本文**に反映する
+    const range = relocate(result)
+    if (!range) {
+      setError('校正のあとに本文が変わったため置換できません。もう一度校正してください')
+      return
+    }
+    setBackup(value)
+    onChange(value.slice(0, range.start) + result.value + value.slice(range.end))
+    prevResultRef.current = null
     setResult(null)
     setSelection(null)
     setAnchor(null)
@@ -219,6 +254,7 @@ export default function ProofreadTextarea({
 
   const close = (): void => {
     abortRef.current?.abort()
+    prevResultRef.current = null
     setResult(null)
     setAnchor(null)
   }

@@ -193,11 +193,21 @@ def is_removable(install_dir: str | Path) -> bool:
 
 
 def has_cudart(install_dir: str | Path) -> bool:
-    """インストール先に CUDA ランタイム DLL が同居しているか。"""
+    """インストール先に CUDA ランタイム DLL が同居しているか。
+
+    展開が途中で失敗すると一部の DLL だけ残ることがあるため、システム検出と同じく
+    cudart64 + cublas64 の両方が揃って初めて「ある」とみなす(揃っていなければ
+    UI が再インストール(追加ダウンロード)の導線を出せる)。
+    """
+    kinds: set[str] = set()
     try:
-        return any(CUDART_DLL_RE.match(p.name) for p in Path(install_dir).iterdir() if p.is_file())
+        for p in Path(install_dir).iterdir():
+            m = CUDART_DLL_RE.match(p.name)
+            if m and p.is_file():
+                kinds.add(m.group(1).lower())
     except OSError:
         return False
+    return {"cudart64", "cublas64"} <= kinds
 
 
 @functools.lru_cache(maxsize=1)
@@ -344,7 +354,25 @@ def uninstall(install_dir: str) -> dict[str, Any]:
             f"削除できませんでした(このサーバを使用中の可能性があります): {install_dir} — {e}"
         )
     shutil.rmtree(trash, ignore_errors=True)
-    return {"removed_dir": str(target), "freed_bytes": freed}
+    if trash.exists():
+        # AV やインデクサが掴んでいて消し切れなかったぶんは「空いた量」から引く
+        # (残骸は次回起動時の cleanup_leftovers が回収する)
+        freed -= _dir_size(trash)
+    return {"removed_dir": str(target), "freed_bytes": max(freed, 0)}
+
+
+def cleanup_leftovers() -> None:
+    """削除・インストールの失敗で残った隠しフォルダ(.removing-* / .installing-*)を回収する。
+
+    起動時に一度呼ぶ。掴まれていて消せないものは ignore_errors で次回へ持ち越す。
+    """
+    if not RUNTIME_DIR.is_dir():
+        return
+    for sub in RUNTIME_DIR.iterdir():
+        if sub.is_dir() and (
+            sub.name.startswith(".removing-") or sub.name.startswith(".installing-")
+        ):
+            shutil.rmtree(sub, ignore_errors=True)
 
 
 # ---- ダウンロード + 展開 --------------------------------------------
@@ -389,8 +417,17 @@ def _extract(zip_path: Path, dest_dir: Path) -> None:
         zf.extractall(dest_dir)
 
 
-def _dest_dir(asset_name: str) -> Path:
-    return RUNTIME_DIR / re.sub(r"\.zip$", "", asset_name, flags=re.IGNORECASE)
+def dest_dir_for(asset_name: str) -> Path:
+    """asset 名から展開先(runtime/<asset名>/)を決める。
+
+    asset_name はフロント経由で届く外部入力なので、パス区切りや `..` を含む名前は
+    拒否する(runtime/ の外への展開・削除を防ぐ)。正規の asset 名は
+    `llama-b9496-bin-win-cuda-13-x64.zip` のような英数字とハイフンのみ。
+    """
+    name = re.sub(r"\.zip$", "", asset_name, flags=re.IGNORECASE)
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name) or ".." in name:
+        raise ValueError(f"不正なファイル名です: {asset_name}")
+    return RUNTIME_DIR / name
 
 
 def _tmp_zip(suffix: str) -> Path:
@@ -414,6 +451,25 @@ async def _fetch_and_extract(
     await asyncio.to_thread(_extract, tmp_zip, dest_dir)
 
 
+def _swap_into_place(staging: Path, dest_dir: Path) -> None:
+    """展開の済んだ staging を dest_dir へ置き換える。
+
+    既存の dest_dir は先に rename で退かす。使用中(exe をロック中)なら rename の
+    時点で失敗し、既存インストールは無傷のまま残る。
+    """
+    if dest_dir.exists():
+        trash = dest_dir.with_name(f".removing-{uuid.uuid4().hex}")
+        try:
+            dest_dir.rename(trash)
+        except OSError as e:
+            raise RuntimeError(
+                f"既存のインストール先を置き換えられませんでした"
+                f"(このサーバを使用中の可能性があります): {dest_dir} — {e}"
+            )
+        shutil.rmtree(trash, ignore_errors=True)
+    staging.rename(dest_dir)
+
+
 async def install_variant(
     variant: dict[str, Any], include_cudart: bool = True
 ) -> AsyncIterator[dict[str, Any]]:
@@ -423,13 +479,20 @@ async def install_variant(
     入っていれば PATH 側の DLL で動くため、数百 MB を節約できる)。後から
     install_cudart() で足せる。
 
+    展開は隠しフォルダ(.installing-*)で行い、完了してから dest_dir と置き換える。
+    こうすると失敗・キャンセルで消すのは staging だけで、同じバリアントを
+    入れ直すときに既存の(動いている)インストールを巻き込まない。
+    find_server_installs はドットフォルダを見ないので、展開途中の exe が
+    起動候補に混ざることもない。
+
     進捗 dict を yield する。キャンセルは呼び出し側(SSE)の切断で
     asyncio.CancelledError が飛ぶ想定。一時 zip は finally で必ず削除する。
     """
     asset_name = variant["asset_name"]
-    dest_dir = _dest_dir(asset_name)
+    dest_dir = dest_dir_for(asset_name)
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
-    dest_dir.mkdir(parents=True, exist_ok=True)
+    staging = RUNTIME_DIR / f".installing-{uuid.uuid4().hex}"
+    staging.mkdir(parents=True)
 
     server_zip = _tmp_zip("server")
     cudart_zip = _tmp_zip("cudart")
@@ -438,27 +501,25 @@ async def install_variant(
         async with _http_client() as client:
             # サーバ本体
             async for p in _fetch_and_extract(
-                client, variant["asset_url"], server_zip, "llama-server", dest_dir
+                client, variant["asset_url"], server_zip, "llama-server", staging
             ):
                 yield p
 
             # CUDA ランタイムを同梱するときだけ、同じフォルダへ上書き展開する
             if include_cudart and variant.get("cudart_url"):
                 async for p in _fetch_and_extract(
-                    client, variant["cudart_url"], cudart_zip, "cudart", dest_dir
+                    client, variant["cudart_url"], cudart_zip, "cudart", staging
                 ):
                     yield p
 
-        exe = dest_dir / "llama-server.exe"
-        if not exe.exists():
+        if not (staging / "llama-server.exe").exists():
             raise RuntimeError("展開後に llama-server.exe が見つかりませんでした")
+        await asyncio.to_thread(_swap_into_place, staging, dest_dir)
         build = _extract_build(asset_name)
-        yield {"phase": "done", "build": build, "path": str(exe)}
+        yield {"phase": "done", "build": build, "path": str(dest_dir / "llama-server.exe")}
     except BaseException:
-        # 失敗・キャンセルで DLL 欠落などの不完全な展開先を残さない
-        # (find_server_installs は exe の存在しか見ないため、残すと壊れた
-        # サーバが自動選択されて原因不明の起動失敗になる)
-        shutil.rmtree(dest_dir, ignore_errors=True)
+        # 失敗・キャンセルの後始末は staging のみ(置き換え済みなら何もしない)
+        shutil.rmtree(staging, ignore_errors=True)
         raise
     finally:
         for z in (server_zip, cudart_zip):
@@ -477,7 +538,7 @@ async def install_cudart(variant: dict[str, Any]) -> AsyncIterator[dict[str, Any
     if not variant.get("cudart_url"):
         raise RuntimeError("このバリアントに CUDA ランタイムはありません")
 
-    dest_dir = _dest_dir(variant["asset_name"])
+    dest_dir = dest_dir_for(variant["asset_name"])
     exe = dest_dir / "llama-server.exe"
     if not exe.exists():
         raise RuntimeError("先に llama.cpp 本体をインストールしてください")

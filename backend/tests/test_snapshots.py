@@ -1,5 +1,7 @@
 """スナップショット(チェックポイント)— 保存・復元・世代管理(docs/design/snapshots.md)。"""
 
+import asyncio
+
 import pytest
 
 import db
@@ -60,18 +62,18 @@ def test_restore_missing_raises(store):
 
 
 def test_auto_throttle(store):
-    snapshots.auto(store, "削除の前", 60)
-    snapshots.auto(store, "削除の前", 60)  # 間隔内なのでスキップ
+    asyncio.run(snapshots.auto(store, "削除の前", 60))
+    asyncio.run(snapshots.auto(store, "削除の前", 60))  # 間隔内なのでスキップ
     assert len(snapshots.list_snapshots(store)) == 1
     # 別ラベルは独立にスロットルされる
-    snapshots.auto(store, "正史切替の前", 0)
-    snapshots.auto(store, "正史切替の前", 0)  # 間隔なし = 毎回
+    asyncio.run(snapshots.auto(store, "正史切替の前", 0))
+    asyncio.run(snapshots.auto(store, "正史切替の前", 0))  # 間隔なし = 毎回
     assert len(snapshots.list_snapshots(store)) == 3
 
 
 def test_auto_without_root_is_noop():
     store = Store(db.connect(":memory:"))
-    snapshots.auto(store, "x", 0)  # 例外にならず何もしない
+    asyncio.run(snapshots.auto(store, "x", 0))  # 例外にならず何もしない
     with pytest.raises(RuntimeError):
         snapshots.create(store, "x")
 

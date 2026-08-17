@@ -93,6 +93,13 @@ async def _startup() -> None:
 
     asyncio.get_event_loop().run_in_executor(None, embed.warmup)
     try:
+        import llama_installer
+
+        # 削除・インストール失敗の残骸(.removing-* / .installing-*)を回収する
+        asyncio.get_event_loop().run_in_executor(None, llama_installer.cleanup_leftovers)
+    except Exception as e:  # 回収の失敗で起動を止めない
+        print(f"[llama] 残骸の回収に失敗: {e}")
+    try:
         removed = store.gc_assets()
         if removed:
             print(f"[assets] 未参照ファイルを {removed} 件削除しました")
@@ -359,7 +366,7 @@ async def insert_node_after(node_id: str, body: NodeIn) -> dict[str, Any]:
 @app.post("/nodes/{node_id}/make_canon")
 async def make_canon(node_id: str) -> dict[str, Any]:
     """このノードを通る道を正史にする(先の結末をアクティブに。無ければ作る)。"""
-    snapshots.auto(store, "正史切替の前", 0)
+    await snapshots.auto(store, "正史切替の前", 0)
     try:
         store.make_canon(node_id)
     except KeyError:
@@ -402,7 +409,7 @@ class AttachIn(BaseModel):
 @app.post("/nodes/{node_id}/detach")
 async def detach_node(node_id: str) -> dict[str, Any]:
     """親エッジを切って、このシーン以下を独立した島にする。"""
-    snapshots.auto(store, "つなぎ替えの前", 60)
+    await snapshots.auto(store, "つなぎ替えの前", 60)
     try:
         detached = store.detach_node(node_id)
     except KeyError:
@@ -424,7 +431,7 @@ async def normalize_chain(node_id: str) -> dict[str, Any]:
 @app.post("/edges")
 async def create_edge(body: AttachIn) -> dict[str, Any]:
     """シーンを他のシーンの子として繋ぐ(replace_parent=True で既存の親から繋ぎ替え)。"""
-    snapshots.auto(store, "つなぎ替えの前", 60)
+    await snapshots.auto(store, "つなぎ替えの前", 60)
     try:
         store.attach_node(body.parent_id, body.child_id, body.canon, body.replace_parent)
     except KeyError:
@@ -488,7 +495,7 @@ class GroupMoveIn(BaseModel):
 @app.post("/groups/{group_id}/move")
 async def move_group(group_id: str, body: GroupMoveIn) -> list[dict[str, Any]]:
     """章を別の章の後ろへつなぎ替える(並べ替え)。"""
-    snapshots.auto(store, "章の並べ替えの前", 60)
+    await snapshots.auto(store, "章の並べ替えの前", 60)
     try:
         return store.move_group(group_id, body.after)
     except KeyError:
@@ -513,7 +520,7 @@ async def get_group_digest(group_id: str) -> dict[str, Any]:
 @app.post("/groups/{group_id}/digest/generate")
 async def generate_group_digest(group_id: str) -> dict[str, Any]:
     """LLM で章のまとめを生成してそのまま保存する(内容は後から編集できる)。"""
-    snapshots.auto(store, "章のまとめ更新の前", 60)
+    await snapshots.auto(store, "章のまとめ更新の前", 60)
     try:
         base_url = await llama.ensure_running(store.get_settings())
         events = await generation.generate_group_digest(store, base_url, group_id)
@@ -529,7 +536,7 @@ async def generate_group_digest(group_id: str) -> dict[str, Any]:
 @app.put("/groups/{group_id}/digest")
 async def put_group_digest(group_id: str, body: DigestIn) -> dict[str, Any]:
     """手直ししたまとめを保存する。内容が変わったときだけ下流(次章側)へ波及する。"""
-    snapshots.auto(store, "章のまとめ更新の前", 60)
+    await snapshots.auto(store, "章のまとめ更新の前", 60)
     try:
         return store.save_group_digest(
             group_id, [e.model_dump(exclude={"source"}) for e in body.events]
@@ -543,7 +550,7 @@ async def put_group_digest(group_id: str, body: DigestIn) -> dict[str, Any]:
 @app.delete("/groups/{group_id}/digest")
 async def delete_group_digest(group_id: str) -> dict[str, Any]:
     """まとめを削除する(章は残る。下流は生の状態に戻る)。"""
-    snapshots.auto(store, "章のまとめ更新の前", 60)
+    await snapshots.auto(store, "章のまとめ更新の前", 60)
     try:
         return store.delete_group_digest(group_id)
     except KeyError:
@@ -553,7 +560,7 @@ async def delete_group_digest(group_id: str) -> dict[str, Any]:
 @app.post("/groups/{group_id}/route/{node_id}")
 async def set_group_route(group_id: str, node_id: str) -> dict[str, Any]:
     """章の読む道を、このシーンを通る道にする(出口をその枝の端へ繋ぎ替える)。"""
-    snapshots.auto(store, "章の道の差し替えの前", 60)
+    await snapshots.auto(store, "章の道の差し替えの前", 60)
     try:
         group = store.set_group_route(group_id, node_id)
     except KeyError as e:
@@ -597,7 +604,7 @@ async def get_node(node_id: str) -> dict[str, Any]:
 
 @app.patch("/nodes/{node_id}")
 async def update_node(node_id: str, body: NodePatch) -> dict[str, Any]:
-    snapshots.auto(store, "シーン編集の前", 600)
+    await snapshots.auto(store, "シーン編集の前", 600)
     node = store.update_node(node_id, body.model_dump(exclude_unset=True))
     if node is None:
         raise HTTPException(404, "node not found")
@@ -607,7 +614,7 @@ async def update_node(node_id: str, body: NodePatch) -> dict[str, Any]:
 
 @app.delete("/nodes/{node_id}")
 async def delete_node(node_id: str) -> dict[str, str]:
-    snapshots.auto(store, "シーン削除の前", 30)
+    await snapshots.auto(store, "シーン削除の前", 30)
     try:
         deleted = store.delete_node(node_id)
     except ValueError as e:
@@ -755,7 +762,7 @@ async def reset_layout() -> dict[str, str]:
 async def put_events(node_id: str, body: EventsPut) -> dict[str, Any]:
     if store.get_node(node_id) is None:
         raise HTTPException(404, "node not found")
-    snapshots.auto(store, "イベント編集の前", 600)
+    await snapshots.auto(store, "イベント編集の前", 600)
     events = store.replace_events(node_id, [e.model_dump() for e in body.events])
     return {"events": events, "validation": store.validate(node_id)}
 
@@ -879,7 +886,8 @@ async def llama_releases() -> dict[str, Any]:
 async def llama_server_status() -> dict[str, Any]:
     import llama_installer
 
-    return llama_installer.status()
+    # フォルダサイズの集計(rglob)と PATH 走査を含むので、イベントループを塞がない
+    return await asyncio.to_thread(llama_installer.status)
 
 
 class LlamaInstallIn(BaseModel):
@@ -894,8 +902,25 @@ class LlamaInstallIn(BaseModel):
 @app.post("/llama/install")
 async def llama_install(body: LlamaInstallIn) -> StreamingResponse:
     import json as _json
+    from pathlib import Path
 
     import llama_installer
+
+    try:
+        dest_dir = llama_installer.dest_dir_for(body.variant.get("asset_name") or "")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    # 起動中のサーバのフォルダへの展開は拒否する(exe / DLL がロックされていて
+    # 途中で失敗するだけなので、始めさせない。uninstall と同じガード)
+    running = llama.status()
+    if running.get("spawned") and running.get("server_path"):
+        try:
+            in_use = Path(running["server_path"]).resolve().parent == dest_dir.resolve()
+        except OSError:
+            in_use = False
+        if in_use:
+            raise HTTPException(409, "起動中の llama-server です。停止してからインストールしてください。")
 
     async def stream():
         try:
@@ -940,7 +965,7 @@ async def llama_uninstall(body: LlamaUninstallIn) -> dict[str, Any]:
         raise HTTPException(400, str(e))
     except (RuntimeError, OSError) as e:
         raise HTTPException(500, str(e))
-    return {**result, **llama_installer.status()}
+    return {**result, **(await asyncio.to_thread(llama_installer.status))}
 
 
 @app.post("/generate/beat")
@@ -1028,7 +1053,7 @@ async def suggest_scene_meta(body: SuggestFieldIn) -> dict[str, str]:
 async def extract_events(node_id: str) -> dict[str, Any]:
     if store.get_node(node_id) is None:
         raise HTTPException(404, "node not found")
-    snapshots.auto(store, "イベント作り直しの前", 60)
+    await snapshots.auto(store, "イベント作り直しの前", 60)
     try:
         base_url = await llama.ensure_running(store.get_settings())
         events = await generation.extract_events(store, base_url, node_id)
@@ -1048,7 +1073,7 @@ async def reextract_nodes(body: ReextractIn) -> StreamingResponse:
     """選択した複数シーンのイベントを抽出し直す(親から順に逐次、SSE)。"""
     if not body.node_ids:
         raise HTTPException(400, "node_ids が空です")
-    snapshots.auto(store, "イベント作り直しの前", 60)
+    await snapshots.auto(store, "イベント作り直しの前", 60)
     try:
         base_url = await llama.ensure_running(store.get_settings())
     except RuntimeError as e:
@@ -1067,7 +1092,7 @@ async def reextract_chain(node_id: str, keep_user_events: bool = True) -> Stream
     島を繋いだ直後など、上流の状態が変わったときに使う。"""
     if store.get_node(node_id) is None:
         raise HTTPException(404, "node not found")
-    snapshots.auto(store, "イベント作り直しの前", 60)
+    await snapshots.auto(store, "イベント作り直しの前", 60)
     try:
         base_url = await llama.ensure_running(store.get_settings())
     except RuntimeError as e:
@@ -1322,7 +1347,7 @@ async def list_snapshots() -> dict[str, Any]:
 @app.post("/snapshots")
 async def create_snapshot(body: SnapshotIn) -> dict[str, Any]:
     try:
-        return snapshots.create(store, body.label, kind="manual")
+        return await snapshots.create_async(store, body.label, kind="manual")
     except RuntimeError as e:
         raise HTTPException(400, str(e))
 
