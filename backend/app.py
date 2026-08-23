@@ -809,12 +809,18 @@ async def get_generation_prompt() -> dict[str, str]:
 @app.get("/models")
 async def list_models() -> dict[str, Any]:
     import system_info
-    from llama_manager import DEFAULT_MODEL_PATH
+    from llama_manager import resolve_model_path
 
     settings = store.get_settings()
+    models_dir = system_info.resolve_models_dir(settings.get("models_dir"))
     return {
-        "models": system_info.list_models(),
-        "current": settings.get("llm_model_path") or DEFAULT_MODEL_PATH,
+        "models": system_info.list_models(settings.get("models_dir")),
+        "current": resolve_model_path(settings),
+        # モデルを探しているフォルダ(設定が空なら既定の models/)。設定画面と
+        # モデル選択が「どこを見ているか」を出すために返す
+        "models_dir": str(models_dir),
+        "default_models_dir": str(system_info.DEFAULT_MODELS_DIR),
+        "models_dir_exists": models_dir.exists(),
     }
 
 

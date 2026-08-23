@@ -1352,6 +1352,9 @@ export default function SettingsMode(): React.JSX.Element {
   const [llmError, setLlmError] = useState<string | null>(null)
   const [models, setModels] = useState<ModelEntry[]>([])
   const [currentModel, setCurrentModel] = useState<string>('')
+  // モデルを探しているフォルダ(バックエンドが解決した実際のパス)と、その既定値
+  const [modelsDir, setModelsDir] = useState<{ dir: string; fallback: string; exists: boolean } | null>(null)
+  const [modelsDirError, setModelsDirError] = useState<string | null>(null)
   const [genPromptDefault, setGenPromptDefault] = useState('')
   const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const busyElapsed = useElapsedSeconds(busy !== null)
@@ -1374,13 +1377,18 @@ export default function SettingsMode(): React.JSX.Element {
     }
   }
 
+  // モデルフォルダを変えるたびに取り直すので関数にしてある
+  const loadModels = async (): Promise<void> => {
+    const r = await api.listModels()
+    setModels(r.models)
+    setCurrentModel(r.current)
+    setModelsDir({ dir: r.models_dir, fallback: r.default_models_dir, exists: r.models_dir_exists })
+  }
+
   useEffect(() => {
     void api.getSettings().then(setValues)
     void refreshStatus()
-    void api.listModels().then((r) => {
-      setModels(r.models)
-      setCurrentModel(r.current)
-    })
+    void loadModels()
     void api.getGenerationPrompt().then((r) => setGenPromptDefault(r.default))
   }, [])
 
@@ -1404,6 +1412,32 @@ export default function SettingsMode(): React.JSX.Element {
     if (Object.keys(patch).length > 0) await api.putSettings(patch)
     showSaved()
     void refreshStatus()
+  }
+
+  // モデルフォルダを選び直す。llm_model_path はそのまま残す(新しいフォルダに
+  // 無ければ一覧では「外部パス」として出るので、選び直すまで今のモデルで動く)
+  const handleChooseModelsDir = async (): Promise<void> => {
+    const dir = await window.storyGraph.chooseFolder('GGUF モデルのフォルダを選択')
+    if (!dir) return
+    setModelsDirError(null)
+    await save({ models_dir: dir })
+    await loadModels()
+  }
+
+  const handleResetModelsDir = async (): Promise<void> => {
+    setModelsDirError(null)
+    await save({ models_dir: '' })
+    await loadModels()
+  }
+
+  const handleOpenModelsDir = async (): Promise<void> => {
+    const dir = modelsDir?.dir
+    if (!dir) return
+    if (await window.storyGraph.openFolder(dir)) {
+      setModelsDirError(null)
+      return
+    }
+    setModelsDirError(`モデルフォルダを開けませんでした: ${dir}`)
   }
 
   const handleLlmStart = async (): Promise<void> => {
@@ -1517,7 +1551,60 @@ export default function SettingsMode(): React.JSX.Element {
               </div>
               <div className="settings-field">
                 <div className="settings-field-header">
-                  <span className="settings-field-label">モデル (models/ フォルダから選択)</span>
+                  <span className="settings-field-label">モデルフォルダ</span>
+                  <div className="settings-field-controls">
+                    {(values.models_dir ?? '') !== '' && (
+                      <button
+                        onClick={() => void handleResetModelsDir()}
+                        className="rounded-md border px-2 py-0.5 text-[11px]"
+                        style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+                        data-tip="既定のフォルダ(アプリの models/)に戻します"
+                      >
+                        既定に戻す
+                      </button>
+                    )}
+                    <button
+                      onClick={() => void handleChooseModelsDir()}
+                      className="rounded-md border px-2 py-0.5 text-[11px]"
+                      style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+                      data-tip="GGUF を探すフォルダを選びます"
+                    >
+                      変更
+                    </button>
+                    <button
+                      onClick={() => void handleOpenModelsDir()}
+                      className="rounded-md border px-2 py-0.5 text-[11px]"
+                      style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+                      data-tip="モデルフォルダをエクスプローラーで開く"
+                    >
+                      開く
+                    </button>
+                  </div>
+                </div>
+                <div className="text-[12px]">
+                  <span className="block truncate" style={{ color: 'var(--text)' }} data-tip={modelsDir?.dir}>
+                    {modelsDir?.dir ?? ''}
+                  </span>
+                </div>
+                {modelsDir && !modelsDir.exists && (
+                  <p className="text-[12px]" style={{ color: '#f2a3a3' }}>
+                    フォルダが見つかりません: {modelsDir.dir}
+                  </p>
+                )}
+                {modelsDirError && (
+                  <p className="text-[12px]" style={{ color: '#f2a3a3' }}>
+                    {modelsDirError}
+                  </p>
+                )}
+                <p className="settings-field-hint">
+                  このフォルダの下(サブフォルダも含む)から .gguf を探します。指定しなければ既定の
+                  {` ${modelsDir?.fallback ?? 'models/'} `}
+                  を使います。
+                </p>
+              </div>
+              <div className="settings-field">
+                <div className="settings-field-header">
+                  <span className="settings-field-label">モデル(モデルフォルダから選択)</span>
                 </div>
                 <select
                   value={values.llm_model_path || currentModel}
@@ -1525,7 +1612,9 @@ export default function SettingsMode(): React.JSX.Element {
                   className="w-full rounded-lg border px-3 py-2 text-[13px] outline-none"
                   style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
                 >
-                  {models.length === 0 && <option value="">models/ に GGUF がありません</option>}
+                  {models.length === 0 && (
+                    <option value="">モデルフォルダに GGUF がありません</option>
+                  )}
                   {models.map((m) => (
                     <option key={m.path} value={m.path}>
                       {m.name}({fmtGb(m.size)})

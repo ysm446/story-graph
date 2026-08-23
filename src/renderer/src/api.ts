@@ -284,7 +284,14 @@ export const api = {
       vram_total: number | null
     }>('/system/resources'),
   listModels: () =>
-    request<{ models: Array<{ name: string; path: string; size: number }>; current: string }>('/models'),
+    request<{
+      models: Array<{ name: string; path: string; size: number }>
+      current: string
+      /** GGUF を探しているフォルダ(設定が空なら既定の models/) */
+      models_dir: string
+      default_models_dir: string
+      models_dir_exists: boolean
+    }>('/models'),
 
   llmStatus: () =>
     request<{

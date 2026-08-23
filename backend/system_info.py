@@ -14,7 +14,8 @@ import psutil
 log = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-MODELS_DIR = REPO_ROOT / "models"
+# 設定(settings の models_dir)が空のときに使う既定のモデル置き場
+DEFAULT_MODELS_DIR = REPO_ROOT / "models"
 
 _nvml_handle = None
 _nvml_failed = False
@@ -63,12 +64,25 @@ def resources() -> dict[str, Any]:
     return result
 
 
-def list_models() -> list[dict[str, Any]]:
-    """models/ 配下の GGUF を列挙する(mmproj は Vision 用なので除外)。"""
-    if not MODELS_DIR.exists():
+def resolve_models_dir(models_dir: str | None = None) -> Path:
+    """GGUF を探すフォルダ。設定(models_dir)が空なら既定の models/ を使う。"""
+    if models_dir and models_dir.strip():
+        return Path(models_dir.strip())
+    return DEFAULT_MODELS_DIR
+
+
+def list_models(models_dir: str | None = None) -> list[dict[str, Any]]:
+    """モデルフォルダ配下の GGUF を列挙する(mmproj は Vision 用なので除外)。"""
+    root = resolve_models_dir(models_dir)
+    if not root.exists():
         return []
     models = []
-    for path in sorted(MODELS_DIR.rglob("*.gguf")):
+    try:
+        paths = sorted(root.rglob("*.gguf"))
+    except OSError:  # ネットワークドライブが切れている等
+        log.warning("モデルフォルダを読めません: %s", root)
+        return []
+    for path in paths:
         if path.name.lower().startswith("mmproj"):
             continue
         try:

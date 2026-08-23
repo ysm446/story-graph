@@ -1,7 +1,7 @@
 # 全体設計(アーキテクチャ)
 
 作成日時: 2026-08-09 15:30
-更新日時: 2026-08-09 15:30
+更新日時: 2026-08-23 18:53
 
 このアプリが **どう組まれているか** をまとめた入口。「何を作るか」は
 [story-graph-spec.md](../story-graph-spec.md)(仕様)と [plan/goals.md](../plan/goals.md)(目的・価値)、
@@ -169,6 +169,9 @@ UI の色・角丸・余白は `index.css` の CSS 変数(`--bg-*` / `--text-*` 
 - **llama-server は外部起動を優先**する。`llm_base_url` が既に healthy ならそれを使い、
   無ければ `llama_server_path` + `llm_model_path` で spawn する
   (`llama_manager.py`)。llama.cpp 本体は設定画面から自動ダウンロードできる
+- **GGUF を探すフォルダは設定 `models_dir`**(設定画面の「モデルフォルダ」)。空なら
+  リポジトリ内の `models/`(`system_info.resolve_models_dir`)。`llm_model_path` が空のときの
+  既定モデルは `llama_manager.resolve_model_path`(モデルフォルダの先頭の GGUF → 同梱の既定)
 - **構造化出力**は `response_format` の json_schema で強制する。生成したものは
   `validation.py` のルール検証にかけ、NG なら指摘を添えて最大 2 回リトライする
 - **LLM が発行できるイベント型は 3 つだけ**(`memory_add` / `relationship_update` /

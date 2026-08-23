@@ -2,6 +2,7 @@
 
 - settings の llm_base_url が既に healthy ならそれを使う(外部起動を優先)
 - そうでなければ llama_server_path + llm_model_path で spawn する
+- llm_model_path が空なら、既定モデル → モデルフォルダ(models_dir)の先頭の GGUF の順で決める
 """
 
 from __future__ import annotations
@@ -23,6 +24,27 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_SERVER_PATH = r"D:\GitHub\lm-graph\bin\llama-server\b9496-win-cuda13-x64\llama-server.exe"
 DEFAULT_MODEL_PATH = str(REPO_ROOT / "models" / "gemma-4-31B-it-GGUF" / "gemma-4-31B-it-Q6_K.gguf")
 DEFAULT_PORT = 8080
+
+
+def resolve_model_path(settings: dict[str, str]) -> str:
+    """使う GGUF のパス。設定(llm_model_path)が空のときの既定を決める。
+
+    モデルフォルダ(models_dir)を指定しているか、既定モデルが無い環境では、
+    そのフォルダで最初に見つかった GGUF を既定にする。
+    """
+    configured = (settings.get("llm_model_path") or "").strip()
+    if configured:
+        return configured
+    models_dir = (settings.get("models_dir") or "").strip()
+    # モデルフォルダを指定しているなら、アプリ同梱の既定モデルより
+    # そのフォルダで最初に見つかった GGUF を優先する
+    if models_dir or not Path(DEFAULT_MODEL_PATH).exists():
+        import system_info
+
+        models = system_info.list_models(models_dir)
+        if models:
+            return models[0]["path"]
+    return DEFAULT_MODEL_PATH
 
 
 class LlamaManager:
@@ -88,7 +110,7 @@ class LlamaManager:
         import llama_installer
 
         server_path = settings.get("llama_server_path") or llama_installer.resolve_server_path() or DEFAULT_SERVER_PATH
-        model_path = settings.get("llm_model_path") or DEFAULT_MODEL_PATH
+        model_path = resolve_model_path(settings)
         base_url = settings.get("llm_base_url") or f"http://127.0.0.1:{DEFAULT_PORT}"
         try:
             port = urlsplit(base_url).port or DEFAULT_PORT

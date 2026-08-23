@@ -66,6 +66,7 @@ function EjectIcon(): React.JSX.Element {
 
 function ModelModal({
   models,
+  modelsDir,
   selected,
   loadingPath,
   error,
@@ -73,6 +74,7 @@ function ModelModal({
   onClose
 }: {
   models: ModelEntry[]
+  modelsDir: string
   selected: string
   loadingPath: string | null
   error: string | null
@@ -106,7 +108,9 @@ function ModelModal({
         </div>
         {models.length === 0 ? (
           <div className="rounded-xl border border-dashed px-4 py-8 text-center text-[12px]" style={{ borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }}>
-            models/ フォルダに GGUF がありません。
+            GGUF がありません: {modelsDir || 'models/'}
+            <br />
+            設定 → 推論エンジン → モデルフォルダ で場所を変えられます。
           </div>
         ) : (
           <div className="inspector-scrollbar max-h-[360px] space-y-1 overflow-y-auto pr-1">
@@ -181,6 +185,7 @@ function ModelModal({
  */
 export default function ModelBar({ refreshKey }: { refreshKey: number }): React.JSX.Element {
   const [models, setModels] = useState<ModelEntry[]>([])
+  const [modelsDir, setModelsDir] = useState<string>('') // GGUF を探しているフォルダ
   const [selected, setSelected] = useState<string>('') // path
   const [healthy, setHealthy] = useState<boolean | null>(null)
   // バックエンドが読み込み中(生成の自動ロードを含む。このバー以外がきっかけでも映す)
@@ -194,6 +199,7 @@ export default function ModelBar({ refreshKey }: { refreshKey: number }): React.
     try {
       const [r, settings] = await Promise.all([api.listModels(), api.getSettings()])
       setModels(r.models)
+      setModelsDir(r.models_dir)
       setSelected(settings.llm_model_path || r.current || '')
     } catch {
       setModels([])
@@ -346,6 +352,7 @@ export default function ModelBar({ refreshKey }: { refreshKey: number }): React.
       {open && (
         <ModelModal
           models={models}
+          modelsDir={modelsDir}
           selected={selected}
           loadingPath={loadingPath}
           error={error}
