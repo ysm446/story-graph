@@ -1,7 +1,7 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-07-24 22:38
-更新日時: 2026-08-18 00:20
+更新日時: 2026-08-26 23:05
 
 ## 現在の状態
 
@@ -371,6 +371,70 @@
   - **埋め込み encode は依然イベントループ上**: ロード中のフリーズは解消済み(trylock)だが、
     ロード後も 1 クエリごとに数十〜数百 ms ブロックする。to_thread 化は SQLite 接続の
     スレッド越えと「書き込みはループ上で直列」の前提に触るので、遅さが気になったら設計して入れる
+- [ ] **場面の画像生成(ComfyUI 連携)**(2026-08-26 ユーザー発案): ビートから挿絵を
+  自動生成し、既存の挿絵アセット(`nodes.image_path`)に流し込む。
+  - **goals.md の非目標「画像・動画生成」と矛盾する**ので、着手前に非目標の文言を
+    「挿絵の自動生成は含む(演出・動画は含まない)」へ改める判断が要る。
+  - **同梱より接続を先に**(llama-server の「外部起動優先 + 自動 spawn」と同じ順序):
+    ① settings に ComfyUI の URL(既定 `http://127.0.0.1:8188`)を置き、起動済みの
+    ComfyUI に `/prompt` + WebSocket で投げる → ② `runtime/comfyui/` への自動インストール
+    (portable 版 + チェックポイントは CUDA DLL と同じく本体と別に落とす。torch だけで
+    数 GB、SDXL 系モデルで 6〜7GB)は接続が安定してから。
+  - **VRAM の同居**: RTX PRO 5000(48GB)では 31B Q6_K(約 26GB + KV)と SDXL fp16
+    (約 7GB)は同時常駐できる。Flux 系(fp8 で 12GB 前後)は KV 次第で厳しいので、
+    ComfyUI 側の VRAM 不足時に LLM を一時停止 → 生成 → 再起動する排他パスも用意する。
+  - **モデルは `D:\ai-models\diffusion\comfyui` を参照する**(2026-08-26 ユーザー指定):
+    このフォルダは既に ComfyUI の `models/` と同じ階層構成(checkpoints / diffusion_models /
+    loras / vae / text_encoders …)なので、コピーやシンボリックリンクではなく ComfyUI 標準の
+    `extra_model_paths.yaml` に `base_path` として書いて読ませる(同梱時も同じ yaml を
+    `runtime/comfyui/` に生成する)。パスは settings の項目(`comfy_models_dir` 案)にして、
+    llama の `models/` フォルダ設定と同じ扱いで上書き可能にする。
+    **第一候補は `Qwen-Rapid-AIO`**(checkpoints にある AIO 版。Qwen-Image-Edit 2509 系の
+    複数画像入力 + VAE + テキストエンコーダを 1 ファイルにまとめた少ステップ版で、
+    参照画像方式をそのまま組める。ユーザー意向 2026-08-26)。**次点は Krea2**
+    (`krea2_turbo_bf16` + `krea2_identity_edit_v1_2` LoRA。軽くて速いが編集入力は 1 枚
+    寄りなので、2 人場面では Qwen 側が有利)。ワークフロー JSON テンプレートは両方
+    用意し、settings で選べるようにする。
+  - **キャラ参照画像 → 画像編集モデルの複数入力**(2026-08-26 ユーザー発案): 場面ごとに
+    ゼロから描くのではなく、①キャラごとに参照画像(全身の立ち絵)を一度だけ
+    text-to-image で作って保持し、②場面生成は複数画像入力を取れる編集モデル
+    (Qwen-Image-Edit 2509 は 3 枚、FLUX.2 / Kontext 系も複数入力可)の input1 / input2 に
+    cast の参照画像をつなぎ、「input1 と input2 を〈場面〉に置く」というプロンプトで描く。
+    IPAdapter より外見の一貫性がはるかに高く、LoRA 学習も不要。
+    - [x] **着手順はキャラクター画面から**(2026-08-26 ユーザー指定)→ **実装済み**
+      (2026-08-26。設計: [docs/design/image-gen.md](../design/image-gen.md)): 資料庫のキャラ
+      画面に参照画像の枠 + 「外見から生成」(LLM プロンプト → 確認 → ComfyUI)。設定に
+      「画像生成」セクション(起動 / 停止・URL・モデルフォルダ・チェックポイント・パラメータ・
+      portable 版の自動インストール)。`characters.ref_image_path` / `ref_image_prompt` 列。
+      バックエンドは `comfy_installer.py` / `comfy_manager.py` / `comfy.py` / `image_gen.py`。
+      **実機確認済み**: portable v0.34.0 を `runtime/comfyui/` に導入(7z は py7zr が BCJ2 非対応で
+      失敗 → Windows 同梱の bsdtar に切替)、`Qwen-Rapid-AIO-NSFW-v23` で「たかし」の全身立ち絵を
+      生成(11 秒)。31B と同居時の VRAM は 46.3GB / 48.9GB。
+    - [x] **場面生成も実装**(2026-08-26): インスペクタの挿絵欄「生成」→ `SceneImageModal`。
+      ビート・場所・cast から LLM が場面プロンプト(参照画像は image1..3 で参照)→
+      `TextEncodeQwenImageEditPlus` の複数入力で生成、挿絵に設定。参照画像が無ければ t2i。
+      実機: 2 人シーンで両者の外見が保たれた(14.6 秒)。残りは §7(テンプレート化、VRAM 排他)。
+    - **外部からの読み込み口は維持し、内部生成と両立させる**(ユーザー指定): 既存の
+      画像ドロップ / ファイル選択はそのまま残し、生成結果も同じ保存経路
+      (assets/images + `gc_assets` の参照保護)に乗せる。生成 → 気に入らなければ
+      手持ち画像で差し替え、の往復ができること。外見 facts が変わったら「作り直す」を
+      手動で押す運用(自動再生成はしない。衣装・年齢の変化は場面プロンプト側で指示)。
+      参照画像から顔を切り抜いて `portrait_path` を作る導線も付ける(逆方向は不要)。
+    - **同時に置けるキャラ数**: Qwen-Image-Edit 2509 系(Rapid AIO 含む)の入力は
+      **公式に 3 枚まで**(`TextEncodeQwenImageEditPlus` の image1〜3)。ただし同一性が
+      安定するのは実用上 2 人までで、3 人目から混ざりやすい。Krea2 の identity edit は
+      1 枚寄り。4 人以上が要る場面は、参照画像を 1 枚に並べた「集合参照シート」を
+      入力にする回避策があるが精度は落ちるので、基本は主役から順に上限まで選び、
+      残りは文章のみで描写する。1 人場面・無人の風景は text-to-image にフォールバック。
+    - 場面プロンプトはビート本文 + 選んだキャラの「input N = 誰」の対応 + style preset
+      から LLM で英語生成。ワークフローは JSON テンプレート(`resources/comfy/*.json`)で
+      差し替え可能にし、入力枚数はテンプレート側の仕様として持つ。
+    - **VRAM**: Qwen-Image-Edit(20B)は fp8 で約 20GB → 31B と同居させるなら GGUF Q4
+      (約 12GB)クラス。Kontext dev(12B、fp8 で約 12GB)なら余裕。同居できない構成向けに
+      上記の排他パスは残す。
+  - **UI**: インスペクタの挿絵欄に「この場面の画像を生成」ボタン + 進捗(ComfyUI の
+    progress WS)。生成結果は差し替え確認を挟んで既存の assets/images 保存経路に乗せる
+    (`gc_assets` の参照保護をそのまま使う)。
 - [ ] **Phase 6 — スケール対応**: memory_compress(記憶の自動要約圧縮)、LLM 検証パス(感情の一貫性、温度0.1)、faction フォールバック + factions UI、2ノード間差分表示、エクスポート強化
 - [ ] **フル版の関係図**(2026-07-25 ユーザー発案): インスペクタ内のコンパクト版とは別に、
   しっかりしたバージョンを作る。

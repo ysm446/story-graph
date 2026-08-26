@@ -1,7 +1,7 @@
 # UI スタイルガイド(色・タイポ・余白・部品)
 
 作成日時: 2026-08-09 16:00
-更新日時: 2026-08-14 12:40
+更新日時: 2026-08-27 02:45
 
 新しい画面や部品を足すときに **見た目を揃えるための具体値** をまとめる。
 [overview.md](overview.md) がアーキテクチャの入口なら、本書は UI の入口。
@@ -249,6 +249,46 @@ Tailwind の既定スケール(`1 = 4px`)をそのまま使う。**使う段は�
 ```
 
 幅は `w-[520px] max-w-[92vw]` のように**固定幅 + ビューポート上限**。`z-50` を使う。
+
+### 画像のドロップ枠(プロフィール画像 / 参照画像 / 挿絵)
+
+画像を置ける場所は **`button` 1 つで「クリックで選ぶ」「ドロップで置く」「hover で操作名を重ねる」** を
+まとめる(`CharactersMode.tsx` のプロフィール画像、`RefImagePanel.tsx` の参照画像)。
+
+```tsx
+<button
+  onClick={() => fileInputRef.current?.click()}
+  onDragEnter / onDragOver / onDragLeave / onDrop   // 深さカウンタで dragleave の誤発火を抑える
+  className="group relative h-48 w-32 shrink-0 overflow-hidden rounded-lg border"
+  style={{
+    borderColor: 'var(--border-strong)',
+    background: 'var(--bg-canvas)',
+    ...(dragOver ? { outline: '2px dashed var(--accent)', outlineOffset: 2 } : {})
+  }}
+  data-tip="クリックで別の画像に差し替え / 画像をドロップ"
+>
+  {url ? <img src={url} className="h-full w-full object-cover" /> : <span …>未設定</span>}
+  <span className="absolute inset-0 hidden items-center justify-center bg-black/50 text-[11px] text-white group-hover:flex">
+    差し替え
+  </span>
+</button>
+<input ref={fileInputRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" … />
+```
+
+- 下地は `--bg-canvas`(画像の下地)、枠は `--border-strong`(押せるもの)。ドラッグ中は
+  `--accent` の破線 outline を**外側**(`outlineOffset: 2`)に描く
+- 形は用途で変える: プロフィールは丸(`h-28 w-28 rounded-full`、枠色はキャラの色)、
+  全身の参照画像は縦長(`h-48 w-32 rounded-lg`)
+- 画像の**操作(外す / 生成)は枠の横か下に文字ボタンで並べる**。
+  **画像があるときの枠クリックは拡大表示**(`Lightbox`)に使い、差し替えは枠の右下隅の小さなアイコンボタン
+  (`h-6 w-6 rounded-md border`、地は `rgba(28,31,43,0.85)`、`Icon name="image"`)とドロップで受ける。
+  それ以外の押せるものは枠の中に重ねない
+
+### 拡大表示(`Lightbox.tsx`)
+
+サムネイルをクリックしたときの等倍〜画面いっぱいの表示。モーダルより暗い地(`rgba(0,0,0,0.85)`)、
+`z-50`、余白 `p-6`、中身は `max-h-full max-w-full object-contain`。**オーバーレイのクリックか Esc で閉じる**
+(閉じるボタンは置かない)。開く側のサムネイルには `cursor-zoom-in`、オーバーレイには `cursor-zoom-out`。
 
 ### ツールチップ(`Tooltip.tsx`)
 

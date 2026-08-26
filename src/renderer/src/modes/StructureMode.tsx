@@ -35,7 +35,9 @@ import FactTimeline from '../FactTimeline'
 import { MsgActionButton, StatsLine, SystemPromptModal } from '../GenMeta'
 import { Icon } from '../icons'
 import ProofreadTextarea from '../ProofreadTextarea'
+import Lightbox from '../Lightbox'
 import RelationGraph from '../RelationGraph'
+import SceneImageModal from '../SceneImageModal'
 import {
   LengthSelect,
   lengthLabel,
@@ -520,6 +522,9 @@ function BeatTab({
   const [retireTarget, setRetireTarget] = useState<string | null>(null)
   const [retireReason, setRetireReason] = useState('death')
   const [imageDragOver, setImageDragOver] = useState(false)
+  const [sceneImageOpen, setSceneImageOpen] = useState(false)
+  // 挿絵のサムネイルをクリックしたときの拡大表示
+  const [lightboxOpen, setLightboxOpen] = useState(false)
   const suggestElapsed = useElapsedSeconds(suggesting !== null)
   const imageDragDepth = useRef(0) // 子要素との境界で dragleave が発火してもチラつかないよう深さを数える
   const imageInputRef = useRef<HTMLInputElement | null>(null)
@@ -922,12 +927,30 @@ function BeatTab({
         </label>
       </div>
       {/* 挿絵(画像/動画。装飾専用。LLM には渡さない) */}
+      {lightboxOpen && node.image_path && assetUrl(node.image_path) && (
+        <Lightbox src={assetUrl(node.image_path)!} path={node.image_path} onClose={() => setLightboxOpen(false)} />
+      )}
+      {sceneImageOpen && (
+        <SceneImageModal
+          node={node}
+          characters={characters}
+          onGenerated={onSaved}
+          onClose={() => setSceneImageOpen(false)}
+        />
+      )}
       <div>
         <div className="mb-1 flex items-center justify-between">
           <span className="text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
             挿絵
           </span>
           <div className="flex gap-1.5">
+            <button
+              onClick={() => setSceneImageOpen(true)}
+              className="accent-action inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium"
+              data-tip="ビート・場所・登場人物(参照画像)から ComfyUI でこの場面の画像を生成します"
+            >
+              <Icon name="sparkle" size={11} /> 生成
+            </button>
             <button
               onClick={() => imageInputRef.current?.click()}
               className="rounded-md border px-2 py-0.5 text-[11px]"
@@ -979,9 +1002,12 @@ function BeatTab({
             if (file) handleImageFile(file)
           }}
           onClick={() => {
+            // 挿絵が無ければファイル選択、あれば拡大表示
             if (!node.image_path) imageInputRef.current?.click()
+            else setLightboxOpen(true)
           }}
-          className="relative rounded-xl transition-colors"
+          className="relative cursor-zoom-in rounded-xl transition-colors"
+          data-tip={node.image_path ? 'クリックで拡大 / ドロップで差し替え' : undefined}
           style={imageDragOver ? { outline: '2px dashed var(--accent)', outlineOffset: 2 } : undefined}
         >
           {assetUrl(node.image_path) ? (

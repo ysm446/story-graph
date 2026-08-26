@@ -313,6 +313,35 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ install_dir: installDir })
     }),
+  // ---- ComfyUI(画像生成) ----
+  comfyStatus: () => request<ComfyStatus>('/comfy/status'),
+  comfyStart: () => request<{ base_url: string; healthy: boolean }>('/comfy/start', { method: 'POST' }),
+  comfyStop: () => request<{ stopped: boolean }>('/comfy/stop', { method: 'POST' }),
+  comfyModels: (folder = 'checkpoints') =>
+    request<{ models: string[]; healthy: boolean }>(`/comfy/models?folder=${encodeURIComponent(folder)}`),
+  comfyReleases: () => request<{ releases: ComfyRelease[] }>('/comfy/releases'),
+  comfyUninstall: () => request<ComfyStatus>('/comfy/uninstall', { method: 'POST' }),
+
+  /** ComfyUI で参照画像を生成し、候補として保存する(キャラには設定しない。採用は updateCharacter)。
+   *  数十秒〜。初回はモデル読み込みで更に待つ。seed 省略でランダム */
+  characterRefImageGenerate: (id: string, prompt: string, seed: number | null, signal?: AbortSignal) =>
+    request<GeneratedImage>(`/characters/${id}/ref_image/generate`, {
+      method: 'POST',
+      body: JSON.stringify({ prompt, seed }),
+      signal
+    }),
+  /** 場面の挿絵の生成ウインドウの状態(プロンプト・追加指示・seed・参照キャラ)を保存する。挿絵は変えない */
+  nodeImageGenSave: (
+    nodeId: string,
+    state: { prompt: string | null; instructions: string | null; seed: number | null; ref_chars: string[] | null }
+  ) => request<{ ok: boolean }>(`/nodes/${nodeId}/image_gen`, { method: 'POST', body: JSON.stringify(state) }),
+  /** ComfyUI で場面の挿絵を生成し、候補として保存する(挿絵には設定しない。採用は setNodeImage) */
+  nodeImageGenerate: (nodeId: string, prompt: string, charIds: string[], seed: number | null, signal?: AbortSignal) =>
+    request<GeneratedImage>(`/nodes/${nodeId}/image/generate`, {
+      method: 'POST',
+      body: JSON.stringify({ prompt, char_ids: charIds, seed }),
+      signal
+    }),
   // signal はキュー(tasks.ts)からの中止用
   extractEvents: (nodeId: string, signal?: AbortSignal) =>
     request<{ events: StoryEvent[]; validation: string[] }>(`/nodes/${nodeId}/extract_events`, {
@@ -548,19 +577,151 @@ export async function llamaInstallStream(
   signal?: AbortSignal,
   options: LlamaInstallOptions = {}
 ): Promise<void> {
+  await installStream(
+    '/llama/install',
+    { variant, include_cudart: options.includeCudart ?? true, cudart_only: options.cudartOnly ?? false },
+    onProgress,
+    signal
+  )
+}
+
+// ---- ComfyUI(画像生成) ----------------------------------------------
+
+export interface ComfyReleaseVariant {
+  key: string
+  backend: string
+  label: string
+  asset_name: string
+  asset_url: string
+  size_bytes: number
+}
+
+export interface ComfyRelease {
+  tag: string
+  name: string
+  published_at: string | null
+  html_url: string
+  variants: ComfyReleaseVariant[]
+}
+
+/** 生成した画像の候補。assets に保存済みだが、まだどこにも設定されていない */
+export interface GeneratedImage {
+  image_path: string
+  /** 使った seed。同じ seed + 同じプロンプトで同じ絵になる */
+  seed: number
+}
+
+/** 場面プロンプト生成の冒頭で届く情報(どのキャラが image1.. になるか) */
+export interface SceneImagePromptMeta {
+  suffix: string
+  /** 参照画像として渡すキャラ(image1.. のラベル順) */
+  refs: Array<{ char_id: string; name: string; label: string }>
+  /** cast 全員と参照画像の有無 */
+  cast: Array<{ char_id: string; name: string; has_ref: boolean }>
+}
+
+/** 画像プロンプト生成の SSE イベント({meta} → {delta}… → {done, prompt} / {error}) */
+export interface ImagePromptStreamEvent<M = { suffix: string }> {
+  meta?: M
+  delta?: string
+  done?: boolean
+  prompt?: string
+  error?: string
+}
+
+/** POST して SSE(`data: {...}` 行)を逐次 onEvent に渡す共通部。abort で中断 */
+async function postSse<E>(path: string, body: unknown, onEvent: (e: E) => void, signal?: AbortSignal): Promise<void> {
   if (!baseUrl) throw new Error('backend not ready')
-  const res = await fetch(`${baseUrl}/llama/install`, {
+  const res = await fetch(`${baseUrl}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      variant,
-      include_cudart: options.includeCudart ?? true,
-      cudart_only: options.cudartOnly ?? false
-    }),
+    body: JSON.stringify(body),
+    signal
+  })
+  if (!res.ok || !res.body) throw new Error(`${res.status} ${path}: ${await res.text()}`)
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const parts = buffer.split('\n\n')
+      buffer = parts.pop() ?? ''
+      for (const part of parts) {
+        const line = part.trim()
+        if (line.startsWith('data: ')) onEvent(JSON.parse(line.slice(6)) as E)
+      }
+    }
+  } finally {
+    void reader.cancel().catch(() => undefined)
+  }
+}
+
+/** 外見・プロフィール(+ 追加指示)から参照画像の英語プロンプトをストリーミングで作る。保存はしない */
+export function characterRefImagePromptStream(
+  id: string,
+  instructions: string | null,
+  onEvent: (e: ImagePromptStreamEvent) => void,
+  signal?: AbortSignal
+): Promise<void> {
+  return postSse(`/characters/${id}/ref_image/prompt`, { instructions }, onEvent, signal)
+}
+
+/** ビート・場所・cast(+ 追加指示)から場面の英語プロンプトをストリーミングで作る。保存はしない。
+ *  charIds 省略(null)で参照画像のあるキャラを自動選択 */
+export function nodeImagePromptStream(
+  nodeId: string,
+  charIds: string[] | null,
+  instructions: string | null,
+  onEvent: (e: ImagePromptStreamEvent<SceneImagePromptMeta>) => void,
+  signal?: AbortSignal
+): Promise<void> {
+  return postSse(`/nodes/${nodeId}/image/prompt`, { char_ids: charIds, instructions }, onEvent, signal)
+}
+
+export interface ComfyStatus {
+  base_url: string
+  healthy: boolean
+  /** spawn 済みだがまだ応答しない = 起動中 */
+  loading: boolean
+  spawned: boolean
+  /** 実際に使うモデルフォルダ(設定が空なら既定。既定も無ければ '' = 同梱の models/) */
+  models_dir: string
+  default_models_dir: string
+  installed: boolean
+  install: { dir: string; root: string; python: string; main: string; version: string | null; backend: string | null } | null
+  install_dir: string
+  runtime_dir: string
+  size_bytes: number
+}
+
+/** ComfyUI(portable 版)のインストールを開始し、進捗イベントを逐次受け取る。abort でキャンセル。 */
+export async function comfyInstallStream(
+  variant: ComfyReleaseVariant,
+  onProgress: (p: LlamaInstallProgress) => void,
+  signal?: AbortSignal
+): Promise<void> {
+  await installStream('/comfy/install', { variant }, onProgress, signal)
+}
+
+/** インストール系 SSE(`data: {...}` 行)を読み、進捗を逐次渡す共通部 */
+async function installStream(
+  path: string,
+  body: unknown,
+  onProgress: (p: LlamaInstallProgress) => void,
+  signal?: AbortSignal
+): Promise<void> {
+  if (!baseUrl) throw new Error('backend not ready')
+  const res = await fetch(`${baseUrl}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
     signal
   })
   if (!res.ok || !res.body) {
-    throw new Error(`${res.status} /llama/install: ${await res.text()}`)
+    throw new Error(`${res.status} ${path}: ${await res.text()}`)
   }
   const reader = res.body.getReader()
   const decoder = new TextDecoder()

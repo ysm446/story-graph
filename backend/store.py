@@ -37,6 +37,7 @@ ASSET_REF_SQLS = (
     "SELECT thumb_path FROM nodes WHERE thumb_path IS NOT NULL",
     "SELECT portrait_path FROM characters WHERE portrait_path IS NOT NULL",
     "SELECT portrait_source_path FROM characters WHERE portrait_source_path IS NOT NULL",
+    "SELECT ref_image_path FROM characters WHERE ref_image_path IS NOT NULL",
     "SELECT image_path FROM places WHERE image_path IS NOT NULL",
 )
 
@@ -104,7 +105,8 @@ class Store:
 
     def update_character(self, char_id: str, data: dict[str, Any]) -> dict[str, Any] | None:
         fields = ["name", "profile", "appearance", "voice", "color", "graph_x", "graph_y",
-                  "portrait_path", "portrait_source_path", "portrait_crop"]
+                  "portrait_path", "portrait_source_path", "portrait_crop",
+                  "ref_image_path", "ref_image_prompt", "ref_image_instructions", "ref_image_seed"]
         updates = {k: data[k] for k in fields if k in data}
         if updates:
             sets = ", ".join(f"{k} = ?" for k in updates)
@@ -303,6 +305,7 @@ class Store:
             return None
         node = dict(row)
         node["cast"] = json.loads(node["cast"])
+        node["image_ref_chars"] = json.loads(node["image_ref_chars"]) if node.get("image_ref_chars") else None
         node["events"] = self.list_events(node_id)
         return node
 
@@ -595,6 +598,7 @@ class Store:
             events_by_node.setdefault(e["node_id"], []).append(e)
         for node in nodes:
             node["cast"] = json.loads(node["cast"])
+            node["image_ref_chars"] = json.loads(node["image_ref_chars"]) if node.get("image_ref_chars") else None
             node["events"] = events_by_node.get(node["id"], [])
         edges = [dict(r) for r in self.conn.execute("SELECT * FROM edges")]
         return {"nodes": nodes, "edges": edges}
@@ -1202,6 +1206,17 @@ class Store:
             self._mark_digest_stale(node_id)
         self.conn.commit()
         return self.get_node(node_id)
+
+    def set_node_image_gen(
+        self, node_id: str, *, prompt: str | None, instructions: str | None, seed: int | None, ref_chars: list[str] | None
+    ) -> None:
+        """場面の挿絵の生成ウインドウの状態(プロンプト・追加指示・seed・参照キャラ)。
+        装飾の設定なので state に影響せず dirty 化しない。"""
+        self.conn.execute(
+            "UPDATE nodes SET image_prompt = ?, image_instructions = ?, image_seed = ?, image_ref_chars = ? WHERE id = ?",
+            (prompt, instructions, seed, json.dumps(ref_chars) if ref_chars is not None else None, node_id),
+        )
+        self.conn.commit()
 
     def set_node_image(self, node_id: str, image_path: str | None) -> None:
         """シーン挿絵(装飾専用)。state に影響しないので dirty 化しない。

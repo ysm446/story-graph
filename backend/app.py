@@ -28,6 +28,7 @@ import generation
 import llm
 import rendering
 import snapshots
+from comfy_manager import ComfyManager
 from llama_manager import LlamaManager
 from store import Store
 
@@ -50,6 +51,7 @@ if _library_root:
 else:
     store = Store(db.connect(_db_path), root=str(db.DEFAULT_DB_PATH.parent))
 llama = LlamaManager()
+comfy_mgr = ComfyManager()
 
 
 # 書き込みメソッドの途中で例外が出ると、共有コネクションに半端な変更が残り、
@@ -111,6 +113,7 @@ async def _startup() -> None:
 @app.on_event("shutdown")
 def _shutdown() -> None:
     llama.stop()
+    comfy_mgr.stop()
 
 
 # ---- schemas --------------------------------------------------------
@@ -134,6 +137,10 @@ class CharacterPatch(BaseModel):
     portrait_path: str | None = None
     portrait_source_path: str | None = None
     portrait_crop: str | None = None
+    ref_image_path: str | None = None
+    ref_image_prompt: str | None = None
+    ref_image_instructions: str | None = None
+    ref_image_seed: int | None = None
 
 
 class PlaceIn(BaseModel):
@@ -694,7 +701,10 @@ async def get_asset(filename: str) -> FileResponse:
     path = _Path(assets) / safe_name
     if not path.exists():
         raise HTTPException(404, "not found")
-    return FileResponse(str(path))
+    # <img> の要求は Origin を送らないので CORS ミドルウェアがヘッダを付けず、その応答が
+    # ブラウザにキャッシュされると、後から canvas 用に crossOrigin / fetch で読み直したとき
+    # CORS 検査に落ちる(切り抜きモーダル)。同じ URL の応答は常に許可ヘッダ付きにしておく
+    return FileResponse(str(path), headers={"Access-Control-Allow-Origin": "*"})
 
 
 @app.post("/nodes/{node_id}/image")
@@ -972,6 +982,293 @@ async def llama_uninstall(body: LlamaUninstallIn) -> dict[str, Any]:
     except (RuntimeError, OSError) as e:
         raise HTTPException(500, str(e))
     return {**result, **(await asyncio.to_thread(llama_installer.status))}
+
+
+# ---- ComfyUI(画像生成) ----------------------------------------------
+# 設計: docs/design/image-gen.md。llama と同じく「外部起動を優先、無ければ runtime/ の
+# インストールを spawn」。生成物は挿絵と同じ assets/images に置く
+
+@app.get("/comfy/status")
+async def comfy_status() -> dict[str, Any]:
+    import comfy
+    import comfy_installer
+    import comfy_manager
+
+    settings = store.get_settings()
+    base_url = comfy_manager.resolve_base_url(settings)
+    healthy = await comfy.health(base_url)
+    info = comfy_mgr.status()
+    return {
+        **info,
+        **(await asyncio.to_thread(comfy_installer.status)),
+        # マネージャの base_url(未起動なら None)より、設定から解決した URL を優先して返す
+        "base_url": base_url,
+        "healthy": healthy,
+        "loading": bool(info["spawned"]) and not healthy,
+        "models_dir": comfy_manager.resolve_models_dir(settings),
+        "default_models_dir": comfy_manager.DEFAULT_MODELS_DIR,
+    }
+
+
+@app.post("/comfy/start")
+async def comfy_start() -> dict[str, Any]:
+    try:
+        base_url = await comfy_mgr.ensure_running(store.get_settings())
+    except RuntimeError as e:
+        raise HTTPException(500, str(e))
+    return {"base_url": base_url, "healthy": True, **comfy_mgr.status()}
+
+
+@app.post("/comfy/stop")
+async def comfy_stop() -> dict[str, Any]:
+    await comfy_mgr.stop_async()
+    return {"stopped": True}
+
+
+@app.get("/comfy/models")
+async def comfy_models(folder: str = "checkpoints") -> dict[str, Any]:
+    """起動中の ComfyUI が見つけているモデル名(チェックポイント選択用)。停止中は空。"""
+    import comfy
+    import comfy_manager
+    import re as _re
+
+    if not _re.fullmatch(r"[a-z_]+", folder):
+        raise HTTPException(400, "不正なフォルダ名です")
+    base_url = comfy_manager.resolve_base_url(store.get_settings())
+    if not await comfy.health(base_url):
+        return {"models": [], "healthy": False}
+    try:
+        return {"models": await comfy.list_models(base_url, folder), "healthy": True}
+    except (RuntimeError, OSError) as e:
+        raise HTTPException(502, str(e))
+
+
+@app.get("/comfy/releases")
+async def comfy_releases() -> dict[str, Any]:
+    import comfy_installer
+
+    try:
+        releases = await comfy_installer.fetch_releases()
+    except RuntimeError as e:
+        raise HTTPException(502, str(e))
+    return {"releases": releases}
+
+
+class ComfyInstallIn(BaseModel):
+    variant: dict[str, Any]
+
+
+@app.post("/comfy/install")
+async def comfy_install(body: ComfyInstallIn) -> StreamingResponse:
+    import json as _json
+
+    import comfy_installer
+
+    if comfy_mgr.status()["spawned"]:
+        raise HTTPException(409, "ComfyUI が起動中です。停止してからインストールしてください。")
+
+    async def stream():
+        try:
+            async for progress in comfy_installer.install_variant(body.variant):
+                yield f"data: {_json.dumps(progress, ensure_ascii=False)}\n\n"
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            yield f"data: {_json.dumps({'phase': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(stream(), media_type="text/event-stream")
+
+
+@app.post("/comfy/uninstall")
+async def comfy_uninstall() -> dict[str, Any]:
+    import comfy_installer
+
+    if comfy_mgr.status()["spawned"]:
+        raise HTTPException(409, "ComfyUI が起動中です。停止してから削除してください。")
+    try:
+        await asyncio.to_thread(comfy_installer.uninstall)
+    except (RuntimeError, OSError) as e:
+        raise HTTPException(500, str(e))
+    return await asyncio.to_thread(comfy_installer.status)
+
+
+class RefImagePromptIn(BaseModel):
+    instructions: str | None = None  # 作者の追加指示(日本語可)。LLM に渡して英語プロンプトへ織り込む
+
+
+@app.post("/characters/{char_id}/ref_image/prompt")
+async def character_ref_image_prompt(char_id: str, body: RefImagePromptIn | None = None) -> StreamingResponse:
+    """外見・プロフィール(+ 追加指示)から、参照画像の英語プロンプト(人物描写)を LLM でストリーミング生成する。
+    SSE: {meta:{suffix}} → {delta}… → {done, prompt} / {error}。保存はしない。"""
+    import image_gen
+
+    char = store.get_character(char_id)
+    if char is None:
+        raise HTTPException(404, "character not found")
+    instructions = body.instructions if body else None
+
+    async def stream():
+        yield image_gen._sse({"meta": {"suffix": image_gen.REF_IMAGE_SUFFIX}})
+        try:
+            base_url = await llama.ensure_running(store.get_settings())
+        except RuntimeError as e:
+            yield image_gen._sse({"error": str(e)})
+            return
+        async for chunk in image_gen.stream_character_prompt(char, base_url=base_url, instructions=instructions):
+            yield chunk
+
+    return StreamingResponse(stream(), media_type="text/event-stream")
+
+
+class RefImageGenerateIn(BaseModel):
+    prompt: str
+    seed: int | None = None
+
+
+@app.post("/characters/{char_id}/ref_image/generate")
+async def character_ref_image_generate(char_id: str, body: RefImageGenerateIn) -> dict[str, Any]:
+    """ComfyUI で参照画像を生成し、assets に**候補として**保存する(キャラには設定しない)。
+
+    採用は UI の「決定」→ PATCH /characters(ref_image_path / ref_image_prompt)。
+    採用されなかった候補は参照されないので、次回起動時の gc_assets が回収する。"""
+    import uuid
+    from pathlib import Path as _Path
+
+    import image_gen
+
+    char = store.get_character(char_id)
+    if char is None:
+        raise HTTPException(404, "character not found")
+    assets = store.assets_dir()
+    if assets is None:
+        raise HTTPException(500, "ライブラリが未設定です")
+    if not body.prompt.strip():
+        raise HTTPException(400, "プロンプトが空です")
+    settings = store.get_settings()
+    try:
+        base_url = await comfy_mgr.ensure_running(settings)
+        data, seed = await image_gen.generate_character_image(
+            settings, body.prompt, comfy_base_url=base_url, seed=body.seed
+        )
+    except RuntimeError as e:
+        raise HTTPException(500, str(e))
+    name = f"{uuid.uuid4().hex[:12]}.png"
+    await asyncio.to_thread((_Path(assets) / name).write_bytes, data)
+    return {"image_path": name, "seed": seed}
+
+
+def _scene_context(node_id: str) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any] | None]:
+    """場面画像用の (node, cast のキャラ(cast 順), 実効ロケーションの場所)。"""
+    node = store.get_node(node_id)
+    if node is None:
+        raise HTTPException(404, "node not found")
+    chars = []
+    for cid in node.get("cast") or []:
+        c = store.get_character(cid)
+        if c:
+            chars.append(c)
+    place_id, _ = store.effective_location(node_id)
+    place = store.get_place(place_id) if place_id else None
+    return node, chars, place
+
+
+class SceneImagePromptIn(BaseModel):
+    # 参照画像として使うキャラ(cast 順、最大 3 人)。省略時は参照画像のあるキャラを cast 順に自動選択
+    char_ids: list[str] | None = None
+    instructions: str | None = None  # 作者の追加指示(日本語可)
+
+
+@app.post("/nodes/{node_id}/image/prompt")
+async def node_image_prompt(node_id: str, body: SceneImagePromptIn) -> StreamingResponse:
+    """ビート・場所・cast から場面の英語プロンプトを LLM でストリーミング生成する(保存はしない)。
+    SSE: {meta:{suffix, refs, cast}} → {delta}… → {done, prompt} / {error}。
+    参照画像を渡すキャラは meta.refs に image1.. のラベルで入る。"""
+    import image_gen
+
+    node, chars, place = _scene_context(node_id)
+    if body.char_ids is not None:
+        refs = [c for c in chars if c["id"] in set(body.char_ids) and c.get("ref_image_path")][: image_gen.MAX_SCENE_REFS]
+    else:
+        refs = image_gen.select_scene_refs(chars)
+    meta = {
+        "suffix": image_gen.SCENE_SUFFIX,
+        "refs": [{"char_id": c["id"], "name": c["name"], "label": f"image{i + 1}"} for i, c in enumerate(refs)],
+        "cast": [{"char_id": c["id"], "name": c["name"], "has_ref": bool(c.get("ref_image_path"))} for c in chars],
+    }
+
+    async def stream():
+        yield image_gen._sse({"meta": meta})
+        try:
+            base_url = await llama.ensure_running(store.get_settings())
+        except RuntimeError as e:
+            yield image_gen._sse({"error": str(e)})
+            return
+        async for chunk in image_gen.stream_scene_prompt(
+            node, chars, refs, place, base_url=base_url, instructions=body.instructions
+        ):
+            yield chunk
+
+    return StreamingResponse(stream(), media_type="text/event-stream")
+
+
+class SceneImageGenIn(BaseModel):
+    prompt: str | None = None
+    instructions: str | None = None
+    seed: int | None = None
+    ref_chars: list[str] | None = None
+
+
+@app.post("/nodes/{node_id}/image_gen")
+async def node_image_gen_save(node_id: str, body: SceneImageGenIn) -> dict[str, Any]:
+    """場面の挿絵の生成ウインドウの状態を保存する(次に開いたとき復元。挿絵そのものは変えない)。"""
+    if store.get_node(node_id) is None:
+        raise HTTPException(404, "node not found")
+    store.set_node_image_gen(
+        node_id, prompt=body.prompt, instructions=body.instructions, seed=body.seed, ref_chars=body.ref_chars
+    )
+    return {"ok": True}
+
+
+class SceneImageGenerateIn(BaseModel):
+    prompt: str
+    char_ids: list[str] = Field(default_factory=list)
+    seed: int | None = None
+
+
+@app.post("/nodes/{node_id}/image/generate")
+async def node_image_generate(node_id: str, body: SceneImageGenerateIn) -> dict[str, Any]:
+    """場面の挿絵を ComfyUI で生成し、assets に**候補として**保存する(挿絵には設定しない)。
+    採用は UI の「決定」→ POST /nodes/{id}/image。不採用の候補は gc_assets が回収する。"""
+    import uuid
+    from pathlib import Path as _Path
+
+    import image_gen
+
+    _node, chars, _place = _scene_context(node_id)
+    assets = store.assets_dir()
+    if assets is None:
+        raise HTTPException(500, "ライブラリが未設定です")
+    if not body.prompt.strip():
+        raise HTTPException(400, "プロンプトが空です")
+    wanted = set(body.char_ids)
+    refs = [c for c in chars if c["id"] in wanted and c.get("ref_image_path")][: image_gen.MAX_SCENE_REFS]
+    ref_files: list[tuple[str, bytes]] = []
+    for c in refs:
+        p = _Path(assets) / _Path(c["ref_image_path"]).name
+        if not p.exists():
+            raise HTTPException(400, f"{c['name']} の参照画像ファイルが見つかりません")
+        ref_files.append((p.name, await asyncio.to_thread(p.read_bytes)))
+    settings = store.get_settings()
+    try:
+        base_url = await comfy_mgr.ensure_running(settings)
+        data, seed = await image_gen.generate_scene_image(
+            settings, body.prompt, ref_files, comfy_base_url=base_url, seed=body.seed
+        )
+    except RuntimeError as e:
+        raise HTTPException(500, str(e))
+    name = f"{uuid.uuid4().hex[:12]}.png"
+    await asyncio.to_thread((_Path(assets) / name).write_bytes, data)
+    return {"image_path": name, "seed": seed}
 
 
 @app.post("/generate/beat")

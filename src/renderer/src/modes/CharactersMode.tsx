@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, assetUrl, uploadAsset } from '../api'
 import ImageCropModal, { type CropState } from '../ImageCropModal'
 import PlaceEditor from './PlaceEditor'
+import RefImagePanel from '../RefImagePanel'
 import ProofreadTextarea from '../ProofreadTextarea'
 import RelationGraph from '../RelationGraph'
 import type { Character, Place, StoryGraph, StoryNode } from '../types'
@@ -34,6 +35,8 @@ export default function CharactersMode(): React.JSX.Element {
     source: File | string
     isNewFile: boolean
     initial: CropState | null
+    /** 保存済みアセットから切り抜くときの元画像パス(参照画像からの顔切り抜き用。省略時は今の元画像) */
+    sourcePath?: string
   } | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   // プロフィール画像へのドラッグ&ドロップ。子要素をまたぐと dragleave が誤発火するので、
@@ -99,7 +102,7 @@ export default function CharactersMode(): React.JSX.Element {
     try {
       const sourcePath = target.isNewFile
         ? (await uploadAsset(target.source as File)).path
-        : draft.portrait_source_path
+        : target.sourcePath ?? draft.portrait_source_path
       const cropped = new File([blob], 'portrait.png', { type: 'image/png' })
       const { path } = await uploadAsset(cropped)
       const patch = {
@@ -507,6 +510,21 @@ export default function CharactersMode(): React.JSX.Element {
                 </label>
               </div>
             </div>
+            {/* 参照画像(全身の立ち絵)。外見の記述から生成するか、手持ちの画像を置く。
+                場面画像を作るときに編集モデルの入力として渡す(docs/design/image-gen.md) */}
+            <RefImagePanel
+              character={selected}
+              appearance={draft.appearance ?? ''}
+              onChanged={async (patch) => {
+                setDraft((d) => ({ ...d, ...patch }))
+                await reload()
+              }}
+              onCropPortrait={(path) => {
+                const url = assetUrl(path)
+                if (!url) return
+                setCropTarget({ source: url, isNewFile: false, initial: null, sourcePath: path })
+              }}
+            />
             {FIELD_DEFS.map((f) => (
               <label key={f.key} className="mb-4 block">
                 <span className="mb-1 block text-[12px]" style={{ color: 'var(--text-dim)' }}>

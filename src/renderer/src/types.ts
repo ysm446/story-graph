@@ -10,6 +10,13 @@ export interface Character {
   portrait_path: string | null
   portrait_source_path: string | null
   portrait_crop: string | null
+  /** 参照画像(全身の立ち絵)。場面画像の編集モデルへ渡す入力。生成でも手持ち画像でもよい */
+  ref_image_path: string | null
+  /** 参照画像の生成に使った英語プロンプト(人物描写のみ。作り直し用) */
+  ref_image_prompt: string | null
+  /** 参照画像の生成ウインドウの追加指示(日本語可)と最後の seed(null = ランダム)。次に開いたとき復元 */
+  ref_image_instructions: string | null
+  ref_image_seed: number | null
   created_at: string
 }
 
@@ -57,6 +64,12 @@ export interface StoryNode {
   image_path: string | null
   /** 挿絵が動画のときのサムネイル画像(構造モードのカード用。無ければ描画時に生成される) */
   thumb_path: string | null
+  /** 場面の挿絵の生成ウインドウの状態(docs/design/image-gen.md §6)。次に開いたとき復元する */
+  image_prompt?: string | null
+  image_instructions?: string | null
+  image_seed?: number | null
+  /** 参照画像を渡すキャラ ID(image1.. の順) */
+  image_ref_chars?: string[] | null
   /** このシーンだけの清書の目安の字数(null / 0 = 共通の設定に従う) */
   target_chars: number | null
   /** 章グループ(null = 未分類。docs/design/chapters.md) */

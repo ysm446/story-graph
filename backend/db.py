@@ -214,6 +214,17 @@ def init_schema(conn: sqlite3.Connection) -> None:
         "ALTER TABLE characters ADD COLUMN portrait_path TEXT",  # プロフィール画像(切り抜き後。表示用)
         "ALTER TABLE characters ADD COLUMN portrait_source_path TEXT",  # 元画像(再クロップ用に保持)
         "ALTER TABLE characters ADD COLUMN portrait_crop TEXT",  # 切り抜きパラメータ(JSON。エディタ復元用)
+        # 参照画像(全身の立ち絵。場面画像の編集モデルへ渡す入力。生成 / 手持ち画像のどちらでも)
+        "ALTER TABLE characters ADD COLUMN ref_image_path TEXT",
+        "ALTER TABLE characters ADD COLUMN ref_image_prompt TEXT",  # 生成に使った英語プロンプト(作り直し用)
+        # 参照画像の生成ウインドウの状態(次に開いたとき復元する。docs/design/image-gen.md §4)
+        "ALTER TABLE characters ADD COLUMN ref_image_instructions TEXT",  # 作者の追加指示(日本語可)
+        "ALTER TABLE characters ADD COLUMN ref_image_seed INTEGER",  # 最後に使った seed(NULL = ランダム)
+        # 場面の挿絵の生成ウインドウの状態(docs/design/image-gen.md §6)
+        "ALTER TABLE nodes ADD COLUMN image_prompt TEXT",  # 英語の場面プロンプト
+        "ALTER TABLE nodes ADD COLUMN image_instructions TEXT",  # 作者の追加指示
+        "ALTER TABLE nodes ADD COLUMN image_seed INTEGER",
+        "ALTER TABLE nodes ADD COLUMN image_ref_chars TEXT",  # 参照画像を渡すキャラ ID(JSON 配列。image1.. の順)
         "ALTER TABLE chats ADD COLUMN char_id TEXT",  # NULL = 相談チャット。設定時はキャラとの会話
         "ALTER TABLE chats ADD COLUMN mode TEXT",  # キャラチャットの枠組み: interview | roleplay
         "ALTER TABLE chats ADD COLUMN title TEXT",  # 会話名(NULL = 冒頭の発言を見出しに使う)

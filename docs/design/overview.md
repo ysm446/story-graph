@@ -1,7 +1,7 @@
 # 全体設計(アーキテクチャ)
 
 作成日時: 2026-08-09 15:30
-更新日時: 2026-08-23 18:53
+更新日時: 2026-08-26 15:25
 
 このアプリが **どう組まれているか** をまとめた入口。「何を作るか」は
 [story-graph-spec.md](../story-graph-spec.md)(仕様)と [plan/goals.md](../plan/goals.md)(目的・価値)、
@@ -45,7 +45,7 @@
 │  fold.py       イベント畳み込み(純粋関数)        │
 │  generation / rendering / chat_agent   LLM 利用     │
 │  retrieval + embed                     記憶検索     │
-│  llm / llama_manager / llama_installer 推論基盤     │
+│  llm / llama_* / comfy_* 推論・画像基盤     │
 │  snapshots / backup                    保全         │
 └────────┬───────────────────────────┬───────────────┘
          │ HTTP                      │ ファイル
@@ -120,6 +120,8 @@ llama.cpp の制約付き構造化出力 —— どれも Python 側に既存の
 | `retrieval.py` + `embed.py` | 記憶のハイブリッド検索(RRF + 重要度 + 物語内時間減衰)、Ruri 埋め込み | db |
 | `llm.py` | llama-server クライアント(httpx 非同期、構造化出力) | なし |
 | `llama_manager.py` / `llama_installer.py` | llama-server の起動・停止と自動インストール | なし |
+| `comfy_manager.py` / `comfy_installer.py` | ComfyUI(portable 版)の起動・停止と自動インストール、extra_model_paths.yaml の書き出し | comfy |
+| `comfy.py` / `image_gen.py` | ComfyUI クライアント(ワークフロー組み立て・実行)とキャラ参照画像の生成([image-gen.md](image-gen.md)) | llm / comfy |
 | `validation.py` | ルールベース検証(cast と state の照合) | fold |
 | `snapshots.py` / `backup.py` | 時点保存と外部バックアップ | store |
 | `system_info.py` | CPU / RAM / GPU / VRAM とモデル一覧 | なし |

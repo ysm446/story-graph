@@ -11,9 +11,8 @@ export interface CropState {
 async function cropToBlob(imageUrl: string, area: Area): Promise<Blob> {
   const image = await new Promise<HTMLImageElement>((resolve, reject) => {
     const img = new Image()
-    if (imageUrl.startsWith('http')) img.crossOrigin = 'anonymous' // canvas 汚染防止
     img.onload = () => resolve(img)
-    img.onerror = reject
+    img.onerror = () => reject(new Error(`画像を読み込めませんでした: ${imageUrl.slice(0, 80)}`))
     img.src = imageUrl
   })
   const canvas = document.createElement('canvas')
@@ -50,13 +49,41 @@ export default function ImageCropModal({
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
+    // 保存済みアセット(http の URL)は fetch して Blob にしてから使う。<img> で
+    // 表示済み(CORS 無しでキャッシュ済み)の URL を crossOrigin 付きで読み直すと
+    // ブラウザのキャッシュに CORS ヘッダが無くて失敗するため。blob: なら canvas も汚れない。
+    // fetch も同じキャッシュに当たるので `cache: 'no-store'` で必ずサーバへ取りに行く
+    // (<img> の要求は Origin ヘッダを送らず、バックエンドの CORS ミドルウェアは
+    // Origin が無い要求には CORS ヘッダを付けない)
+    let cancelled = false
+    let objectUrl: string | null = null
     if (typeof source === 'string') {
-      setImageUrl(source)
-      return
+      if (!source.startsWith('http')) {
+        setImageUrl(source)
+        return
+      }
+      setImageUrl(null)
+      void fetch(source, { cache: 'no-store' })
+        .then((res) => {
+          if (!res.ok) throw new Error(`${res.status} ${source}`)
+          return res.blob()
+        })
+        .then((blob) => {
+          if (cancelled) return
+          objectUrl = URL.createObjectURL(blob)
+          setImageUrl(objectUrl)
+        })
+        .catch((e) => {
+          if (!cancelled) setError(`画像を読み込めませんでした: ${String(e)}`)
+        })
+    } else {
+      objectUrl = URL.createObjectURL(source)
+      setImageUrl(objectUrl)
     }
-    const url = URL.createObjectURL(source)
-    setImageUrl(url)
-    return () => URL.revokeObjectURL(url)
+    return () => {
+      cancelled = true
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
   }, [source])
 
   const onCropComplete = useCallback((_: Area, areaPixels: Area) => {
