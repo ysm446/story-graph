@@ -1,7 +1,7 @@
 # UI スタイルガイド(色・タイポ・余白・部品)
 
 作成日時: 2026-08-09 16:00
-更新日時: 2026-08-27 02:45
+更新日時: 2026-08-28 05:10
 
 新しい画面や部品を足すときに **見た目を揃えるための具体値** をまとめる。
 [overview.md](overview.md) がアーキテクチャの入口なら、本書は UI の入口。
@@ -283,6 +283,37 @@ Tailwind の既定スケール(`1 = 4px`)をそのまま使う。**使う段は�
   **画像があるときの枠クリックは拡大表示**(`Lightbox`)に使い、差し替えは枠の右下隅の小さなアイコンボタン
   (`h-6 w-6 rounded-md border`、地は `rgba(28,31,43,0.85)`、`Icon name="image"`)とドロップで受ける。
   それ以外の押せるものは枠の中に重ねない
+
+### 候補の格子(`MediaPicker.tsx`)
+
+生成した候補や手持ちの画像から 1 枚を選ぶ一覧。モーダル(`w-[720px]`)の中に `grid gap-3`
+(横長は `grid-cols-3`、縦長は `grid-cols-4`)でカードを並べる。
+
+```tsx
+<button
+  className="relative w-full overflow-hidden rounded-xl border"
+  style={{
+    aspectRatio: '1216 / 832',
+    background: 'var(--bg-canvas)',
+    borderColor: selected ? 'var(--accent)' : 'var(--border-strong)',
+    boxShadow: selected ? '0 0 0 1px var(--accent)' : undefined
+  }}
+>
+  <img className="h-full w-full object-cover" />
+  {selected && (
+    <span className="absolute left-1.5 top-1.5 rounded px-1.5 py-0.5 text-[10px] font-medium"
+          style={{ background: 'var(--accent)', color: '#fff' }}>選択中</span>
+  )}
+</button>
+<div className="flex items-center justify-between gap-1 px-0.5">   {/* カードの下: 補足 + 小ボタン */}
+  <span className="text-[11px] tabular-nums" style={{ color: 'var(--text-faint)' }}>seed 123</span>
+  <button className="rounded-md border px-1.5 py-0.5 text-[11px] disabled:opacity-40" …>削除</button>
+</div>
+```
+
+- 選択中は**枠色 + 1px の外側リング + 左上のバッジ**で示す(色だけにしない)
+- カードの中に押せるものを重ねない。削除などの操作はカードの**下**に `text-[11px]` の小ボタンで置く
+- 種別(動画など)はカード右下の `text-[10px]` バッジ(地は `rgba(28,31,43,0.85)`)
 
 ### 拡大表示(`Lightbox.tsx`)
 

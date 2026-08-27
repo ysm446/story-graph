@@ -39,7 +39,11 @@ ASSET_REF_SQLS = (
     "SELECT portrait_source_path FROM characters WHERE portrait_source_path IS NOT NULL",
     "SELECT ref_image_path FROM characters WHERE ref_image_path IS NOT NULL",
     "SELECT image_path FROM places WHERE image_path IS NOT NULL",
+    "SELECT path FROM media",
+    "SELECT thumb_path FROM media WHERE thumb_path IS NOT NULL",
 )
+
+MEDIA_OWNER_TYPES = ("node", "character")
 
 
 def _is_turn_start(message: dict[str, Any]) -> bool:
@@ -119,6 +123,7 @@ class Store:
     def delete_character(self, char_id: str) -> None:
         self.conn.execute("DELETE FROM characters WHERE id = ?", (char_id,))
         self.conn.execute("DELETE FROM faction_members WHERE char_id = ?", (char_id,))
+        self.conn.execute("DELETE FROM media WHERE owner_type = 'character' AND owner_id = ?", (char_id,))
         self.conn.commit()
 
     def known_char_ids(self) -> set[str]:
@@ -1240,11 +1245,138 @@ class Store:
         self.conn.commit()
 
     def set_node_thumb(self, node_id: str, thumb_path: str | None) -> None:
-        """動画挿絵のサムネイル。構造モードのカードが動画をデコードしないために持つ。"""
+        """動画挿絵のサムネイル。構造モードのカードが動画をデコードしないために持つ。
+
+        ストックの同じ動画にも写しておき、別の候補に切り替えてから戻したときに作り直さない。
+        """
+        row = self.conn.execute("SELECT image_path FROM nodes WHERE id = ?", (node_id,)).fetchone()
         self.conn.execute(
             "UPDATE nodes SET thumb_path = ? WHERE id = ?", (thumb_path, node_id)
         )
+        if row is not None and row["image_path"] and thumb_path:
+            self.conn.execute(
+                "UPDATE media SET thumb_path = ? WHERE owner_type = 'node' AND owner_id = ? AND path = ?",
+                (thumb_path, node_id, row["image_path"]),
+            )
         self.conn.commit()
+
+    # ---- 挿絵・参照画像のストック(docs/design/image-gen.md §7) -----------------
+    #
+    # 持ち主(node / character)ごとに候補を溜め、その中の 1 枚を「選択中」として
+    # nodes.image_path / characters.ref_image_path に写す。表示側はこれまでどおり
+    # その列だけを見ればよい。生成物はプロンプト・追加指示・seed(・参照キャラ)を
+    # 1 セットで持ち、選び直したときに生成ウインドウの保存状態もそのセットに戻す。
+
+    @staticmethod
+    def _media_dict(row: sqlite3.Row) -> dict[str, Any]:
+        m = dict(row)
+        m["ref_chars"] = json.loads(m["ref_chars"]) if m.get("ref_chars") else None
+        return m
+
+    def list_media(self, owner_type: str, owner_id: str) -> list[dict[str, Any]]:
+        """持ち主のストック(新しい順)。"""
+        rows = self.conn.execute(
+            "SELECT * FROM media WHERE owner_type = ? AND owner_id = ? ORDER BY created_at DESC, rowid DESC",
+            (owner_type, owner_id),
+        ).fetchall()
+        return [self._media_dict(r) for r in rows]
+
+    def get_media(self, media_id: str) -> dict[str, Any] | None:
+        row = self.conn.execute("SELECT * FROM media WHERE id = ?", (media_id,)).fetchone()
+        return self._media_dict(row) if row else None
+
+    def add_media(
+        self,
+        owner_type: str,
+        owner_id: str,
+        path: str,
+        *,
+        prompt: str | None = None,
+        instructions: str | None = None,
+        seed: int | None = None,
+        ref_chars: list[str] | None = None,
+        thumb_path: str | None = None,
+    ) -> dict[str, Any]:
+        """ストックに 1 枚足す(選択はしない)。手持ちの画像は prompt 以下を空のまま。"""
+        if owner_type not in MEDIA_OWNER_TYPES:
+            raise ValueError(f"unknown owner_type: {owner_type}")
+        media_id = _new_id()
+        self.conn.execute(
+            "INSERT INTO media(id, owner_type, owner_id, path, thumb_path, prompt, instructions, seed, ref_chars, created_at)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?)",
+            (
+                media_id, owner_type, owner_id, path, thumb_path, prompt, instructions, seed,
+                json.dumps(ref_chars) if ref_chars is not None else None, _now(),
+            ),
+        )
+        self.conn.commit()
+        return self.get_media(media_id)  # type: ignore[return-value]
+
+    def _selected_media_path(self, owner_type: str, owner_id: str) -> str | None:
+        if owner_type == "node":
+            row = self.conn.execute("SELECT image_path FROM nodes WHERE id = ?", (owner_id,)).fetchone()
+            return row["image_path"] if row else None
+        row = self.conn.execute("SELECT ref_image_path FROM characters WHERE id = ?", (owner_id,)).fetchone()
+        return row["ref_image_path"] if row else None
+
+    def select_media(self, media_id: str) -> dict[str, Any]:
+        """ストックの 1 枚を持ち主の現在の画像にする。
+
+        生成物なら、生成ウインドウの保存状態(プロンプト・追加指示・seed・参照キャラ)も
+        その画像を作ったセットに戻す(次に開いたとき同じ絵を引き直せる)。手持ちの画像
+        (セットが空)では保存状態に触れない。
+        """
+        m = self.get_media(media_id)
+        if m is None:
+            raise KeyError(media_id)
+        if m["owner_type"] == "node":
+            self.conn.execute(
+                "UPDATE nodes SET image_path = ?, thumb_path = ? WHERE id = ?",
+                (m["path"], m["thumb_path"], m["owner_id"]),
+            )
+            if m["prompt"]:
+                self.conn.execute(
+                    "UPDATE nodes SET image_prompt = ?, image_instructions = ?, image_seed = ?, image_ref_chars = ?"
+                    " WHERE id = ?",
+                    (
+                        m["prompt"], m["instructions"], m["seed"],
+                        json.dumps(m["ref_chars"]) if m["ref_chars"] is not None else None, m["owner_id"],
+                    ),
+                )
+        else:
+            self.conn.execute(
+                "UPDATE characters SET ref_image_path = ? WHERE id = ?", (m["path"], m["owner_id"])
+            )
+            if m["prompt"]:
+                self.conn.execute(
+                    "UPDATE characters SET ref_image_prompt = ?, ref_image_instructions = ?, ref_image_seed = ?"
+                    " WHERE id = ?",
+                    (m["prompt"], m["instructions"], m["seed"], m["owner_id"]),
+                )
+        self.conn.commit()
+        return m
+
+    def delete_media(self, media_id: str) -> bool:
+        """ストックから外す(ファイルは参照が無くなれば gc_assets が回収する)。
+        選択中の 1 枚は消せない(先に別の候補へ切り替えるか、画像を外す)。"""
+        m = self.get_media(media_id)
+        if m is None:
+            return False
+        if self._selected_media_path(m["owner_type"], m["owner_id"]) == m["path"]:
+            raise ValueError("選択中の画像はストックから削除できません。先に別の候補を選ぶか、画像を外してください")
+        self.conn.execute("DELETE FROM media WHERE id = ?", (media_id,))
+        self.conn.commit()
+        return True
+
+    def delete_unselected_media(self, owner_type: str, owner_id: str) -> int:
+        """選択中以外の候補をまとめて消す(seed の引きすぎの掃除)。消した数を返す。"""
+        selected = self._selected_media_path(owner_type, owner_id)
+        cur = self.conn.execute(
+            "DELETE FROM media WHERE owner_type = ? AND owner_id = ? AND (? IS NULL OR path != ?)",
+            (owner_type, owner_id, selected, selected),
+        )
+        self.conn.commit()
+        return cur.rowcount
 
     def assets_dir(self) -> str | None:
         """現在のライブラリの画像フォルダ(assets/images)。"""
@@ -1388,6 +1520,7 @@ class Store:
         self.conn.execute("DELETE FROM events WHERE node_id = ?", (node_id,))
         self.conn.execute("DELETE FROM state_cache WHERE node_id = ?", (node_id,))
         self.conn.execute("DELETE FROM renders WHERE node_id = ?", (node_id,))
+        self.conn.execute("DELETE FROM media WHERE owner_type = 'node' AND owner_id = ?", (node_id,))
         self.conn.execute("DELETE FROM nodes WHERE id = ?", (node_id,))
         for child_id in child_ids:
             self.mark_dirty_downstream(child_id, commit=False)

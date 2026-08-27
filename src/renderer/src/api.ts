@@ -5,6 +5,7 @@ import type {
   Character,
   EventInput,
   Group,
+  MediaItem,
   Place,
   RenderResult,
   SceneEntry,
@@ -133,6 +134,23 @@ export const api = {
   // 動画挿絵のサムネイル(videoThumb.ts が生成して保存する)
   setNodeThumb: (id: string, thumbPath: string | null) =>
     request<unknown>(`/nodes/${id}/thumb`, { method: 'POST', body: JSON.stringify({ thumb_path: thumbPath }) }),
+
+  // ---- 挿絵・参照画像のストック(docs/design/image-gen.md §7) ----
+  /** 持ち主のストック(新しい順)と、いま選択中のファイル名 */
+  listMedia: (ownerType: MediaItem['owner_type'], ownerId: string) =>
+    request<{ items: MediaItem[]; selected: string | null }>(`/media/${ownerType}/${ownerId}`),
+  /** 手持ちの画像 / 動画(uploadAsset 済み)をストックに足す。select で同時に現在の画像にする */
+  addMedia: (ownerType: MediaItem['owner_type'], ownerId: string, path: string, select = true) =>
+    request<MediaItem>('/media', {
+      method: 'POST',
+      body: JSON.stringify({ owner_type: ownerType, owner_id: ownerId, path, select })
+    }),
+  /** ストックの 1 枚を現在の画像にする(生成物なら生成ウインドウの保存状態もそのセットに戻る) */
+  selectMedia: (id: string) => request<MediaItem>(`/media/${id}/select`, { method: 'POST' }),
+  /** ストックから外す(選択中の 1 枚は 400) */
+  deleteMedia: (id: string) => request<{ ok: boolean }>(`/media/${id}`, { method: 'DELETE' }),
+  deleteUnselectedMedia: (ownerType: MediaItem['owner_type'], ownerId: string) =>
+    request<{ deleted: number }>(`/media/${ownerType}/${ownerId}/unselected`, { method: 'DELETE' }),
   resetLayout: () => request<unknown>('/layout/reset', { method: 'POST' }),
   putEvents: (nodeId: string, events: EventInput[]) =>
     request<{ events: StoryEvent[]; validation: string[] }>(`/nodes/${nodeId}/events`, {
@@ -322,24 +340,34 @@ export const api = {
   comfyReleases: () => request<{ releases: ComfyRelease[] }>('/comfy/releases'),
   comfyUninstall: () => request<ComfyStatus>('/comfy/uninstall', { method: 'POST' }),
 
-  /** ComfyUI で参照画像を生成し、候補として保存する(キャラには設定しない。採用は updateCharacter)。
+  /** ComfyUI で参照画像を生成し、ストックに登録する(キャラには設定しない。採用は selectMedia)。
+   *  使ったプロンプト・追加指示・seed はストックの行とキャラの保存状態に 1 セットで書かれる。
    *  数十秒〜。初回はモデル読み込みで更に待つ。seed 省略でランダム */
-  characterRefImageGenerate: (id: string, prompt: string, seed: number | null, signal?: AbortSignal) =>
+  characterRefImageGenerate: (
+    id: string,
+    prompt: string,
+    instructions: string | null,
+    seed: number | null,
+    signal?: AbortSignal
+  ) =>
     request<GeneratedImage>(`/characters/${id}/ref_image/generate`, {
       method: 'POST',
-      body: JSON.stringify({ prompt, seed }),
+      body: JSON.stringify({ prompt, instructions, seed }),
       signal
     }),
-  /** 場面の挿絵の生成ウインドウの状態(プロンプト・追加指示・seed・参照キャラ)を保存する。挿絵は変えない */
-  nodeImageGenSave: (
+  /** ComfyUI で場面の挿絵を生成し、ストックに登録する(挿絵には設定しない。採用は selectMedia)。
+   *  使ったプロンプト・追加指示・seed・参照キャラはストックの行とシーンの保存状態に 1 セットで書かれる */
+  nodeImageGenerate: (
     nodeId: string,
-    state: { prompt: string | null; instructions: string | null; seed: number | null; ref_chars: string[] | null }
-  ) => request<{ ok: boolean }>(`/nodes/${nodeId}/image_gen`, { method: 'POST', body: JSON.stringify(state) }),
-  /** ComfyUI で場面の挿絵を生成し、候補として保存する(挿絵には設定しない。採用は setNodeImage) */
-  nodeImageGenerate: (nodeId: string, prompt: string, charIds: string[], seed: number | null, signal?: AbortSignal) =>
+    prompt: string,
+    charIds: string[],
+    instructions: string | null,
+    seed: number | null,
+    signal?: AbortSignal
+  ) =>
     request<GeneratedImage>(`/nodes/${nodeId}/image/generate`, {
       method: 'POST',
-      body: JSON.stringify({ prompt, char_ids: charIds, seed }),
+      body: JSON.stringify({ prompt, char_ids: charIds, instructions, seed }),
       signal
     }),
   // signal はキュー(tasks.ts)からの中止用
@@ -604,11 +632,13 @@ export interface ComfyRelease {
   variants: ComfyReleaseVariant[]
 }
 
-/** 生成した画像の候補。assets に保存済みだが、まだどこにも設定されていない */
+/** 生成した画像の候補。ストックには登録済みだが、まだ現在の画像には設定されていない */
 export interface GeneratedImage {
   image_path: string
   /** 使った seed。同じ seed + 同じプロンプトで同じ絵になる */
   seed: number
+  /** ストックの行。「決定」は selectMedia(media_id) */
+  media_id: string
 }
 
 /** 場面プロンプト生成の冒頭で届く情報(どのキャラが image1.. になるか) */

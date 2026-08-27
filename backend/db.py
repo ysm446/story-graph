@@ -16,7 +16,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DB_PATH = REPO_ROOT / "data" / "story-graph.db"
 
 # 2: nodes.location を自由テキストから places.id 参照に変える(docs/design/places.md)
-SCHEMA_VERSION = 2
+# 3: 挿絵・参照画像のストック(media)を作り、設定済みの 1 枚を初期の候補として登録する(docs/design/image-gen.md §7)
+SCHEMA_VERSION = 3
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS characters(
@@ -141,6 +142,24 @@ CREATE TABLE IF NOT EXISTS chats(
 
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT);
 
+-- 挿絵・参照画像のストック(docs/design/image-gen.md §7)。持ち主(シーン / キャラ)ごとに
+-- 生成した候補と手持ちの画像を溜め、その中の 1 枚を nodes.image_path / characters.ref_image_path
+-- に「選択中」として写す。生成物はプロンプト・追加指示・seed(・参照キャラ)を 1 セットで持つ
+-- (再現用)。手持ちの画像はどれも NULL。削除は作者の明示操作だけ(ファイルは gc_assets が回収)
+CREATE TABLE IF NOT EXISTS media(
+  id TEXT PRIMARY KEY,
+  owner_type TEXT NOT NULL,        -- 'node' | 'character'
+  owner_id TEXT NOT NULL,
+  path TEXT NOT NULL,              -- assets/images 内のファイル名(画像 / 動画)
+  thumb_path TEXT,                 -- 動画のサムネイル(nodes.thumb_path と同じもの。選び直しで使い回す)
+  prompt TEXT,
+  instructions TEXT,
+  seed INTEGER,
+  ref_chars TEXT,                  -- JSON 配列(場面のみ)
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_media_owner ON media(owner_type, owner_id, created_at);
+
 -- 頻出クエリの索引。parent_of / 子の列挙(edges)、最新清書の取得と stale 化(renders)、
 -- イベント削除に伴う記憶の削除(memories)はどれもミューテーションや画面更新の
 -- たびに走るので、全表走査にしない
@@ -258,8 +277,39 @@ def init_schema(conn: sqlite3.Connection) -> None:
         # 一回限りのデータ変換(lm-chat の作法)
         if version < 2:
             _migrate_locations_to_places(conn)
+        if version < 3:
+            _migrate_images_to_media(conn)
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
     conn.commit()
+
+
+def _migrate_images_to_media(conn: sqlite3.Connection) -> None:
+    """設定済みの挿絵 / 参照画像を、それぞれの持ち主のストックの最初の 1 枚として登録する。
+
+    生成ウインドウの保存状態(プロンプト・追加指示・seed)は「その画像を作ったときのもの」とは
+    限らない(ストック導入前は閉じるたびに保存していた)が、他に手がかりが無いのでそのまま添える。
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    rows = conn.execute(
+        "SELECT id, image_path, thumb_path, image_prompt, image_instructions, image_seed, image_ref_chars"
+        " FROM nodes WHERE image_path IS NOT NULL"
+    ).fetchall()
+    for r in rows:
+        conn.execute(
+            "INSERT INTO media(id, owner_type, owner_id, path, thumb_path, prompt, instructions, seed, ref_chars, created_at)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?)",
+            (uuid.uuid4().hex[:12], "node", r[0], r[1], r[2], r[3], r[4], r[5], r[6], now),
+        )
+    rows = conn.execute(
+        "SELECT id, ref_image_path, ref_image_prompt, ref_image_instructions, ref_image_seed"
+        " FROM characters WHERE ref_image_path IS NOT NULL"
+    ).fetchall()
+    for r in rows:
+        conn.execute(
+            "INSERT INTO media(id, owner_type, owner_id, path, thumb_path, prompt, instructions, seed, ref_chars, created_at)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?)",
+            (uuid.uuid4().hex[:12], "character", r[0], r[1], None, r[2], r[3], r[4], None, now),
+        )
 
 
 def _migrate_locations_to_places(conn: sqlite3.Connection) -> None:

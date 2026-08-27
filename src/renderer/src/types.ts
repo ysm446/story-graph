@@ -20,6 +20,24 @@ export interface Character {
   created_at: string
 }
 
+/** 挿絵・参照画像のストックの 1 枚(docs/design/image-gen.md §7)。
+ *  持ち主(シーン / キャラ)ごとに溜め、その中の 1 枚が nodes.image_path / characters.ref_image_path に
+ *  「選択中」として写される。生成物はプロンプト・追加指示・seed(・参照キャラ)を 1 セットで持つ。
+ *  手持ちの画像(ドロップ / ファイル選択)はどれも null */
+export interface MediaItem {
+  id: string
+  owner_type: 'node' | 'character'
+  owner_id: string
+  path: string
+  /** 動画のサムネイル(nodes.thumb_path と同じもの) */
+  thumb_path: string | null
+  prompt: string | null
+  instructions: string | null
+  seed: number | null
+  ref_chars: string[] | null
+  created_at: string
+}
+
 /** 場所。キャラクターと同型の登録制エンティティ(docs/design/places.md)。
  *  シーンは 1 つだけ参照し、空欄なら親から引き継ぐ。 */
 export interface Place {

@@ -3,6 +3,7 @@ import { api, assetUrl, characterRefImagePromptStream, isAbortError, uploadAsset
 import { CandidatePreview, SeedField } from './ImageCandidate'
 import { Icon } from './icons'
 import Lightbox from './Lightbox'
+import MediaPicker from './MediaPicker'
 import type { Character } from './types'
 import { useElapsedSeconds } from './useElapsed'
 
@@ -37,6 +38,8 @@ export default function RefImagePanel({
   const [dragOver, setDragOver] = useState(false)
   // 参照画像をクリックしたときの拡大表示
   const [lightboxOpen, setLightboxOpen] = useState(false)
+  // ストック(候補の一覧)ウインドウ
+  const [stockOpen, setStockOpen] = useState(false)
   const dragDepth = useRef(0)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const abortRef = useRef<AbortController | null>(null)
@@ -52,6 +55,7 @@ export default function RefImagePanel({
     setPhase(null)
     setError(null)
     setInstructions('')
+    setStockOpen(false)
   }, [character?.id])
 
   if (!character) return null
@@ -63,7 +67,7 @@ export default function RefImagePanel({
     setError(null)
     try {
       const { path: uploaded } = await uploadAsset(file)
-      await api.updateCharacter(character.id, { ref_image_path: uploaded })
+      await api.addMedia('character', character.id, uploaded) // ストックに足して、そのまま参照画像にする
       await onChanged({ ref_image_path: uploaded })
     } catch (e) {
       setError(`画像の保存に失敗しました: ${String(e)}`)
@@ -121,11 +125,13 @@ export default function RefImagePanel({
     setPhase('generate')
     setError(null)
     try {
-      const r = await api.characterRefImageGenerate(character.id, modal.prompt, seed, controller.signal)
+      // 生成に使ったプロンプト・追加指示・seed は、サーバがストックの行とキャラの保存状態に
+      // 1 セットで書く(再現性。閉じる / 決定では保存しない)
+      const trimmed = instructions.trim() || null
+      const r = await api.characterRefImageGenerate(character.id, modal.prompt, trimmed, seed, controller.signal)
       setCandidate(r)
       setSeed(r.seed) // そのまま「生成」なら同じ絵、-1 で別の絵
-      // 再現性のため、保存するのは「生成に使った」プロンプト・追加指示・seed の 1 セットだけ(閉じる / 決定では保存しない)
-      await persist({ ref_image_prompt: modal.prompt, ref_image_instructions: instructions.trim() || null, ref_image_seed: r.seed })
+      await onChanged({ ref_image_prompt: modal.prompt, ref_image_instructions: trimmed, ref_image_seed: r.seed })
     } catch (e) {
       if (!isAbortError(e)) setError(String(e))
     } finally {
@@ -134,23 +140,21 @@ export default function RefImagePanel({
     }
   }
 
-  /** 生成ウインドウの状態(プロンプト・追加指示・seed)をキャラに保存する。画像は変えない */
-  const persist = async (patch: Partial<Character>): Promise<void> => {
-    await api.updateCharacter(character.id, patch)
-    await onChanged(patch)
-  }
-
   const apply = async (): Promise<void> => {
     if (!modal || !candidate) return
     setPhase('apply')
     setError(null)
     try {
-      // プロンプト・追加指示・seed は生成時に保存済み(候補と対応するセット)。ここでは画像だけ
-      const patch = { ref_image_path: candidate.image_path }
-      await api.updateCharacter(character.id, patch)
+      // プロンプト・追加指示・seed は生成時にストックの行へ保存済み。選択でそのセットがキャラにも写る
+      const m = await api.selectMedia(candidate.media_id)
       setModal(null)
       setCandidate(null)
-      await onChanged(patch)
+      await onChanged({
+        ref_image_path: m.path,
+        ref_image_prompt: m.prompt,
+        ref_image_instructions: m.instructions,
+        ref_image_seed: m.seed
+      })
     } catch (e) {
       setError(String(e))
     } finally {
@@ -250,6 +254,14 @@ export default function RefImagePanel({
         <div className="flex min-w-0 flex-1 flex-col gap-1.5">
           <div className="flex flex-wrap items-center gap-2">
             <button
+              onClick={() => setStockOpen(true)}
+              className="rounded-md border px-2 py-0.5 text-[11px]"
+              style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+              data-tip="生成した候補と手持ちの画像の一覧。ここから 1 枚を選び直したり、いらない候補を削除したりできます"
+            >
+              ストック
+            </button>
+            <button
               onClick={() => void openGenerate()}
               disabled={phase !== null}
               className="accent-action inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[12px] font-medium disabled:opacity-40"
@@ -275,7 +287,7 @@ export default function RefImagePanel({
                   onClick={() => void remove()}
                   className="rounded-md border px-2 py-0.5 text-[11px]"
                   style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-                  data-tip="参照画像を外す(プロンプトは残るので、作り直しに使えます)"
+                  data-tip="参照画像を外す(ストックとプロンプトは残るので、選び直しや作り直しに使えます)"
                 >
                   外す
                 </button>
@@ -310,6 +322,16 @@ export default function RefImagePanel({
       </div>
 
       {lightboxOpen && url && path && <Lightbox src={url} path={path} onClose={() => setLightboxOpen(false)} />}
+      {stockOpen && (
+        <MediaPicker
+          ownerType="character"
+          ownerId={character.id}
+          aspect="832 / 1216"
+          accept="image/png,image/jpeg,image/webp"
+          onChanged={() => void onChanged({})}
+          onClose={() => setStockOpen(false)}
+        />
+      )}
       {modal && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center"
@@ -327,7 +349,7 @@ export default function RefImagePanel({
             <h3 className="mb-1 text-[14px] font-semibold">参照画像を生成</h3>
             <p className="mb-3 text-[11px]" style={{ color: 'var(--text-faint)' }}>
               人物の見た目(英語)。手直しできます。全身・正面・無地背景の指示は後ろに自動で足されます。
-              生成した画像は「決定」を押すまで参照画像にはなりません。プロンプト・追加指示・seed は「生成」したときの組み合わせでキャラに保存されます(閉じるだけでは保存しません)。
+              生成した画像はストックに残り、「決定」を押すまで参照画像にはなりません。プロンプト・追加指示・seed は「生成」したときの組み合わせでキャラに保存されます(閉じるだけでは保存しません)。
             </p>
             <label className="mb-3 block">
               <span className="mb-1 block text-[10px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
@@ -415,7 +437,7 @@ export default function RefImagePanel({
                 onClick={closeModal}
                 className="ml-auto rounded-md border px-2 py-0.5 text-[11px]"
                 style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-                data-tip={candidate ? '生成した画像は採用せずに閉じます(最後に生成したときの設定が残ります)' : '閉じるだけでは設定を保存しません(生成したときに保存されます)'}
+                data-tip={candidate ? '生成した画像は参照画像にせずに閉じます(候補はストックに残ります)' : '閉じるだけでは設定を保存しません(生成したときに保存されます)'}
               >
                 {phase === 'generate' ? 'キャンセル' : '閉じる'}
               </button>

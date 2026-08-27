@@ -36,6 +36,7 @@ import { MsgActionButton, StatsLine, SystemPromptModal } from '../GenMeta'
 import { Icon } from '../icons'
 import ProofreadTextarea from '../ProofreadTextarea'
 import Lightbox from '../Lightbox'
+import MediaPicker from '../MediaPicker'
 import RelationGraph from '../RelationGraph'
 import SceneImageModal from '../SceneImageModal'
 import {
@@ -523,6 +524,8 @@ function BeatTab({
   const [retireReason, setRetireReason] = useState('death')
   const [imageDragOver, setImageDragOver] = useState(false)
   const [sceneImageOpen, setSceneImageOpen] = useState(false)
+  // 挿絵のストック(候補の一覧)ウインドウ
+  const [stockOpen, setStockOpen] = useState(false)
   // 挿絵のサムネイルをクリックしたときの拡大表示
   const [lightboxOpen, setLightboxOpen] = useState(false)
   const suggestElapsed = useElapsedSeconds(suggesting !== null)
@@ -538,8 +541,9 @@ function BeatTab({
       setError('画像または動画ファイルをドロップしてください')
       return
     }
+    // ストックに足して、そのまま挿絵にする(前の挿絵はストックに残る)
     void uploadAsset(file)
-      .then(({ path }) => api.setNodeImage(node.id, path))
+      .then(({ path }) => api.addMedia('node', node.id, path))
       .then(onSaved)
       .catch((err) => setError(String(err)))
   }
@@ -938,6 +942,16 @@ function BeatTab({
           onClose={() => setSceneImageOpen(false)}
         />
       )}
+      {stockOpen && (
+        <MediaPicker
+          ownerType="node"
+          ownerId={node.id}
+          aspect="1216 / 832"
+          accept="image/png,image/jpeg,image/gif,image/webp,video/mp4,video/webm"
+          onChanged={onSaved}
+          onClose={() => setStockOpen(false)}
+        />
+      )}
       <div>
         <div className="mb-1 flex items-center justify-between">
           <span className="text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
@@ -952,6 +966,14 @@ function BeatTab({
               <Icon name="sparkle" size={11} /> 生成
             </button>
             <button
+              onClick={() => setStockOpen(true)}
+              className="rounded-md border px-2 py-0.5 text-[11px]"
+              style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+              data-tip="生成した候補と手持ちの画像・動画の一覧。ここから 1 枚を選び直したり、いらない候補を削除したりできます"
+            >
+              ストック
+            </button>
+            <button
               onClick={() => imageInputRef.current?.click()}
               className="rounded-md border px-2 py-0.5 text-[11px]"
               style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
@@ -963,6 +985,7 @@ function BeatTab({
                 onClick={() => void api.setNodeImage(node.id, null).then(onSaved)}
                 className="rounded-md border px-2 py-0.5 text-[11px]"
                 style={{ borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }}
+                data-tip="挿絵を外します(ストックには残るので、あとから選び直せます)"
               >
                 外す
               </button>

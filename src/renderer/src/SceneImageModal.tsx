@@ -94,18 +94,19 @@ export default function SceneImageModal({
     setPhase('generate')
     setError(null)
     try {
-      const r = await api.nodeImageGenerate(node.id, prompt, selected ?? [], seed, controller.signal)
+      // 生成に使ったプロンプト・追加指示・seed・参照キャラは、サーバがストックの行とシーンの
+      // 保存状態に 1 セットで書く(再現性。閉じる / 決定では保存しない)
+      const r = await api.nodeImageGenerate(
+        node.id,
+        prompt,
+        selected ?? [],
+        instructions.trim() || null,
+        seed,
+        controller.signal
+      )
       setCandidate(r)
       // 使った seed を欄に入れておく。そのまま「生成」すれば同じ絵、-1 で別の絵
       setSeed(r.seed)
-      // 再現性のため、保存するのは「生成に使った」プロンプト・追加指示・seed・参照キャラの 1 セットだけ。
-      // 閉じる / 決定では保存しない(手直しや書き直し途中の欄が保存済みのセットを崩さない)
-      await api.nodeImageGenSave(node.id, {
-        prompt: prompt.trim() || null,
-        instructions: instructions.trim() || null,
-        seed: r.seed,
-        ref_chars: selected
-      })
     } catch (e) {
       if (!isAbortError(e)) setError(String(e))
     } finally {
@@ -119,7 +120,7 @@ export default function SceneImageModal({
     setPhase('apply')
     setError(null)
     try {
-      await api.setNodeImage(node.id, candidate.image_path)
+      await api.selectMedia(candidate.media_id)
       onGenerated()
       onClose()
     } catch (e) {
@@ -170,7 +171,7 @@ export default function SceneImageModal({
         <h3 className="mb-1 text-[14px] font-semibold">この場面の画像を生成</h3>
         <p className="mb-3 text-[11px]" style={{ color: 'var(--text-faint)' }}>
           ビート・場所・登場人物・追加指示から LLM が英語のプロンプトを書きます。参照画像を渡す人物は image1〜 で参照されます。
-          生成した画像は「決定」を押すまで挿絵にはなりません。プロンプト・追加指示・seed・参照キャラは「生成」したときの組み合わせでこのシーンに保存されます(閉じるだけでは保存しません)。
+          生成した画像はストックに残り、「決定」を押すまで挿絵にはなりません。プロンプト・追加指示・seed・参照キャラは「生成」したときの組み合わせでこのシーンに保存されます(閉じるだけでは保存しません)。
         </p>
 
         {/* 参照画像を渡すキャラ(cast 順) */}
@@ -320,7 +321,7 @@ export default function SceneImageModal({
             onClick={close}
             className="ml-auto rounded-md border px-2 py-0.5 text-[11px]"
             style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-            data-tip={candidate ? '生成した画像は採用せずに閉じます(最後に生成したときの設定が残ります)' : '閉じるだけでは設定を保存しません(生成したときに保存されます)'}
+            data-tip={candidate ? '生成した画像は挿絵にせずに閉じます(候補はストックに残ります)' : '閉じるだけでは設定を保存しません(生成したときに保存されます)'}
           >
             {phase === 'generate' ? 'キャンセル' : '閉じる'}
           </button>
