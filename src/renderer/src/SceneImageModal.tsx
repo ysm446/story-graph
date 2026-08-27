@@ -322,7 +322,7 @@ export default function SceneImageModal({
             style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
             data-tip={candidate ? '生成した画像は採用せずに閉じます(最後に生成したときの設定が残ります)' : '閉じるだけでは設定を保存しません(生成したときに保存されます)'}
           >
-            {phase === 'generate' ? '中止' : '閉じる'}
+            {phase === 'generate' ? 'キャンセル' : '閉じる'}
           </button>
         </div>
       </div>
