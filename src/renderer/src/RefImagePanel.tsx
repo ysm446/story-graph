@@ -124,6 +124,7 @@ export default function RefImagePanel({
       const r = await api.characterRefImageGenerate(character.id, modal.prompt, seed, controller.signal)
       setCandidate(r)
       setSeed(r.seed) // そのまま「生成」なら同じ絵、-1 で別の絵
+      // 再現性のため、保存するのは「生成に使った」プロンプト・追加指示・seed の 1 セットだけ(閉じる / 決定では保存しない)
       await persist({ ref_image_prompt: modal.prompt, ref_image_instructions: instructions.trim() || null, ref_image_seed: r.seed })
     } catch (e) {
       if (!isAbortError(e)) setError(String(e))
@@ -144,12 +145,8 @@ export default function RefImagePanel({
     setPhase('apply')
     setError(null)
     try {
-      const patch = {
-        ref_image_path: candidate.image_path,
-        ref_image_prompt: modal.prompt,
-        ref_image_instructions: instructions.trim() || null,
-        ref_image_seed: seed
-      }
+      // プロンプト・追加指示・seed は生成時に保存済み(候補と対応するセット)。ここでは画像だけ
+      const patch = { ref_image_path: candidate.image_path }
       await api.updateCharacter(character.id, patch)
       setModal(null)
       setCandidate(null)
@@ -161,15 +158,11 @@ export default function RefImagePanel({
     }
   }
 
-  /** 閉じる(不採用)。プロンプト・追加指示・seed は保存する */
+  /** 閉じる(不採用)。保存しない: 手直しや書き直し途中の欄で、生成時に保存したセットを崩さない */
   const closeModal = (): void => {
     abortRef.current?.abort()
-    const patch = modal
-      ? { ref_image_prompt: modal.prompt, ref_image_instructions: instructions.trim() || null, ref_image_seed: seed }
-      : null
     setModal(null)
     setCandidate(null)
-    if (patch) void persist(patch).catch((e) => setError(`生成の設定を保存できませんでした: ${String(e)}`))
   }
 
   const remove = async (): Promise<void> => {
@@ -334,7 +327,7 @@ export default function RefImagePanel({
             <h3 className="mb-1 text-[14px] font-semibold">参照画像を生成</h3>
             <p className="mb-3 text-[11px]" style={{ color: 'var(--text-faint)' }}>
               人物の見た目(英語)。手直しできます。全身・正面・無地背景の指示は後ろに自動で足されます。
-              生成した画像は「決定」を押すまで参照画像にはなりません。プロンプト・追加指示・seed はキャラに保存されます。
+              生成した画像は「決定」を押すまで参照画像にはなりません。プロンプト・追加指示・seed は「生成」したときの組み合わせでキャラに保存されます(閉じるだけでは保存しません)。
             </p>
             <label className="mb-3 block">
               <span className="mb-1 block text-[10px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
@@ -422,7 +415,7 @@ export default function RefImagePanel({
                 onClick={closeModal}
                 className="ml-auto rounded-md border px-2 py-0.5 text-[11px]"
                 style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-                data-tip={candidate ? '生成した画像は採用せずに閉じます(プロンプトと設定は保存されます)' : 'プロンプトと設定は保存されます'}
+                data-tip={candidate ? '生成した画像は採用せずに閉じます(最後に生成したときの設定が残ります)' : '閉じるだけでは設定を保存しません(生成したときに保存されます)'}
               >
                 {phase === 'generate' ? '中止' : '閉じる'}
               </button>

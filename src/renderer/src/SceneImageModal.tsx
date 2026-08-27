@@ -88,20 +88,6 @@ export default function SceneImageModal({
     return () => abortRef.current?.abort()
   }, [])
 
-  /** いまの入力をシーンに保存する(閉じる / 生成 / 決定のたび。挿絵そのものは変えない) */
-  const persist = async (): Promise<void> => {
-    try {
-      await api.nodeImageGenSave(node.id, {
-        prompt: prompt.trim() || null,
-        instructions: instructions.trim() || null,
-        seed,
-        ref_chars: selected
-      })
-    } catch (e) {
-      setError(`生成の設定を保存できませんでした: ${String(e)}`)
-    }
-  }
-
   const generate = async (): Promise<void> => {
     const controller = new AbortController()
     abortRef.current = controller
@@ -112,6 +98,8 @@ export default function SceneImageModal({
       setCandidate(r)
       // 使った seed を欄に入れておく。そのまま「生成」すれば同じ絵、-1 で別の絵
       setSeed(r.seed)
+      // 再現性のため、保存するのは「生成に使った」プロンプト・追加指示・seed・参照キャラの 1 セットだけ。
+      // 閉じる / 決定では保存しない(手直しや書き直し途中の欄が保存済みのセットを崩さない)
       await api.nodeImageGenSave(node.id, {
         prompt: prompt.trim() || null,
         instructions: instructions.trim() || null,
@@ -131,7 +119,6 @@ export default function SceneImageModal({
     setPhase('apply')
     setError(null)
     try {
-      await persist()
       await api.setNodeImage(node.id, candidate.image_path)
       onGenerated()
       onClose()
@@ -144,10 +131,8 @@ export default function SceneImageModal({
 
   const close = (): void => {
     abortRef.current?.abort()
-    void persist().then(() => {
-      onGenerated() // 保存した生成の設定を node に反映させる(次に開いたときの復元用)
-      onClose()
-    })
+    onGenerated() // 生成のたびに保存した設定を node に反映させる(次に開いたときの復元用)
+    onClose()
   }
 
   const toggle = (id: string): void => {
@@ -185,7 +170,7 @@ export default function SceneImageModal({
         <h3 className="mb-1 text-[14px] font-semibold">この場面の画像を生成</h3>
         <p className="mb-3 text-[11px]" style={{ color: 'var(--text-faint)' }}>
           ビート・場所・登場人物・追加指示から LLM が英語のプロンプトを書きます。参照画像を渡す人物は image1〜 で参照されます。
-          生成した画像は「決定」を押すまで挿絵にはなりません。プロンプト・追加指示・seed はこのシーンに保存されます。
+          生成した画像は「決定」を押すまで挿絵にはなりません。プロンプト・追加指示・seed・参照キャラは「生成」したときの組み合わせでこのシーンに保存されます(閉じるだけでは保存しません)。
         </p>
 
         {/* 参照画像を渡すキャラ(cast 順) */}
@@ -335,7 +320,7 @@ export default function SceneImageModal({
             onClick={close}
             className="ml-auto rounded-md border px-2 py-0.5 text-[11px]"
             style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-            data-tip={candidate ? '生成した画像は採用せずに閉じます(プロンプトと設定は保存されます)' : 'プロンプトと設定は保存されます'}
+            data-tip={candidate ? '生成した画像は採用せずに閉じます(最後に生成したときの設定が残ります)' : '閉じるだけでは設定を保存しません(生成したときに保存されます)'}
           >
             {phase === 'generate' ? '中止' : '閉じる'}
           </button>
