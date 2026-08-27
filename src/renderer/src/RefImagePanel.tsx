@@ -405,7 +405,7 @@ export default function RefImagePanel({
               </button>
               {phase === 'generate' && (
                 <span className="text-[12px]" style={{ color: 'var(--text-dim)' }}>
-                  ComfyUI で生成中…(初回はモデルの読み込みで 1〜2 分)
+                  ComfyUI で生成中…
                   <span className="ml-1 tabular-nums" style={{ color: 'var(--text-faint)' }}>({elapsed}s)</span>
                 </span>
               )}

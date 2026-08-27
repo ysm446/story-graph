@@ -288,7 +288,7 @@ export default function SceneImageModal({
           </button>
           {phase && phase !== 'apply' && (
             <span className="text-[12px]" style={{ color: 'var(--text-dim)' }}>
-              {phase === 'prompt' ? 'プロンプトを作成中…' : 'ComfyUI で生成中…(初回はモデルの読み込みで 1〜2 分)'}
+              {phase === 'prompt' ? 'プロンプトを作成中…' : 'ComfyUI で生成中…'}
               <span className="ml-1 tabular-nums" style={{ color: 'var(--text-faint)' }}>({elapsed}s)</span>
             </span>
           )}
