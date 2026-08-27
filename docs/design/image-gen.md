@@ -1,7 +1,7 @@
 # 画像生成(ComfyUI 連携)— キャラクターの参照画像と場面の挿絵
 
 作成日時: 2026-08-26 15:15
-更新日時: 2026-08-28 05:10
+更新日時: 2026-08-28 05:40
 
 ローカルの ComfyUI で挿絵を作る仕組みの設計メモ。2026-08-26 のユーザー発案
 ([progress.md](../plan/progress.md) の「場面の画像生成」)。画像は**装飾専用**で、
@@ -81,9 +81,10 @@ API 形式の JSON を `comfy.build_t2i_workflow` で組み立てて `/prompt` �
    保存はしない。UI はモーダルのプロンプト欄へ delta を流し込み、手直しさせる。
 2. `POST /characters/{id}/ref_image/generate` `{prompt, instructions?, seed?}` — 人物描写の後ろに共通の接尾辞
    (`REF_IMAGE_SUFFIX`: 全身・正面・ニュートラルなポーズ・無地の薄灰背景・単独)を機械的に足して生成。
-   PNG を `assets/images/<uuid>.png` に置き、**ストック(§7)に登録して** `{image_path, seed, media_id}` を返す
-   (キャラの参照画像には設定しない)。UI はプレビューを見せ、「決定」で `POST /media/{id}/select` する。
-   不採用の候補もストックに残る(消すのはストックの「削除」だけ)。
+   PNG を `assets/images/<uuid>.png` に**候補として**置き、`{image_path, seed, prompt, instructions, ref_chars}`
+   を返す(ストックにもキャラにも入れない)。UI はプレビューを見せ、「決定」で `POST /media`
+   (戻り値のセット付き、select)→ ストックに入り参照画像になる。決定しなかった候補は参照が無いので
+   `gc_assets` が回収する(2026-08-28 ユーザー要望「決定したときだけストックに。過程の絵は廃棄でよい」)。
    seed は使った値を返し、UI の seed 欄に入る(同じ seed + 同じプロンプト = 同じ絵。-1(または 🎲)で
    ランダムにして別の絵を引く)。2026-08-27 ユーザー要望「生成しても即決定ではなく、確認してから」。
 3. **追加指示と保存・復元**(2026-08-27 ユーザー要望): モーダルに「追加指示」欄(日本語可。
@@ -116,8 +117,9 @@ API 形式の JSON を `comfy.build_t2i_workflow` で組み立てて `/prompt` �
    SSE: 冒頭の `{meta:{suffix, refs, cast}}` で「誰が image1.. か」を返し、続けて `{delta}` を流す。
    `char_ids` 省略時は cast 順に参照画像のあるキャラを最大 3 人自動選択(`select_scene_refs`)。
 2. `POST /nodes/{id}/image/generate` `{prompt, char_ids, seed?}` — 参照画像を ComfyUI に上げ、編集ワークフローで
-   生成(1216×832、接尾辞 `SCENE_SUFFIX`)。`assets/images` に保存してストック(§7)に登録し
-   `{image_path, seed, media_id}` を返す。採用は UI の「決定」→ `POST /media/{id}/select`。
+   生成(1216×832、接尾辞 `SCENE_SUFFIX`)。`assets/images` に候補として保存し
+   `{image_path, seed, prompt, instructions, ref_chars}` を返す。採用は UI の「決定」→ `POST /media`
+   (セット付き、select)。決定しなかった候補は `gc_assets` が回収する。
 3. UI は `SceneImageModal.tsx`(インスペクタの挿絵欄「生成」)。cast のトグルで渡す参照画像を選ぶ
    (参照画像の無いキャラは押せず、文章での描写になる)。選び方を変えるとラベルがずれるので、
    「書き直す」を押すまで生成ボタンを止める。生成 → プレビュー → 「決定」/ seed を変えて「もう一度生成」/
@@ -153,17 +155,19 @@ API 形式の JSON を `comfy.build_t2i_workflow` で組み立てて `/prompt` �
    その行も消える。動画のサムネイルは `set_node_thumb` が `media.thumb_path` にも写し、
    選び直したときに作り直さない。
 3. **API**: `GET /media/{owner_type}/{owner_id}` → `{items(新しい順), selected}`。
-   `POST /media {owner_type, owner_id, path, select=true}` は手持ちのファイル用(アップロード後に呼ぶ)。
+   `POST /media {owner_type, owner_id, path, select=true, prompt?, instructions?, seed?, ref_chars?}` は
+   手持ちのファイル(アップロード後、セット無し)と生成ウインドウの「決定」(generate の戻り値のセット付き)の
+   両方が通る。**ストックに入るのは決定した画像だけ**で、生成の過程の候補は残さない。
    `POST /media/{id}/select` で現在の画像にする(生成物なら**生成ウインドウの保存状態もそのセットに戻す**。
    手持ちの画像は保存状態に触れない)。`DELETE /media/{id}` は**選択中の 1 枚なら 400**
    (先に別の候補を選ぶか、画像を外す)。`DELETE /media/{owner_type}/{owner_id}/unselected` で
-   選択中以外をまとめて消す。生成 API(§4-2 / §6-2)は生成のたびにストックへ登録する(自動)。
+   選択中以外をまとめて消す。
 4. **UI**: `MediaPicker.tsx`(インスペクタの挿絵欄・参照画像パネルの「ストック」ボタン)。
    カードの格子(場面は 3 列横長、参照画像は 4 列縦長)。クリックで選択、選択中はアクセント枠 +
    「選択中」バッジ、動画は右下に「動画」。各カードの下に seed(手持ちは「手持ち」)と「削除」
    (選択中は押せない)。上に「+ 追加」(選択せずに足す)と「選んでいない候補を削除(N)」。
    ツールチップに seed・追加指示・プロンプト(先頭 160 字)を出す。
-   生成ウインドウの「決定」は `selectMedia(media_id)`、ドロップ / ファイル選択は `addMedia(select=true)`、
+   生成ウインドウの「決定」は `addMedia(path, select, セット)`、ドロップ / ファイル選択は `addMedia(select=true)`、
    「外す」は従来どおり `image_path = NULL`(ストックは残る)。
 
 ## 8. この先

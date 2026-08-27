@@ -152,7 +152,7 @@ export default function MediaPicker({
             className="rounded-xl border border-dashed px-4 py-8 text-center text-[12px]"
             style={{ borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }}
           >
-            まだ候補がありません。「生成」するか、「+ 追加」で手持ちのファイルを足してください。
+            まだ候補がありません。生成して「決定」するか、「+ 追加」で手持ちのファイルを足してください。
           </div>
         ) : (
           <div className={`grid gap-3 ${ownerType === 'node' ? 'grid-cols-3' : 'grid-cols-4'}`}>

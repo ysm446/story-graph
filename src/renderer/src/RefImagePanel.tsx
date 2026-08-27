@@ -145,8 +145,8 @@ export default function RefImagePanel({
     setPhase('apply')
     setError(null)
     try {
-      // プロンプト・追加指示・seed は生成時にストックの行へ保存済み。選択でそのセットがキャラにも写る
-      const m = await api.selectMedia(candidate.media_id)
+      // 決定したときだけストックに入れる(生成に使ったセット付き)。決定しなかった候補は捨てる
+      const m = await api.addMedia('character', character.id, candidate.image_path, true, candidate)
       setModal(null)
       setCandidate(null)
       await onChanged({
@@ -349,7 +349,7 @@ export default function RefImagePanel({
             <h3 className="mb-1 text-[14px] font-semibold">参照画像を生成</h3>
             <p className="mb-3 text-[11px]" style={{ color: 'var(--text-faint)' }}>
               人物の見た目(英語)。手直しできます。全身・正面・無地背景の指示は後ろに自動で足されます。
-              生成した画像はストックに残り、「決定」を押すまで参照画像にはなりません。プロンプト・追加指示・seed は「生成」したときの組み合わせでキャラに保存されます(閉じるだけでは保存しません)。
+              生成した画像は「決定」を押すまで参照画像にはなりません(決定した画像だけがストックに残ります)。プロンプト・追加指示・seed は「生成」したときの組み合わせでキャラに保存されます(閉じるだけでは保存しません)。
             </p>
             <label className="mb-3 block">
               <span className="mb-1 block text-[10px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
@@ -437,7 +437,7 @@ export default function RefImagePanel({
                 onClick={closeModal}
                 className="ml-auto rounded-md border px-2 py-0.5 text-[11px]"
                 style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-                data-tip={candidate ? '生成した画像は参照画像にせずに閉じます(候補はストックに残ります)' : '閉じるだけでは設定を保存しません(生成したときに保存されます)'}
+                data-tip={candidate ? '生成した画像は採用せずに閉じます(ストックには残りません)' : '閉じるだけでは設定を保存しません(生成したときに保存されます)'}
               >
                 {phase === 'generate' ? 'キャンセル' : '閉じる'}
               </button>

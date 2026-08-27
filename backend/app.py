@@ -729,8 +729,13 @@ async def set_node_thumb(node_id: str, body: NodeThumbIn) -> dict[str, str]:
 class MediaIn(BaseModel):
     owner_type: str  # 'node' | 'character'
     owner_id: str
-    path: str  # /assets/upload の戻り値
+    path: str  # /assets/upload または generate の戻り値
     select: bool = True  # 足した画像をそのまま現在の画像にする(ドロップ / ファイル選択の既定)
+    # 生成物のとき: 生成に使ったセット(generate の戻り値をそのまま渡す)。手持ちの画像は全部 None
+    prompt: str | None = None
+    instructions: str | None = None
+    seed: int | None = None
+    ref_chars: list[str] | None = None
 
 
 def _check_media_owner(owner_type: str, owner_id: str) -> None:
@@ -753,9 +758,13 @@ async def list_media(owner_type: str, owner_id: str) -> dict[str, Any]:
 
 @app.post("/media")
 async def add_media(body: MediaIn) -> dict[str, Any]:
-    """手持ちの画像 / 動画をストックに足す(プロンプト等は空)。select で同時に現在の画像にする。"""
+    """ストックに足す。手持ちの画像 / 動画(セットは空)と、生成ウインドウの「決定」(生成に使った
+    セット付き)の両方がここを通る。select で同時に現在の画像にする。"""
     _check_media_owner(body.owner_type, body.owner_id)
-    m = store.add_media(body.owner_type, body.owner_id, body.path)
+    m = store.add_media(
+        body.owner_type, body.owner_id, body.path,
+        prompt=body.prompt, instructions=body.instructions, seed=body.seed, ref_chars=body.ref_chars,
+    )
     if body.select:
         store.select_media(m["id"])
     return m
@@ -1192,11 +1201,11 @@ class RefImageGenerateIn(BaseModel):
 
 @app.post("/characters/{char_id}/ref_image/generate")
 async def character_ref_image_generate(char_id: str, body: RefImageGenerateIn) -> dict[str, Any]:
-    """ComfyUI で参照画像を生成し、**ストックに登録する**(キャラの参照画像には設定しない)。
+    """ComfyUI で参照画像を生成し、assets に**候補として**保存する(ストックにもキャラにも入れない)。
 
-    採用は UI の「決定」→ POST /media/{id}/select。使ったプロンプト・追加指示・seed は
-    ストックの行に 1 セットで持ち、キャラの生成ウインドウの保存状態にも写す(再現用)。
-    採用されなかった候補もストックに残る(消すのは作者の明示操作)。"""
+    採用は UI の「決定」→ POST /media(生成に使ったセット付き、select)。不採用の候補は参照が
+    無いので gc_assets が回収する。使ったプロンプト・追加指示・seed はキャラの生成ウインドウの
+    保存状態に 1 セットで写し(再現用)、戻り値にも含める(「決定」がそのままストックへ渡す)。"""
     import uuid
     from pathlib import Path as _Path
 
@@ -1221,11 +1230,10 @@ async def character_ref_image_generate(char_id: str, body: RefImageGenerateIn) -
     name = f"{uuid.uuid4().hex[:12]}.png"
     await asyncio.to_thread((_Path(assets) / name).write_bytes, data)
     instructions = (body.instructions or "").strip() or None
-    m = store.add_media("character", char_id, name, prompt=body.prompt, instructions=instructions, seed=seed)
     store.update_character(
         char_id, {"ref_image_prompt": body.prompt, "ref_image_instructions": instructions, "ref_image_seed": seed}
     )
-    return {"image_path": name, "seed": seed, "media_id": m["id"]}
+    return {"image_path": name, "seed": seed, "prompt": body.prompt, "instructions": instructions, "ref_chars": None}
 
 
 def _scene_context(node_id: str) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any] | None]:
@@ -1309,10 +1317,10 @@ class SceneImageGenerateIn(BaseModel):
 
 @app.post("/nodes/{node_id}/image/generate")
 async def node_image_generate(node_id: str, body: SceneImageGenerateIn) -> dict[str, Any]:
-    """場面の挿絵を ComfyUI で生成し、**ストックに登録する**(挿絵には設定しない)。
-    採用は UI の「決定」→ POST /media/{id}/select。使ったプロンプト・追加指示・seed・参照キャラは
-    ストックの行に 1 セットで持ち、シーンの生成ウインドウの保存状態にも写す(再現用)。
-    採用されなかった候補もストックに残る(消すのは作者の明示操作)。"""
+    """場面の挿絵を ComfyUI で生成し、assets に**候補として**保存する(ストックにも挿絵にも入れない)。
+    採用は UI の「決定」→ POST /media(生成に使ったセット付き、select)。不採用の候補は gc_assets が回収する。
+    使ったプロンプト・追加指示・seed・参照キャラはシーンの生成ウインドウの保存状態に 1 セットで写し
+    (再現用)、戻り値にも含める(「決定」がそのままストックへ渡す)。"""
     import uuid
     from pathlib import Path as _Path
 
@@ -1343,11 +1351,10 @@ async def node_image_generate(node_id: str, body: SceneImageGenerateIn) -> dict[
     name = f"{uuid.uuid4().hex[:12]}.png"
     await asyncio.to_thread((_Path(assets) / name).write_bytes, data)
     instructions = (body.instructions or "").strip() or None
-    m = store.add_media(
-        "node", node_id, name, prompt=body.prompt, instructions=instructions, seed=seed, ref_chars=body.char_ids
-    )
     store.set_node_image_gen(node_id, prompt=body.prompt, instructions=instructions, seed=seed, ref_chars=body.char_ids)
-    return {"image_path": name, "seed": seed, "media_id": m["id"]}
+    return {
+        "image_path": name, "seed": seed, "prompt": body.prompt, "instructions": instructions, "ref_chars": body.char_ids
+    }
 
 
 @app.post("/generate/beat")

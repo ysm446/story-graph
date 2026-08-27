@@ -120,7 +120,8 @@ export default function SceneImageModal({
     setPhase('apply')
     setError(null)
     try {
-      await api.selectMedia(candidate.media_id)
+      // 決定したときだけストックに入れる(生成に使ったセット付き)。決定しなかった候補は捨てる
+      await api.addMedia('node', node.id, candidate.image_path, true, candidate)
       onGenerated()
       onClose()
     } catch (e) {
@@ -171,7 +172,7 @@ export default function SceneImageModal({
         <h3 className="mb-1 text-[14px] font-semibold">この場面の画像を生成</h3>
         <p className="mb-3 text-[11px]" style={{ color: 'var(--text-faint)' }}>
           ビート・場所・登場人物・追加指示から LLM が英語のプロンプトを書きます。参照画像を渡す人物は image1〜 で参照されます。
-          生成した画像はストックに残り、「決定」を押すまで挿絵にはなりません。プロンプト・追加指示・seed・参照キャラは「生成」したときの組み合わせでこのシーンに保存されます(閉じるだけでは保存しません)。
+          生成した画像は「決定」を押すまで挿絵にはなりません(決定した画像だけがストックに残ります)。プロンプト・追加指示・seed・参照キャラは「生成」したときの組み合わせでこのシーンに保存されます(閉じるだけでは保存しません)。
         </p>
 
         {/* 参照画像を渡すキャラ(cast 順) */}
@@ -321,7 +322,7 @@ export default function SceneImageModal({
             onClick={close}
             className="ml-auto rounded-md border px-2 py-0.5 text-[11px]"
             style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-            data-tip={candidate ? '生成した画像は挿絵にせずに閉じます(候補はストックに残ります)' : '閉じるだけでは設定を保存しません(生成したときに保存されます)'}
+            data-tip={candidate ? '生成した画像は採用せずに閉じます(ストックには残りません)' : '閉じるだけでは設定を保存しません(生成したときに保存されます)'}
           >
             {phase === 'generate' ? 'キャンセル' : '閉じる'}
           </button>
