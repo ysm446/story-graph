@@ -308,7 +308,7 @@ export default function SceneImageModal({
           )}
         </div>
         <div className="mt-3">
-          <CandidatePreview candidate={candidate} aspect="1216 / 832" />
+          <CandidatePreview candidate={candidate} current={node.image_path} currentLabel="いまの挿絵" aspect="1216 / 832" />
         </div>
         {error && (
           <p className="mt-2 text-[12px]" style={{ color: '#f2a3a3' }}>

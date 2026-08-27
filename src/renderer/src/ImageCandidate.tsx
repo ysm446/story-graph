@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { assetUrl, type GeneratedImage } from './api'
+import { assetUrl, isVideoAsset, type GeneratedImage } from './api'
 
 /** 生成した画像の候補と seed の操作(場面の挿絵 / キャラの参照画像で共用)。
  *
@@ -64,25 +64,49 @@ export function SeedField({
 
 export function CandidatePreview({
   candidate,
+  current,
+  currentLabel,
   aspect
 }: {
   candidate: GeneratedImage | null
+  /** 生成前に見せる、いま設定されている画像(表示専用。「決定」の対象にはしない)。
+   *  引き直したときの比較相手になる。場面の挿絵は動画のこともある */
+  current: string | null
+  /** current のラベル(「いまの挿絵」「いまの参照画像」)。手持ちの画像を読み込んだものと
+   *  生成物の区別がつかないので、何を見ているかを必ず文字で示す */
+  currentLabel: string
   /** プレビュー枠の縦横比(CSS の aspect-ratio。場面は横長、参照画像は縦長) */
   aspect: string
 }): React.JSX.Element {
-  const url = assetUrl(candidate?.image_path)
+  const showCurrent = !candidate && !!current
+  const path = candidate?.image_path ?? (showCurrent ? current : null)
+  const url = assetUrl(path)
+  const label = candidate ? '生成した候補(未決定)' : showCurrent ? currentLabel : null
   return (
-    <div
-      className="flex w-full items-center justify-center overflow-hidden rounded-xl border"
-      style={{ aspectRatio: aspect, background: 'var(--bg-canvas)', borderColor: 'var(--border)', maxHeight: '48vh' }}
-    >
-      {url ? (
-        <img src={url} className="h-full w-full object-contain" />
-      ) : (
-        <span className="text-[12px]" style={{ color: 'var(--text-faint)' }}>
-          生成するとここにプレビューが出ます
-        </span>
-      )}
+    <div>
+      <div className="mb-1 flex h-4 items-center">
+        {label && (
+          <span className="text-[10px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
+            {label}
+          </span>
+        )}
+      </div>
+      <div
+        className="flex w-full items-center justify-center overflow-hidden rounded-xl border"
+        style={{ aspectRatio: aspect, background: 'var(--bg-canvas)', borderColor: 'var(--border)', maxHeight: '48vh' }}
+      >
+        {url ? (
+          isVideoAsset(path) ? (
+            <video src={url} className="h-full w-full object-contain" muted loop autoPlay playsInline />
+          ) : (
+            <img src={url} className="h-full w-full object-contain" />
+          )
+        ) : (
+          <span className="text-[12px]" style={{ color: 'var(--text-faint)' }}>
+            生成するとここにプレビューが出ます
+          </span>
+        )}
+      </div>
     </div>
   )
 }

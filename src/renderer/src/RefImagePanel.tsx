@@ -396,7 +396,7 @@ export default function RefImagePanel({
               )}
             </div>
             <div className="mx-auto mt-3 w-[280px] max-w-full">
-              <CandidatePreview candidate={candidate} aspect="832 / 1216" />
+              <CandidatePreview candidate={candidate} current={path} currentLabel="いまの参照画像" aspect="832 / 1216" />
             </div>
             {error && (
               <p className="mt-2 text-[12px]" style={{ color: '#f2a3a3' }}>
