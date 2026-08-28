@@ -110,7 +110,8 @@ class Store:
     def update_character(self, char_id: str, data: dict[str, Any]) -> dict[str, Any] | None:
         fields = ["name", "profile", "appearance", "voice", "color", "graph_x", "graph_y",
                   "portrait_path", "portrait_source_path", "portrait_crop",
-                  "ref_image_path", "ref_image_prompt", "ref_image_instructions", "ref_image_seed"]
+                  "ref_image_path", "ref_image_prompt", "ref_image_instructions", "ref_image_seed",
+                  "ref_image_workflow"]
         updates = {k: data[k] for k in fields if k in data}
         if updates:
             sets = ", ".join(f"{k} = ?" for k in updates)
@@ -1213,13 +1214,21 @@ class Store:
         return self.get_node(node_id)
 
     def set_node_image_gen(
-        self, node_id: str, *, prompt: str | None, instructions: str | None, seed: int | None, ref_chars: list[str] | None
+        self,
+        node_id: str,
+        *,
+        prompt: str | None,
+        instructions: str | None,
+        seed: int | None,
+        ref_chars: list[str] | None,
+        workflow: str | None = None,
     ) -> None:
-        """場面の挿絵の生成ウインドウの状態(プロンプト・追加指示・seed・参照キャラ)。
+        """場面の挿絵の生成ウインドウの状態(プロンプト・追加指示・seed・参照キャラ・ワークフロー)。
         装飾の設定なので state に影響せず dirty 化しない。"""
         self.conn.execute(
-            "UPDATE nodes SET image_prompt = ?, image_instructions = ?, image_seed = ?, image_ref_chars = ? WHERE id = ?",
-            (prompt, instructions, seed, json.dumps(ref_chars) if ref_chars is not None else None, node_id),
+            "UPDATE nodes SET image_prompt = ?, image_instructions = ?, image_seed = ?, image_ref_chars = ?,"
+            " image_workflow = ? WHERE id = ?",
+            (prompt, instructions, seed, json.dumps(ref_chars) if ref_chars is not None else None, workflow, node_id),
         )
         self.conn.commit()
 
@@ -1296,17 +1305,18 @@ class Store:
         seed: int | None = None,
         ref_chars: list[str] | None = None,
         thumb_path: str | None = None,
+        workflow: str | None = None,
     ) -> dict[str, Any]:
         """ストックに 1 枚足す(選択はしない)。手持ちの画像は prompt 以下を空のまま。"""
         if owner_type not in MEDIA_OWNER_TYPES:
             raise ValueError(f"unknown owner_type: {owner_type}")
         media_id = _new_id()
         self.conn.execute(
-            "INSERT INTO media(id, owner_type, owner_id, path, thumb_path, prompt, instructions, seed, ref_chars, created_at)"
-            " VALUES(?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO media(id, owner_type, owner_id, path, thumb_path, prompt, instructions, seed, ref_chars,"
+            " workflow, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
             (
                 media_id, owner_type, owner_id, path, thumb_path, prompt, instructions, seed,
-                json.dumps(ref_chars) if ref_chars is not None else None, _now(),
+                json.dumps(ref_chars) if ref_chars is not None else None, workflow, _now(),
             ),
         )
         self.conn.commit()
@@ -1336,11 +1346,12 @@ class Store:
             )
             if m["prompt"]:
                 self.conn.execute(
-                    "UPDATE nodes SET image_prompt = ?, image_instructions = ?, image_seed = ?, image_ref_chars = ?"
-                    " WHERE id = ?",
+                    "UPDATE nodes SET image_prompt = ?, image_instructions = ?, image_seed = ?, image_ref_chars = ?,"
+                    " image_workflow = ? WHERE id = ?",
                     (
                         m["prompt"], m["instructions"], m["seed"],
-                        json.dumps(m["ref_chars"]) if m["ref_chars"] is not None else None, m["owner_id"],
+                        json.dumps(m["ref_chars"]) if m["ref_chars"] is not None else None,
+                        m.get("workflow"), m["owner_id"],
                     ),
                 )
         else:
@@ -1349,9 +1360,9 @@ class Store:
             )
             if m["prompt"]:
                 self.conn.execute(
-                    "UPDATE characters SET ref_image_prompt = ?, ref_image_instructions = ?, ref_image_seed = ?"
-                    " WHERE id = ?",
-                    (m["prompt"], m["instructions"], m["seed"], m["owner_id"]),
+                    "UPDATE characters SET ref_image_prompt = ?, ref_image_instructions = ?, ref_image_seed = ?,"
+                    " ref_image_workflow = ? WHERE id = ?",
+                    (m["prompt"], m["instructions"], m["seed"], m.get("workflow"), m["owner_id"]),
                 )
         self.conn.commit()
         return m

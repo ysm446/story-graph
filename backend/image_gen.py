@@ -116,11 +116,17 @@ def _float(settings: dict[str, str], key: str, default: float) -> float:
         return default
 
 
-def character_workflow(settings: dict[str, str], description: str, seed: int | None = None) -> dict[str, Any]:
+def character_workflow(
+    settings: dict[str, str], description: str, seed: int | None = None, variant: str | None = None
+) -> dict[str, Any]:
+    """variant は workflows/variants.json の id(None / 不明なら既定)。"""
     checkpoint = (settings.get("comfy_checkpoint") or "").strip()
     if not checkpoint:
         raise RuntimeError("設定 →「画像生成」でチェックポイント(モデル)を選んでください")
+    v = comfy.get_variant(variant)
     return comfy.build_t2i_workflow(
+        template=v["t2i"],
+        extra_values=v.get("values") or {},
         checkpoint=checkpoint,
         positive=full_prompt(description),
         negative=(settings.get("comfy_negative") or comfy.DEFAULT_NEGATIVE),
@@ -138,13 +144,18 @@ def new_seed() -> int:
 
 
 async def generate_character_image(
-    settings: dict[str, str], description: str, *, comfy_base_url: str, seed: int | None = None
+    settings: dict[str, str],
+    description: str,
+    *,
+    comfy_base_url: str,
+    seed: int | None = None,
+    variant: str | None = None,
 ) -> tuple[bytes, int]:
     """(PNG, 使った seed)。seed を返すのは、UI で同じ絵を再現・微調整できるようにするため。
     None または負数(-1。ComfyUI などの慣例)はランダム。"""
     if seed is None or seed < 0:
         seed = new_seed()
-    return await comfy.run_workflow(comfy_base_url, character_workflow(settings, description, seed)), seed
+    return await comfy.run_workflow(comfy_base_url, character_workflow(settings, description, seed, variant)), seed
 
 
 # ---- 場面の挿絵 -------------------------------------------------------
@@ -230,12 +241,19 @@ def stream_scene_prompt(
 
 
 def scene_workflow(
-    settings: dict[str, str], description: str, ref_names: list[str], seed: int | None = None
+    settings: dict[str, str],
+    description: str,
+    ref_names: list[str],
+    seed: int | None = None,
+    variant: str | None = None,
 ) -> dict[str, Any]:
+    """variant は workflows/variants.json の id(None / 不明なら既定)。"""
     checkpoint = (settings.get("comfy_checkpoint") or "").strip()
     if not checkpoint:
         raise RuntimeError("設定 →「画像生成」でチェックポイント(モデル)を選んでください")
+    v = comfy.get_variant(variant)
     common = dict(
+        extra_values=v.get("values") or {},
         checkpoint=checkpoint,
         positive=f"{description.strip().rstrip(',')}, {SCENE_SUFFIX}",
         negative=(settings.get("comfy_negative") or comfy.DEFAULT_NEGATIVE),
@@ -247,8 +265,8 @@ def scene_workflow(
         height=832,
     )
     if ref_names:
-        return comfy.build_edit_workflow(ref_images=ref_names, **common)
-    return comfy.build_t2i_workflow(filename_prefix="story-graph/scene", **common)
+        return comfy.build_edit_workflow(template=v["edit"], ref_images=ref_names, **common)
+    return comfy.build_t2i_workflow(template=v["t2i"], filename_prefix="story-graph/scene", **common)
 
 
 async def generate_scene_image(
@@ -258,10 +276,12 @@ async def generate_scene_image(
     *,
     comfy_base_url: str,
     seed: int | None = None,
+    variant: str | None = None,
 ) -> tuple[bytes, int]:
     """ref_files は (assets のファイル名, バイト列)。ComfyUI へ上げてから描く。(PNG, 使った seed)。
     seed が None または負数ならランダム。"""
     if seed is None or seed < 0:
         seed = new_seed()
     names = [await comfy.upload_image(comfy_base_url, data, name) for name, data in ref_files]
-    return await comfy.run_workflow(comfy_base_url, scene_workflow(settings, description, names, seed)), seed
+    wf = scene_workflow(settings, description, names, seed, variant)
+    return await comfy.run_workflow(comfy_base_url, wf), seed

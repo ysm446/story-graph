@@ -1,5 +1,54 @@
 import { useEffect, useState } from 'react'
-import { assetUrl, isVideoAsset, type GeneratedImage } from './api'
+import { api, assetUrl, isVideoAsset, type GeneratedImage, type WorkflowVariant } from './api'
+
+/** ワークフローの組(既定 / LoRA 版など。workflows/variants.json)を選ぶ。
+ *  seed・プロンプトと同じく「生成に使ったセット」の一部なので、SeedField の隣に置く。
+ *  一覧は開くたびに読む(variants.json を編集して試せるように)。組が 1 つしか無ければ出さない */
+export function WorkflowSelect({
+  value,
+  onChange,
+  disabled
+}: {
+  /** variants.json の id。null = 既定(先頭) */
+  value: string | null
+  onChange: (id: string) => void
+  disabled: boolean
+}): React.JSX.Element | null {
+  const [variants, setVariants] = useState<WorkflowVariant[]>([])
+  useEffect(() => {
+    let alive = true
+    api
+      .comfyWorkflows()
+      .then((r) => {
+        if (alive) setVariants(r.variants)
+      })
+      .catch(() => undefined)
+    return () => {
+      alive = false
+    }
+  }, [])
+  if (variants.length < 2) return null
+  const current = variants.some((v) => v.id === value) ? value! : variants[0].id
+  return (
+    <label className="inline-flex items-center gap-1 text-[11px]" style={{ color: 'var(--text-dim)' }}>
+      ワークフロー
+      <select
+        value={current}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.value)}
+        className="rounded-md border px-1.5 py-0.5 text-[11px] disabled:opacity-50"
+        style={{ background: 'var(--bg-input)', borderColor: 'var(--border)', color: 'var(--text)' }}
+        data-tip="ComfyUI に送るワークフローの組(workflows/variants.json)。LoRA 版などを選べます。seed と同じく生成に使ったものが保存されます"
+      >
+        {variants.map((v) => (
+          <option key={v.id} value={v.id}>
+            {v.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  )
+}
 
 /** 生成した画像の候補と seed の操作(場面の挿絵 / キャラの参照画像で共用)。
  *

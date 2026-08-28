@@ -162,6 +162,7 @@ export default function MediaPicker({
               const tip = [
                 isSelected ? `選択中の${label}` : `クリックで${label}にする`,
                 m.seed !== null ? `seed ${m.seed}` : '手持ちの画像(プロンプトなし)',
+                m.workflow && m.workflow !== 'default' ? `ワークフロー: ${m.workflow}` : null,
                 m.instructions ? `追加指示: ${m.instructions}` : null,
                 m.prompt ? `prompt: ${m.prompt.length > 160 ? `${m.prompt.slice(0, 160)}…` : m.prompt}` : null
               ]

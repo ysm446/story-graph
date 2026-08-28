@@ -265,6 +265,11 @@ def init_schema(conn: sqlite3.Connection) -> None:
         # 一覧を開くたびに全チャットの messages JSON(長い履歴は MB 級)を
         # パースしない(NULL = 旧データ。次の list_chats で埋まる)
         "ALTER TABLE chats ADD COLUMN snippet TEXT",
+        # 生成に使ったワークフローの組(workflows/variants.json の id。NULL = 既定)。
+        # プロンプト・seed と同じくセットの一部(LoRA の有無で絵が変わるので、再現に要る)
+        "ALTER TABLE nodes ADD COLUMN image_workflow TEXT",
+        "ALTER TABLE characters ADD COLUMN ref_image_workflow TEXT",
+        "ALTER TABLE media ADD COLUMN workflow TEXT",
     ):
         try:
             conn.execute(ddl)

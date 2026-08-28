@@ -17,6 +17,8 @@ export interface Character {
   /** 参照画像の生成ウインドウの追加指示(日本語可)と最後の seed(null = ランダム)。次に開いたとき復元 */
   ref_image_instructions: string | null
   ref_image_seed: number | null
+  /** 生成に使ったワークフローの組(workflows/variants.json の id。null = 既定) */
+  ref_image_workflow?: string | null
   created_at: string
 }
 
@@ -35,6 +37,8 @@ export interface MediaItem {
   instructions: string | null
   seed: number | null
   ref_chars: string[] | null
+  /** 生成に使ったワークフローの組(workflows/variants.json の id。null = 既定 / 手持ち) */
+  workflow: string | null
   created_at: string
 }
 
@@ -88,6 +92,8 @@ export interface StoryNode {
   image_seed?: number | null
   /** 参照画像を渡すキャラ ID(image1.. の順) */
   image_ref_chars?: string[] | null
+  /** 生成に使ったワークフローの組(workflows/variants.json の id。null = 既定) */
+  image_workflow?: string | null
   /** このシーンだけの清書の目安の字数(null / 0 = 共通の設定に従う) */
   target_chars: number | null
   /** 章グループ(null = 未分類。docs/design/chapters.md) */

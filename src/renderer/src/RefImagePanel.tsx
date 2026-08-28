@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, assetUrl, characterRefImagePromptStream, isAbortError, uploadAsset, type GeneratedImage } from './api'
-import { CandidatePreview, SeedField } from './ImageCandidate'
+import { CandidatePreview, SeedField, WorkflowSelect } from './ImageCandidate'
 import { Icon } from './icons'
 import Lightbox from './Lightbox'
 import MediaPicker from './MediaPicker'
@@ -32,6 +32,8 @@ export default function RefImagePanel({
   const [promptBasis, setPromptBasis] = useState('')
   const [phase, setPhase] = useState<null | 'prompt' | 'generate' | 'apply'>(null)
   const [seed, setSeed] = useState<number | null>(null)
+  // ワークフローの組(workflows/variants.json の id。null = 既定)。seed と同じく生成に使ったものが保存される
+  const [workflow, setWorkflow] = useState<string | null>(null)
   // 生成した候補。「決定」を押すまでキャラには設定しない
   const [candidate, setCandidate] = useState<GeneratedImage | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -81,6 +83,7 @@ export default function RefImagePanel({
     const savedInstructions = character.ref_image_instructions ?? ''
     setInstructions(savedInstructions)
     setSeed(character.ref_image_seed ?? null)
+    setWorkflow(character.ref_image_workflow ?? null)
     if (character.ref_image_prompt) {
       setPromptBasis(savedInstructions)
       setModal({ prompt: character.ref_image_prompt, suffix: '' })
@@ -128,10 +131,23 @@ export default function RefImagePanel({
       // 生成に使ったプロンプト・追加指示・seed は、サーバがストックの行とキャラの保存状態に
       // 1 セットで書く(再現性。閉じる / 決定では保存しない)
       const trimmed = instructions.trim() || null
-      const r = await api.characterRefImageGenerate(character.id, modal.prompt, trimmed, seed, controller.signal)
+      const r = await api.characterRefImageGenerate(
+        character.id,
+        modal.prompt,
+        trimmed,
+        seed,
+        workflow,
+        controller.signal
+      )
       setCandidate(r)
       setSeed(r.seed) // そのまま「生成」なら同じ絵、-1 で別の絵
-      await onChanged({ ref_image_prompt: modal.prompt, ref_image_instructions: trimmed, ref_image_seed: r.seed })
+      setWorkflow(r.workflow)
+      await onChanged({
+        ref_image_prompt: modal.prompt,
+        ref_image_instructions: trimmed,
+        ref_image_seed: r.seed,
+        ref_image_workflow: r.workflow
+      })
     } catch (e) {
       if (!isAbortError(e)) setError(String(e))
     } finally {
@@ -153,7 +169,8 @@ export default function RefImagePanel({
         ref_image_path: m.path,
         ref_image_prompt: m.prompt,
         ref_image_instructions: m.instructions,
-        ref_image_seed: m.seed
+        ref_image_seed: m.seed,
+        ref_image_workflow: m.workflow
       })
     } catch (e) {
       setError(String(e))
@@ -394,6 +411,7 @@ export default function RefImagePanel({
                 {phase === 'generate' ? '生成中…' : candidate ? 'もう一度生成' : '生成'}
               </button>
               <SeedField seed={seed} onChange={setSeed} disabled={phase !== null} />
+              <WorkflowSelect value={workflow} onChange={setWorkflow} disabled={phase !== null} />
               <button
                 onClick={() => void buildPrompt()}
                 disabled={phase !== null}

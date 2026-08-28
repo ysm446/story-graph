@@ -1,9 +1,15 @@
 # Changelog
 
 作成日時: 2026-07-24 22:59
-更新日時: 2026-08-28 06:05
+更新日時: 2026-08-28 06:50
 
 ## 未リリース
+
+- 2026-08-28 06:50 **LoRA 版ワークフローと、生成時のワークフロー選択**(ユーザー要望)。`workflows/variants.json` で
+  「既定」「LoRA: zeniji」(`qwen-image-zeniji.safetensors` を `LoraLoaderModelOnly` で挟んだ
+  `ref_t2i_lora.json` / `scene_edit_lora.json`)の組を定義し、参照画像・場面の生成ウインドウの seed 欄の隣で
+  選べる。使った組はプロンプト・seed と同じくセットとして保存・復元される(ストックから選び直しても戻る)。
+  組を足すときはテンプレートと variants の行を足すだけ。
 
 - 2026-08-28 06:05 **ComfyUI のワークフローをリポジトリ直下の `workflows/*.json` に移した**(ユーザー要望)。
   `ref_t2i.json`(参照画像)と `scene_edit.json`(場面の挿絵)。ComfyUI の API 形式そのままで、

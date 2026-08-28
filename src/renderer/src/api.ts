@@ -146,7 +146,7 @@ export const api = {
     ownerId: string,
     path: string,
     select = true,
-    set?: Pick<GeneratedImage, 'prompt' | 'instructions' | 'seed' | 'ref_chars'>
+    set?: Pick<GeneratedImage, 'prompt' | 'instructions' | 'seed' | 'ref_chars' | 'workflow'>
   ) =>
     request<MediaItem>('/media', {
       method: 'POST',
@@ -345,6 +345,8 @@ export const api = {
   comfyModels: (folder = 'checkpoints') =>
     request<{ models: string[]; healthy: boolean }>(`/comfy/models?folder=${encodeURIComponent(folder)}`),
   comfyReleases: () => request<{ releases: ComfyRelease[] }>('/comfy/releases'),
+  /** 生成ウインドウで選べるワークフローの組(workflows/variants.json。先頭が既定) */
+  comfyWorkflows: () => request<{ variants: WorkflowVariant[] }>('/comfy/workflows'),
   comfyUninstall: () => request<ComfyStatus>('/comfy/uninstall', { method: 'POST' }),
 
   /** ComfyUI で参照画像を生成し、候補として保存する(ストックにもキャラにも入れない。採用は addMedia)。
@@ -355,11 +357,12 @@ export const api = {
     prompt: string,
     instructions: string | null,
     seed: number | null,
+    workflow: string | null,
     signal?: AbortSignal
   ) =>
     request<GeneratedImage>(`/characters/${id}/ref_image/generate`, {
       method: 'POST',
-      body: JSON.stringify({ prompt, instructions, seed }),
+      body: JSON.stringify({ prompt, instructions, seed, workflow }),
       signal
     }),
   /** ComfyUI で場面の挿絵を生成し、候補として保存する(ストックにも挿絵にも入れない。採用は addMedia)。
@@ -370,11 +373,12 @@ export const api = {
     charIds: string[],
     instructions: string | null,
     seed: number | null,
+    workflow: string | null,
     signal?: AbortSignal
   ) =>
     request<GeneratedImage>(`/nodes/${nodeId}/image/generate`, {
       method: 'POST',
-      body: JSON.stringify({ prompt, char_ids: charIds, instructions, seed }),
+      body: JSON.stringify({ prompt, char_ids: charIds, instructions, seed, workflow }),
       signal
     }),
   // signal はキュー(tasks.ts)からの中止用
@@ -649,6 +653,14 @@ export interface GeneratedImage {
   prompt: string
   instructions: string | null
   ref_chars: string[] | null
+  /** 使ったワークフローの組(variants.json の id) */
+  workflow: string
+}
+
+/** 生成ウインドウで選べるワークフローの組(workflows/variants.json) */
+export interface WorkflowVariant {
+  id: string
+  label: string
 }
 
 /** 場面プロンプト生成の冒頭で届く情報(どのキャラが image1.. になるか) */

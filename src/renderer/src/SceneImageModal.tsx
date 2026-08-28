@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, isAbortError, nodeImagePromptStream, type GeneratedImage, type SceneImagePromptMeta } from './api'
-import { CandidatePreview, SeedField } from './ImageCandidate'
+import { CandidatePreview, SeedField, WorkflowSelect } from './ImageCandidate'
 import type { Character, StoryNode } from './types'
 import { useElapsedSeconds } from './useElapsed'
 
@@ -41,6 +41,8 @@ export default function SceneImageModal({
     instructions: node.image_instructions ?? ''
   })
   const [seed, setSeed] = useState<number | null>(node.image_seed ?? null)
+  // ワークフローの組(workflows/variants.json の id。null = 既定)。seed と同じく生成に使ったものが保存される
+  const [workflow, setWorkflow] = useState<string | null>(node.image_workflow ?? null)
   const [candidate, setCandidate] = useState<GeneratedImage | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const elapsed = useElapsedSeconds(phase !== null)
@@ -102,11 +104,13 @@ export default function SceneImageModal({
         selected ?? [],
         instructions.trim() || null,
         seed,
+        workflow,
         controller.signal
       )
       setCandidate(r)
       // 使った seed を欄に入れておく。そのまま「生成」すれば同じ絵、-1 で別の絵
       setSeed(r.seed)
+      setWorkflow(r.workflow)
     } catch (e) {
       if (!isAbortError(e)) setError(String(e))
     } finally {
@@ -278,6 +282,7 @@ export default function SceneImageModal({
             {phase === 'generate' ? '生成中…' : candidate ? 'もう一度生成' : '生成'}
           </button>
           <SeedField seed={seed} onChange={setSeed} disabled={busy} />
+          <WorkflowSelect value={workflow} onChange={setWorkflow} disabled={busy} />
           <button
             onClick={() => void buildPrompt(selected)}
             disabled={busy}

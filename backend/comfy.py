@@ -12,7 +12,6 @@ import asyncio
 import json
 import random
 import re
-from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -55,10 +54,31 @@ WORKFLOWS_DIR = Path(__file__).resolve().parent.parent / "workflows"
 _PLACEHOLDER = re.compile(r"\{\{(\w+)\}\}")
 
 
-@lru_cache(maxsize=None)
 def _load_template(name: str) -> str:
-    """workflows/<name>.json(リポジトリ直下)の中身(文字列のまま持ち、使うたびに parse して独立した dict を返す)。"""
+    """workflows/<name>.json(リポジトリ直下)の中身。毎回読む(小さいファイルで、編集して試すことが多い)。"""
     return (WORKFLOWS_DIR / f"{name}.json").read_text(encoding="utf-8")
+
+
+DEFAULT_VARIANT = {"id": "default", "label": "既定", "t2i": "ref_t2i", "edit": "scene_edit", "values": {}}
+
+
+def list_variants() -> list[dict[str, Any]]:
+    """workflows/variants.json の「生成ウインドウで選べるワークフローの組」。読めなければ既定 1 つ。"""
+    try:
+        data = json.loads((WORKFLOWS_DIR / "variants.json").read_text(encoding="utf-8"))
+        variants = [v for v in data.get("variants", []) if isinstance(v, dict) and v.get("id")]
+    except (OSError, ValueError):
+        variants = []
+    return variants or [dict(DEFAULT_VARIANT)]
+
+
+def get_variant(variant_id: str | None) -> dict[str, Any]:
+    """id の組。無い / 消えた id は既定(先頭)に落とす(保存済みの id が古くても生成は止めない)。"""
+    variants = list_variants()
+    for v in variants:
+        if v["id"] == variant_id:
+            return v
+    return variants[0]
 
 
 def _fill(obj: Any, values: dict[str, Any]) -> Any:
@@ -97,14 +117,18 @@ def build_t2i_workflow(
     sampler: str = DEFAULT_SAMPLER,
     scheduler: str = DEFAULT_SCHEDULER,
     filename_prefix: str = "story-graph/ref",
+    template: str = "ref_t2i",
+    extra_values: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """AIO チェックポイント 1 本で完結する text-to-image(`workflows/ref_t2i.json`)。
-    CheckpointLoaderSimple → ModelSamplingAuraFlow(shift) → KSampler → VAEDecode → SaveImage。"""
+    """AIO チェックポイント 1 本で完結する text-to-image(既定は `workflows/ref_t2i.json`)。
+    CheckpointLoaderSimple → ModelSamplingAuraFlow(shift) → KSampler → VAEDecode → SaveImage。
+    template / extra_values は variants.json の組(LoRA 版など)から来る。"""
     if seed is None:
         seed = random.randint(0, 2**53 - 1)
     return load_workflow(
-        "ref_t2i",
+        template,
         {
+            **(extra_values or {}),
             "checkpoint": checkpoint,
             "positive": positive,
             "negative": negative,
@@ -136,8 +160,10 @@ def build_edit_workflow(
     sampler: str = DEFAULT_SAMPLER,
     scheduler: str = DEFAULT_SCHEDULER,
     filename_prefix: str = "story-graph/scene",
+    template: str = "scene_edit",
+    extra_values: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Qwen-Image-Edit 2509 系の複数画像入力(最大 3 枚)で場面を描く(`workflows/scene_edit.json`)。
+    """Qwen-Image-Edit 2509 系の複数画像入力(最大 3 枚)で場面を描く(既定は `workflows/scene_edit.json`)。
 
     ref_images は ComfyUI の input フォルダにアップロード済みのファイル名。
     `TextEncodeQwenImageEditPlus` の image1..3 に順に繋ぎ、プロンプト側は
@@ -150,6 +176,7 @@ def build_edit_workflow(
     if seed is None:
         seed = random.randint(0, 2**53 - 1)
     values: dict[str, Any] = {
+        **(extra_values or {}),
         "checkpoint": checkpoint,
         "positive": positive,
         "negative": negative,
@@ -165,7 +192,7 @@ def build_edit_workflow(
     }
     for i, name in enumerate(ref_images):
         values[f"ref_image_{i + 1}"] = name
-    wf = load_workflow("scene_edit", values)
+    wf = load_workflow(template, values)
     for i in range(len(ref_images), 3):
         wf.pop(str(10 + i), None)
         for enc in ("3", "4"):

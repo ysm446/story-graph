@@ -153,3 +153,33 @@ def test_clean_prompt_strips_fences_and_quotes():
     assert image_gen._clean_prompt('"anime style, red hair"') == "anime style, red hair"
     assert image_gen._clean_prompt("```text\nanime style\n```") == "anime style"
     assert image_gen._clean_prompt("  plain  ") == "plain"
+
+
+def test_variants_include_default_and_lora():
+    ids = [v["id"] for v in comfy.list_variants()]
+    assert ids[0] == "default" and "zeniji" in ids
+    assert comfy.get_variant("nope")["id"] == "default"  # 不明な id は既定に落ちる
+    assert comfy.get_variant(None)["id"] == "default"
+
+
+def test_lora_variant_inserts_loader_between_checkpoint_and_sampling():
+    v = comfy.get_variant("zeniji")
+    wf = comfy.build_t2i_workflow(template=v["t2i"], extra_values=v["values"], checkpoint="c", positive="p", seed=1)
+    assert wf["9"]["class_type"] == "LoraLoaderModelOnly"
+    assert wf["9"]["inputs"]["lora_name"] == "qwen-image-zeniji.safetensors"
+    assert wf["9"]["inputs"]["strength_model"] == 1.0 and wf["9"]["inputs"]["model"] == ["1", 0]
+    assert wf["2"]["inputs"]["model"] == ["9", 0]
+    wf2 = comfy.build_edit_workflow(
+        template=v["edit"], extra_values=v["values"], checkpoint="c", positive="p", ref_images=["a.png"], seed=1
+    )
+    assert wf2["9"]["inputs"]["lora_name"] == "qwen-image-zeniji.safetensors" and "11" not in wf2
+    # 既定の組には LoRA ノードが無い
+    assert "9" not in comfy.build_t2i_workflow(checkpoint="c", positive="p", seed=1)
+
+
+def test_scene_workflow_honours_variant():
+    settings = {"comfy_checkpoint": "c.safetensors"}
+    wf = image_gen.scene_workflow(settings, "x", ["r.png"], seed=1, variant="zeniji")
+    assert wf["9"]["class_type"] == "LoraLoaderModelOnly"
+    assert "9" not in image_gen.scene_workflow(settings, "x", ["r.png"], seed=1)
+    assert "9" not in image_gen.character_workflow(settings, "x", seed=1, variant="missing")

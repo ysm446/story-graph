@@ -1,7 +1,7 @@
 # 画像生成(ComfyUI 連携)— キャラクターの参照画像と場面の挿絵
 
 作成日時: 2026-08-26 15:15
-更新日時: 2026-08-28 06:05
+更新日時: 2026-08-28 06:50
 
 ローカルの ComfyUI で挿絵を作る仕組みの設計メモ。2026-08-26 のユーザー発案
 ([progress.md](../plan/progress.md) の「場面の画像生成」)。画像は**装飾専用**で、
@@ -177,5 +177,27 @@ API 形式の JSON テンプレート `workflows/ref_t2i.json` を `comfy.build_
 
 ## 8. この先
 
-- ワークフロー JSON は `workflows/` に出した(2026-08-28)。設定から別のテンプレート(Krea2 用など)を選べるようにするのは未着手。
+- ワークフロー JSON は `workflows/` に出し、`variants.json` で組を選べるようにした(2026-08-28。下記 §9)。
+  Krea2 用など別モデルの組を足すのは、テンプレートと variants の行を足すだけ。
 - VRAM 不足時に LLM を一時停止する排他パス。
+
+## 9. ワークフローの組(variants)と LoRA 版
+
+2026-08-28 ユーザー要望「LoRA(`qwen-image-zeniji.safetensors`)を挟んだワークフローを追加し、
+生成時に既定 / LoRA 版を選べるように」。
+
+- `workflows/variants.json` の `variants[]` が「生成ウインドウで選べる組」。各行は
+  `{id, label, t2i, edit, values}`。`t2i` はキャラの参照画像と参照画像なしの場面、`edit` は参照画像ありの
+  場面に使うテンプレート名(`workflows/<name>.json`)。`values` はテンプレートの `{{name}}` に追加で入る値
+  (LoRA 版なら `lora` / `lora_strength`)。先頭が既定。**`id` は DB に保存されるので変えない。**
+- LoRA 版のテンプレート `ref_t2i_lora.json` / `scene_edit_lora.json` は、既定の
+  `CheckpointLoaderSimple("1")` と `ModelSamplingAuraFlow("2")` の間に `LoraLoaderModelOnly("9")` を挟んだもの
+  (CLIP は触らない。Qwen-Image 系の LoRA は model のみが通例)。LoRA ファイルは ComfyUI の `loras/`
+  (`D:i-models\diffusion\comfyui\loras`)から名前で参照する。
+- `comfy.list_variants()` / `get_variant(id)`(不明な id は既定に落として生成は止めない)。
+  `build_*_workflow(template=, extra_values=)` に組を渡す。`GET /comfy/workflows` が UI 用の一覧。
+- **組はセットの一部**: LoRA の有無で絵が変わるので、プロンプト・seed と同じく
+  `nodes.image_workflow` / `characters.ref_image_workflow` / `media.workflow` に生成時の id を保存し、
+  次に開いたとき復元、ストックから選び直したときもそのセットに戻る。手持ちの画像は NULL。
+- UI は `ImageCandidate.WorkflowSelect`(seed 欄の隣のセレクト。両モーダル共用)。組が 1 つしか無ければ
+  出さない。一覧は開くたびに読むので、`variants.json` を編集すればアプリを再起動せずに反映される。

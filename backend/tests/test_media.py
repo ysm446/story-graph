@@ -14,13 +14,15 @@ def _store() -> Store:
 def test_add_and_select_node_media_copies_generation_set():
     store = _store()
     n = store.append_node({"beat": "b", "cast": []})
-    m = store.add_media("node", n["id"], "a.png", prompt="p1", instructions="i1", seed=5, ref_chars=["x"])
+    m = store.add_media(
+        "node", n["id"], "a.png", prompt="p1", instructions="i1", seed=5, ref_chars=["x"], workflow="zeniji"
+    )
     assert store.get_node(n["id"])["image_path"] is None  # 足しただけでは選ばれない
     store.select_media(m["id"])
     got = store.get_node(n["id"])
     assert got["image_path"] == "a.png"
     assert got["image_prompt"] == "p1" and got["image_instructions"] == "i1" and got["image_seed"] == 5
-    assert got["image_ref_chars"] == ["x"]
+    assert got["image_ref_chars"] == ["x"] and got["image_workflow"] == "zeniji"
 
 
 def test_select_uploaded_media_keeps_generation_state():
@@ -37,10 +39,11 @@ def test_select_uploaded_media_keeps_generation_state():
 def test_select_character_media():
     store = _store()
     c = store.create_character({"name": "A"})
-    m = store.add_media("character", c["id"], "ref.png", prompt="desc", instructions=None, seed=9)
+    m = store.add_media("character", c["id"], "ref.png", prompt="desc", instructions=None, seed=9, workflow="zeniji")
     store.select_media(m["id"])
     got = store.get_character(c["id"])
     assert got["ref_image_path"] == "ref.png" and got["ref_image_prompt"] == "desc" and got["ref_image_seed"] == 9
+    assert got["ref_image_workflow"] == "zeniji"
 
 
 def test_selected_media_cannot_be_deleted():

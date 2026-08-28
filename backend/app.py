@@ -736,6 +736,7 @@ class MediaIn(BaseModel):
     instructions: str | None = None
     seed: int | None = None
     ref_chars: list[str] | None = None
+    workflow: str | None = None  # 生成に使ったワークフローの組(variants.json の id)
 
 
 def _check_media_owner(owner_type: str, owner_id: str) -> None:
@@ -764,6 +765,7 @@ async def add_media(body: MediaIn) -> dict[str, Any]:
     m = store.add_media(
         body.owner_type, body.owner_id, body.path,
         prompt=body.prompt, instructions=body.instructions, seed=body.seed, ref_chars=body.ref_chars,
+        workflow=body.workflow,
     )
     if body.select:
         store.select_media(m["id"])
@@ -1197,6 +1199,15 @@ class RefImageGenerateIn(BaseModel):
     prompt: str
     seed: int | None = None
     instructions: str | None = None  # 生成に使った追加指示(プロンプト・seed と 1 セットで保存する)
+    workflow: str | None = None  # workflows/variants.json の id(None = 既定)
+
+
+@app.get("/comfy/workflows")
+async def comfy_workflows() -> dict[str, Any]:
+    """生成ウインドウで選べるワークフローの組(workflows/variants.json)。"""
+    import comfy
+
+    return {"variants": [{"id": v["id"], "label": v.get("label") or v["id"]} for v in comfy.list_variants()]}
 
 
 @app.post("/characters/{char_id}/ref_image/generate")
@@ -1209,6 +1220,7 @@ async def character_ref_image_generate(char_id: str, body: RefImageGenerateIn) -
     import uuid
     from pathlib import Path as _Path
 
+    import comfy
     import image_gen
 
     char = store.get_character(char_id)
@@ -1223,17 +1235,25 @@ async def character_ref_image_generate(char_id: str, body: RefImageGenerateIn) -
     try:
         base_url = await comfy_mgr.ensure_running(settings)
         data, seed = await image_gen.generate_character_image(
-            settings, body.prompt, comfy_base_url=base_url, seed=body.seed
+            settings, body.prompt, comfy_base_url=base_url, seed=body.seed, variant=body.workflow
         )
     except RuntimeError as e:
         raise HTTPException(500, str(e))
     name = f"{uuid.uuid4().hex[:12]}.png"
     await asyncio.to_thread((_Path(assets) / name).write_bytes, data)
     instructions = (body.instructions or "").strip() or None
+    workflow = comfy.get_variant(body.workflow)["id"]
     store.update_character(
-        char_id, {"ref_image_prompt": body.prompt, "ref_image_instructions": instructions, "ref_image_seed": seed}
+        char_id,
+        {
+            "ref_image_prompt": body.prompt, "ref_image_instructions": instructions,
+            "ref_image_seed": seed, "ref_image_workflow": workflow,
+        },
     )
-    return {"image_path": name, "seed": seed, "prompt": body.prompt, "instructions": instructions, "ref_chars": None}
+    return {
+        "image_path": name, "seed": seed, "prompt": body.prompt, "instructions": instructions,
+        "ref_chars": None, "workflow": workflow,
+    }
 
 
 def _scene_context(node_id: str) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any] | None]:
@@ -1313,6 +1333,7 @@ class SceneImageGenerateIn(BaseModel):
     char_ids: list[str] = Field(default_factory=list)
     seed: int | None = None
     instructions: str | None = None  # 生成に使った追加指示(プロンプト・seed・参照キャラと 1 セットで保存する)
+    workflow: str | None = None  # workflows/variants.json の id(None = 既定)
 
 
 @app.post("/nodes/{node_id}/image/generate")
@@ -1324,6 +1345,7 @@ async def node_image_generate(node_id: str, body: SceneImageGenerateIn) -> dict[
     import uuid
     from pathlib import Path as _Path
 
+    import comfy
     import image_gen
 
     _node, chars, _place = _scene_context(node_id)
@@ -1344,16 +1366,20 @@ async def node_image_generate(node_id: str, body: SceneImageGenerateIn) -> dict[
     try:
         base_url = await comfy_mgr.ensure_running(settings)
         data, seed = await image_gen.generate_scene_image(
-            settings, body.prompt, ref_files, comfy_base_url=base_url, seed=body.seed
+            settings, body.prompt, ref_files, comfy_base_url=base_url, seed=body.seed, variant=body.workflow
         )
     except RuntimeError as e:
         raise HTTPException(500, str(e))
     name = f"{uuid.uuid4().hex[:12]}.png"
     await asyncio.to_thread((_Path(assets) / name).write_bytes, data)
     instructions = (body.instructions or "").strip() or None
-    store.set_node_image_gen(node_id, prompt=body.prompt, instructions=instructions, seed=seed, ref_chars=body.char_ids)
+    workflow = comfy.get_variant(body.workflow)["id"]
+    store.set_node_image_gen(
+        node_id, prompt=body.prompt, instructions=instructions, seed=seed, ref_chars=body.char_ids, workflow=workflow
+    )
     return {
-        "image_path": name, "seed": seed, "prompt": body.prompt, "instructions": instructions, "ref_chars": body.char_ids
+        "image_path": name, "seed": seed, "prompt": body.prompt, "instructions": instructions,
+        "ref_chars": body.char_ids, "workflow": workflow,
     }
 
 
