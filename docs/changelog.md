@@ -1,9 +1,15 @@
 # Changelog
 
 作成日時: 2026-07-24 22:59
-更新日時: 2026-08-28 06:50
+更新日時: 2026-08-28 07:30
 
 ## 未リリース
+
+- 2026-08-28 07:30 **Krea2 Turbo のワークフローを追加**(ユーザー要望)。生成ウインドウで「Krea2 Turbo」
+  「Krea2 + LoRA: zeniji」を選べる(`workflows/krea2_t2i.json` / `krea2_edit.json`、
+  `krea2_identity_edit_v1_2` LoRA で人物を保つ)。参照画像の渡し方は Qwen-Image と同じ経路。
+  組ごとの steps / cfg / shift はテンプレート側の値が設定画面より優先されるようにし、LoRA ローダーの
+  有無は `_optional` で組ごとに切り替えられるようにした。実機での品質(特に 2 人場面)は未検証。
 
 - 2026-08-28 06:50 **LoRA 版ワークフローと、生成時のワークフロー選択**(ユーザー要望)。`workflows/variants.json` で
   「既定」「LoRA: zeniji」(`qwen-image-zeniji.safetensors` を `LoraLoaderModelOnly` で挟んだ

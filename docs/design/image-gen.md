@@ -1,7 +1,7 @@
 # 画像生成(ComfyUI 連携)— キャラクターの参照画像と場面の挿絵
 
 作成日時: 2026-08-26 15:15
-更新日時: 2026-08-28 06:50
+更新日時: 2026-08-28 07:30
 
 ローカルの ComfyUI で挿絵を作る仕組みの設計メモ。2026-08-26 のユーザー発案
 ([progress.md](../plan/progress.md) の「場面の画像生成」)。画像は**装飾専用**で、
@@ -201,3 +201,27 @@ API 形式の JSON テンプレート `workflows/ref_t2i.json` を `comfy.build_
   次に開いたとき復元、ストックから選び直したときもそのセットに戻る。手持ちの画像は NULL。
 - UI は `ImageCandidate.WorkflowSelect`(seed 欄の隣のセレクト。両モーダル共用)。組が 1 つしか無ければ
   出さない。一覧は開くたびに読むので、`variants.json` を編集すればアプリを再起動せずに反映される。
+- **組の `values` は設定画面の値より優先**(steps / cfg / shift / checkpoint …)。モデルごとに向く値が
+  違うため(Qwen-Rapid は 4 steps、Krea2 Turbo は 8 steps)。
+- **`_optional` ノード**: テンプレートのノードに `"_optional": "<name>"` を書くと、組の `values[name]` が
+  空のときそのノードを配線ごと外す(`model` 入力の上流を、そのノードを参照していた入力へ付け替える)。
+  「挟むだけ」の LoRA ローダーの有無を、テンプレートを複製せずに組で切り替えるため。
+
+## 10. Krea2 Turbo の組
+
+2026-08-28 ユーザー質問「Krea2 で Qwen-Image と同じことはできるか」→ 仕組み上は同じ経路が組めるので、
+見比べられるように組を足した(実機での品質は未検証)。
+
+- 同梱 ComfyUI の公式テンプレート「Text to Image (Krea-2 Turbo)」「Image Style Reference (Krea-2 Turbo)」を
+  API 形式に写した `krea2_t2i.json` / `krea2_edit.json`。Krea2 は AIO ではなく
+  `UNETLoader(diffusion_models/krea2_turbo_bf16)` + `CLIPLoader(text_encoders/qwen3vl_4b_fp8_scaled, type=krea2)` +
+  `VAELoader(vae/qwen_image_vae)` の 3 つを別々に読む(`D:\ai-models\diffusion\comfyui` に全部ある)。
+  サンプリングは `ModelSamplingFlux(max_shift 1.15 / base_shift 0.5)` → `CFGGuider(cfg 1)` →
+  `SamplerCustomAdvanced`(euler / simple / 8 steps)。負側は `ConditioningZeroOut`。
+- **参照画像の経路は Qwen-Image-Edit と同じ** `TextEncodeQwenImageEditPlus(image1..3)`。Krea2 の本体が
+  `ref_latents` を受ける(`comfy/ldm/krea2/model.py`)ので、`FluxKontextMultiReferenceLatentMethod
+  (index_timestep_zero)` を挟んで渡す。公式の用途は 1 枚の *style reference* なので、人物の同一性は
+  `krea2_identity_edit_v1_2` LoRA("9"、edit では必須)に頼る。**2〜3 人の参照を同時に渡して両方の顔を
+  保てるかは未検証**(以前の調査メモどおり 1 枚寄り。2 人場面は Qwen 側が有利な見込み)。
+- 組は `krea2`(identity のみ)と `krea2_zeniji`(+ `krea2-zeniji-style` を "13" で重ねる)。
+  設定画面のチェックポイントは使わず、モデル名は `values` で持つ。

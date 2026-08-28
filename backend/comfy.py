@@ -96,10 +96,37 @@ def _fill(obj: Any, values: dict[str, Any]) -> Any:
     return obj
 
 
+def _drop_optional_nodes(wf: dict[str, Any], values: dict[str, Any]) -> None:
+    """`"_optional": "<name>"` を持つノードは、values[name] が空なら配線ごと外す。
+
+    外したノードの `model` 入力(上流)を、そのノードを参照していた入力へ付け替える
+    (LoRA ローダーのように「挟むだけ」のノードを組ごとに有無を切り替えるため)。
+    残すノードからは `_optional` キーを落とす。
+    """
+    for nid in list(wf):
+        node = wf[nid]
+        if not isinstance(node, dict) or "_optional" not in node:
+            continue
+        flag = node.pop("_optional")
+        if values.get(flag):
+            continue
+        upstream = node.get("inputs", {}).get("model")
+        del wf[nid]
+        if upstream is None:
+            continue
+        for other in wf.values():
+            if not isinstance(other, dict):
+                continue
+            for key, val in other.get("inputs", {}).items():
+                if isinstance(val, list) and len(val) == 2 and val[0] == nid:
+                    other["inputs"][key] = list(upstream)
+
+
 def load_workflow(name: str, values: dict[str, Any]) -> dict[str, Any]:
     """テンプレートを読んでプレースホルダを埋めた API 形式の dict を返す(`_comment` は落とす)。"""
     wf = _fill(json.loads(_load_template(name)), values)
     wf.pop("_comment", None)
+    _drop_optional_nodes(wf, values)
     return wf
 
 
@@ -122,13 +149,12 @@ def build_t2i_workflow(
 ) -> dict[str, Any]:
     """AIO チェックポイント 1 本で完結する text-to-image(既定は `workflows/ref_t2i.json`)。
     CheckpointLoaderSimple → ModelSamplingAuraFlow(shift) → KSampler → VAEDecode → SaveImage。
-    template / extra_values は variants.json の組(LoRA 版など)から来る。"""
+    template / extra_values は variants.json の組(LoRA 版・Krea2 など)から来る。組の値は設定画面の値より優先。"""
     if seed is None:
         seed = random.randint(0, 2**53 - 1)
     return load_workflow(
         template,
         {
-            **(extra_values or {}),
             "checkpoint": checkpoint,
             "positive": positive,
             "negative": negative,
@@ -141,6 +167,8 @@ def build_t2i_workflow(
             "sampler": sampler,
             "scheduler": scheduler,
             "filename_prefix": filename_prefix,
+            # 組の値が最後(モデルごとに向く steps / cfg / shift が違うので、設定画面の値より優先)
+            **(extra_values or {}),
         },
     )
 
@@ -176,7 +204,6 @@ def build_edit_workflow(
     if seed is None:
         seed = random.randint(0, 2**53 - 1)
     values: dict[str, Any] = {
-        **(extra_values or {}),
         "checkpoint": checkpoint,
         "positive": positive,
         "negative": negative,
@@ -189,6 +216,7 @@ def build_edit_workflow(
         "sampler": sampler,
         "scheduler": scheduler,
         "filename_prefix": filename_prefix,
+        **(extra_values or {}),  # 組の値が最後(設定画面の値より優先)
     }
     for i, name in enumerate(ref_images):
         values[f"ref_image_{i + 1}"] = name

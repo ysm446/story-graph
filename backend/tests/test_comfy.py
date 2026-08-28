@@ -1,3 +1,5 @@
+import json
+
 import comfy
 import comfy_installer as ci
 import image_gen
@@ -183,3 +185,44 @@ def test_scene_workflow_honours_variant():
     assert wf["9"]["class_type"] == "LoraLoaderModelOnly"
     assert "9" not in image_gen.scene_workflow(settings, "x", ["r.png"], seed=1)
     assert "9" not in image_gen.character_workflow(settings, "x", seed=1, variant="missing")
+
+
+def test_optional_node_is_dropped_and_rewired_when_value_missing():
+    v = comfy.get_variant("krea2")
+    wf = comfy.build_t2i_workflow(template=v["t2i"], extra_values=v["values"], checkpoint="c", positive="p", seed=1)
+    assert "9" not in wf  # 画風 LoRA(lora 未指定)は外れる
+    assert wf["2"]["inputs"]["model"] == ["1", 0]  # ModelSamplingFlux は UNETLoader に直結
+    assert wf["1"]["class_type"] == "UNETLoader" and wf["1"]["inputs"]["unet_name"] == "krea2_turbo_bf16.safetensors"
+    assert wf["20"]["inputs"]["type"] == "krea2"
+    assert "_optional" not in json.dumps(wf)
+    v2 = comfy.get_variant("krea2_zeniji")
+    wf2 = comfy.build_t2i_workflow(template=v2["t2i"], extra_values=v2["values"], checkpoint="c", positive="p", seed=1)
+    assert wf2["9"]["inputs"]["lora_name"] == "krea2-zeniji-style.safetensors" and wf2["2"]["inputs"]["model"] == ["9", 0]
+
+
+def test_krea2_edit_workflow_keeps_identity_lora_and_reference_wiring():
+    v = comfy.get_variant("krea2")
+    wf = comfy.build_edit_workflow(
+        template=v["edit"], extra_values=v["values"], checkpoint="c", positive="p", ref_images=["a.png", "b.png"], seed=3
+    )
+    assert wf["9"]["inputs"]["lora_name"] == "krea2_identity_edit_v1_2.safetensors"
+    assert "13" not in wf and wf["2"]["inputs"]["model"] == ["9", 0]  # 画風 LoRA 無し → identity に直結
+    enc = wf["3"]["inputs"]
+    assert enc["image1"] == ["10", 0] and enc["image2"] == ["11", 0] and "image3" not in enc and "12" not in wf
+    assert wf["26"]["inputs"]["reference_latents_method"] == "index_timestep_zero"
+    assert wf["22"]["inputs"]["positive"] == ["26", 0] and wf["22"]["inputs"]["cfg"] == 1.0
+    assert wf["24"]["inputs"]["steps"] == 8 and wf["25"]["inputs"]["noise_seed"] == 3
+    assert wf["2"]["inputs"]["max_shift"] == 1.15
+    v2 = comfy.get_variant("krea2_zeniji")
+    wf2 = comfy.build_edit_workflow(
+        template=v2["edit"], extra_values=v2["values"], checkpoint="c", positive="p", ref_images=["a.png"], seed=3
+    )
+    assert wf2["13"]["inputs"]["model"] == ["9", 0] and wf2["2"]["inputs"]["model"] == ["13", 0]
+
+
+def test_variant_values_override_settings():
+    settings = {"comfy_checkpoint": "c.safetensors", "comfy_steps": "4", "comfy_cfg": "2.5"}
+    wf = image_gen.scene_workflow(settings, "x", [], seed=1, variant="krea2")
+    assert wf["24"]["inputs"]["steps"] == 8 and wf["22"]["inputs"]["cfg"] == 1.0
+    wf_default = image_gen.scene_workflow(settings, "x", [], seed=1)
+    assert wf_default["6"]["inputs"]["steps"] == 4 and wf_default["6"]["inputs"]["cfg"] == 2.5

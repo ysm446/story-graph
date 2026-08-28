@@ -1,13 +1,49 @@
 {
-  "_comment": "生成ウインドウで選べるワークフローの組。id は DB(nodes.image_workflow / characters.ref_image_workflow / media.workflow)に保存されるので変えない。t2i はキャラの参照画像と参照画像なしの場面、edit は参照画像ありの場面に使う(workflows/ 内のファイル名、拡張子なし)。values はテンプレートの {{name}} に追加で入る値。",
+  "_comment": "生成ウインドウで選べるワークフローの組。id は DB(nodes.image_workflow / characters.ref_image_workflow / media.workflow)に保存されるので変えない。t2i はキャラの参照画像と参照画像なしの場面、edit は参照画像ありの場面に使う(workflows/ 内のファイル名、拡張子なし)。values はテンプレートの {{name}} に入る値で、設定画面の値(checkpoint / steps / cfg / shift / negative)より優先する(モデルごとに向く値が違うため)。テンプレートの _optional ノードは、その名前の値が values に無ければ配線ごと外れる。",
   "variants": [
-    { "id": "default", "label": "既定", "t2i": "ref_t2i", "edit": "scene_edit", "values": {} },
+    { "id": "default", "label": "既定(Qwen)", "t2i": "ref_t2i", "edit": "scene_edit", "values": {} },
     {
       "id": "zeniji",
-      "label": "LoRA: zeniji",
+      "label": "Qwen + LoRA: zeniji",
       "t2i": "ref_t2i_lora",
       "edit": "scene_edit_lora",
       "values": { "lora": "qwen-image-zeniji.safetensors", "lora_strength": 1.0 }
+    },
+    {
+      "id": "krea2",
+      "label": "Krea2 Turbo",
+      "t2i": "krea2_t2i",
+      "edit": "krea2_edit",
+      "values": {
+        "unet": "krea2_turbo_bf16.safetensors",
+        "clip": "qwen3vl_4b_fp8_scaled.safetensors",
+        "vae": "qwen_image_vae.safetensors",
+        "identity_lora": "krea2_identity_edit_v1_2.safetensors",
+        "identity_strength": 1.0,
+        "steps": 8,
+        "cfg": 1.0,
+        "max_shift": 1.15,
+        "base_shift": 0.5
+      }
+    },
+    {
+      "id": "krea2_zeniji",
+      "label": "Krea2 + LoRA: zeniji",
+      "t2i": "krea2_t2i",
+      "edit": "krea2_edit",
+      "values": {
+        "unet": "krea2_turbo_bf16.safetensors",
+        "clip": "qwen3vl_4b_fp8_scaled.safetensors",
+        "vae": "qwen_image_vae.safetensors",
+        "identity_lora": "krea2_identity_edit_v1_2.safetensors",
+        "identity_strength": 1.0,
+        "lora": "krea2-zeniji-style.safetensors",
+        "lora_strength": 1.0,
+        "steps": 8,
+        "cfg": 1.0,
+        "max_shift": 1.15,
+        "base_shift": 0.5
+      }
     }
   ]
 }

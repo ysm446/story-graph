@@ -1,0 +1,46 @@
+{
+  "_comment": "Krea2 Turbo の text-to-image(キャラの参照画像 / 参照画像なしの場面)。同梱 ComfyUI の公式テンプレート「Text to Image (Krea-2 Turbo)」を API 形式に写したもの。UNET / CLIP(qwen3vl_4b, type=krea2)/ VAE(qwen_image_vae)は values で指定し、設定画面のチェックポイントは使わない。\"9\" の画風 LoRA は values に lora が無ければ外れる(_optional)。ノード ID の 6(サンプラー)/ 7(VAEDecode)/ 8(SaveImage)/ 9(LoRA)は既定のテンプレートと揃えてある。",
+  "1": { "class_type": "UNETLoader", "inputs": { "unet_name": "{{unet}}", "weight_dtype": "default" } },
+  "20": { "class_type": "CLIPLoader", "inputs": { "clip_name": "{{clip}}", "type": "krea2", "device": "default" } },
+  "21": { "class_type": "VAELoader", "inputs": { "vae_name": "{{vae}}" } },
+  "9": {
+    "_optional": "lora",
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": { "model": ["1", 0], "lora_name": "{{lora}}", "strength_model": "{{lora_strength}}" }
+  },
+  "2": {
+    "class_type": "ModelSamplingFlux",
+    "inputs": {
+      "model": ["9", 0],
+      "max_shift": "{{max_shift}}",
+      "base_shift": "{{base_shift}}",
+      "width": "{{width}}",
+      "height": "{{height}}"
+    }
+  },
+  "3": { "class_type": "CLIPTextEncode", "inputs": { "clip": ["20", 0], "text": "{{positive}}" } },
+  "4": { "class_type": "ConditioningZeroOut", "inputs": { "conditioning": ["3", 0] } },
+  "5": {
+    "class_type": "EmptyLatentImage",
+    "inputs": { "width": "{{width}}", "height": "{{height}}", "batch_size": 1 }
+  },
+  "22": { "class_type": "CFGGuider", "inputs": { "model": ["2", 0], "positive": ["3", 0], "negative": ["4", 0], "cfg": "{{cfg}}" } },
+  "23": { "class_type": "KSamplerSelect", "inputs": { "sampler_name": "{{sampler}}" } },
+  "24": {
+    "class_type": "BasicScheduler",
+    "inputs": { "model": ["2", 0], "scheduler": "{{scheduler}}", "steps": "{{steps}}", "denoise": 1.0 }
+  },
+  "25": { "class_type": "RandomNoise", "inputs": { "noise_seed": "{{seed}}" } },
+  "6": {
+    "class_type": "SamplerCustomAdvanced",
+    "inputs": {
+      "noise": ["25", 0],
+      "guider": ["22", 0],
+      "sampler": ["23", 0],
+      "sigmas": ["24", 0],
+      "latent_image": ["5", 0]
+    }
+  },
+  "7": { "class_type": "VAEDecode", "inputs": { "samples": ["6", 0], "vae": ["21", 0] } },
+  "8": { "class_type": "SaveImage", "inputs": { "images": ["7", 0], "filename_prefix": "{{filename_prefix}}" } }
+}
