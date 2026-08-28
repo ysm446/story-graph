@@ -1,7 +1,7 @@
 # 画像生成(ComfyUI 連携)— キャラクターの参照画像と場面の挿絵
 
 作成日時: 2026-08-26 15:15
-更新日時: 2026-08-28 05:40
+更新日時: 2026-08-28 06:05
 
 ローカルの ComfyUI で挿絵を作る仕組みの設計メモ。2026-08-26 のユーザー発案
 ([progress.md](../plan/progress.md) の「場面の画像生成」)。画像は**装飾専用**で、
@@ -26,7 +26,7 @@
 |---|---|---|
 | portable 版のダウンロード・展開・削除 | `backend/comfy_installer.py` | `llama_installer.py` |
 | spawn / ヘルスチェック / 停止 | `backend/comfy_manager.py` | `llama_manager.py` |
-| HTTP API クライアント + ワークフロー組み立て | `backend/comfy.py` | `llm.py` |
+| HTTP API クライアント + ワークフロー組み立て | `backend/comfy.py`(本体は `backend/workflows/*.json`) | `llm.py` |
 | 参照画像のプロンプト生成 + 生成の段取り | `backend/image_gen.py` | `generation.py` |
 
 - **外部起動を優先**: 設定 `comfy_base_url`(既定 `http://127.0.0.1:8188`)が応答すればそれを使う。
@@ -47,7 +47,11 @@
 
 ## 3. ワークフロー
 
-API 形式の JSON を `comfy.build_t2i_workflow` で組み立てて `/prompt` に投げる。
+API 形式の JSON テンプレート `backend/workflows/ref_t2i.json` を `comfy.build_t2i_workflow` が読み、
+`{{name}}` の欄(checkpoint / positive / negative / seed / steps / cfg / shift / width / height …)を埋めて
+`/prompt` に投げる(2026-08-28 ユーザー要望でコード直書きから `workflows/` へ移した。値が `{{name}}` だけの
+欄は数値の型を保って差し込む。ComfyUI の「Save (API Format)」と同じ形なので、ComfyUI で調整した
+ワークフローをそのまま置き換えられる)。
 ノード ID は固定(テスト `tests/test_comfy.py` が参照):
 
 ```
@@ -66,7 +70,8 @@ API 形式の JSON を `comfy.build_t2i_workflow` で組み立てて `/prompt` �
   `comfy_shift` / `comfy_negative` で上書き。
 - 実行は `/prompt` → `/history/{id}` を 1 秒ごとにポーリング → 出力の `images[0]` を `/view` で取得。
   クライアント切断(AbortController)では `/interrupt` を送って GPU を解放する。
-- **場面用の編集ワークフロー** `comfy.build_edit_workflow`(同じ AIO チェックポイント):
+- **場面用の編集ワークフロー** `comfy.build_edit_workflow`(`workflows/scene_edit.json`。同じ AIO チェックポイント。
+  テンプレートは 3 枚分の LoadImage を持ち、渡した枚数より後ろのノードと image2/3 の配線を build 時に外す):
   `LoadImage`("10"〜"12")→ `TextEncodeQwenImageEditPlus`("3" 正 / "4" 負。clip + vae + image1..3)→
   `EmptySD3LatentImage 1216×832` → KSampler → VAEDecode → SaveImage。参照画像は `/upload/image`
   (`input/story-graph/`)へ先に上げる。参照画像が 1 枚も無ければ t2i にフォールバック(`image_gen.scene_workflow`)。
@@ -172,5 +177,5 @@ API 形式の JSON を `comfy.build_t2i_workflow` で組み立てて `/prompt` �
 
 ## 8. この先
 
-- ワークフロー JSON をテンプレート化して差し替え可能に(Krea2 用など)。
+- ワークフロー JSON は `workflows/` に出した(2026-08-28)。設定から別のテンプレート(Krea2 用など)を選べるようにするのは未着手。
 - VRAM 不足時に LLM を一時停止する排他パス。

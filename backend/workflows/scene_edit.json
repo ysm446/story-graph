@@ -1,0 +1,51 @@
+{
+  "_comment": "場面の挿絵(Qwen-Image-Edit 2509 系の複数画像入力)。ComfyUI の API 形式。{{name}} は comfy.build_edit_workflow が埋める。参照画像は {{ref_image_1}}..{{ref_image_3}} で、渡した枚数より後ろの LoadImage(11, 12)と image2/image3 の配線は build 時に外す。ノード ID はテストが参照するので変えない。",
+  "1": { "class_type": "CheckpointLoaderSimple", "inputs": { "ckpt_name": "{{checkpoint}}" } },
+  "2": { "class_type": "ModelSamplingAuraFlow", "inputs": { "model": ["1", 0], "shift": "{{shift}}" } },
+  "10": { "class_type": "LoadImage", "inputs": { "image": "{{ref_image_1}}", "upload": "image" } },
+  "11": { "class_type": "LoadImage", "inputs": { "image": "{{ref_image_2}}", "upload": "image" } },
+  "12": { "class_type": "LoadImage", "inputs": { "image": "{{ref_image_3}}", "upload": "image" } },
+  "3": {
+    "class_type": "TextEncodeQwenImageEditPlus",
+    "inputs": {
+      "clip": ["1", 1],
+      "vae": ["1", 2],
+      "prompt": "{{positive}}",
+      "image1": ["10", 0],
+      "image2": ["11", 0],
+      "image3": ["12", 0]
+    }
+  },
+  "4": {
+    "class_type": "TextEncodeQwenImageEditPlus",
+    "inputs": {
+      "clip": ["1", 1],
+      "vae": ["1", 2],
+      "prompt": "{{negative}}",
+      "image1": ["10", 0],
+      "image2": ["11", 0],
+      "image3": ["12", 0]
+    }
+  },
+  "5": {
+    "class_type": "EmptySD3LatentImage",
+    "inputs": { "width": "{{width}}", "height": "{{height}}", "batch_size": 1 }
+  },
+  "6": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": ["2", 0],
+      "positive": ["3", 0],
+      "negative": ["4", 0],
+      "latent_image": ["5", 0],
+      "seed": "{{seed}}",
+      "steps": "{{steps}}",
+      "cfg": "{{cfg}}",
+      "sampler_name": "{{sampler}}",
+      "scheduler": "{{scheduler}}",
+      "denoise": 1.0
+    }
+  },
+  "7": { "class_type": "VAEDecode", "inputs": { "samples": ["6", 0], "vae": ["1", 2] } },
+  "8": { "class_type": "SaveImage", "inputs": { "images": ["7", 0], "filename_prefix": "{{filename_prefix}}" } }
+}

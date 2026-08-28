@@ -1,15 +1,19 @@
 """ComfyUI の HTTP API クライアントと、アプリが使うワークフロー(API 形式 JSON)の組み立て。
 
 - `/prompt` に投げて prompt_id を受け取り、`/history/{id}` を待って `/view` で画像を取る
-- ワークフローは Qwen-Image 系の AIO チェックポイント(Qwen-Rapid-AIO)を前提にした
-  text-to-image 1 本(docs/plan/progress.md「場面の画像生成」)。
+- ワークフローの本体は `backend/workflows/*.json`(ComfyUI の「Save (API Format)」と同じ形。
+  値が `{{name}}` の欄をここで埋める)。Qwen-Image 系の AIO チェックポイント(Qwen-Rapid-AIO)前提。
   ノード ID は文字列で固定し、テストで参照できるようにしてある
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import random
+import re
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -46,6 +50,38 @@ async def list_models(base_url: str, folder: str = "checkpoints") -> list[str]:
 
 # ---- ワークフロー ---------------------------------------------------
 
+WORKFLOWS_DIR = Path(__file__).resolve().parent / "workflows"
+_PLACEHOLDER = re.compile(r"\{\{(\w+)\}\}")
+
+
+@lru_cache(maxsize=None)
+def _load_template(name: str) -> str:
+    """workflows/<name>.json の中身(文字列のまま持ち、使うたびに parse して独立した dict を返す)。"""
+    return (WORKFLOWS_DIR / f"{name}.json").read_text(encoding="utf-8")
+
+
+def _fill(obj: Any, values: dict[str, Any]) -> Any:
+    """`{{name}}` を埋める。欄の値がプレースホルダだけなら型を保って差し込む(seed や steps は数値のまま)。
+    文字列の一部に含まれるときは文字列として置換する。未知の名前はそのまま残す。"""
+    if isinstance(obj, dict):
+        return {k: _fill(v, values) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_fill(v, values) for v in obj]
+    if isinstance(obj, str):
+        m = _PLACEHOLDER.fullmatch(obj)
+        if m:
+            return values.get(m.group(1), obj)
+        return _PLACEHOLDER.sub(lambda mm: str(values.get(mm.group(1), mm.group(0))), obj)
+    return obj
+
+
+def load_workflow(name: str, values: dict[str, Any]) -> dict[str, Any]:
+    """テンプレートを読んでプレースホルダを埋めた API 形式の dict を返す(`_comment` は落とす)。"""
+    wf = _fill(json.loads(_load_template(name)), values)
+    wf.pop("_comment", None)
+    return wf
+
+
 def build_t2i_workflow(
     *,
     checkpoint: str,
@@ -61,34 +97,27 @@ def build_t2i_workflow(
     scheduler: str = DEFAULT_SCHEDULER,
     filename_prefix: str = "story-graph/ref",
 ) -> dict[str, Any]:
-    """AIO チェックポイント 1 本で完結する text-to-image。
+    """AIO チェックポイント 1 本で完結する text-to-image(`workflows/ref_t2i.json`)。
     CheckpointLoaderSimple → ModelSamplingAuraFlow(shift) → KSampler → VAEDecode → SaveImage。"""
     if seed is None:
         seed = random.randint(0, 2**53 - 1)
-    return {
-        "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": checkpoint}},
-        "2": {"class_type": "ModelSamplingAuraFlow", "inputs": {"model": ["1", 0], "shift": shift}},
-        "3": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["1", 1], "text": positive}},
-        "4": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["1", 1], "text": negative}},
-        "5": {"class_type": "EmptySD3LatentImage", "inputs": {"width": width, "height": height, "batch_size": 1}},
-        "6": {
-            "class_type": "KSampler",
-            "inputs": {
-                "model": ["2", 0],
-                "positive": ["3", 0],
-                "negative": ["4", 0],
-                "latent_image": ["5", 0],
-                "seed": seed,
-                "steps": steps,
-                "cfg": cfg,
-                "sampler_name": sampler,
-                "scheduler": scheduler,
-                "denoise": 1.0,
-            },
+    return load_workflow(
+        "ref_t2i",
+        {
+            "checkpoint": checkpoint,
+            "positive": positive,
+            "negative": negative,
+            "width": width,
+            "height": height,
+            "steps": steps,
+            "cfg": cfg,
+            "shift": shift,
+            "seed": seed,
+            "sampler": sampler,
+            "scheduler": scheduler,
+            "filename_prefix": filename_prefix,
         },
-        "7": {"class_type": "VAEDecode", "inputs": {"samples": ["6", 0], "vae": ["1", 2]}},
-        "8": {"class_type": "SaveImage", "inputs": {"images": ["7", 0], "filename_prefix": filename_prefix}},
-    }
+    )
 
 
 def build_edit_workflow(
@@ -107,53 +136,39 @@ def build_edit_workflow(
     scheduler: str = DEFAULT_SCHEDULER,
     filename_prefix: str = "story-graph/scene",
 ) -> dict[str, Any]:
-    """Qwen-Image-Edit 2509 系の複数画像入力(最大 3 枚)で場面を描く。
+    """Qwen-Image-Edit 2509 系の複数画像入力(最大 3 枚)で場面を描く(`workflows/scene_edit.json`)。
 
     ref_images は ComfyUI の input フォルダにアップロード済みのファイル名。
     `TextEncodeQwenImageEditPlus` の image1..3 に順に繋ぎ、プロンプト側は
-    「image1 = 誰」で参照する(docs/design/image-gen.md §3)。
-    LoadImage は "10", "11", "12"、エンコーダは "3"(正) / "4"(負)。"""
+    「image1 = 誰」で参照する(docs/design/image-gen.md §3)。テンプレートは 3 枚分の
+    LoadImage("10"〜"12")を持っているので、渡した枚数より後ろのノードと配線を外す。"""
     if not ref_images:
         raise ValueError("ref_images が空です(参照画像が無いときは build_t2i_workflow を使う)")
     if len(ref_images) > 3:
         raise ValueError("参照画像は 3 枚までです")
     if seed is None:
         seed = random.randint(0, 2**53 - 1)
-    wf: dict[str, Any] = {
-        "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": checkpoint}},
-        "2": {"class_type": "ModelSamplingAuraFlow", "inputs": {"model": ["1", 0], "shift": shift}},
+    values: dict[str, Any] = {
+        "checkpoint": checkpoint,
+        "positive": positive,
+        "negative": negative,
+        "width": width,
+        "height": height,
+        "steps": steps,
+        "cfg": cfg,
+        "shift": shift,
+        "seed": seed,
+        "sampler": sampler,
+        "scheduler": scheduler,
+        "filename_prefix": filename_prefix,
     }
-    image_inputs: dict[str, Any] = {}
     for i, name in enumerate(ref_images):
-        nid = str(10 + i)
-        wf[nid] = {"class_type": "LoadImage", "inputs": {"image": name, "upload": "image"}}
-        image_inputs[f"image{i + 1}"] = [nid, 0]
-    wf["3"] = {
-        "class_type": "TextEncodeQwenImageEditPlus",
-        "inputs": {"clip": ["1", 1], "vae": ["1", 2], "prompt": positive, **image_inputs},
-    }
-    wf["4"] = {
-        "class_type": "TextEncodeQwenImageEditPlus",
-        "inputs": {"clip": ["1", 1], "vae": ["1", 2], "prompt": negative, **image_inputs},
-    }
-    wf["5"] = {"class_type": "EmptySD3LatentImage", "inputs": {"width": width, "height": height, "batch_size": 1}}
-    wf["6"] = {
-        "class_type": "KSampler",
-        "inputs": {
-            "model": ["2", 0],
-            "positive": ["3", 0],
-            "negative": ["4", 0],
-            "latent_image": ["5", 0],
-            "seed": seed,
-            "steps": steps,
-            "cfg": cfg,
-            "sampler_name": sampler,
-            "scheduler": scheduler,
-            "denoise": 1.0,
-        },
-    }
-    wf["7"] = {"class_type": "VAEDecode", "inputs": {"samples": ["6", 0], "vae": ["1", 2]}}
-    wf["8"] = {"class_type": "SaveImage", "inputs": {"images": ["7", 0], "filename_prefix": filename_prefix}}
+        values[f"ref_image_{i + 1}"] = name
+    wf = load_workflow("scene_edit", values)
+    for i in range(len(ref_images), 3):
+        wf.pop(str(10 + i), None)
+        for enc in ("3", "4"):
+            wf[enc]["inputs"].pop(f"image{i + 1}", None)
     return wf
 
 
