@@ -121,7 +121,7 @@ llama.cpp の制約付き構造化出力 —— どれも Python 側に既存の
 | `llm.py` | llama-server クライアント(httpx 非同期、構造化出力) | なし |
 | `llama_manager.py` / `llama_installer.py` | llama-server の起動・停止と自動インストール | なし |
 | `comfy_manager.py` / `comfy_installer.py` | ComfyUI(portable 版)の起動・停止と自動インストール、extra_model_paths.yaml の書き出し | comfy |
-| `comfy.py` / `image_gen.py` / `workflows/*.json` | ComfyUI クライアント(ワークフロー JSON テンプレートの読み込み・実行)とキャラ参照画像・場面の挿絵の生成([image-gen.md](image-gen.md)) | llm / comfy |
+| `comfy.py` / `image_gen.py`(+ リポジトリ直下 `workflows/*.json`) | ComfyUI クライアント(ワークフロー JSON テンプレートの読み込み・実行)とキャラ参照画像・場面の挿絵の生成([image-gen.md](image-gen.md)) | llm / comfy |
 | `validation.py` | ルールベース検証(cast と state の照合) | fold |
 | `snapshots.py` / `backup.py` | 時点保存と外部バックアップ | store |
 | `system_info.py` | CPU / RAM / GPU / VRAM とモデル一覧 | なし |

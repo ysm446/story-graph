@@ -1,7 +1,7 @@
 """ComfyUI の HTTP API クライアントと、アプリが使うワークフロー(API 形式 JSON)の組み立て。
 
 - `/prompt` に投げて prompt_id を受け取り、`/history/{id}` を待って `/view` で画像を取る
-- ワークフローの本体は `backend/workflows/*.json`(ComfyUI の「Save (API Format)」と同じ形。
+- ワークフローの本体は `workflows/*.json`(リポジトリ直下)(ComfyUI の「Save (API Format)」と同じ形。
   値が `{{name}}` の欄をここで埋める)。Qwen-Image 系の AIO チェックポイント(Qwen-Rapid-AIO)前提。
   ノード ID は文字列で固定し、テストで参照できるようにしてある
 """
@@ -50,13 +50,14 @@ async def list_models(base_url: str, folder: str = "checkpoints") -> list[str]:
 
 # ---- ワークフロー ---------------------------------------------------
 
-WORKFLOWS_DIR = Path(__file__).resolve().parent / "workflows"
+# リポジトリ直下の workflows/(ComfyUI に送る API 形式のワークフロー。ユーザーが差し替える前提で backend の外に置く)
+WORKFLOWS_DIR = Path(__file__).resolve().parent.parent / "workflows"
 _PLACEHOLDER = re.compile(r"\{\{(\w+)\}\}")
 
 
 @lru_cache(maxsize=None)
 def _load_template(name: str) -> str:
-    """workflows/<name>.json の中身(文字列のまま持ち、使うたびに parse して独立した dict を返す)。"""
+    """workflows/<name>.json(リポジトリ直下)の中身(文字列のまま持ち、使うたびに parse して独立した dict を返す)。"""
     return (WORKFLOWS_DIR / f"{name}.json").read_text(encoding="utf-8")
 
 

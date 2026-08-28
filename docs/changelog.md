@@ -5,7 +5,7 @@
 
 ## 未リリース
 
-- 2026-08-28 06:05 **ComfyUI のワークフローを `backend/workflows/*.json` に移した**(ユーザー要望)。
+- 2026-08-28 06:05 **ComfyUI のワークフローをリポジトリ直下の `workflows/*.json` に移した**(ユーザー要望)。
   `ref_t2i.json`(参照画像)と `scene_edit.json`(場面の挿絵)。ComfyUI の API 形式そのままで、
   `{{name}}` の欄をコードが埋める。ComfyUI で調整したワークフローを置き換えて使える。動作は変わらない。
 

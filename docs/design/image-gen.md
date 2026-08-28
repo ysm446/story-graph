@@ -26,7 +26,7 @@
 |---|---|---|
 | portable 版のダウンロード・展開・削除 | `backend/comfy_installer.py` | `llama_installer.py` |
 | spawn / ヘルスチェック / 停止 | `backend/comfy_manager.py` | `llama_manager.py` |
-| HTTP API クライアント + ワークフロー組み立て | `backend/comfy.py`(本体は `backend/workflows/*.json`) | `llm.py` |
+| HTTP API クライアント + ワークフロー組み立て | `backend/comfy.py`(本体は `workflows/*.json`) | `llm.py` |
 | 参照画像のプロンプト生成 + 生成の段取り | `backend/image_gen.py` | `generation.py` |
 
 - **外部起動を優先**: 設定 `comfy_base_url`(既定 `http://127.0.0.1:8188`)が応答すればそれを使う。
@@ -47,7 +47,7 @@
 
 ## 3. ワークフロー
 
-API 形式の JSON テンプレート `backend/workflows/ref_t2i.json` を `comfy.build_t2i_workflow` が読み、
+API 形式の JSON テンプレート `workflows/ref_t2i.json` を `comfy.build_t2i_workflow` が読み、
 `{{name}}` の欄(checkpoint / positive / negative / seed / steps / cfg / shift / width / height …)を埋めて
 `/prompt` に投げる(2026-08-28 ユーザー要望でコード直書きから `workflows/` へ移した。値が `{{name}}` だけの
 欄は数値の型を保って差し込む。ComfyUI の「Save (API Format)」と同じ形なので、ComfyUI で調整した
