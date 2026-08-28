@@ -193,7 +193,7 @@ API 形式の JSON テンプレート `workflows/ref_t2i.json` を `comfy.build_
 - LoRA 版のテンプレート `ref_t2i_lora.json` / `scene_edit_lora.json` は、既定の
   `CheckpointLoaderSimple("1")` と `ModelSamplingAuraFlow("2")` の間に `LoraLoaderModelOnly("9")` を挟んだもの
   (CLIP は触らない。Qwen-Image 系の LoRA は model のみが通例)。LoRA ファイルは ComfyUI の `loras/`
-  (`D:i-models\diffusion\comfyui\loras`)から名前で参照する。
+  (`D:\ai-models\diffusion\comfyui\loras`)から名前で参照する。
 - `comfy.list_variants()` / `get_variant(id)`(不明な id は既定に落として生成は止めない)。
   `build_*_workflow(template=, extra_values=)` に組を渡す。`GET /comfy/workflows` が UI 用の一覧。
 - **組はセットの一部**: LoRA の有無で絵が変わるので、プロンプト・seed と同じく
