@@ -23,6 +23,37 @@ function paramLabel(name: string): string | null {
   return m ? `${m[1]}B` : null
 }
 
+// 最近使ったモデル(新しい順、path)。一覧の上に並べる。ライブラリをまたいで同じなので localStorage
+const RECENT_KEY = 'modelBarRecent'
+const RECENT_MAX = 5
+
+function loadRecent(): string[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(RECENT_KEY) ?? '[]')
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+function pushRecent(path: string): string[] {
+  const next = [path, ...loadRecent().filter((x) => x !== path)].slice(0, RECENT_MAX)
+  try {
+    localStorage.setItem(RECENT_KEY, JSON.stringify(next))
+  } catch {
+    // 保存できなくても並び順が変わらないだけ
+  }
+  return next
+}
+
+/** 最近使ったものを先頭に(新しい順)、残りはサーバの並びのまま */
+function orderByRecent(models: ModelEntry[], recent: string[]): ModelEntry[] {
+  const byPath = new Map(models.map((m) => [m.path, m]))
+  const head = recent.map((p) => byPath.get(p)).filter((m): m is ModelEntry => !!m)
+  const headSet = new Set(head.map((m) => m.path))
+  return [...head, ...models.filter((m) => !headSet.has(m.path))]
+}
+
 /** パスの親フォルダ名(models 直下なら 'models/') */
 function parentDir(path: string): string {
   const parts = path.split(/[\\/]/).filter(Boolean)
@@ -67,6 +98,7 @@ function EjectIcon(): React.JSX.Element {
 function ModelModal({
   models,
   modelsDir,
+  recent,
   selected,
   loadingPath,
   error,
@@ -75,6 +107,8 @@ function ModelModal({
 }: {
   models: ModelEntry[]
   modelsDir: string
+  /** 最近使ったモデル(新しい順)。上に並べて「最近」の印を付ける */
+  recent: string[]
   selected: string
   loadingPath: string | null
   error: string | null
@@ -82,6 +116,8 @@ function ModelModal({
   onClose: () => void
 }): React.JSX.Element {
   const busy = loadingPath !== null
+  const ordered = orderByRecent(models, recent)
+  const recentSet = new Set(recent)
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-6"
@@ -114,7 +150,7 @@ function ModelModal({
           </div>
         ) : (
           <div className="inspector-scrollbar max-h-[360px] space-y-1 overflow-y-auto pr-1">
-            {models.map((m) => {
+            {ordered.map((m) => {
               const active = m.path === selected
               const isLoading = m.path === loadingPath
               const quant = quantLabel(m.name)
@@ -146,6 +182,11 @@ function ModelModal({
                     </span>
                   ) : (
                     <div className="flex shrink-0 items-center gap-1.5 text-[10px]" style={{ color: 'var(--text-faint)' }}>
+                      {recentSet.has(m.path) && (
+                        <span className="rounded px-1" style={{ background: 'var(--bg-input)' }} data-tip="最近使ったモデル(新しい順に上へ並びます)">
+                          最近
+                        </span>
+                      )}
                       {param && (
                         <span className="rounded px-1.5 py-0.5" style={{ background: 'var(--bg-elevated)' }}>
                           {param}
@@ -187,6 +228,7 @@ export default function ModelBar({ refreshKey }: { refreshKey: number }): React.
   const [models, setModels] = useState<ModelEntry[]>([])
   const [modelsDir, setModelsDir] = useState<string>('') // GGUF を探しているフォルダ
   const [selected, setSelected] = useState<string>('') // path
+  const [recent, setRecent] = useState<string[]>(loadRecent) // 最近使った順(一覧の上に出す)
   const [healthy, setHealthy] = useState<boolean | null>(null)
   // バックエンドが読み込み中(生成の自動ロードを含む。このバー以外がきっかけでも映す)
   const [autoLoading, setAutoLoading] = useState(false)
@@ -200,7 +242,10 @@ export default function ModelBar({ refreshKey }: { refreshKey: number }): React.
       const [r, settings] = await Promise.all([api.listModels(), api.getSettings()])
       setModels(r.models)
       setModelsDir(r.models_dir)
-      setSelected(settings.llm_model_path || r.current || '')
+      const current = settings.llm_model_path || r.current || ''
+      setSelected(current)
+      // いま設定されているモデルは「前回選んだもの」なので、履歴が無くても上に来るようにする
+      if (current && !loadRecent().includes(current)) setRecent(pushRecent(current))
     } catch {
       setModels([])
     }
@@ -256,6 +301,7 @@ export default function ModelBar({ refreshKey }: { refreshKey: number }): React.
     // 即モーダルを閉じ、バー上でバックグラウンドにロードする(他の作業を続けられる)
     setError(null)
     setSelected(path) // 楽観的に選択名を表示
+    setRecent(pushRecent(path)) // 次に開いたとき上に来る
     setLoadingPath(path)
     setOpen(false)
     try {
@@ -353,6 +399,7 @@ export default function ModelBar({ refreshKey }: { refreshKey: number }): React.
         <ModelModal
           models={models}
           modelsDir={modelsDir}
+          recent={recent}
           selected={selected}
           loadingPath={loadingPath}
           error={error}
