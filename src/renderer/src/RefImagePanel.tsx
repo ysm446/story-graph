@@ -58,6 +58,8 @@ export default function RefImagePanel({
     setError(null)
     setInstructions('')
     setStockOpen(false)
+    // パネルを離れたときも進行中のプロンプト生成 / 画像生成を止める
+    return () => abortRef.current?.abort()
   }, [character?.id])
 
   if (!character) return null

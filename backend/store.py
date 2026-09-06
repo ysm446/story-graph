@@ -118,6 +118,18 @@ class Store:
             self.conn.execute(
                 f"UPDATE characters SET {sets} WHERE id = ?", (*updates.values(), char_id)
             )
+            # 名前・プロフィール・外見・口調は清書プロンプトに載るので、
+            # そのキャラが登場するシーンの既存の清書を stale にする(update_place と同型)
+            if {"name", "profile", "appearance", "voice"} & updates.keys():
+                node_ids = [
+                    r["id"]
+                    for r in self.conn.execute('SELECT id, "cast" FROM nodes').fetchall()
+                    if char_id in (json.loads(r["cast"] or "[]"))
+                ]
+                if node_ids:
+                    self.conn.executemany(
+                        "UPDATE renders SET stale = 1 WHERE node_id = ?", [(n,) for n in node_ids]
+                    )
             self.conn.commit()
         return self.get_character(char_id)
 
@@ -1106,6 +1118,11 @@ class Store:
             seen.add(current)
         if self.parent_of(out["id"]) == current:
             return
+        # 選んだシーンが既に出口の下流にある(出口の先のシーンが章に入れられた)場合、
+        # current → out を張ると out → … → current → out の循環になり、正史の根が
+        # 失われる。その配線は作らずに現状を保つ
+        if out["id"] in self.path_to(current):
+            return
         self.conn.execute("DELETE FROM edges WHERE to_node = ?", (out["id"],))
         self.conn.execute(
             "INSERT INTO edges(id, from_node, to_node, is_canon) VALUES(?,?,?,1)",
@@ -1714,6 +1731,31 @@ class Store:
         ]
         if updates:
             self.conn.executemany("UPDATE memories SET story_order = ? WHERE id = ?", updates)
+        # 章のまとめ(digest)の記憶は events テーブルに無いので上の JOIN に乗らない。
+        # _sync_digest_memories と同じ規則(route 末尾の位置)で追従させる
+        digest_rows = self.conn.execute(
+            "SELECT id, digest_events FROM groups WHERE digest_events IS NOT NULL"
+        ).fetchall()
+        digest_updates: list[tuple[int, str]] = []
+        if digest_rows:
+            routes = {g["id"]: g["route"] for g in self.list_groups()}
+            for g in digest_rows:
+                try:
+                    events = json.loads(g["digest_events"]) or []
+                except (TypeError, ValueError):
+                    continue
+                ids = [e.get("id") for e in events if e.get("type") == "memory_compress" and e.get("id")]
+                if not ids:
+                    continue
+                route = routes.get(g["id"]) or []
+                tail = route[-1] if route else None
+                story_order = order.get(tail, -1) if tail is not None else -1
+                digest_updates.extend((story_order, mid) for mid in ids)
+        if digest_updates:
+            self.conn.executemany(
+                "UPDATE memories SET story_order = ? WHERE id = ? AND story_order != ?",
+                [(o, mid, o) for o, mid in digest_updates],
+            )
         if commit:
             self.conn.commit()
 
@@ -2209,6 +2251,8 @@ class Store:
             return group
         if node.get("group_id"):
             raise ValueError("既に別の章に属すシーンです(先に章から外してください)")
+        if group.get("out_id") and group["out_id"] in self.path_to(node_id):
+            raise ValueError("章の出口より下流のシーンは章に入れられません")
         targets = [node_id]
         current = node_id
         while True:

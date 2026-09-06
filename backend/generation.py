@@ -437,6 +437,9 @@ async def _generate_beat_impl(
     if not char_ids:
         yield _sse({"error": "キャラクターが未登録です。先にキャラクター庫で登録してください。"})
         return
+    if parent_id and after_id:
+        yield _sse({"error": "parent_id と after_id は同時に指定できません"})
+        return
     if parent_id is not None and store.get_node(parent_id) is None:
         yield _sse({"error": f"分岐元ノードが見つかりません: {parent_id}"})
         return

@@ -380,6 +380,7 @@ def cleanup_leftovers() -> None:
 async def _download(
     client: httpx.AsyncClient, url: str, dest: Path, label: str
 ) -> AsyncIterator[dict[str, Any]]:
+    check_download_url(url)
     received = 0
     last_percent = -1
     last_emit = 0
@@ -427,7 +428,26 @@ def dest_dir_for(asset_name: str) -> Path:
     name = re.sub(r"\.zip$", "", asset_name, flags=re.IGNORECASE)
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name) or ".." in name:
         raise ValueError(f"不正なファイル名です: {asset_name}")
+    # llama.cpp のリリース資産の形に限定する。任意の名前を許すと runtime/comfyui など
+    # 他のインストール先を _swap_into_place で消せてしまう
+    if not LLAMA_ASSET_RE.match(asset_name):
+        raise ValueError(f"llama.cpp のリリース資産ではありません: {asset_name}")
     return RUNTIME_DIR / name
+
+
+# ダウンロード元として許すホスト。variant はフロント経由で届く外部入力なので、
+# GitHub のリリース配信以外の URL から実行ファイルを落として runtime/ に置かない
+ALLOWED_DOWNLOAD_HOSTS = frozenset(
+    {"github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com"}
+)
+
+
+def check_download_url(url: str) -> None:
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url or "")
+    if parsed.scheme != "https" or (parsed.hostname or "").lower() not in ALLOWED_DOWNLOAD_HOSTS:
+        raise ValueError(f"許可されていないダウンロード元です: {url}")
 
 
 def _tmp_zip(suffix: str) -> Path:

@@ -467,3 +467,11 @@ def test_replace_from_rewinds_history(store, monkeypatch):
     contents = [m.get("content") for m in store.get_chat(chat_id)["messages"]]
     assert contents[:4] == ["1回目の質問", None, "{}", "1回目の回答"]  # 前半はそのまま
     assert contents[4:] == ["2回目の質問(修正)", "作り直した回答"]
+
+
+def test_visible_path_falls_back_when_anchor_was_deleted(store):
+    """保存済みチャットのアンカーが削除済みシーンを指していても、KeyError にせず
+    正史全体を返す(2026-09-06 修正。delete_node は chats.anchor_node を掃除しない)。"""
+    path = chat_agent._visible_path(store, "no-such-node", "upto")
+    assert path == store.canon_path()
+    assert chat_agent._tool_get_beats(store, path, {})["total"] == 3

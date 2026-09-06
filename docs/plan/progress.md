@@ -1,7 +1,7 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-07-24 22:38
-更新日時: 2026-08-28 05:10
+更新日時: 2026-09-06 12:00
 
 ## 現在の状態
 
@@ -9,7 +9,7 @@
 - **ライブラリ方式を導入**(lm-graph 踏襲): ストーリーごとのフォルダに `story-graph.db` を置く。現在のライブラリと最近使ったライブラリは `%APPDATA%/story-graph/app.json`(Electron userData)に保存。ヘッダー右のドロップダウンで切替(切替時はレンダラをリロード)。デフォルトはリポジトリ内 `data/`。
 - `npm run dev` で Electron が起動し、FastAPI sidecar(ポート 8765〜自動探索)が自動 spawn される。
 - バックエンドは単体でも起動可能: `cd backend && ../.venv/Scripts/python.exe -m uvicorn app:app --port 8765`
-- テスト: `cd backend && ../.venv/Scripts/python.exe -m pytest tests/ -q`(240件、全て成功)
+- テスト: `cd backend && ../.venv/Scripts/python.exe -m pytest tests/ -q`(254件、全て成功)
 - モデルは **31B を主に使用**(12B は検証用。2026-08-11 ユーザー談)
 
 ## 完了済み
@@ -560,6 +560,13 @@
 
 ## 注意点
 
+- **2026-09-06 レビューで直したが実機未確認のもの**: 構造モードの選択ハンドラの固定(`handleSelectionChange`)と
+  リンク経由の選択を `focusNodeOnCanvas` / `focusWhenReady` に寄せた変更、Electron 終了時の `/comfy/stop`、
+  CORS の絞り込み(dev の `http://localhost:<port>` と本番の `file://` / `null` Origin を許可)。
+  CORS で本番のレンダラから API が叩けなくなっていたら `backend/app.py` の `allow_origin_regex` を疑う。
+- **レビューで見送った低優先の指摘**: 複数文ミューテーションの途中で `get_state` / `set_settings` が commit する、
+  `create_group` が非連続メンバーの間の孤児を作成時に取り込まない、外置き自動バックアップが同名ライブラリで
+  ローテーションを共有する、CharTab の `+` 連打と抽出中の競合、`FactTimeline` の初期対象が空一覧で世界に固定。
 - **用語(2026-07-25 ユーザー決定)**: UI 表示は「ビート」→**「シーン」**、レンダー散文→**「清書」**。コード・DB スキーマ・spec・LLM プロンプト内は `beat` / `render` のまま変えない(表示ラベルのみ)。
 - **Python は必ず `.venv` を使う**(ユーザー指示)。
 - spec §12 の「Electron + FastAPI 起動骨格 ← lm-graph」は実態と異なる: lm-graph に Python バックエンドはない。FastAPI 構成の実例は news-picker / lm-chat 側。lm-graph からは spawn+ヘルスチェックのロジックだけ借りた。

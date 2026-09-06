@@ -86,7 +86,11 @@ def _reserve_path(root: str) -> tuple[str, Path]:
     while _snapshot_path(root, snap_id).exists():
         n += 1
         snap_id = f"{base}-{n}"
-    return snap_id, _snapshot_path(root, snap_id)
+    path = _snapshot_path(root, snap_id)
+    # 空ファイルを先に置いて ID を確保する(create_async はスレッドで VACUUM するため、
+    # 同じ秒に 2 件走ると同じ ID を選んでしまう)。VACUUM INTO は空の既存ファイルを受け付ける
+    path.touch()
+    return snap_id, path
 
 
 def _register(root: str, snap_id: str, label: str, kind: str, path: Path) -> dict[str, Any]:
@@ -115,7 +119,11 @@ def create(store: Store, label: str, kind: str = "manual") -> dict[str, Any]:
     snap_id, path = _reserve_path(root)
     # VACUUM は進行中のトランザクションがあると失敗するので先に確定する
     store.conn.commit()
-    store.conn.execute("VACUUM INTO ?", (str(path),))
+    try:
+        store.conn.execute("VACUUM INTO ?", (str(path),))
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
     return _register(root, snap_id, label, kind, path)
 
 
@@ -145,7 +153,11 @@ async def create_async(store: Store, label: str, kind: str = "manual") -> dict[s
         raise RuntimeError("ライブラリが未設定のためスナップショットを保存できません")
     snap_id, path = _reserve_path(root)
     store.conn.commit()  # コミット済みの姿をコピーする(commit はループ上で)
-    await asyncio.to_thread(_vacuum_ro, Path(root) / "story-graph.db", path)
+    try:
+        await asyncio.to_thread(_vacuum_ro, Path(root) / "story-graph.db", path)
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
     return _register(root, snap_id, label, kind, path)
 
 

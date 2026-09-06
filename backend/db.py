@@ -273,8 +273,10 @@ def init_schema(conn: sqlite3.Connection) -> None:
     ):
         try:
             conn.execute(ddl)
-        except sqlite3.OperationalError:
-            pass  # 既に存在する
+        except sqlite3.OperationalError as e:
+            # 既に存在する列だけ無視する。ロック等で失敗した場合は起動時に気づけるよう投げる
+            if "duplicate column" not in str(e).lower():
+                raise
     # group_id は ALTER で足す列なので、索引も列が揃ってから作る
     conn.execute("CREATE INDEX IF NOT EXISTS idx_nodes_group ON nodes(group_id)")
     version = conn.execute("PRAGMA user_version").fetchone()[0]

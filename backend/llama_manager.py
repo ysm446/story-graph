@@ -150,7 +150,7 @@ class LlamaManager:
         self.base_url = base_url
         self.server_path = server_path
         if not await self._wait_healthy(base_url, 180):
-            self.stop()
+            await self.stop_async()  # taskkill + wait でイベントループを塞がない
             raise RuntimeError("llama-server のヘルスチェックがタイムアウトしました(モデルロード失敗の可能性)")
         return base_url
 

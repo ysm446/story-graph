@@ -118,6 +118,10 @@ def build_tools() -> list[dict[str, Any]]:
 # ---- ツール実装(すべて読み取り専用) --------------------------------
 
 def _visible_path(store: Store, anchor: str | None, scope: str) -> list[str]:
+    # 保存済みチャットのアンカーが削除済みシーンを指していることがある(delete_node は
+    # chats.anchor_node を掃除しない)。その場合はアンカー無しとして正史全体に倒す
+    if anchor is not None and store.get_node(anchor) is None:
+        anchor = None
     if scope == "all" or anchor is None:
         return store.canon_path()
     # はじまり / 結末マーカーはシーンではないので除く(fold はイベントが無く素通り)

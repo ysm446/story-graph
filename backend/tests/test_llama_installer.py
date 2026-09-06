@@ -210,3 +210,18 @@ def test_uninstall_removes_only_runtime_installs(tmp_path, monkeypatch):
     empty.mkdir()
     with pytest.raises(ValueError):
         inst.uninstall(str(empty))
+
+
+def test_dest_dir_for_rejects_non_llama_asset_names():
+    """runtime/ 直下の別インストール(comfyui など)を置き換え先にできない(2026-09-06)。"""
+    for bad in ("comfyui.zip", "cudart-llama-bin-win-cuda-13-x64.zip", "evil.zip"):
+        with pytest.raises(ValueError):
+            inst.dest_dir_for(bad)
+
+
+def test_check_download_url_allows_only_github_release_hosts():
+    inst.check_download_url("https://github.com/ggml-org/llama.cpp/releases/download/b1/x.zip")
+    inst.check_download_url("https://objects.githubusercontent.com/x")
+    for bad in ("https://evil.example/x.zip", "http://github.com/x.zip", "file:///C:/x.zip", ""):
+        with pytest.raises(ValueError):
+            inst.check_download_url(bad)

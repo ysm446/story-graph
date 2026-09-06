@@ -1197,3 +1197,56 @@ def test_save_render_stale_flag(store):
     store.seed_presets()
     store.save_render(n1["id"], "default-third", None, "散文", stale=True)
     assert store.latest_render(n1["id"], "default-third", None)["stale"] == 1
+
+
+def test_group_out_realign_does_not_create_cycle(store):
+    """出口の下流にあるシーンを章に入れて道にしようとしても、エッジに循環を作らない
+    (2026-09-06 レビューで発見)。以前は current → out を張るだけで current が出口の
+    子孫かどうかを見ておらず、out → X → out の循環で正史の根が失われていた。"""
+    n1, n2, n3 = _three_scenes(store)
+    g = store.create_group("第一章", [n1["id"], n2["id"]])
+    entry = next(x for x in store.list_groups() if x["id"] == g["id"])
+    assert store.parent_of(n3["id"]) == entry["out_id"]
+    before = store.canon_path()
+    # 出口より下流のシーンは章に入れられない
+    with pytest.raises(ValueError):
+        store.add_node_to_group(g["id"], n3["id"])
+    # 万一入っていても(旧データ)、出口の付け替えで循環は作らない
+    store.conn.execute("UPDATE nodes SET group_id = ? WHERE id = ?", (g["id"], n3["id"]))
+    store.conn.commit()
+    store.make_canon(n3["id"])
+    assert store.canon_path() == before
+    assert store.parent_of(entry["out_id"]) == n2["id"]
+    assert n3["id"] not in store.path_to(entry["out_id"])  # out → n3 → out の循環が無い
+
+
+def test_digest_memory_story_order_follows_structure_changes(store):
+    """章のまとめ(digest)の記憶も、構造の変更で story_order が追従する
+    (2026-09-06 修正)。以前は memories JOIN events で回すため events に無い digest の
+    行が取り残され、時間減衰の基準がずれたままになっていた。"""
+    n1, n2, n3, g = _chapter_with_digest(store)
+    digest_id = next(e["id"] for e in g["digest_events"] if e["type"] == "memory_compress")
+    row = store.conn.execute("SELECT story_order FROM memories WHERE id = ?", (digest_id,)).fetchone()
+    assert row["story_order"] == store.canon_path().index(n2["id"])
+    # はじまりの直後に割り込ませると、章の道の末尾(n2)の位置が 1 つ後ろへずれる
+    start = store.parent_of(n1["id"])
+    store.insert_node_after(start, {"beat": "b0", "cast": ["aya"]})
+    row = store.conn.execute("SELECT story_order FROM memories WHERE id = ?", (digest_id,)).fetchone()
+    assert row["story_order"] == store.canon_path().index(n2["id"])
+
+
+def test_update_character_marks_renders_stale(store):
+    """外見・口調などは清書プロンプトに載るので、そのキャラが登場するシーンの清書を
+    stale にする(update_place と同型。2026-09-06 修正)。"""
+    _setup_chars(store)
+    n1 = store.append_node({"beat": "b1", "cast": ["aya"]})
+    n2 = store.append_node({"beat": "b2", "cast": ["ken"]})
+    preset = store.list_presets()[0]
+    r1 = store.save_render(n1["id"], preset["id"], None, "本文1")
+    r2 = store.save_render(n2["id"], preset["id"], None, "本文2")
+    store.update_character("aya", {"color": "#000000"})  # 見た目だけなら stale にしない
+    assert store.latest_render(n1["id"], preset["id"], None)["stale"] == 0
+    store.update_character("aya", {"appearance": "長い黒髪"})
+    assert store.latest_render(n1["id"], preset["id"], None)["stale"] == 1
+    assert store.latest_render(n2["id"], preset["id"], None)["stale"] == 0
+    assert r1["id"] != r2["id"]

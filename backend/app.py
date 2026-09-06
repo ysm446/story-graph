@@ -35,7 +35,10 @@ from store import Store
 app = FastAPI(title="story-graph backend")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # localhost の Electron レンダラのみが相手
+    # 相手は Electron レンダラ(dev は http://localhost:<port>、本番は file:// で Origin が
+    # "null")だけ。"*" だとブラウザで開いた任意のサイトからインストーラや設定を
+    # 叩けてしまうので、それ以外の Origin にはプリフライトを通さない
+    allow_origin_regex=r"^(null|file://.*|https?://(localhost|127\.0\.0\.1)(:\d+)?)$",
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -1186,7 +1189,7 @@ async def character_ref_image_prompt(char_id: str, body: RefImagePromptIn | None
         yield image_gen._sse({"meta": {"suffix": image_gen.REF_IMAGE_SUFFIX}})
         try:
             base_url = await llama.ensure_running(store.get_settings())
-        except RuntimeError as e:
+        except Exception as e:
             yield image_gen._sse({"error": str(e)})
             return
         async for chunk in image_gen.stream_character_prompt(char, base_url=base_url, instructions=instructions):
@@ -1299,7 +1302,7 @@ async def node_image_prompt(node_id: str, body: SceneImagePromptIn) -> Streaming
         yield image_gen._sse({"meta": meta})
         try:
             base_url = await llama.ensure_running(store.get_settings())
-        except RuntimeError as e:
+        except Exception as e:
             yield image_gen._sse({"error": str(e)})
             return
         async for chunk in image_gen.stream_scene_prompt(
@@ -1383,14 +1386,26 @@ async def node_image_generate(node_id: str, body: SceneImageGenerateIn) -> dict[
     }
 
 
+def _sse_error_response(message: str) -> StreamingResponse:
+    """SSE を返す前段(llama 起動など)で失敗したとき、1 件の error イベントだけを流す。
+
+    except 節の中でジェネレータを定義して ``e`` を参照すると、ジェネレータが走る時点では
+    Python が ``e`` を削除済みで NameError になる(メッセージがクライアントに届かない)。
+    メッセージを先に文字列へ写して閉じ込める。
+    """
+
+    async def error_stream():
+        yield generation._sse({"error": message})
+
+    return StreamingResponse(error_stream(), media_type="text/event-stream")
+
+
 @app.post("/generate/beat")
 async def generate_beat(body: GenerateBeatIn) -> StreamingResponse:
     try:
         base_url = await llama.ensure_running(store.get_settings())
-    except RuntimeError as e:
-        async def error_stream():
-            yield generation._sse({"error": str(e)})
-        return StreamingResponse(error_stream(), media_type="text/event-stream")
+    except Exception as e:
+        return _sse_error_response(str(e))
     return StreamingResponse(
         generation.generate_beat_stream(
             store, base_url, body.instruction, parent_id=body.parent_id, after_id=body.after_id
@@ -1438,10 +1453,8 @@ async def proofread_stream(body: ProofreadIn) -> StreamingResponse:
         raise HTTPException(400, "文章が空です")
     try:
         base_url = await llama.ensure_running(store.get_settings())
-    except RuntimeError as e:
-        async def error_stream():
-            yield generation._sse({"error": str(e)})
-        return StreamingResponse(error_stream(), media_type="text/event-stream")
+    except Exception as e:
+        return _sse_error_response(str(e))
     return StreamingResponse(
         generation.proofread_stream(
             store, base_url, body.text, body.preset_id, body.context_before, body.context_after
@@ -1609,10 +1622,8 @@ async def render(body: RenderIn) -> StreamingResponse:
         node_ids = [start] if body.mode == "single" else canon[canon.index(start):]
     try:
         base_url = await llama.ensure_running(store.get_settings())
-    except RuntimeError as e:
-        async def error_stream():
-            yield rendering._sse({"error": str(e)})
-        return StreamingResponse(error_stream(), media_type="text/event-stream")
+    except Exception as e:
+        return _sse_error_response(str(e))
     return StreamingResponse(
         rendering.render_stream(
             store, base_url, node_ids, body.preset_id, body.pov_char, body.target_chars
@@ -1679,10 +1690,8 @@ async def delete_chat(chat_id: str) -> dict[str, str]:
 async def chat_send(body: ChatSendIn) -> StreamingResponse:
     try:
         base_url = await llama.ensure_running(store.get_settings())
-    except RuntimeError as e:
-        async def error_stream():
-            yield chat_agent._sse({"error": str(e)})
-        return StreamingResponse(error_stream(), media_type="text/event-stream")
+    except Exception as e:
+        return _sse_error_response(str(e))
     anchor = body.anchor_node
     if anchor is None:
         canon = store.canon_path()

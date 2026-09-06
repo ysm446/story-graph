@@ -357,3 +357,12 @@ def test_llm_fact_set_schema_is_char_only():
     fact_sets = [s for s in schemas if s["properties"]["type"]["const"] == "fact_set"]
     assert len(fact_sets) == 1
     assert fact_sets[0]["properties"]["payload"]["properties"]["scope"]["const"] == "char"
+
+
+def test_generate_rejects_parent_and_after_together(store):
+    """parent_id と after_id は文脈と挿入先が食い違うので同時指定を拒む(2026-09-06)。"""
+    n = store.append_node({"beat": "b1", "cast": []})
+    events = collect_sse(generation.generate_beat_stream(
+        store, "http://fake", "続き", parent_id=n["id"], after_id=n["id"]
+    ))
+    assert any("同時に指定" in str(e.get("error", "")) for e in events)

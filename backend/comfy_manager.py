@@ -96,7 +96,7 @@ class ComfyManager:
         )
         self.base_url = base_url
         if not await self._wait_healthy(base_url, 180):
-            self.stop()
+            await self.stop_async()  # taskkill + wait でイベントループを塞がない
             raise RuntimeError("ComfyUI のヘルスチェックがタイムアウトしました")
         return base_url
 

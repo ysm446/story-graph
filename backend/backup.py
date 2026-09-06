@@ -17,6 +17,7 @@ import json
 import os
 import re
 import shutil
+import uuid
 import tempfile
 import zipfile
 from datetime import datetime, timedelta, timezone
@@ -381,15 +382,24 @@ def restore(zip_path: str, dest_root: str) -> dict[str, Any]:
     if (dest / DB_NAME).exists():
         raise FileExistsError("展開先に既にライブラリがあります。空のフォルダを選んでください")
     dest.mkdir(parents=True, exist_ok=True)
+    # 途中で失敗(ディスク満杯・外付けの切断など)しても半端なライブラリを残さないよう、
+    # 隠しフォルダに展開してから最後に本来の位置へ移す
+    staging = dest / f".restoring-{uuid.uuid4().hex[:8]}"
+    staging.mkdir()
     extracted = 0
-    with zipfile.ZipFile(zip_path) as zf:
-        for member in _safe_members(zf):
-            name = member.filename.replace("\\", "/")
-            if name == MANIFEST_NAME:
-                continue  # zip 自体のメタデータなのでライブラリには持ち込まない
-            target = dest / name
-            target.parent.mkdir(parents=True, exist_ok=True)
-            with zf.open(member) as src, open(target, "wb") as out:
-                shutil.copyfileobj(src, out)
-            extracted += 1
+    try:
+        with zipfile.ZipFile(zip_path) as zf:
+            for member in _safe_members(zf):
+                name = member.filename.replace("\\", "/")
+                if name == MANIFEST_NAME:
+                    continue  # zip 自体のメタデータなのでライブラリには持ち込まない
+                target = staging / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with zf.open(member) as src, open(target, "wb") as out:
+                    shutil.copyfileobj(src, out)
+                extracted += 1
+        for child in list(staging.iterdir()):
+            os.replace(child, dest / child.name)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
     return {"root": str(dest), "extracted": extracted}

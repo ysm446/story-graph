@@ -245,3 +245,30 @@ def test_record_auto_updates_last_at(store, tmp_path):
 
     entries = backup.list_backups(plan["dir"])
     assert len(entries) == 1 and entries[0]["kind"] == "auto"
+
+
+def test_restore_leaves_nothing_on_failure(store, tmp_path, monkeypatch):
+    """展開の途中で失敗しても半端なライブラリ(DB だけある状態)を残さない(2026-09-06)。
+    残すと再試行が「既にライブラリがあります」で拒まれ、手で消すまで進めなくなる。"""
+    _asset(store, "a.png")  # DB の後にもう 1 件展開するものを用意する
+    src = tmp_path / "src.zip"
+    backup.export_zip(store, str(src))
+    calls = {"n": 0}
+    real = backup.shutil.copyfileobj
+
+    def flaky(fsrc, fdst, *a, **k):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise OSError("disk full")
+        return real(fsrc, fdst, *a, **k)
+
+    monkeypatch.setattr(backup.shutil, "copyfileobj", flaky)
+    dest = tmp_path / "restored"
+    with pytest.raises(OSError):
+        backup.restore(str(src), str(dest))
+    assert not (dest / "story-graph.db").exists()
+    assert not any(p.name.startswith(".restoring-") for p in dest.iterdir())
+    # 再試行はそのまま通る
+    monkeypatch.setattr(backup.shutil, "copyfileobj", real)
+    backup.restore(str(src), str(dest))
+    assert (dest / "story-graph.db").exists()

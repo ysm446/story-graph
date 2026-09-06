@@ -184,7 +184,12 @@ export default function CharactersMode(): React.JSX.Element {
     if (!selectedId) return
     setSaving(true)
     try {
-      await api.updateCharacter(selectedId, draft)
+      // 編集欄の項目だけ送る。draft は選択時点の丸ごとコピーなので、そのまま PATCH すると
+      // 選択後にその場で保存された項目(参照画像・関係図の座標など)を古い値で巻き戻す
+      const patch = Object.fromEntries(
+        (['name', 'color', 'profile', 'appearance', 'voice'] as const).map((k) => [k, draft[k] ?? ''])
+      )
+      await api.updateCharacter(selectedId, patch)
       await reload()
     } finally {
       setSaving(false)

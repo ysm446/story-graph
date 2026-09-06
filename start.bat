@@ -25,7 +25,8 @@ if not exist .venv\Scripts\python.exe (
     .venv\Scripts\python.exe -m pip install --upgrade pip -q
     .venv\Scripts\python.exe -m pip install -r backend\requirements.txt -q
     if errorlevel 1 (
-        echo [start] Failed to install backend dependencies.
+        echo [start] Failed to install backend dependencies. Removing .venv so the next run retries.
+        rmdir /s /q .venv
         pause
         exit /b 1
     )

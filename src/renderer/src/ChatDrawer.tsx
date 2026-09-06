@@ -502,7 +502,8 @@ export default function ChatDrawer({
     const controller = new AbortController()
     abortRef.current = controller
     setBusy(true)
-    setInput('')
+    // 候補チップや再生成(override あり)では入力欄の書きかけを消さない
+    if (override === undefined) setInput('')
     // 送信直後の吹き出しにも時刻を出す(保存側の ts と同じ形式)。
     // 再読み込み後はサーバーが付けた ts に置き換わる
     setItems((prev) => [...prev, { kind: 'user', text: message, ts: new Date().toISOString() }])

@@ -106,7 +106,7 @@ async function waitForHealthy(baseUrl: string, timeoutMs: number): Promise<boole
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     try {
-      const res = await fetch(`${baseUrl}/health`)
+      const res = await fetch(`${baseUrl}/health`, { signal: AbortSignal.timeout(2000) })
       if (res.ok) return true
     } catch {
       // まだ起動中
@@ -174,10 +174,23 @@ async function startSidecar(): Promise<string> {
   })
   sidecarProcess = proc
 
-  const healthy = await waitForHealthy(baseUrl, 30_000)
+  // spawn 自体の失敗(EACCES 等)と、起動直後の即死(ポート bind 失敗・import エラー)は
+  // ヘルスチェックの 30 秒を待たずに失敗させる。error リスナーが無いと main が落ちる
+  const died = new Promise<boolean>((resolve) => {
+    proc.once('error', (error) => {
+      console.log(`[sidecar] spawn error: ${String(error)}`)
+      resolve(true)
+    })
+    proc.once('exit', () => resolve(true))
+  })
+  const healthy = await Promise.race([waitForHealthy(baseUrl, 30_000), died.then(() => false)])
   if (!healthy) {
     stopSidecar() // タイムアウトしたプロセスを孤児化させない
-    throw new Error('sidecar のヘルスチェックがタイムアウトしました')
+    throw new Error(
+      proc.exitCode !== null
+        ? `sidecar が起動直後に終了しました (code ${proc.exitCode})`
+        : 'sidecar のヘルスチェックがタイムアウトしました'
+    )
   }
   apiBaseUrl = baseUrl
   return baseUrl
@@ -192,14 +205,16 @@ async function startSidecar(): Promise<string> {
  */
 async function stopLlamaServer(): Promise<void> {
   if (!apiBaseUrl) return
-  try {
-    await fetch(`${apiBaseUrl}/llm/stop`, {
-      method: 'POST',
-      signal: AbortSignal.timeout(4000)
-    })
-  } catch {
-    // 既に落ちている / バックエンドが応答しない場合は諦める
-  }
+  // ComfyUI もバックエンドが spawn したものは同じ理由で明示的に止める(VRAM を握ったまま残さない)
+  await Promise.allSettled(
+    ['/llm/stop', '/comfy/stop'].map((path) =>
+      fetch(`${apiBaseUrl}${path}`, {
+        method: 'POST',
+        signal: AbortSignal.timeout(4000)
+      })
+    )
+  )
+  // 既に落ちている / バックエンドが応答しない場合は諦める(allSettled で握る)
 }
 
 function stopSidecar(): void {
@@ -278,6 +293,8 @@ function createWindow(): void {
 // 二重に起動すると userData の Chromium キャッシュを取り合い、起動ログに
 // GPU キャッシュの Access Denied が並ぶ(実害は小さいが紛らわしい)
 if (!app.requestSingleInstanceLock()) {
+  // ready 前の quit は「ready 後に終了」扱いなので、下の whenReady が一瞬走らないよう
+  // ここでウィンドウ生成と sidecar 起動を抑止する
   app.quit()
 }
 app.on('second-instance', () => {
@@ -288,6 +305,7 @@ app.on('second-instance', () => {
 })
 
 app.whenReady().then(async () => {
+  if (!app.hasSingleInstanceLock()) return
   ipcMain.handle('bootstrap', async () => {
     try {
       await ensureSidecar()

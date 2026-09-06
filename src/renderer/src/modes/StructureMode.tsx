@@ -1969,8 +1969,10 @@ function RenderTab({
       runner: async ({ signal }) => {
         onNodeBusyChange(targetId, true)
         setLive({ nodeId: targetId, text: '' })
-        // 中止されたら保存も中止する(保存待ちのまま固まらないように)
-        const onAbort = (): void => saveAbortRef.current?.abort()
+        // 中止されたら保存も中止する(保存待ちのまま固まらないように)。
+        // 止めるのは開始時点で待っている保存だけ(後から変えた分量の保存は巻き込まない)
+        const pendingSave = saveAbortRef.current
+        const onAbort = (): void => pendingSave?.abort()
         signal.addEventListener('abort', onAbort, { once: true })
         try {
           // 直前に分量を変えていたら、その保存を待ってから流す
@@ -3393,6 +3395,26 @@ function StructureModeInner({
     return () => clearTimeout(timer)
   }, [effectiveView, chapterView, reactFlow])
 
+  /** キャンバスの選択が変わったときにインスペクタの対象を合わせる。
+   *
+   * React Flow はこのハンドラ自体を effect の依存に含めるので、インラインで渡すと
+   * 再レンダーのたびに「現在の選択」で呼ばれ、キャンバス選択を伴わない
+   * setSelectedId(リンクからの移動など)が直後に打ち消される。参照を固定しておく。
+   */
+  const handleSelectionChange = useCallback(({ nodes }: { nodes: Node[] }): void => {
+    if (nodes.length > 0) setSelectedEdgeId(null)
+    const chapter = nodes.find((n) => n.type === 'chapterNode')
+    const beats = nodes.filter((n) => n.type !== 'chapterNode')
+    // 章ノードの選択はインスペクタの章パネルへ。シーン選択・選択解除で閉じる
+    if (chapter) setSelectedChapterId((chapter.data as ChapterNodeData).group.id)
+    else setSelectedChapterId(null)
+    setSelectedId((prev) => {
+      if (beats.length === 0) return null
+      // 複数選択中は先頭をインスペクタ対象にする
+      return beats.some((n) => n.id === prev) ? prev : beats[0].id
+    })
+  }, [])
+
   /** そのノードを選択して画面中央へ寄せる(ズームは保つ)。
    *
    * 矢印キーの移動と、開いた直後のフォーカス(鑑賞モードからの復帰)で共用する。
@@ -3428,17 +3450,26 @@ function StructureModeInner({
    * 反映(reload → 再描画)が何回目で届くかは決まらないので、現れるまで数回試す。
    * 章ビューなどで畳まれていて出てこないときは、そのまま何もしない。
    */
+  const focusTimerRef = useRef<number | null>(null)
   const focusWhenReady = useCallback(
     (nodeId: string): void => {
+      if (focusTimerRef.current !== null) window.clearTimeout(focusTimerRef.current)
       let tries = 0
       const tick = (): void => {
+        focusTimerRef.current = null
         if (reactFlow.getNode(nodeId)) return focusNodeOnCanvas(nodeId)
         tries += 1
-        if (tries < 15) window.setTimeout(tick, 200)
+        if (tries < 15) focusTimerRef.current = window.setTimeout(tick, 200)
       }
-      window.setTimeout(tick, 200)
+      focusTimerRef.current = window.setTimeout(tick, 200)
     },
     [reactFlow, focusNodeOnCanvas]
+  )
+  useEffect(
+    () => () => {
+      if (focusTimerRef.current !== null) window.clearTimeout(focusTimerRef.current)
+    },
+    []
   )
 
   // 鑑賞モードで読んでいたシーンにフォーカスして開く(戻ったときに迷子にならない)。
@@ -3588,6 +3619,7 @@ function StructureModeInner({
         navigateSelection(arrows[event.key])
         return
       }
+      if (event.ctrlKey || event.metaKey || event.altKey) return
       if (event.key === 'a') {
         event.preventDefault()
         void reactFlow.fitView({ duration: 300, padding: 0.1 })
@@ -3662,7 +3694,7 @@ function StructureModeInner({
       // 結末カードは w-40(160px)なので、その半分ぶん左上へずらして置く
       await api.setNodePosition(node.id, Math.round(at.x - 80), Math.round(at.y - 40))
       await reload()
-      setSelectedId(node.id)
+      focusWhenReady(node.id)
       setGenStatus('結末を置きました。シーンの右のハンドルからドラッグしてつなげます')
     } catch (e) {
       setGenStatus(`結末を作れません: ${String(e)}`)
@@ -4007,7 +4039,7 @@ function StructureModeInner({
         await api.setNodePosition(node.id, Math.round(center.x - 144), Math.round(center.y - 80))
       }
       await reload()
-      setSelectedId(node.id)
+      focusWhenReady(node.id)
       setInspectorTab('beat')
     } catch (e) {
       setGenStatus(`シーンを追加できません: ${String(e)}`)
@@ -4127,19 +4159,7 @@ function StructureModeInner({
             onNodeDoubleClick={(_, node) => {
               if (node.type === 'chapterNode') setChapterView((node.data as ChapterNodeData).group.id)
             }}
-            onSelectionChange={({ nodes }) => {
-              if (nodes.length > 0) setSelectedEdgeId(null)
-              const chapter = nodes.find((n) => n.type === 'chapterNode')
-              const beats = nodes.filter((n) => n.type !== 'chapterNode')
-              // 章ノードの選択はインスペクタの章パネルへ。シーン選択・選択解除で閉じる
-              if (chapter) setSelectedChapterId((chapter.data as ChapterNodeData).group.id)
-              else setSelectedChapterId(null)
-              setSelectedId((prev) => {
-                if (beats.length === 0) return null
-                // 複数選択中は先頭をインスペクタ対象にする
-                return beats.some((n) => n.id === prev) ? prev : beats[0].id
-              })
-            }}
+            onSelectionChange={handleSelectionChange}
             onConnect={(connection) => void handleConnect(connection)}
             isValidConnection={(connection) => isValidConnection(connection)}
             // エッジ選択は自前で持つ(onEdgesChange を渡していないため)
@@ -4963,7 +4983,7 @@ function StructureModeInner({
                 path={pathToSelected ?? canonPath}
                 characters={characters}
                 selectedNodeId={selectedId}
-                onSelectNode={(nodeId) => setSelectedId(nodeId)}
+                onSelectNode={(nodeId) => focusNodeOnCanvas(nodeId)}
               />
             ) : activeGroup ? (
               <ChapterTab
@@ -4977,7 +4997,8 @@ function StructureModeInner({
                 onSelectScene={(nodeId) => {
                   // 章ビューから選んだ場合は章の中に入ってから選択する
                   if (effectiveView === 'chapters') setChapterView(activeGroup.id)
-                  setSelectedId(nodeId)
+                  // 章の中に入ってから現れるので、描画されるのを待って選択する
+                  focusWhenReady(nodeId)
                 }}
                 onChanged={() => void reload()}
                 onRename={() => void renameChapter(activeGroup)}
@@ -5048,7 +5069,7 @@ function StructureModeInner({
                   characters={characters}
                   memoryContents={memoryContents}
                   onChanged={() => void reload()}
-                  onSelectNode={(nodeId) => setSelectedId(nodeId)}
+                  onSelectNode={(nodeId) => focusNodeOnCanvas(nodeId)}
                 />
               )
             ) : (
