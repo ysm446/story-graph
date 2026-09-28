@@ -2826,6 +2826,65 @@ function StructureModeInner({
   )
 
   // 選択したシーンを一括清書(条件は鑑賞モードの選択をそのまま使う。清書済みも上書きする)
+  // 選んだシーンの朗読台本に、LLM で話者と感情を付ける(docs/design/voice.md §4.4)。シーンごとに 1 件ずつ
+  // タスクキューに積む(ステータスバーで進み具合が見え、1 件ずつ中止できる)。対象の清書は、いまの清書の
+  // スタイル(プリセット / POV)の最新。清書の無いシーンは積まない。redo=false なら付け済みのシーンは飛ばす
+  const runAnnotateNodes = useCallback(
+    async (nodeIds: string[], redo: boolean): Promise<void> => {
+      const presetId = renderStyle.presetId
+      if (!presetId || nodeIds.length === 0) return
+      const pov = renderStyle.povChar
+      let queued = 0
+      let noRender = 0
+      let already = 0
+      for (const nodeId of nodeIds) {
+        let renderId: string | null = null
+        try {
+          renderId = (await api.getRender(nodeId, presetId, pov)).render?.id ?? null
+          if (renderId && !redo && (await api.voiceScript(renderId)).source === 'llm') {
+            already += 1
+            continue
+          }
+        } catch {
+          renderId = null
+        }
+        if (!renderId) {
+          noRender += 1
+          continue
+        }
+        const rid = renderId
+        const title = graphNodes.find((n) => n.id === nodeId)?.title || '(無題)'
+        queued += 1
+        enqueueTask({
+          label: '台本',
+          detail: `話者と感情: ${title}`,
+          kind: 'voice-script',
+          nodeId: rid, // 台本の画面が「付けている最中」を見分ける鍵(清書 ID)
+          runner: async ({ signal }) => {
+            markNodeBusy(nodeId, true)
+            try {
+              await api.annotateVoiceScript(rid, null, signal)
+            } catch (err) {
+              if (!isAbortError(err)) setGenStatus(`話者と感情を付けられませんでした(${title}): ${String(err)}`)
+            } finally {
+              markNodeBusy(nodeId, false)
+            }
+          }
+        })
+      }
+      const skipped = [
+        noRender ? `清書の無い ${noRender} シーン` : '',
+        already ? `付け済みの ${already} シーン` : ''
+      ].filter(Boolean)
+      setGenStatus(
+        queued
+          ? `話者と感情の付与を ${queued} シーン分キューに積みました${skipped.length ? `(${skipped.join('・')}は飛ばしました)` : ''}`
+          : `積むシーンがありません(${skipped.join('・') || '対象なし'})`
+      )
+    },
+    [renderStyle.presetId, renderStyle.povChar, graphNodes, markNodeBusy]
+  )
+
   const runRenderNodes = useCallback(
     (nodeIds: string[]): void => {
       const presetId = renderStyle.presetId
@@ -4807,6 +4866,20 @@ function StructureModeInner({
                     } — 清書済みのシーンも作り直す`,
                     disabled: !renderStyle.presetId,
                     run: () => void runRenderNodes(menu.targets)
+                  },
+                  {
+                    label: '話者と感情を付ける',
+                    hint: `読み上げの台本に LLM で。${renderStyle.preset?.name ?? '未設定'}${
+                      renderStyle.povChar ? ` / POV: ${nameOfChar(renderStyle.povChar)}` : ''
+                    } の清書 — 付け済みのシーンは飛ばす(シーンごとにキューへ)`,
+                    disabled: !renderStyle.presetId,
+                    run: () => void runAnnotateNodes(menu.targets, false)
+                  },
+                  {
+                    label: '話者と感情を付け直す',
+                    hint: '付け済みのシーンも付け直す(台本で手直しした行はそのまま)',
+                    disabled: !renderStyle.presetId,
+                    run: () => void runAnnotateNodes(menu.targets, true)
                   },
                   {
                     label: 'まとめて切り離す',
