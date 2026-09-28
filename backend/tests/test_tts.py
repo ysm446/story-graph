@@ -503,3 +503,40 @@ def test_delete_voice_profile_clears_chat_profile(lib):
     lib.set_settings({"tts_chat_profile": profile["id"]})
     lib.delete_voice_profile(profile["id"])
     assert not lib.get_settings().get("tts_chat_profile")
+
+
+# ---- 一人称の地の文は視点人物の声 ----------------------------------------------
+
+def _first_person_render(s, prose):
+    presets = {p["person"]: p["id"] for p in s.list_presets()}
+    nid = s.append_node({"beat": "b", "cast": ["aya"]})["id"]
+    return (
+        s.save_render(nid, presets["first"], "aya", prose),
+        s.save_render(nid, presets["third"], "aya", prose),
+        s.save_render(nid, presets["first"], None, prose),
+    )
+
+
+def test_first_person_narration_uses_pov_character(lib):
+    first, third, no_pov = _first_person_render(lib, "俺は走った。\n「待て」")
+    lines = voice.resolve_script(lib, first)["lines"]
+    assert [(l["kind"], l["speaker"]) for l in lines] == [("narration", "char:aya"), ("dialogue", "narrator")]
+    # 三人称(視点寄り)と視点なしは語り手のまま
+    for render in (third, no_pov):
+        assert voice.resolve_script(lib, render)["lines"][0]["speaker"] == "narrator"
+
+
+def test_first_person_keeps_author_edited_narrator(lib):
+    first, _, _ = _first_person_render(lib, "俺は走った。")
+    line = dict(voice.build_script("俺は走った。")[0], edited=True)  # 作者が語り手のままにした
+    lib.save_voice_script(first["id"], first["node_id"], [line], "rule")
+    assert voice.resolve_script(lib, first)["lines"][0]["speaker"] == "narrator"
+
+
+def test_first_person_narration_is_read_in_pov_voice(lib):
+    first, _, _ = _first_person_render(lib, "俺は走った。")
+    aya = lib.create_voice_profile({"name": "アヤ", "caption": "明るい少女"})
+    lib.update_character("aya", {"voice_profile_id": aya["id"]})
+    line = voice.resolve_script(lib, first)["lines"][0]
+    _, body = voice.VoiceBook(lib, {}).line_audio(tts.get_engine("irodori"), line)
+    assert body["irodori"]["caption"] == "明るい少女"

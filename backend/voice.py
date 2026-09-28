@@ -239,16 +239,42 @@ def carry_over(lines: list[dict[str, Any]], old_lines: list[dict[str, Any]]) -> 
     return carried
 
 
+def pov_narrator(store: Any, render: dict[str, Any]) -> str | None:
+    """一人称の清書なら、地の文を語る視点人物の話者(char:<id>)。三人称(視点寄りを含む)は None。
+
+    一人称の地の文は視点人物(「俺」「私」)自身の語りなので、語り手の声ではなくその人物の声で読む
+    (2026-09-28 ユーザー指摘)。人称はスタイルプリセットの person、視点は清書の pov_char で決まる。"""
+    pov = render.get("pov_char")
+    if not pov:
+        return None
+    preset = store.get_preset(render.get("preset_id") or "")
+    return f"char:{pov}" if preset and preset.get("person") == "first" else None
+
+
+def apply_pov_narration(lines: list[dict[str, Any]], speaker: str | None) -> None:
+    """地の文の話者を視点人物にする。作者が手で直した行(edited)は、作者の指定を優先して触らない。"""
+    if not speaker:
+        return
+    for line in lines:
+        if line.get("kind") == "narration" and line.get("speaker", "narrator") == "narrator" and not line.get("edited"):
+            line["speaker"] = speaker
+
+
 def resolve_script(store: Any, render: dict[str, Any]) -> dict[str, Any]:
-    """読み上げに使う台本。保存があればそれ、無ければ規則ベースで作って前の台本から引き継ぐ(保存はしない)。"""
+    """読み上げに使う台本。保存があればそれ、無ければ規則ベースで作って前の台本から引き継ぐ(保存はしない)。
+    一人称の清書は、ここで地の文の話者を視点人物にする。読み上げ・台本の画面・音声キャッシュの掃除が
+    どれもここを通るので、どこでも同じ話者になる。"""
+    narrator = pov_narrator(store, render)
     saved = store.get_voice_script(render["id"])
     if saved is not None:
+        apply_pov_narration(saved["lines"], narrator)
         return {"lines": saved["lines"], "source": saved["source"], "saved": True, "carried": 0}
     lines = build_script(render.get("prose") or "")
     carried = 0
     previous = store.previous_voice_script(render["node_id"], render["id"])
     if previous is not None:
         carried = carry_over(lines, previous["lines"])
+    apply_pov_narration(lines, narrator)
     return {"lines": lines, "source": "rule", "saved": False, "carried": carried}
 
 

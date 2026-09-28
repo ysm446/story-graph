@@ -1381,9 +1381,9 @@ async def save_render_voice_script(render_id: str, body: VoiceScriptIn) -> dict[
     if not lines:
         raise HTTPException(400, "読む行が 1 つもありません")
     current = store.get_voice_script(render_id)
-    saved = store.save_voice_script(render_id, render["node_id"], lines, current["source"] if current else "rule")
+    store.save_voice_script(render_id, render["node_id"], lines, current["source"] if current else "rule")
     _schedule_audio_gc()  # 直す前の行の音声は使われなくなる
-    return {"render_id": render_id, "lines": saved["lines"], "source": saved["source"], "saved": True, "carried": 0}
+    return {"render_id": render_id, **voice.resolve_script(store, render)}
 
 
 @app.post("/renders/{render_id}/voice_script/reset")
@@ -1394,9 +1394,9 @@ async def reset_render_voice_script(render_id: str) -> dict[str, Any]:
 
     render = _render_or_404(render_id)
     lines = voice.build_script(render.get("prose") or "")
-    saved = store.save_voice_script(render_id, render["node_id"], lines, "rule")
+    store.save_voice_script(render_id, render["node_id"], lines, "rule")
     _schedule_audio_gc()
-    return {"render_id": render_id, "lines": saved["lines"], "source": "rule", "saved": True, "carried": 0}
+    return {"render_id": render_id, **voice.resolve_script(store, render)}
 
 
 class VoiceAnnotateIn(BaseModel):
@@ -1421,9 +1421,10 @@ async def annotate_render_voice_script(render_id: str, body: VoiceAnnotateIn | N
         annotated = await voice.annotate_script(store, render, lines, base_url)
     except RuntimeError as e:
         raise HTTPException(502, str(e))
-    saved = store.save_voice_script(render_id, render["node_id"], annotated, "llm")
+    store.save_voice_script(render_id, render["node_id"], annotated, "llm")
     _schedule_audio_gc()
-    return {"render_id": render_id, "lines": saved["lines"], "source": "llm", "saved": True, "carried": 0}
+    # 一人称なら地の文の話者を視点人物にした形で返す(読み上げと同じ見え方)
+    return {"render_id": render_id, **voice.resolve_script(store, render)}
 
 
 class TtsLineIn(BaseModel):
