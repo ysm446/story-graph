@@ -633,3 +633,26 @@ def test_saved_script_drops_silent_lines(store):
     out = voice.resolve_script(store, render)["lines"]
     assert [l["text"] for l in out] == ["走った。", "「待って」"]
     assert out[0]["pause_after_ms"] == voice.PAUSE_SILENT_MS
+
+
+# ---- 行と本文の位置(鑑賞モードの強調・ページ送り) --------------------------------
+
+def test_align_spans_skips_whitespace_and_uses_source_text():
+    prose = "　雨が降っていた。　彼女は窓を見た。\n「待って」\n夜。"
+    lines = voice.build_script(prose)
+    lines[1]["text"] = "「まって」"  # 読みを直しても元の文で探す
+    voice.align_spans(prose, lines)
+    spans = [l["span"] for l in lines]
+    assert [prose[s:e] for s, e in spans] == ["雨が降っていた。　彼女は窓を見た。", "「待って」", "夜。"]
+
+
+def test_align_spans_marks_missing_lines():
+    lines = voice.build_script("雨。")
+    lines.append(dict(lines[0], source_text="本文に無い文。"))
+    voice.align_spans("雨。", lines)
+    assert lines[0]["span"] == [0, 2] and lines[1]["span"] is None
+
+
+def test_resolve_script_includes_spans(store):
+    render = store.save_render(_node_id(store), "p", None, "走った。\n「待て」")
+    assert [l["span"] for l in voice.resolve_script(store, render)["lines"]] == [[0, 4], [5, 9]]

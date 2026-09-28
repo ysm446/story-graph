@@ -791,6 +791,8 @@ export interface VoiceLine {
   profile_id?: string | null
   /** 効果音の行(言葉ではなく音として鳴らす。gasp = 息を呑む音)。鳴らせないエンジンでは間になる */
   effect?: string
+  /** 清書の本文のどこにあたるか [開始, 終了)。鑑賞モードの強調とページ送りに使う。見つからなければ null */
+  span?: [number, number] | null
 }
 
 export interface VoiceScript {

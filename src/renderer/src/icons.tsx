@@ -16,6 +16,8 @@ export type IconName =
   | 'image' // 挿絵(章の表紙にする)
   | 'speaker' // 読み上げ(TTS)
   | 'stop' // 読み上げを止める
+  | 'skipBack' // 読み上げの前の行へ
+  | 'skipForward' // 読み上げの次の行へ
 
 const PATHS: Record<IconName, React.JSX.Element> = {
   chat: <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />,
@@ -92,7 +94,20 @@ const PATHS: Record<IconName, React.JSX.Element> = {
       <path d="M19 5a10 10 0 0 1 0 14" />
     </>
   ),
-  stop: <rect x="6" y="6" width="12" height="12" rx="1.5" />
+  stop: <rect x="6" y="6" width="12" height="12" rx="1.5" />,
+  // 縦棒 + 三角(lucide の skip-back / skip-forward)
+  skipBack: (
+    <>
+      <path d="M19 20 9 12l10-8z" />
+      <path d="M5 19V5" />
+    </>
+  ),
+  skipForward: (
+    <>
+      <path d="m5 4 10 8-10 8z" />
+      <path d="M19 5v14" />
+    </>
+  )
 }
 
 export function Icon({

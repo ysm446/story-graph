@@ -377,6 +377,47 @@ def drop_silent_lines(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
+_SPAN_SKIP = " \t\u3000\r\n"
+
+
+def _match_at(prose: str, i: int, src: str) -> int | None:
+    """prose[i:] が src と(空白の有無を無視して)一致すれば、一致した終わりの位置。"""
+    j, k = 0, i
+    while j < len(src):
+        if k >= len(prose):
+            return None
+        if prose[k] == src[j]:
+            j += 1
+            k += 1
+        elif prose[k] in _SPAN_SKIP:
+            k += 1
+        elif src[j] in _SPAN_SKIP:
+            j += 1
+        else:
+            return None
+    return k
+
+
+def align_spans(prose: str, lines: list[dict[str, Any]]) -> None:
+    """各行が清書の本文のどこにあたるか(span = [開始, 終了])を付ける。鑑賞モードで、読んでいる所を
+    本文の中で強調し、ページを送るのに使う。台本の文は前後や文の間の空白を詰めてあるので、本文側の
+    空白は読み飛ばして照合する。作者が読みを直した行も元の文(source_text)で探す。見つからなければ None。"""
+    cursor = 0
+    for line in lines:
+        src = str(line.get("source_text") or line.get("text") or "").strip(_SPAN_SKIP)
+        line["span"] = None
+        if not src:
+            continue
+        i = prose.find(src[0], cursor)
+        while i != -1:
+            end = _match_at(prose, i, src)
+            if end is not None:
+                line["span"] = [i, end]
+                cursor = end
+                break
+            i = prose.find(src[0], i + 1)
+
+
 def resolve_script(store: Any, render: dict[str, Any]) -> dict[str, Any]:
     """読み上げに使う台本。保存があればそれ、無ければ規則ベースで作って前の台本から引き継ぐ(保存はしない)。
     一人称の清書は、ここで地の文の話者を視点人物にする。読み上げ・台本の画面・音声キャッシュの掃除が
@@ -386,6 +427,7 @@ def resolve_script(store: Any, render: dict[str, Any]) -> dict[str, Any]:
     if saved is not None:
         lines = drop_silent_lines(saved["lines"])
         apply_pov_narration(lines, narrator)
+        align_spans(render.get("prose") or "", lines)
         return {"lines": lines, "source": saved["source"], "saved": True, "carried": 0}
     lines = build_script(render.get("prose") or "")
     carried = 0
@@ -393,6 +435,7 @@ def resolve_script(store: Any, render: dict[str, Any]) -> dict[str, Any]:
     if previous is not None:
         carried = carry_over(lines, previous["lines"])
     apply_pov_narration(lines, narrator)
+    align_spans(render.get("prose") or "", lines)
     return {"lines": lines, "source": "rule", "saved": False, "carried": carried}
 
 

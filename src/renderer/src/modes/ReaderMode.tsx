@@ -37,6 +37,8 @@ const DEFAULT_TYPING_SPEED: TypingSpeedId = 'normal'
 interface PageChunk {
   sceneIndex: number
   text: string | null
+  /** text が清書の本文の何文字目から始まるか(読み上げの強調・ページ送りに使う) */
+  start?: number
   /** 章の扉ページ(タイトルのみ)。設定時は text を使わない */
   chapter?: { id: string; title: string; number: number }
 }
@@ -78,6 +80,10 @@ export default function ReaderMode({
   const pageAreaRef = useRef<HTMLDivElement | null>(null) // 本文エリア全体(挿絵の有無に依らず全高・全幅)
   const measurerRef = useRef<HTMLDivElement | null>(null)
   const typingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  // 読み上げ(docs/design/voice.md §6)。読んでいる行を本文の中で強調し、ページ・スクロールを追従させる
+  const readAloud = useReadAloud()
+  const reading = readAloud.state.nodeId !== null
+  const readElapsed = useElapsedSeconds(readAloud.state.phase === 'synth')
 
   const renderElapsed = useElapsedSeconds(rendering)
   // キューに清書タスクが残っている間は多重投入させない
@@ -182,7 +188,7 @@ export default function ReaderMode({
           const breakAt = Math.max(slice.lastIndexOf('\n'), slice.lastIndexOf('。') + 1 || -1)
           if (breakAt > slice.length * 0.5) end = pos + breakAt
         }
-        result.push({ sceneIndex: si, text: prose.slice(pos, end) })
+        result.push({ sceneIndex: si, text: prose.slice(pos, end), start: pos })
         pushed = true
         pos = end
       }
@@ -198,13 +204,15 @@ export default function ReaderMode({
   // ページ切替の瞬間に前ページの typedLen 分だけ次ページの文章が見えてしまう
   const currentChunk = viewMode === 'page' ? pages[Math.min(pageIndex, Math.max(pages.length - 1, 0))] : undefined
   const currentChunkText = currentChunk?.text ?? null
+  // 読み上げ中はタイプライター演出を止めて全文を出す(読んでいる所の強調と表示がずれないように)
+  const readingNow = reading
   useLayoutEffect(() => {
     if (viewMode !== 'page' || !currentChunkText) {
       setTypedLen(0)
       return
     }
     const cps = TYPING_SPEEDS.find((s) => s.id === typingSpeed)?.cps ?? 250
-    if (cps <= 0) {
+    if (cps <= 0 || readingNow) {
       setTypedLen(currentChunkText.length) // 「一気に表示」は演出なし
       return
     }
@@ -225,7 +233,7 @@ export default function ReaderMode({
       clearInterval(timer)
       typingTimerRef.current = null
     }
-  }, [viewMode, pageIndex, currentChunkText, typingSpeed])
+  }, [viewMode, pageIndex, currentChunkText, typingSpeed, readingNow])
 
   // クリックで全文表示。タイマーを止めないと次の tick で途中まで戻ってしまう
   const skipTyping = useCallback((fullLength: number): void => {
@@ -483,25 +491,43 @@ export default function ReaderMode({
     URL.revokeObjectURL(url)
   }
 
-  // 読み上げ(docs/design/voice.md)。次のシーンに移ったら、そのシーンを画面に出す
-  const onReadSceneStart = useCallback(
-    (nodeId: string): void => {
-      if (viewMode === 'page') {
-        const index = scenes.findIndex((s) => s.node.id === nodeId)
-        const page = pages.findIndex((p) => p.sceneIndex === index && !p.chapter)
-        if (page >= 0) setPageIndex(page)
-        return
-      }
-      document.getElementById(`reader-scene-${nodeId}`)?.scrollIntoView({ block: 'start', behavior: 'smooth' })
-    },
-    [viewMode, scenes, pages]
-  )
-  const readAloud = useReadAloud(onReadSceneStart)
-  const reading = readAloud.state.nodeId !== null
-  const readElapsed = useElapsedSeconds(readAloud.state.phase === 'synth')
   // 朗読台本のモーダルを開いているシーン
   const [scriptNodeId, setScriptNodeId] = useState<string | null>(null)
   const scriptScene = scriptNodeId ? scenes.find((s) => s.node.id === scriptNodeId && s.render) : undefined
+
+  // 読み上げの追従。ページモードは読んでいる行のあるページへ送り、縦読み・挿絵分割は強調が画面から
+  // 外れたときだけスクロールする(読んでいる途中で勝手に動かしすぎない)。行の位置が分からなければシーンの頭へ
+  const readingNodeId = readAloud.state.nodeId
+  const readingSpanStart = readAloud.state.span?.[0] ?? null
+  useEffect(() => {
+    if (!readingNodeId) return
+    const index = scenes.findIndex((s) => s.node.id === readingNodeId)
+    if (index < 0) return
+    if (viewMode === 'page') {
+      const page = pages.findIndex(
+        (p) =>
+          p.sceneIndex === index &&
+          !p.chapter &&
+          p.text !== null &&
+          (readingSpanStart === null ||
+            ((p.start ?? 0) <= readingSpanStart && readingSpanStart < (p.start ?? 0) + p.text.length))
+      )
+      if (page >= 0) setPageIndex(page)
+      return
+    }
+    const frame = requestAnimationFrame(() => {
+      const mark = document.getElementById('reader-reading-mark')
+      const container = containerRef.current
+      if (mark && container) {
+        const r = mark.getBoundingClientRect()
+        const c = container.getBoundingClientRect()
+        if (r.top < c.top + 40 || r.bottom > c.bottom - 40) mark.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      } else {
+        document.getElementById(`reader-scene-${readingNodeId}`)?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+      }
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [readingNodeId, readingSpanStart, viewMode, pages, scenes])
 
   const hasAnyRender = scenes.some((s) => s.render)
   const selectStyle = { background: 'var(--bg-input)', borderColor: 'var(--border)' }
@@ -580,7 +606,29 @@ export default function ReaderMode({
     )
   }
 
-  const renderProse = (scene: SceneEntry, textOverride?: string, typing = false): React.JSX.Element => {
+  // 読み上げ中の行を本文の中で強調する。offset = text が清書の本文の何文字目から始まるか(ページモードの分割)
+  const withReadingMark = (scene: SceneEntry, text: string, offset: number): React.ReactNode => {
+    const span = readAloud.state.nodeId === scene.node.id ? readAloud.state.span : null
+    if (!span) return text
+    const start = Math.max(0, span[0] - offset)
+    const end = Math.min(text.length, span[1] - offset)
+    if (end <= 0 || start >= text.length || start >= end) return text
+    return (
+      <>
+        {text.slice(0, start)}
+        <mark
+          id="reader-reading-mark"
+          className="rounded-[3px] transition-colors"
+          style={{ background: 'var(--accent-soft)', color: 'inherit', boxShadow: '0 1px 0 var(--accent-border-bright)' }}
+        >
+          {text.slice(start, end)}
+        </mark>
+        {text.slice(end)}
+      </>
+    )
+  }
+
+  const renderProse = (scene: SceneEntry, textOverride?: string, typing = false, offset = 0): React.JSX.Element => {
     const isLive = liveNodeId === scene.node.id
     const stale = scene.render?.stale === 1
     const proseStyle = { color: 'var(--text)', fontFamily: proseFont, fontSize, lineHeight: 1.9 }
@@ -598,7 +646,7 @@ export default function ReaderMode({
     if (scene.render) {
       return (
         <div className="whitespace-pre-wrap" style={{ ...proseStyle, opacity: stale ? 0.6 : 1 }}>
-          {textOverride ?? scene.render.prose}
+          {typing ? (textOverride ?? scene.render.prose) : withReadingMark(scene, textOverride ?? scene.render.prose, offset)}
           {typing && (
             <span className="ml-0.5 inline-block h-4 w-1.5 align-middle" style={{ background: 'var(--text-faint)' }} />
           )}
@@ -679,12 +727,30 @@ export default function ReaderMode({
                 : readAloud.state.phase === 'synth' && ` 合成しています…(${readElapsed}s)`}
             </span>
             <button
+              onClick={readAloud.prev}
+              className="shrink-0 rounded-md border px-1.5 py-1 text-[11px]"
+              style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+              aria-label="前の行へ"
+              data-tip="前の行へ戻る(シーンの頭なら前のシーンの最後の行)"
+            >
+              <Icon name="skipBack" size={11} />
+            </button>
+            <button
               onClick={readAloud.state.paused ? readAloud.resume : readAloud.pause}
               className="shrink-0 rounded-md border px-2 py-0.5 text-[11px]"
               style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
               data-tip={readAloud.state.paused ? '続きから読みます' : 'いまの行で止めます(続きから再開できます)'}
             >
               {readAloud.state.paused ? '▶ 再開' : '❚❚ 一時停止'}
+            </button>
+            <button
+              onClick={readAloud.next}
+              className="shrink-0 rounded-md border px-1.5 py-1 text-[11px]"
+              style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+              aria-label="次の行へ"
+              data-tip="いまの行を飛ばして次の行へ(シーンの終わりなら次のシーンへ)"
+            >
+              <Icon name="skipForward" size={11} />
             </button>
             <button
               onClick={readAloud.stop}
@@ -896,7 +962,7 @@ export default function ReaderMode({
                           >
                             {isLive || text === null
                               ? renderProse(scene)
-                              : renderProse(scene, typing ? text.slice(0, typedLen) : text, typing)}
+                              : renderProse(scene, typing ? text.slice(0, typedLen) : text, typing, chunk?.start ?? 0)}
                           </div>
                         </>
                       )}
