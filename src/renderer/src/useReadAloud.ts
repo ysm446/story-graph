@@ -91,10 +91,12 @@ function playBlob(blob: Blob, gate: PauseGate, signal: AbortSignal): Promise<voi
   })
 }
 
-/** 飛び先。line = -1 は「そのシーンの最後の行」(前のシーンへ戻るとき) */
+/** 飛び先。line = -1 は「そのシーンの最後の行」(前のシーンへ戻るとき)。
+ *  offset があれば line の代わりに「本文のその位置から始まる最初の行」へ飛ぶ(ページをめくったとき) */
 interface Cursor {
   scene: number
   line: number
+  offset?: number
 }
 
 /** 鑑賞モードの読み上げ(docs/design/voice.md §6)。清書 → 朗読台本 → 1 行ずつ合成して順に再生する。
@@ -111,6 +113,8 @@ export function useReadAloud(onSceneStart?: (nodeId: string) => void): {
   next: () => void
   /** 前の行へ(シーンの頭なら前のシーンの最後の行) */
   prev: () => void
+  /** sceneIndex のシーンの、清書の本文 offset 文字目から読み直す(読み上げ中だけ。ページをめくったとき) */
+  seekToOffset: (sceneIndex: number, offset: number) => void
 } {
   const [state, setState] = useState<ReadAloudState>(IDLE)
   const abortRef = useRef<AbortController | null>(null)
@@ -157,6 +161,13 @@ export function useReadAloud(onSceneStart?: (nodeId: string) => void): {
     seek(line > 0 ? { scene, line: line - 1 } : { scene: scene - 1, line: -1 })
   }, [seek])
 
+  const seekToOffset = useCallback(
+    (sceneIndex: number, offset: number): void => {
+      seek({ scene: sceneIndex, line: 0, offset })
+    },
+    [seek]
+  )
+
   // モードを離れたら止める
   useEffect(() => () => abortRef.current?.abort(), [])
 
@@ -195,6 +206,7 @@ export function useReadAloud(onSceneStart?: (nodeId: string) => void): {
     const run = async (): Promise<void> => {
       let si = fromIndex
       let li = fromLine
+      let offset: number | null = null // ページをめくって飛んだとき、本文のこの位置から読む
       let lastScene = -1
       while (si < scenes.length) {
         if (signal.aborted) return
@@ -205,6 +217,13 @@ export function useReadAloud(onSceneStart?: (nodeId: string) => void): {
         }
         const lines = await scriptOf(si)
         if (signal.aborted) return
+        if (offset !== null) {
+          const at = offset
+          offset = null
+          // その位置から始まる最初の行(前のページからまたいでいる行は選ばない。選ぶとページ送りで前へ戻される)
+          const found = lines.findIndex((l) => !!l.span && l.span[0] >= at)
+          li = found >= 0 ? found : lines.length // 位置より後に行が無ければ次のシーンへ
+        }
         // 未清書・読む行の無いシーンは、進む向きに飛ばす(前へ戻る途中なら更に前へ)
         if (li === -1) {
           if (lines.length === 0) {
@@ -262,6 +281,7 @@ export function useReadAloud(onSceneStart?: (nodeId: string) => void): {
         if (target) {
           si = target.scene
           li = target.line
+          offset = target.offset ?? null
         } else {
           li += 1
         }
@@ -290,5 +310,5 @@ export function useReadAloud(onSceneStart?: (nodeId: string) => void): {
       })
   }, [])
 
-  return { state, play, stop, pause, resume, next, prev }
+  return { state, play, stop, pause, resume, next, prev, seekToOffset }
 }

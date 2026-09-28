@@ -17,7 +17,15 @@ export const DEFAULT_VIDEO_CROSSFADE_SECONDS = 0.5
  *   その箱に重ねる。scroll / split モードのように内容サイズで表示する場所向け。
  * - fill=true: 親要素いっぱいに広げて object-contain で収める。ページモードの
  *   挿絵領域(高さ 42% 固定)のように領域が先に決まっている場所向け。
+ *
+ * 止まったまま対策(2026-09-29):
+ * - 切り替えの予約(旧側を止めるタイマー・フェードの rAF)は、src が変わったとき・外れたときに取り消す。
+ *   ページモードはページをめくっても同じプレイヤーを使い回して src だけ差し替えるので、継ぎ目の
+ *   0.65 秒の間にめくると、前の動画の「旧側を止める」が新しい動画で再生中の 1 枚を止めてしまっていた
+ * - 見張り: 2 秒おきに、再生中のはずの 1 枚が止まっていたら再生し直す(play() の失敗は握りつぶしている
+ *   ので、読み込みの割り込みなどで再生が始まらなかったときの受け皿)
  */
+const WATCHDOG_MS = 2000
 export function CrossfadeLoopVideo({
   src,
   fadeSeconds,
@@ -35,12 +43,22 @@ export function CrossfadeLoopVideo({
   const videoBRef = useRef<HTMLVideoElement | null>(null)
   const activeIndex = useRef(0)
   const switching = useRef(false)
+  // 切り替えの予約。src が変わったとき・外れたときにまとめて取り消す
+  const pendingTimers = useRef<number[]>([])
+  const pendingFrames = useRef<number[]>([])
+  const cancelPending = (): void => {
+    pendingTimers.current.forEach((id) => window.clearTimeout(id))
+    pendingFrames.current.forEach((id) => cancelAnimationFrame(id))
+    pendingTimers.current = []
+    pendingFrames.current = []
+  }
 
   const crossfadeEnabled = fadeSeconds > 0.05
   const refOf = (index: number): React.RefObject<HTMLVideoElement | null> =>
     index === 0 ? videoARef : videoBRef
 
   useEffect(() => {
+    cancelPending()
     activeIndex.current = 0
     switching.current = false
     const first = videoARef.current
@@ -58,6 +76,17 @@ export function CrossfadeLoopVideo({
       second.style.zIndex = '1'
       second.pause()
     }
+    // 見張り: 再生中のはずの 1 枚が止まっていたら再生し直す(隠れているタブでは何もしない)
+    const watchdog = window.setInterval(() => {
+      if (document.visibilityState !== 'visible' || switching.current) return
+      const active = (activeIndex.current === 0 ? videoARef : videoBRef).current
+      if (active && active.paused && !active.ended) void active.play().catch(() => undefined)
+    }, WATCHDOG_MS)
+    return () => {
+      window.clearInterval(watchdog)
+      cancelPending()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [src, crossfadeEnabled])
 
   const handleTimeUpdate = (index: number): void => {
@@ -85,18 +114,21 @@ export function CrossfadeLoopVideo({
     next.style.zIndex = '2'
     next.currentTime = 0
     void next.play().catch(() => undefined)
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
+    const outer = requestAnimationFrame(() => {
+      const inner = requestAnimationFrame(() => {
         next.style.transition = `opacity ${fadeSeconds}s linear`
         next.style.opacity = '1'
       })
+      pendingFrames.current.push(inner)
     })
+    pendingFrames.current.push(outer)
 
-    // フェード完了後に旧側を止める
-    window.setTimeout(() => {
+    // フェード完了後に旧側を止める(src が変わったら cancelPending で取り消される)
+    const timer = window.setTimeout(() => {
       current.pause()
       switching.current = false
     }, fadeSeconds * 1000 + 150)
+    pendingTimers.current.push(timer)
   }
 
   const handleEnded = (index: number): void => {
@@ -116,6 +148,7 @@ export function CrossfadeLoopVideo({
       <div className={`${fill ? 'relative h-full w-full' : 'relative max-w-full'} ${className}`}>
         <video
           key={src}
+          ref={videoARef}
           src={src}
           autoPlay
           muted

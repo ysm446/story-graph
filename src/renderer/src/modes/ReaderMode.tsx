@@ -84,6 +84,22 @@ export default function ReaderMode({
   const readAloud = useReadAloud()
   const reading = readAloud.state.nodeId !== null
   const readElapsed = useElapsedSeconds(readAloud.state.phase === 'synth')
+  // 自分でページをめくったとき(ボタン・スライダー・矢印キー・目次)。読み上げ中なら、読み上げも
+  // そのページの頭から続ける。読み上げが自動でめくるときは setPageIndex を直接使うので、ここは通らない
+  const seekToOffset = readAloud.seekToOffset
+  const goToPage = useCallback(
+    (target: number): void => {
+      const index = Math.max(0, Math.min(target, pages.length - 1))
+      setPageIndex(index)
+      const chunk = pages[index]
+      if (reading && chunk) seekToOffset(chunk.sceneIndex, chunk.chapter || chunk.text === null ? 0 : (chunk.start ?? 0))
+    },
+    [pages, reading, seekToOffset]
+  )
+  const pageIndexRef = useRef(0)
+  useEffect(() => {
+    pageIndexRef.current = pageIndex
+  }, [pageIndex])
 
   const renderElapsed = useElapsedSeconds(rendering)
   // キューに清書タスクが残っている間は多重投入させない
@@ -250,12 +266,12 @@ export default function ReaderMode({
     const onKey = (e: KeyboardEvent): void => {
       const target = e.target as HTMLElement | null
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT')) return
-      if (e.key === 'ArrowRight') setPageIndex((i) => Math.min(i + 1, pages.length - 1))
-      if (e.key === 'ArrowLeft') setPageIndex((i) => Math.max(i - 1, 0))
+      if (e.key === 'ArrowRight') goToPage(pageIndexRef.current + 1)
+      if (e.key === 'ArrowLeft') goToPage(pageIndexRef.current - 1)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [viewMode, pages.length])
+  }, [viewMode, goToPage])
 
   // 読み直しが重なったとき(清書が連続で書き上がる等)、遅れて届いた古い結果で
   // 新しい結果を上書きしないよう、最後に始めたものだけを採る
@@ -845,7 +861,7 @@ export default function ReaderMode({
               if (!groupId) return
               if (viewMode === 'page') {
                 const page = pages.findIndex((p) => p.chapter?.id === groupId)
-                if (page >= 0) setPageIndex(page)
+                if (page >= 0) goToPage(page)
               } else {
                 document.getElementById(`reader-chapter-${groupId}`)?.scrollIntoView({ block: 'start' })
               }
@@ -975,7 +991,7 @@ export default function ReaderMode({
                   >
                     <div className="mx-auto flex max-w-5xl items-center gap-3">
                       <button
-                        onClick={() => setPageIndex((i) => Math.max(i - 1, 0))}
+                        onClick={() => goToPage(pageIndex - 1)}
                         disabled={pageIndex === 0}
                         className="shrink-0 rounded-lg border px-3 py-1 text-[12px] disabled:opacity-30"
                         style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
@@ -987,7 +1003,7 @@ export default function ReaderMode({
                         min={0}
                         max={Math.max(pages.length - 1, 0)}
                         value={Math.min(pageIndex, Math.max(pages.length - 1, 0))}
-                        onChange={(e) => setPageIndex(Number(e.target.value))}
+                        onChange={(e) => goToPage(Number(e.target.value))}
                         className="settings-slider active min-w-0 flex-1"
                         data-tip="ドラッグで任意のページへジャンプ"
                       />
@@ -995,7 +1011,7 @@ export default function ReaderMode({
                         {Math.min(pageIndex, Math.max(pages.length - 1, 0)) + 1} / {Math.max(pages.length, 1)}
                       </span>
                       <button
-                        onClick={() => setPageIndex((i) => Math.min(i + 1, pages.length - 1))}
+                        onClick={() => goToPage(pageIndex + 1)}
                         disabled={pageIndex >= pages.length - 1}
                         className="shrink-0 rounded-lg px-3 py-1 text-[12px] font-medium text-white disabled:opacity-30"
                         style={{ background: 'var(--accent)' }}
