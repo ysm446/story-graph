@@ -6,6 +6,7 @@ import { FONT_OPTIONS, FONT_SIZES, RenderStyleControls, useRenderStyle } from '.
 import { cancelTask, enqueueTask, useTasks } from '../tasks'
 import { useElapsedSeconds } from '../useElapsed'
 import { useReadAloud } from '../useReadAloud'
+import VoiceRateSelect from '../VoiceRateSelect'
 import VoiceScriptModal from '../VoiceScriptModal'
 import type { Group, SceneEntry } from '../types'
 
@@ -768,6 +769,7 @@ export default function ReaderMode({
             >
               <Icon name="skipForward" size={11} />
             </button>
+            <VoiceRateSelect className="shrink-0" />
             <button
               onClick={readAloud.stop}
               className="shrink-0 rounded-md border px-2 py-0.5 text-[11px]"

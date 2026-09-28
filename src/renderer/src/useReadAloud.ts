@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, isAbortError, ttsSpeak, type VoiceLine } from './api'
 import type { SceneEntry } from './types'
+import { applyVoiceRate, scaledPause } from './voiceRate'
 
 /** 再生中に数行先まで合成しておく(サーバーは 1 件ずつ合成するので、積みすぎても速くならない) */
 const PREFETCH_AHEAD = 2
@@ -75,9 +76,11 @@ function playBlob(blob: Blob, gate: PauseGate, signal: AbortSignal): Promise<voi
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(blob)
     const audio = new Audio(url)
+    const release = applyVoiceRate(audio)
     gate.audio = audio
     const done = (err?: unknown): void => {
       audio.pause()
+      release()
       gate.audio = null
       URL.revokeObjectURL(url)
       if (err) reject(err)
@@ -267,7 +270,7 @@ export function useReadAloud(onSceneStart?: (nodeId: string) => void): {
           for (let a = 1; a <= PREFETCH_AHEAD && li + a < lines.length; a += 1) void fetchLine(si, lines, li + a)
           setState((s) => ({ ...s, phase: 'play' }))
           if (blob) await playBlob(blob, gate, lineAbort.signal) // null = エンジンが鳴らせない効果音(間だけ置く)
-          await sleep(line.pause_after_ms, lineAbort.signal)
+          await sleep(scaledPause(line.pause_after_ms), lineAbort.signal)
           await gate.wait(lineAbort.signal)
         } catch (e) {
           if (signal.aborted) return

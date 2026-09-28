@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { api, isAbortError, ttsInstallStream, type TtsInstallProgress, type TtsStatus } from './api'
 import AutoTextarea from './AutoTextarea'
 import VoiceProfilesCard from './VoiceProfilesCard'
+import VoiceRateSelect from './VoiceRateSelect'
 import { useElapsedSeconds } from './useElapsed'
 
 function fmtBytes(bytes: number): string {
@@ -268,6 +269,21 @@ export default function VoiceSettingsSection({
       </div>
 
       <VoiceProfilesCard />
+
+      <div className="settings-card">
+        <div className="settings-field">
+          <div className="settings-field-header">
+            <span className="settings-field-label">読み上げの速さ</span>
+            <div className="settings-field-controls">
+              <VoiceRateSelect />
+            </div>
+          </div>
+          <p className="settings-field-hint">
+            鑑賞モードとチャットの読み上げの速さです。合成し直さず再生の速さだけを変えるので、すぐ効きます(声の高さはそのまま、行の間も同じ割合で縮みます)。
+            鑑賞モードの読み上げ中の表示からも変えられます。声の試し読みは、声を確かめるため等速のままです。
+          </p>
+        </div>
+      </div>
 
       <div className="settings-card">
         <div className="settings-field">

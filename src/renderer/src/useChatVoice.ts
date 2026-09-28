@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, isAbortError, ttsSpeak, voiceApi, type VoiceLine } from './api'
+import { applyVoiceRate, scaledPause } from './voiceRate'
 
 /** 再生中に数行先まで合成しておく(鑑賞モードの読み上げと同じ) */
 const PREFETCH_AHEAD = 2
@@ -132,7 +133,7 @@ class SpeechQueue {
         for (let a = 1; a <= PREFETCH_AHEAD && i + a < this.lines.length; a += 1) void this.fetchLine(i + a)
         this.synth.delete(i)
         if (blob) await this.play(blob, signal) // null = エンジンが鳴らせない効果音(間だけ置く)
-        await sleep(Math.min(this.lines[i].pause_after_ms, 600), signal)
+        await sleep(scaledPause(Math.min(this.lines[i].pause_after_ms, 600)), signal)
         this.next += 1
       }
     } catch (e) {
@@ -144,9 +145,11 @@ class SpeechQueue {
     return new Promise((resolve, reject) => {
       const url = URL.createObjectURL(blob)
       const audio = new Audio(url)
+      const release = applyVoiceRate(audio)
       this.audio = audio
       const done = (err?: unknown): void => {
         audio.pause()
+        release()
         URL.revokeObjectURL(url)
         if (err) reject(err)
         else resolve()

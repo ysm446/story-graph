@@ -4,6 +4,7 @@ import { Icon } from './icons'
 import { enqueueTask, useTasks } from './tasks'
 import type { Character, SceneEntry } from './types'
 import { useElapsedSeconds } from './useElapsed'
+import { applyVoiceRate } from './voiceRate'
 
 const inputStyle = { background: 'var(--bg-input)', borderColor: 'var(--border)' }
 const secondaryStyle = { borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }
@@ -114,7 +115,11 @@ export default function VoiceScriptModal({
       }
       const url = URL.createObjectURL(blob)
       const audio = new Audio(url)
-      audio.onended = () => URL.revokeObjectURL(url)
+      const release = applyVoiceRate(audio) // 読み上げと同じ速さで聞く
+      audio.onended = () => {
+        release()
+        URL.revokeObjectURL(url)
+      }
       audioRef.current = audio
       await audio.play()
     } catch (e) {
