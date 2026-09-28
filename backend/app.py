@@ -1559,6 +1559,50 @@ async def add_voice_ref(profile_id: str, file: UploadFile) -> dict[str, Any]:
     return updated  # type: ignore[return-value]
 
 
+class VoiceSampleIn(BaseModel):
+    text: str
+    kind: str | None = None  # narration | dialogue(試し読みと同じ読み方にする)
+
+
+@app.post("/voice_profiles/{profile_id}/refs/from_sample")
+async def add_voice_ref_from_sample(profile_id: str, body: VoiceSampleIn) -> dict[str, Any]:
+    """いまの声で試し読みした音声を、その声の参照音声にする(声色を固定する。docs/design/voice.md §5)。
+
+    試し読みと同じリクエスト(同じ文・同じ seed)を、形式だけ wav にして合成し直して取り込む。
+    キャッシュの opus をそのまま使わないのは、TTS サーバーが参照音声として opus を読めるとは限らないため。"""
+    import uuid
+    from pathlib import Path as _Path
+
+    import tts
+    import voice
+
+    profile = _voice_profile_or_404(profile_id)
+    voices = store.voices_dir()
+    if voices is None:
+        raise HTTPException(500, "ライブラリが未設定です")
+    text = body.text.strip()
+    if not text:
+        raise HTTPException(400, "読む文字がありません")
+    line = {"text": text, "kind": "dialogue" if body.kind == "dialogue" else "narration", "speaker": "narrator"}
+    settings = store.get_settings()
+    engine = _tts_engine()
+    try:
+        book = voice.VoiceBook(store, settings)
+        _, request_body = book.line_audio(engine, line, profile_id)
+        request_body["response_format"] = "wav"
+        base_url = await tts_mgr.ensure_running(settings)
+        data = await tts.synthesize(base_url, request_body)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except RuntimeError as e:
+        raise HTTPException(502, str(e))
+    name = f"{uuid.uuid4().hex[:12]}.wav"
+    await asyncio.to_thread((_Path(voices) / name).write_bytes, data)
+    updated = store.update_voice_profile(profile_id, {"ref_paths": [*profile["ref_paths"], name]})
+    _schedule_audio_gc()  # 声が変わるので、前の声で作った音声は使われなくなる
+    return updated  # type: ignore[return-value]
+
+
 @app.get("/voices/{filename}")
 async def get_voice_file(filename: str) -> FileResponse:
     """参照音声の再生用。"""

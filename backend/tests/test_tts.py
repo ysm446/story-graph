@@ -94,22 +94,29 @@ def test_launch_spec_without_models_dir_drops_hf_home(monkeypatch):
 # ---- 台本 ------------------------------------------------------------------
 
 def test_build_script_splits_dialogue_and_narration():
-    prose = "　雨が降っていた。彼女は窓を見た。\n「行かないで。……お願い」\nと、彼女は言った。"
+    prose = "　雨が降っていた。彼女は窓を見た。\n「行かないで。……お願い」と彼女は言い、うつむいた。\n夜が明けた。"
     lines = voice.build_script(prose)
     assert [(l["kind"], l["text"]) for l in lines] == [
-        ("narration", "雨が降っていた。"),
-        ("narration", "彼女は窓を見た。"),
+        ("narration", "雨が降っていた。彼女は窓を見た。"),  # 同じ段落の地の文はまとめる
         ("dialogue", "「行かないで。……お願い」"),
-        ("narration", "と、彼女は言った。"),
+        ("narration", "と彼女は言い、うつむいた。"),
+        ("narration", "夜が明けた。"),  # 段落をまたいではまとめない
     ]
     assert all(l["speaker"] == "narrator" and l["emotion"] == "neutral" for l in lines)
-    assert lines[0]["pause_after_ms"] == voice.PAUSE_SENTENCE_MS
-    assert lines[1]["pause_after_ms"] == voice.PAUSE_PARAGRAPH_MS
+    assert lines[1]["pause_after_ms"] == voice.PAUSE_SENTENCE_MS
+    assert lines[2]["pause_after_ms"] == voice.PAUSE_PARAGRAPH_MS
 
 
-def test_build_script_keeps_punctuation_runs_together():
-    lines = voice.build_script("本当に!?　嘘でしょう。")
-    assert [l["text"] for l in lines] == ["本当に!?", "嘘でしょう。"]
+def test_build_script_merges_narration_up_to_limit():
+    sentence = "長い道のりを歩いてきた。"  # 12 字
+    lines = voice.build_script(sentence * 20)
+    assert all(len(l["text"]) <= voice.MERGE_NARRATION_CHARS for l in lines)
+    assert "".join(l["text"] for l in lines) == sentence * 20
+    assert len(lines) == 3  # 8 文 + 8 文 + 4 文
+
+
+def test_sentences_keep_punctuation_runs_together():
+    assert voice._sentences("本当に!?　嘘でしょう。") == ["本当に!?", "嘘でしょう。"]
 
 
 def test_build_script_scene_break_becomes_pause():

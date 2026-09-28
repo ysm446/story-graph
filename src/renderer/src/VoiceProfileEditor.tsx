@@ -40,6 +40,10 @@ export default function VoiceProfileEditor({
   const [error, setError] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
   const [testing, setTesting] = useState(false)
+  // 最後に試し読みした文と、そのときの声(updated_at)。声を直さずに同じ文なら、それを参照音声にできる
+  const [lastTested, setLastTested] = useState<{ text: string; kind: 'narration' | 'dialogue'; version: string } | null>(null)
+  const [pinning, setPinning] = useState(false)
+  const [notice, setNotice] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const testElapsed = useElapsedSeconds(testing)
@@ -121,12 +125,14 @@ export default function VoiceProfileEditor({
     audioRef.current?.pause()
     setTesting(true)
     setError(null)
+    setNotice(null)
     try {
       const text = sample.trim()
+      const kind = text.startsWith('「') ? 'dialogue' : 'narration'
       const blob = await ttsSpeak(
         {
           speaker: 'narrator',
-          kind: text.startsWith('「') ? 'dialogue' : 'narration',
+          kind,
           text,
           emotion: 'neutral',
           intensity: 0.5,
@@ -141,10 +147,28 @@ export default function VoiceProfileEditor({
       audio.onended = () => URL.revokeObjectURL(url)
       audioRef.current = audio
       await audio.play()
+      setLastTested({ text, kind, version: profile.updated_at })
     } catch (e) {
       setError(`試し読みに失敗しました: ${String(e).replace(/^Error:\s*/, '')}`)
     } finally {
       setTesting(false)
+    }
+  }
+
+  // 気に入った試し読みを参照音声にする。説明文だけの声は文ごとに声色が揺れるので、録音を手本にして固定する
+  const handlePin = async (): Promise<void> => {
+    if (!lastTested) return
+    setPinning(true)
+    setError(null)
+    try {
+      const updated = await voiceApi.refFromSample(profile.id, lastTested.text, lastTested.kind)
+      setLastTested(null)
+      setNotice('参照音声にしました。これからはこの声を手本に読みます(説明文の話し方も効きます)')
+      onChanged(updated)
+    } catch (e) {
+      setError(`参照音声にできませんでした: ${String(e).replace(/^Error:\s*/, '')}`)
+    } finally {
+      setPinning(false)
     }
   }
 
@@ -355,6 +379,26 @@ export default function VoiceProfileEditor({
             {testing ? `合成しています…(${testElapsed}s)` : '▶ 再生'}
           </button>
         </div>
+        {lastTested && lastTested.text === sample.trim() && lastTested.version === profile.updated_at && (
+          <button
+            onClick={() => void handlePin()}
+            disabled={pinning}
+            className="mt-1.5 inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-40"
+            style={secondaryStyle}
+            data-tip="いま聞いた声を録音として取り込み、この声の参照音声にします。文ごとの声色の揺れが小さくなります"
+          >
+            <Icon name="speaker" size={11} />
+            {pinning ? '取り込んでいます…' : 'この声を参照音声にして固定'}
+          </button>
+        )}
+        {notice && (
+          <p className={hintClass} style={{ color: 'var(--text-dim)' }}>
+            {notice}
+          </p>
+        )}
+        <p className={hintClass} style={{ color: 'var(--text-faint)' }}>
+          説明文だけの声は、文ごとに声色が少し揺れます。気に入った声が出たら参照音声にして固定してください(10 秒前後の長めの文がおすすめ)。
+        </p>
       </div>
 
       {error && (

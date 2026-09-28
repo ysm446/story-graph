@@ -892,6 +892,12 @@ export const voiceApi = {
       body: JSON.stringify({ text, char_id: charId, mode }),
       signal
     }),
+  /** いまの声で試し読みした文を、同じ条件で合成し直してその声の参照音声にする(声色を固定する) */
+  refFromSample: (id: string, text: string, kind: 'narration' | 'dialogue') =>
+    request<VoiceProfile>(`/voice_profiles/${encodeURIComponent(id)}/refs/from_sample`, {
+      method: 'POST',
+      body: JSON.stringify({ text, kind })
+    }),
   /** キャラの資料から声の説明の下書きを LLM で作る(保存はしない) */
   draftCaption: (charId: string, signal?: AbortSignal) =>
     request<{ caption: string }>(`/characters/${encodeURIComponent(charId)}/voice_caption`, { method: 'POST', signal })

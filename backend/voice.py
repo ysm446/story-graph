@@ -34,6 +34,9 @@ PAUSE_PARAGRAPH_MS = 600
 PAUSE_SCENE_BREAK_MS = 1200
 # 台詞 1 つがこれより長ければ、文の終わりで分ける(1 回の合成が長すぎると最初の音が遅れる)
 MAX_DIALOGUE_CHARS = 160
+# 地の文は、同じ段落の続く文をこの字数までまとめて 1 行にする。1 行ずつ別々に合成するので、
+# 行の継ぎ目ごとに声色が少し揺れる(2026-09-28 ユーザー指摘)。まとめて継ぎ目を減らす
+MERGE_NARRATION_CHARS = 100
 DEFAULT_SEED = 1234
 
 
@@ -56,6 +59,17 @@ def _sentences(text: str) -> list[str]:
     return [s.strip(_TRIM) for s in _SENTENCE_END.split(text) if s.strip(_TRIM)]
 
 
+def _group_sentences(sentences: list[str], limit: int = MERGE_NARRATION_CHARS) -> list[str]:
+    """続く文を limit 字までまとめる(1 文で limit を超えるものはそのまま 1 行)。"""
+    groups: list[str] = []
+    for s in sentences:
+        if groups and len(groups[-1]) + len(s) <= limit:
+            groups[-1] += s
+        else:
+            groups.append(s)
+    return groups
+
+
 def _split_paragraph(para: str) -> list[dict[str, Any]]:
     lines: list[dict[str, Any]] = []
     buf = ""
@@ -63,7 +77,7 @@ def _split_paragraph(para: str) -> list[dict[str, Any]]:
 
     def flush_narration() -> None:
         nonlocal buf
-        lines.extend(_line(s, "narration") for s in _sentences(buf))
+        lines.extend(_line(s, "narration") for s in _group_sentences(_sentences(buf)))
         buf = ""
 
     def flush_dialogue() -> None:

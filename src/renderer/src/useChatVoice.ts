@@ -3,6 +3,9 @@ import { api, isAbortError, ttsSpeak, voiceApi, type VoiceLine } from './api'
 
 /** 再生中に数行先まで合成しておく(鑑賞モードの読み上げと同じ) */
 const PREFETCH_AHEAD = 2
+// 2 文目以降は、読める所がこの字数まで溜まってから送る。台本の地の文と同じく、1 回の合成に
+// 複数の文をまとめて継ぎ目(= 声色が揺れる所)を減らす。最初の 1 文だけは溜めずにすぐ読み始める
+const MERGE_CHARS = 80
 const STORAGE_KEY = 'chatVoice'
 const OPEN_QUOTES = '「『'
 const CLOSE_QUOTES = '」』'
@@ -192,6 +195,7 @@ export function useChatVoice(ctx: ChatVoiceContext): {
   const queueRef = useRef<SpeechQueue | null>(null)
   const bufferRef = useRef('')
   const fedRef = useRef(false) // この返答で差分を受け取ったか(受け取っていなければ finish で全文を読む)
+  const sentFirstRef = useRef(false) // この返答の最初の塊を送ったか
   const ctxRef = useRef(ctx)
   useEffect(() => {
     ctxRef.current = ctx
@@ -241,6 +245,7 @@ export function useChatVoice(ctx: ChatVoiceContext): {
 
   const begin = useCallback((): void => {
     fedRef.current = false
+    sentFirstRef.current = false
     if (enabled) start()
     else stop()
   }, [enabled, start, stop])
@@ -251,7 +256,8 @@ export function useChatVoice(ctx: ChatVoiceContext): {
     if (!queue || queue.stopped) return
     bufferRef.current += delta
     const cut = safeBoundary(bufferRef.current)
-    if (cut > 0) {
+    if (cut > 0 && (!sentFirstRef.current || cut >= MERGE_CHARS)) {
+      sentFirstRef.current = true
       queue.addText(bufferRef.current.slice(0, cut))
       bufferRef.current = bufferRef.current.slice(cut)
     }
