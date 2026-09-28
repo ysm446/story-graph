@@ -349,6 +349,10 @@ def extra_body(settings: dict[str, str]) -> dict[str, Any]:
 
 # ---- 合成(キャッシュ付き) -------------------------------------------------
 
+# キャッシュ(assets/audio)は「いま読むと使う音声」だけを残す。清書の上書き・声や台本の変更・シーンの削除・
+# エンジンの切り替えで使われなくなったものは gc(expected_audio + sweep_audio)で消える。
+# 作り直した清書でも変わらなかった文は同じファイル名になるので、消さずに使い回せる
+
 def cache_key(engine_id: str, body: dict[str, Any], voice: dict[str, Any]) -> str:
     """同じ (エンジン, リクエスト, 参照音声の中身) なら同じ鍵。参照音声は差し替えに気付けるよう
     パスだけでなく大きさと更新時刻も混ぜる。"""
@@ -364,6 +368,15 @@ def cache_key(engine_id: str, body: dict[str, Any], voice: dict[str, Any]) -> st
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
 
 
+def line_audio(settings: dict[str, str], engine: dict[str, Any], line: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """1 行の (キャッシュのファイル名, リクエストの body)。合成(speak)と掃除(gc_audio)が同じ計算を使う
+    ことで、「いま読むと使うファイル」を合成せずに割り出せる。声の決め方を変えるときはここだけを直す。"""
+    voice = narrator_voice(settings)
+    body = tts.build_request(engine, line, voice, extra_body(settings))
+    ext = str(body.get("response_format") or "wav")
+    return f"{cache_key(engine['id'], body, voice)}.{ext}", body
+
+
 async def speak(
     settings: dict[str, str],
     engine: dict[str, Any],
@@ -372,10 +385,9 @@ async def speak(
     audio_dir: Path,
 ) -> Path:
     """1 行を合成して音声ファイルのパスを返す。キャッシュにあれば合成しない。"""
-    voice = narrator_voice(settings)
-    body = tts.build_request(engine, line, voice, extra_body(settings))
-    ext = str(body.get("response_format") or "wav")
-    path = audio_dir / f"{cache_key(engine['id'], body, voice)}.{ext}"
+    name, body = line_audio(settings, engine, line)
+    ext = name.rsplit(".", 1)[1]
+    path = audio_dir / name
     if path.exists():
         return path
     data = await tts.synthesize(base_url, body)
@@ -383,6 +395,45 @@ async def speak(
     await asyncio.to_thread(tmp.write_bytes, data)
     await asyncio.to_thread(tmp.replace, path)
     return path
+
+
+# 掃除で消さない猶予。合成した直後(試聴の音声を返している最中など)のファイルを守る
+AUDIO_GC_GRACE_SEC = 60
+
+
+def expected_audio(store: Any, settings: dict[str, str]) -> set[str]:
+    """いま読み上げると使う音声のファイル名。対象は、シーン × スタイルプリセット × 視点ごとの最新の清書
+    (画面に出るのはこれだけ。上書きされた古い清書は読まれない)。台本は読み上げと同じく resolve_script で決める。
+
+    声の設定が壊れている(seed が数でない等)と ValueError。そのときに空集合を返すと全部消えてしまうので、
+    呼び出し側は掃除をやめる。"""
+    engine = tts.get_engine(tts.resolve_engine_id(settings))
+    names: set[str] = set()
+    for render in store.latest_renders():
+        for line in resolve_script(store, render)["lines"]:
+            names.add(line_audio(settings, engine, line)[0])
+    return names
+
+
+def sweep_audio(audio_dir: Path, keep: set[str], now: float | None = None) -> int:
+    """keep に無いファイルを消して、消した数を返す(猶予内のものは残す)。"""
+    import time
+
+    if not audio_dir.is_dir():
+        return 0
+    limit = (now if now is not None else time.time()) - AUDIO_GC_GRACE_SEC
+    removed = 0
+    for f in audio_dir.iterdir():
+        if not f.is_file() or f.name in keep:
+            continue
+        try:
+            if f.stat().st_mtime > limit:
+                continue
+            f.unlink()
+            removed += 1
+        except OSError:
+            pass  # 再生中で掴まれていても次の掃除で消える
+    return removed
 
 
 def cache_status(audio_dir: Path | None) -> dict[str, Any]:

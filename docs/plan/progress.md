@@ -1,7 +1,7 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-07-24 22:38
-更新日時: 2026-09-28 20:56
+更新日時: 2026-09-28 21:17
 
 ## 現在の状態
 
@@ -9,7 +9,7 @@
 - **ライブラリ方式を導入**(lm-graph 踏襲): ストーリーごとのフォルダに `story-graph.db` を置く。現在のライブラリと最近使ったライブラリは `%APPDATA%/story-graph/app.json`(Electron userData)に保存。ヘッダー右のドロップダウンで切替(切替時はレンダラをリロード)。デフォルトはリポジトリ内 `data/`。
 - `npm run dev` で Electron が起動し、FastAPI sidecar(ポート 8765〜自動探索)が自動 spawn される。
 - バックエンドは単体でも起動可能: `cd backend && ../.venv/Scripts/python.exe -m uvicorn app:app --port 8765`
-- テスト: `cd backend && ../.venv/Scripts/python.exe -m pytest tests/ -q`(278件、全て成功)
+- テスト: `cd backend && ../.venv/Scripts/python.exe -m pytest tests/ -q`(283件、全て成功)
 - モデルは **31B を主に使用**(12B は検証用。2026-08-11 ユーザー談)
 
 ## 完了済み
@@ -388,6 +388,8 @@
     付けたときと手直ししたときだけ。作り直した清書へは同じ文の行を引き継ぐ)、LLM で番号ごとに話者・感情・
     強さを選ばせる `annotate_script`(文は書かせない)、台本のモーダル `VoiceScriptModal.tsx`(行ごとの手直し・
     試聴・その行から読み上げ)、読み上げの一時停止 / 再開。31B で 57 行のシーンに約 1 分。pytest 278 件
+  - [x] 音声キャッシュの管理(2026-09-28 ユーザー指摘): いま読むと使う音声だけを残す掃除(`voice.expected_audio` +
+    `sweep_audio`。清書の保存・台本や声の変更・シーン削除などで予約し、3 秒まとめて走らせる)と、opus での保存(wav の約 1/12)。pytest 283 件
   - [ ] Step 2 のアプリ画面での通し確認(ユーザー待ち)。地の文の感情付けが多すぎないか聞いて判断する
   - [ ] Step 3 キャラごとの声(`voice_profiles`、`characters.voice_profile_id`、参照音声の取り込み)
   - [ ] Step 4 2 つ目のエンジンで差し替えを確認

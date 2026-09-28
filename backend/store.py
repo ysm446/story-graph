@@ -2752,6 +2752,22 @@ class Store:
                     render[key] = None
         return render
 
+    def latest_renders(self) -> list[dict[str, Any]]:
+        """シーン × スタイルプリセット × 視点ごとの最新の清書(画面に出るのはこれだけ)。
+        読み上げ音声の掃除が「いま使う音声」を割り出すのに使う。本文も入るので全件だと重めだが、
+        掃除のときにしか呼ばない。"""
+        seen: set[tuple[str, str, str | None]] = set()
+        out: list[dict[str, Any]] = []
+        for row in self.conn.execute(
+            "SELECT id, node_id, preset_id, pov_char, prose FROM renders ORDER BY created_at DESC"
+        ):
+            key = (row["node_id"], row["preset_id"], row["pov_char"])
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(dict(row))
+        return out
+
     def get_render(self, render_id: str) -> dict[str, Any] | None:
         row = self.conn.execute("SELECT * FROM renders WHERE id = ?", (render_id,)).fetchone()
         return self._render_row(row)

@@ -79,6 +79,47 @@ def _spawn_bg(coro) -> None:
     task.add_done_callback(_bg_tasks.discard)
 
 
+# 読み上げ音声の掃除(docs/design/voice.md §6)。清書の保存・台本や声の設定の変更・シーンの削除の
+# たびに呼ばれるので、数秒まとめてから 1 回だけ走らせる
+AUDIO_GC_DELAY_SEC = 3.0
+_audio_gc_pending = False
+
+
+def _schedule_audio_gc(delay: float = AUDIO_GC_DELAY_SEC) -> None:
+    global _audio_gc_pending
+    if _audio_gc_pending:
+        return
+    _audio_gc_pending = True
+
+    async def run() -> None:
+        global _audio_gc_pending
+        await asyncio.sleep(delay)
+        _audio_gc_pending = False
+        await _gc_audio_now()
+
+    _spawn_bg(run())
+
+
+async def _gc_audio_now() -> int:
+    """いま読むと使う音声以外を assets/audio から消す。声の設定が壊れているときは何も消さない
+    (「使う音声」が割り出せないのに消すと、全部消えてしまうため)。"""
+    import voice
+    from pathlib import Path as _Path
+
+    audio = store.audio_dir()
+    if audio is None:
+        return 0
+    try:
+        keep = voice.expected_audio(store, store.get_settings())
+    except Exception as e:  # noqa: BLE001 — 掃除の失敗で本来の操作を止めない
+        print(f"[audio] 掃除を見送りました: {e}")
+        return 0
+    removed = await asyncio.to_thread(voice.sweep_audio, _Path(audio), keep)
+    if removed:
+        print(f"[audio] 使われなくなった読み上げ音声を {removed} 件削除しました")
+    return removed
+
+
 @app.exception_handler(StarletteHTTPException)
 async def _http_error_rollback(request: Request, exc: StarletteHTTPException):
     _rollback_pending()
@@ -112,6 +153,7 @@ async def _startup() -> None:
             print(f"[assets] 未参照ファイルを {removed} 件削除しました")
     except Exception as e:  # GC の失敗で起動を止めない
         print(f"[assets] GC に失敗: {e}")
+    _schedule_audio_gc()
     _spawn_bg(_deferred_auto_backup())
 
 
@@ -241,6 +283,7 @@ async def switch_library(body: LibrarySwitchIn) -> dict[str, Any]:
         store.gc_assets()
     except Exception as e:  # GC の失敗で切替を止めない
         print(f"[assets] GC に失敗: {e}")
+    _schedule_audio_gc()
     _spawn_bg(_auto_backup_quietly())  # 開いたライブラリの日次チェック
     return {"root": store.root}
 
@@ -634,6 +677,7 @@ async def delete_node(node_id: str) -> dict[str, str]:
         raise HTTPException(400, str(e))
     if not deleted:
         raise HTTPException(404, "node not found")
+    _schedule_audio_gc()
     return {"status": "deleted"}
 
 
@@ -1315,6 +1359,7 @@ async def save_render_voice_script(render_id: str, body: VoiceScriptIn) -> dict[
         raise HTTPException(400, "読む行が 1 つもありません")
     current = store.get_voice_script(render_id)
     saved = store.save_voice_script(render_id, render["node_id"], lines, current["source"] if current else "rule")
+    _schedule_audio_gc()  # 直す前の行の音声は使われなくなる
     return {"render_id": render_id, "lines": saved["lines"], "source": saved["source"], "saved": True, "carried": 0}
 
 
@@ -1327,6 +1372,7 @@ async def reset_render_voice_script(render_id: str) -> dict[str, Any]:
     render = _render_or_404(render_id)
     lines = voice.build_script(render.get("prose") or "")
     saved = store.save_voice_script(render_id, render["node_id"], lines, "rule")
+    _schedule_audio_gc()
     return {"render_id": render_id, "lines": saved["lines"], "source": "rule", "saved": True, "carried": 0}
 
 
@@ -1353,6 +1399,7 @@ async def annotate_render_voice_script(render_id: str, body: VoiceAnnotateIn | N
     except RuntimeError as e:
         raise HTTPException(502, str(e))
     saved = store.save_voice_script(render_id, render["node_id"], annotated, "llm")
+    _schedule_audio_gc()
     return {"render_id": render_id, "lines": saved["lines"], "source": "llm", "saved": True, "carried": 0}
 
 
@@ -1848,12 +1895,17 @@ async def render(body: RenderIn) -> StreamingResponse:
         base_url = await llama.ensure_running(store.get_settings())
     except Exception as e:
         return _sse_error_response(str(e))
-    return StreamingResponse(
-        rendering.render_stream(
-            store, base_url, node_ids, body.preset_id, body.pov_char, body.target_chars
-        ),
-        media_type="text/event-stream",
-    )
+    async def stream():
+        try:
+            async for chunk in rendering.render_stream(
+                store, base_url, node_ids, body.preset_id, body.pov_char, body.target_chars
+            ):
+                yield chunk
+        finally:
+            # 上書きされた清書の読み上げ音声を消す(変わらなかった文の音声は使い回すので残る)
+            _schedule_audio_gc()
+
+    return StreamingResponse(stream(), media_type="text/event-stream")
 
 
 # ---- 相談チャット ---------------------------------------------------
@@ -2009,6 +2061,7 @@ async def restore_snapshot(snap_id: str) -> dict[str, Any]:
         raise HTTPException(404, "snapshot not found")
     except RuntimeError as e:
         raise HTTPException(400, str(e))
+    _schedule_audio_gc()  # 戻した時点の清書で使う音声だけを残す(消した分は読むときに作り直す)
     return {"restored": snap_id, "root": store.root}
 
 
@@ -2172,4 +2225,6 @@ async def get_settings() -> dict[str, str]:
 @app.put("/settings")
 async def put_settings(body: SettingsPut) -> dict[str, str]:
     store.set_settings(body.values)
+    if any(k.startswith("tts_") for k in body.values):
+        _schedule_audio_gc()  # 声やエンジンを変えると、前の設定で作った音声は使われなくなる
     return store.get_settings()

@@ -501,7 +501,9 @@ export default function VoiceSettingsSection({
             </div>
           </div>
           <p className="settings-field-hint">
-            読み上げた行の音声をライブラリの assets/audio/ に残し、同じ行・同じ声なら合成し直しません。バックアップには含めません。
+            読み上げた行の音声をライブラリの assets/audio/ に残し、同じ行・同じ声なら合成し直しません。
+            清書の上書き・声や台本の変更・シーンの削除で使われなくなった音声は自動で消します(作り直した清書でも、変わらなかった文の音声は使い回します)。
+            バックアップには含めません。
           </p>
         </div>
       </div>

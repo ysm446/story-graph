@@ -283,3 +283,74 @@ def test_annotate_script_sets_dialogue_speakers_and_skips_edited(store, monkeypa
     assert out[1]["speaker"] == "char:aya" and out[1]["intensity"] == 1.0
     assert out[2]["speaker"] == "narrator" and out[2]["emotion"] == "neutral"  # 手で直した行は触らない
     assert lines[1]["speaker"] == "narrator"  # 入力は変更しない
+
+
+# ---- 音声キャッシュの掃除 ----------------------------------------------------
+
+def _touch_old(path, now):
+    import os
+
+    path.write_bytes(b"x")
+    os.utime(path, (now - 3600, now - 3600))
+
+
+def test_latest_renders_picks_one_per_node_preset_pov(store):
+    nid = _node_id(store)
+    store.save_render(nid, "p", None, "古い。")
+    new = store.save_render(nid, "p", None, "新しい。")
+    other_pov = store.save_render(nid, "p", "aya", "視点違い。")
+    ids = {r["id"] for r in store.latest_renders()}
+    assert ids == {new["id"], other_pov["id"]}
+
+
+def test_gc_keeps_audio_of_unchanged_sentences_after_rerender(store, tmp_path):
+    import time
+
+    engine = tts.get_engine("irodori")
+    nid = _node_id(store)
+    settings: dict[str, str] = {}
+    old = store.save_render(nid, "p", None, "雨だった。\n風が吹いた。")
+    old_names = {voice.line_audio(settings, engine, l)[0] for l in voice.build_script(old["prose"])}
+    now = time.time()
+    for name in old_names:
+        _touch_old(tmp_path / name, now)
+    _touch_old(tmp_path / "stale-preview.opus", now)
+    fresh = tmp_path / "just-made.opus"
+    fresh.write_bytes(b"x")  # 猶予内(合成した直後)は消さない
+
+    store.save_render(nid, "p", None, "雨だった。\n晴れた。")  # 清書を上書き
+    keep = voice.expected_audio(store, settings)
+    removed = voice.sweep_audio(tmp_path, keep, now=now)
+
+    kept_same = voice.line_audio(settings, engine, voice.build_script("雨だった。")[0])[0]
+    gone = voice.line_audio(settings, engine, voice.build_script("風が吹いた。")[0])[0]
+    assert (tmp_path / kept_same).exists()  # 変わらなかった文は使い回す
+    assert not (tmp_path / gone).exists()
+    assert not (tmp_path / "stale-preview.opus").exists()
+    assert fresh.exists()
+    assert removed == 2
+
+
+def test_gc_follows_voice_settings_and_saved_script(store, tmp_path):
+    engine = tts.get_engine("irodori")
+    nid = _node_id(store)
+    render = store.save_render(nid, "p", None, "雨だった。")
+    line = voice.build_script("雨だった。")[0]
+    before = voice.expected_audio(store, {"tts_narrator_seed": "1"})
+    after = voice.expected_audio(store, {"tts_narrator_seed": "2"})
+    assert before and before.isdisjoint(after)  # 声を変えると前の音声は使われない
+
+    edited = dict(line, text="あめだった。", edited=True)
+    store.save_voice_script(render["id"], nid, [edited], "rule")
+    assert voice.expected_audio(store, {}) == {voice.line_audio({}, engine, edited)[0]}
+
+
+def test_gc_refuses_when_voice_settings_are_broken(store):
+    store.save_render(_node_id(store), "p", None, "雨だった。")
+    with pytest.raises(ValueError):
+        voice.expected_audio(store, {"tts_narrator_seed": "abc"})
+
+
+def test_irodori_uses_opus():
+    name, body = voice.line_audio({}, tts.get_engine("irodori"), voice.build_script("雨。")[0])
+    assert body["response_format"] == "opus" and name.endswith(".opus")

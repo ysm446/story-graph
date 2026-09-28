@@ -1,7 +1,7 @@
 # 音声読み上げ(TTS 連携)— 朗読台本と差し替え可能なエンジン
 
 作成日時: 2026-09-28 19:58
-更新日時: 2026-09-28 20:56
+更新日時: 2026-09-28 21:17
 
 ローカルの TTS で清書(鑑賞モードの散文)を読み上げる仕組みの設計メモ。2026-09-28 のユーザー発案。
 最初のエンジンは [Irodori-TTS](https://github.com/Aratako/Irodori-TTS)(Aratako、MIT)とするが、
@@ -22,7 +22,7 @@
 POST /v1/audio/speech(OpenAI 互換)──▶ TTS サーバー(runtime/tts/<engine>/)
    │
    ▼
-assets/audio/<hash>.wav                                 ← キャッシュ。同じ行は再合成しない
+assets/audio/<hash>.opus                                ← キャッシュ。同じ行は再合成しない。使わなくなったら自動で消す
 ```
 
 守ることは 3 つ。
@@ -56,7 +56,7 @@ assets/audio/<hash>.wav                                 ← キャッシュ。�
   "default_port": 8088,
   "health_path": "/health",
   "startup_timeout_sec": 900,
-  "request": { "model": "irodori-tts", "response_format": "wav", "voice": "none", "extra_body": {} },
+  "request": { "model": "irodori-tts", "response_format": "opus", "voice": "none", "extra_body": {} },
   "voice": {
     "modes": ["caption", "reference"],
     "caption_body": { "irodori": { "caption": "{caption}" } },
@@ -284,9 +284,24 @@ CREATE TABLE IF NOT EXISTS voice_profiles(
 - **合成は行単位**で `POST /tts/speak`(バックエンド)→ `/v1/audio/speech`(TTS サーバー)を呼ぶ
   (SSE のチャンク配信は使わない。行が短く、行単位のキャッシュと相性がよいため)。body を重ねる順は §2。
   TTS サーバーが止まっていれば、このときに起動する。
-- **キャッシュ**: `assets/audio/<sha256 の先頭 32 桁>.wav`。hash の材料は (engine_id, 重ねた後の body,
-  参照音声の大きさと更新時刻)。DB から参照しないので **`gc_assets` の対象にはしない**。消すのは設定画面の
-  「キャッシュを消す」だけ。いつでも作り直せるので、**外部バックアップの zip にも入れない**(`backup.write_zip`)。
+- **キャッシュ**: `assets/audio/<sha256 の先頭 32 桁>.opus`。hash の材料は (engine_id, 重ねた後の body,
+  参照音声の大きさと更新時刻)。いつでも作り直せるので、**外部バックアップの zip には入れない**(`backup.write_zip`)。
+  - **形式は opus**(Ogg Opus、48kHz モノラル、約 62kbps)。同じ行の wav(768kbps)の約 1/12。
+    1 分あたり約 0.47MB で、5 分のシーンで 2〜3MB。エンジン定義の `request.response_format` で決める
+  - **掃除は「いま読むと使う音声」だけを残す方式**(2026-09-28 ユーザーと決定)。最新の清書(シーン × プリセット ×
+    視点ごと。画面に出るのはこれだけ)それぞれの台本を `resolve_script` で決め、今の声の設定で各行のファイル名を
+    計算し(`voice.line_audio`。合成はしない)、それ以外のファイルを消す(`expected_audio` + `sweep_audio`)。
+    清書の上書き・声や台本の変更・シーンの削除・エンジンの切り替えのどれで使われなくなった音声も、これ 1 つで消える。
+    **作り直した清書でも変わらなかった文は同じファイル名になるので、消えずに使い回される**(上書き時に古い清書の
+    音声を丸ごと消す方式にしなかった理由)
+  - 走るのは、起動時・ライブラリの切り替え・清書のストリームの終わり・台本の保存 / 作り直し / LLM での付与・
+    シーンの削除・スナップショットからの復元・`tts_` で始まる設定の変更のとき。呼ばれるたびに走らせず、
+    3 秒まとめてから 1 回だけ走らせる(`app._schedule_audio_gc`)
+  - 合成して 60 秒以内のファイルは消さない(試聴の音声を返している最中などを守る)。保存前の直しを試聴した音声は
+    どこからも使われないので、次の掃除で消える
+  - 声の設定が壊れている(seed が数でない等)と「使う音声」を割り出せないので、何も消さずに見送る
+    (空集合として扱うと全部消えてしまうため)
+  - 設定画面の「キャッシュを消す」は全部消す(残す計算をしない)
 - **再生**(`useReadAloud.ts`): レンダラが台本の行を順に再生し、再生中に 2 行先まで先に合成しておく
   (Irodori-TTS-Server は既定で 1 件ずつ合成するので、それ以上積んでも速くならない)。シーンの終わりで
   次の清書済みシーンへ進み、そのシーンを画面に出す(縦読みはスクロール、ページはそのページへ)。

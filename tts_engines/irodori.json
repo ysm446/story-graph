@@ -19,7 +19,7 @@
   "startup_timeout_sec": 900,
   "request": {
     "model": "irodori-tts",
-    "response_format": "wav",
+    "response_format": "opus",
     "voice": "none",
     "extra_body": {}
   },
