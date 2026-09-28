@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, initApi } from './api'
 import ComfyBar from './ComfyBar'
+import TtsBar from './TtsBar'
 import ModelBar from './ModelBar'
 import StatusBar from './StatusBar'
 import TooltipHost from './Tooltip'
@@ -256,7 +257,7 @@ export default function App(): React.JSX.Element {
 
   return (
     <div className="flex h-screen flex-col" style={{ background: 'var(--bg)' }}>
-      {/* 上部バー: 左=ライブラリ / 中央=モデル選択 / 右=ComfyUI 状態 + 設定 */}
+      {/* 上部バー: 左=ライブラリ / 中央=モデル選択 / 右=TTS・ComfyUI 状態 + 設定 */}
       <header
         className="relative z-30 flex h-10 shrink-0 items-center border-b px-3"
         style={{ background: 'var(--bg-sidebar)', borderColor: 'var(--border)' }}
@@ -268,6 +269,7 @@ export default function App(): React.JSX.Element {
           {backendReady === true && <ModelBar refreshKey={settingsVersion} />}
         </div>
         <div className="absolute right-3 top-1/2 flex -translate-y-1/2 items-center gap-3">
+          {backendReady === true && <TtsBar />}
           {backendReady === true && <ComfyBar />}
           <button
             onClick={() => setSettingsOpen(true)}

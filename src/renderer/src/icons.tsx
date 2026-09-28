@@ -1,7 +1,7 @@
 /** フラットな線画アイコン(lucide 準拠のパス)。色は currentColor に従う。
  *  チャット周りの絵文字を置き換えるために用意した最小セット。 */
 
-type IconName =
+export type IconName =
   | 'chat' // 吹き出し(相談チャット)
   | 'mask' // 芝居の仮面(キャラクターと話す)
   | 'search' // ツール実行(調査)
@@ -14,6 +14,8 @@ type IconName =
   | 'insert' // 線の途中に挿し込む(シーンの割り込み追加)
   | 'pen' // 文章に手を入れる(校正)
   | 'image' // 挿絵(章の表紙にする)
+  | 'speaker' // 読み上げ(TTS)
+  | 'stop' // 読み上げを止める
 
 const PATHS: Record<IconName, React.JSX.Element> = {
   chat: <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />,
@@ -81,7 +83,16 @@ const PATHS: Record<IconName, React.JSX.Element> = {
       <circle cx="8.5" cy="8.5" r="1.5" />
       <path d="m21 15-4.5-4.5L6 21" />
     </>
-  )
+  ),
+  // スピーカー + 音の波 2 本
+  speaker: (
+    <>
+      <path d="M11 5 6 9H2v6h4l5 4z" />
+      <path d="M15.5 8.5a5 5 0 0 1 0 7" />
+      <path d="M19 5a10 10 0 0 1 0 14" />
+    </>
+  ),
+  stop: <rect x="6" y="6" width="12" height="12" rx="1.5" />
 }
 
 export function Icon({

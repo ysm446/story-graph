@@ -18,6 +18,7 @@ import { DEFAULT_VIDEO_CROSSFADE_SECONDS } from '../CrossfadeLoopVideo'
 import { PresetEditorModal, type PresetDraft } from '../RenderStyle'
 import type { BackupConfig, Snapshot, StylePreset } from '../types'
 import { useElapsedSeconds } from '../useElapsed'
+import VoiceSettingsSection from '../VoiceSettings'
 
 // lm-chat の SettingsPanel と同じ刻み
 const CTX_SIZE_PRESETS = [4096, 8192, 16384, 32768, 65536, 131072, 262144] as const
@@ -95,6 +96,7 @@ const SECTIONS = [
   { id: 'chat', label: '相談チャット' },
   { id: 'reader', label: '鑑賞モード' },
   { id: 'image', label: '画像生成' },
+  { id: 'voice', label: '音声読み上げ' },
   { id: 'backup', label: 'バックアップ' },
   { id: 'promptlog', label: 'プロンプトログ' }
 ] as const
@@ -2392,6 +2394,10 @@ export default function SettingsMode(): React.JSX.Element {
 
           <Section id="image" current={section} title="画像生成(ComfyUI)">
             <ImageGenSection values={values} setValues={setValues} save={save} />
+          </Section>
+
+          <Section id="voice" current={section} title="音声読み上げ(TTS)">
+            <VoiceSettingsSection values={values} setValues={setValues} save={save} />
           </Section>
 
           <Section id="backup" current={section} title="バックアップ">

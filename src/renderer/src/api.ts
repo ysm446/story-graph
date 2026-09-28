@@ -349,6 +349,31 @@ export const api = {
   comfyWorkflows: () => request<{ variants: WorkflowVariant[] }>('/comfy/workflows'),
   comfyUninstall: () => request<ComfyStatus>('/comfy/uninstall', { method: 'POST' }),
 
+  // ---- TTS(清書の読み上げ。docs/design/voice.md) ----
+  ttsStatus: () => request<TtsStatus>('/tts/status'),
+  ttsStart: () => request<{ base_url: string; healthy: boolean }>('/tts/start', { method: 'POST' }),
+  ttsStop: () => request<{ stopped: boolean }>('/tts/stop', { method: 'POST' }),
+  ttsUninstall: () => request<TtsStatus>('/tts/uninstall', { method: 'POST' }),
+  ttsClearCache: () => request<{ removed: number; files: number; bytes: number }>('/tts/cache/clear', { method: 'POST' }),
+  /** 読み上げに使う朗読台本。保存が無ければ規則ベースで作り、前の清書の台本から同じ文の行を引き継ぐ */
+  voiceScript: (renderId: string) => request<VoiceScript>(`/renders/${encodeURIComponent(renderId)}/voice_script`),
+  /** 作者が直した台本を保存する */
+  saveVoiceScript: (renderId: string, lines: VoiceLine[]) =>
+    request<VoiceScript>(`/renders/${encodeURIComponent(renderId)}/voice_script`, {
+      method: 'PUT',
+      body: JSON.stringify({ lines })
+    }),
+  /** 清書から規則ベースで作り直して保存する(話者・感情・手直しを捨てる) */
+  resetVoiceScript: (renderId: string) =>
+    request<VoiceScript>(`/renders/${encodeURIComponent(renderId)}/voice_script/reset`, { method: 'POST' }),
+  /** LLM で台詞の話者と各行の感情を付けて保存する(手で直した行には触らない)。lines は画面の直しかけ */
+  annotateVoiceScript: (renderId: string, lines: VoiceLine[] | null, signal?: AbortSignal) =>
+    request<VoiceScript>(`/renders/${encodeURIComponent(renderId)}/voice_script/annotate`, {
+      method: 'POST',
+      body: JSON.stringify({ lines }),
+      signal
+    }),
+
   /** ComfyUI で参照画像を生成し、候補として保存する(ストックにもキャラにも入れない。採用は addMedia)。
    *  使ったプロンプト・追加指示・seed はキャラの保存状態に 1 セットで書かれ、戻り値にも入る。
    *  数十秒〜。初回はモデル読み込みで更に待つ。seed 省略でランダム */
@@ -747,6 +772,106 @@ export interface ComfyStatus {
   install_dir: string
   runtime_dir: string
   size_bytes: number
+}
+
+// ---- TTS(清書の読み上げ) --------------------------------------------
+
+/** 朗読台本の 1 行(docs/design/voice.md §4.2)。エンジンに依存しない形 */
+export interface VoiceLine {
+  speaker: string
+  kind: 'narration' | 'dialogue'
+  text: string
+  /** 清書から切り出したときの文(text を直しても変わらない。作り直した清書への引き継ぎに使う) */
+  source_text?: string
+  emotion: string
+  intensity: number
+  pause_after_ms: number
+  edited: boolean
+}
+
+export interface VoiceScript {
+  render_id: string
+  lines: VoiceLine[]
+  /** 'llm' = 話者・感情を LLM で付けた / 'rule' = 規則ベースのまま */
+  source: 'rule' | 'llm'
+  /** 保存済みか(false = 規則ベースで作っただけ) */
+  saved: boolean
+  /** 前の清書の台本から引き継いだ行数 */
+  carried: number
+}
+
+/** 台本の感情タグ(backend/tts.py の EMOTIONS と同じ並び)と画面の呼び名 */
+export const VOICE_EMOTIONS: Array<{ id: string; label: string }> = [
+  { id: 'neutral', label: 'ふつう' },
+  { id: 'joy', label: '喜び' },
+  { id: 'sad', label: '悲しみ' },
+  { id: 'anger', label: '怒り' },
+  { id: 'fear', label: 'おびえ' },
+  { id: 'surprise', label: '驚き' },
+  { id: 'whisper', label: 'ささやき' },
+  { id: 'shout', label: '叫び' },
+  { id: 'laugh', label: '笑い' },
+  { id: 'cry', label: '泣き' }
+]
+
+export interface TtsStatus {
+  engine: { id: string; label: string; description: string | null; voice_modes: string[] }
+  engines: Array<{ id: string; label: string }>
+  base_url: string
+  healthy: boolean
+  /** spawn 済みだがまだ応答しない = 起動中(初回はモデル取得で数分) */
+  loading: boolean
+  spawned: boolean
+  /** 応答しているが自分で起動していない = 外部で起動済み(止めない) */
+  external: boolean
+  installed: boolean
+  /** フォルダはあるが最後まで入らなかった(やり直しが要る) */
+  incomplete: boolean
+  install: { engine: string; repo: string; ref: string | null; commit: string | null; installed_at: string } | null
+  install_dir: string
+  runtime_dir: string
+  size_bytes: number
+  models_dir: string
+  default_models_dir: string
+  cache: { files: number; bytes: number }
+}
+
+export type TtsInstallProgress =
+  | { phase: 'step'; label: string }
+  | { phase: 'log'; line: string }
+  | { phase: 'done'; path: string; seconds: number }
+  | { phase: 'error'; message: string }
+
+/** TTS サーバーのインストール(git clone + uv sync)。進捗を逐次受け取る。abort でキャンセル */
+export function ttsInstallStream(onProgress: (p: TtsInstallProgress) => void, signal?: AbortSignal): Promise<void> {
+  return postSse('/tts/install', {}, onProgress, signal)
+}
+
+/** 台本の 1 行を合成して音声(Blob)を返す。TTS サーバーが止まっていれば起動する */
+export async function ttsSpeak(line: VoiceLine, signal?: AbortSignal): Promise<Blob> {
+  if (!baseUrl) throw new Error('backend not ready')
+  const res = await fetch(`${baseUrl}/tts/speak`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      text: line.text,
+      kind: line.kind,
+      speaker: line.speaker,
+      emotion: line.emotion,
+      intensity: line.intensity
+    }),
+    signal
+  })
+  if (!res.ok) {
+    let detail = await res.text()
+    try {
+      detail = (JSON.parse(detail) as { detail?: string }).detail ?? detail
+    } catch {
+      // JSON でなければ本文のまま
+    }
+    throw new Error(detail)
+  }
+  return res.blob()
 }
 
 /** ComfyUI(portable 版)のインストールを開始し、進捗イベントを逐次受け取る。abort でキャンセル。 */

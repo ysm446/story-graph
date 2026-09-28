@@ -190,7 +190,8 @@ def write_zip(
         dest_path = dest_path.with_name(dest_path.name + ".zip")
     dest_path.parent.mkdir(parents=True, exist_ok=True)
 
-    assets = _collect(root_path, "assets")
+    # assets/audio は読み上げ音声のキャッシュ(清書からいつでも作り直せる)なので入れない
+    assets = [a for a in _collect(root_path, "assets") if not a[1].startswith("assets/audio/")]
     snaps = _collect(root_path, "snapshots") if include_snapshots else []
     manifest = {
         "format": FORMAT,

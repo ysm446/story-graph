@@ -1416,6 +1416,17 @@ class Store:
         path.mkdir(parents=True, exist_ok=True)
         return str(path)
 
+    def audio_dir(self) -> str | None:
+        """読み上げ音声のキャッシュ(assets/audio)。DB からは参照しないので gc_assets の対象外。
+        消すのは設定画面の「キャッシュを消す」だけ(docs/design/voice.md §6)。"""
+        if not self.root:
+            return None
+        from pathlib import Path
+
+        path = Path(self.root) / "assets" / "audio"
+        path.mkdir(parents=True, exist_ok=True)
+        return str(path)
+
     def gc_assets(self) -> int:
         """assets/images 内の未参照ファイルを削除し、削除数を返す。
 
@@ -1548,6 +1559,7 @@ class Store:
         self.conn.execute("DELETE FROM events WHERE node_id = ?", (node_id,))
         self.conn.execute("DELETE FROM state_cache WHERE node_id = ?", (node_id,))
         self.conn.execute("DELETE FROM renders WHERE node_id = ?", (node_id,))
+        self.conn.execute("DELETE FROM voice_scripts WHERE node_id = ?", (node_id,))
         self.conn.execute("DELETE FROM media WHERE owner_type = 'node' AND owner_id = ?", (node_id,))
         self.conn.execute("DELETE FROM nodes WHERE id = ?", (node_id,))
         for child_id in child_ids:
@@ -2740,6 +2752,10 @@ class Store:
                     render[key] = None
         return render
 
+    def get_render(self, render_id: str) -> dict[str, Any] | None:
+        row = self.conn.execute("SELECT * FROM renders WHERE id = ?", (render_id,)).fetchone()
+        return self._render_row(row)
+
     def latest_render(self, node_id: str, preset_id: str, pov_char: str | None) -> dict[str, Any] | None:
         row = self.conn.execute(
             """SELECT * FROM renders WHERE node_id = ? AND preset_id = ? AND pov_char IS ?
@@ -2776,6 +2792,45 @@ class Store:
         )
         self.conn.commit()
         return self._render_row(self.conn.execute("SELECT * FROM renders WHERE id = ?", (render_id,)).fetchone())
+
+    # ---- 朗読台本(docs/design/voice.md §4) ---------------------------
+
+    @staticmethod
+    def _voice_script_row(row: sqlite3.Row | None) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        script = dict(row)
+        script["lines"] = json.loads(script["lines"])
+        return script
+
+    def get_voice_script(self, render_id: str) -> dict[str, Any] | None:
+        row = self.conn.execute("SELECT * FROM voice_scripts WHERE render_id = ?", (render_id,)).fetchone()
+        return self._voice_script_row(row)
+
+    def previous_voice_script(self, node_id: str, exclude_render_id: str) -> dict[str, Any] | None:
+        """同じシーンの別の清書に付いた台本のうち、最後に更新したもの(作り直した清書への引き継ぎ元)。"""
+        row = self.conn.execute(
+            """SELECT * FROM voice_scripts WHERE node_id = ? AND render_id != ?
+               ORDER BY updated_at DESC LIMIT 1""",
+            (node_id, exclude_render_id),
+        ).fetchone()
+        return self._voice_script_row(row)
+
+    def save_voice_script(self, render_id: str, node_id: str, lines: list[dict[str, Any]], source: str) -> dict[str, Any]:
+        now = _now()
+        self.conn.execute(
+            """INSERT INTO voice_scripts(render_id, node_id, lines, source, created_at, updated_at)
+               VALUES(?,?,?,?,?,?)
+               ON CONFLICT(render_id) DO UPDATE SET lines = excluded.lines, source = excluded.source,
+                 updated_at = excluded.updated_at""",
+            (render_id, node_id, json.dumps(lines, ensure_ascii=False), source, now, now),
+        )
+        self.conn.commit()
+        return self.get_voice_script(render_id)  # type: ignore[return-value]
+
+    def delete_voice_script(self, render_id: str) -> None:
+        self.conn.execute("DELETE FROM voice_scripts WHERE render_id = ?", (render_id,))
+        self.conn.commit()
 
     def list_renders(
         self, preset_id: str, pov_char: str | None, group_id: str | None = None

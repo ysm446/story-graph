@@ -1,7 +1,7 @@
 # システムプロンプト設計
 
 作成日時: 2026-07-25 01:34
-更新日時: 2026-07-31 21:32
+更新日時: 2026-09-28 20:56
 
 本アプリが LLM(llama.cpp / Gemma4)に送るプロンプトの構成と、編集可能な範囲のまとめ。
 「また後々も考えましょう」の検討候補は末尾の「今後の検討事項」に集約する。
@@ -16,6 +16,7 @@
 | LLM 検証パス | 0.1 | JSON schema | 未実装(Phase 6) | - |
 | 相談チャット | 0.7 | tool calling | 固定(`build_system`) | `backend/chat_agent.py` |
 | 質問候補(内容から生成) | 0.9 | JSON schema | 固定(user のみ) | `backend/chat_agent.py` `suggest_questions` |
+| 朗読台本の話者・感情 | 0.2 | JSON schema(番号ごとに enum から選ぶ) | 固定 | `backend/voice.py` `ANNOTATE_PROMPT`([voice.md](voice.md) §4.4) |
 
 ## 1. 清書(レンダリング)
 

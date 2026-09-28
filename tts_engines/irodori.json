@@ -1,0 +1,33 @@
+{
+  "id": "irodori",
+  "label": "Irodori-TTS",
+  "description": "Aratako/Irodori-TTS(MIT)。日本語特化、キャプションでの声づくりと参照音声のクローン、絵文字での演技指定に対応",
+  "install": {
+    "git": "https://github.com/Aratako/Irodori-TTS-Server.git",
+    "ref": "main",
+    "setup": [["{uv}", "sync", "--extra", "cu128"]]
+  },
+  "launch": {
+    "cmd": ["{uv}", "run", "--no-sync", "python", "-m", "irodori_openai_tts", "--host", "{host}", "--port", "{port}"],
+    "env": {
+      "HF_HOME": "{models_dir}/hf-cache",
+      "IRODORI_PRELOAD": "true"
+    }
+  },
+  "default_port": 8088,
+  "health_path": "/health",
+  "startup_timeout_sec": 900,
+  "request": {
+    "model": "irodori-tts",
+    "response_format": "wav",
+    "voice": "none",
+    "extra_body": {}
+  },
+  "voice": {
+    "modes": ["caption", "reference"],
+    "caption_body": { "irodori": { "caption": "{caption}" } },
+    "reference_body": { "irodori": { "ref_wavs": ["{ref_path}"] } },
+    "seed_body": { "irodori": { "seed": "{seed}" } }
+  },
+  "style_map": "irodori_emoji"
+}

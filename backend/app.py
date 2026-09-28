@@ -31,6 +31,7 @@ import snapshots
 from comfy_manager import ComfyManager
 from llama_manager import LlamaManager
 from store import Store
+from tts_manager import TtsManager
 
 app = FastAPI(title="story-graph backend")
 app.add_middleware(
@@ -55,6 +56,7 @@ else:
     store = Store(db.connect(_db_path), root=str(db.DEFAULT_DB_PATH.parent))
 llama = LlamaManager()
 comfy_mgr = ComfyManager()
+tts_mgr = TtsManager()
 
 
 # 書き込みメソッドの途中で例外が出ると、共有コネクションに半端な変更が残り、
@@ -117,6 +119,7 @@ async def _startup() -> None:
 def _shutdown() -> None:
     llama.stop()
     comfy_mgr.stop()
+    tts_mgr.stop()
 
 
 # ---- schemas --------------------------------------------------------
@@ -1168,6 +1171,227 @@ async def comfy_uninstall() -> dict[str, Any]:
     except (RuntimeError, OSError) as e:
         raise HTTPException(500, str(e))
     return await asyncio.to_thread(comfy_installer.status)
+
+
+# ---- TTS(清書の読み上げ) -----------------------------------------------
+# 設計: docs/design/voice.md。ComfyUI と同じく「外部起動を優先、無ければ runtime/tts/<engine>/ を
+# spawn」。エンジンの違いは tts_engines/<id>.json に閉じ込め、ここでは中身を解釈しない
+
+def _tts_engine() -> dict[str, Any]:
+    import tts
+
+    try:
+        return tts.get_engine(tts.resolve_engine_id(store.get_settings()))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+def _audio_dir():
+    from pathlib import Path as _Path
+
+    audio = store.audio_dir()
+    if audio is None:
+        raise HTTPException(500, "ライブラリが未設定です")
+    return _Path(audio)
+
+
+@app.get("/tts/status")
+async def tts_status() -> dict[str, Any]:
+    import tts
+    import tts_installer
+    import tts_manager
+    import voice
+
+    settings = store.get_settings()
+    engine = _tts_engine()
+    base_url = tts.resolve_base_url(settings, engine)
+    healthy = await tts.health(base_url, engine.get("health_path", "/health"))
+    info = tts_mgr.status()
+    spawned = bool(info["spawned"]) and info["spawned_engine"] == engine["id"]
+    audio = store.audio_dir()
+    from pathlib import Path as _Path
+
+    return {
+        **info,
+        **(await asyncio.to_thread(tts_installer.status, engine["id"])),
+        "engine": {"id": engine["id"], "label": engine.get("label") or engine["id"],
+                   "description": engine.get("description"), "voice_modes": (engine.get("voice") or {}).get("modes", [])},
+        "engines": [{"id": e["id"], "label": e.get("label") or e["id"]} for e in tts.list_engines()],
+        "base_url": base_url,
+        "healthy": healthy,
+        "spawned": spawned,
+        "loading": spawned and not healthy,
+        # 応答しているのに自分で起動していない = 外部で起動済み(止めない)
+        "external": healthy and not spawned,
+        "models_dir": tts_manager.resolve_models_dir(settings),
+        "default_models_dir": tts_manager.DEFAULT_MODELS_DIR,
+        "cache": await asyncio.to_thread(voice.cache_status, _Path(audio) if audio else None),
+    }
+
+
+@app.post("/tts/start")
+async def tts_start() -> dict[str, Any]:
+    try:
+        base_url = await tts_mgr.ensure_running(store.get_settings())
+    except (RuntimeError, ValueError) as e:
+        raise HTTPException(500, str(e))
+    return {"base_url": base_url, "healthy": True, **tts_mgr.status()}
+
+
+@app.post("/tts/stop")
+async def tts_stop() -> dict[str, Any]:
+    await tts_mgr.stop_async()
+    return {"stopped": True}
+
+
+@app.post("/tts/install")
+async def tts_install() -> StreamingResponse:
+    import json as _json
+
+    import tts_installer
+
+    engine = _tts_engine()
+    if tts_mgr.status()["spawned"]:
+        raise HTTPException(409, "TTS サーバーが起動中です。停止してからインストールしてください。")
+
+    async def stream():
+        try:
+            async for progress in tts_installer.install(engine):
+                yield f"data: {_json.dumps(progress, ensure_ascii=False)}\n\n"
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            yield f"data: {_json.dumps({'phase': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(stream(), media_type="text/event-stream")
+
+
+@app.post("/tts/uninstall")
+async def tts_uninstall() -> dict[str, Any]:
+    import tts_installer
+
+    engine = _tts_engine()
+    if tts_mgr.status()["spawned"]:
+        raise HTTPException(409, "TTS サーバーが起動中です。停止してから削除してください。")
+    try:
+        await asyncio.to_thread(tts_installer.uninstall, engine["id"])
+    except (RuntimeError, OSError) as e:
+        raise HTTPException(500, str(e))
+    return await asyncio.to_thread(tts_installer.status, engine["id"])
+
+
+def _render_or_404(render_id: str) -> dict[str, Any]:
+    render = store.get_render(render_id)
+    if render is None:
+        raise HTTPException(404, "render not found")
+    return render
+
+
+@app.get("/renders/{render_id}/voice_script")
+async def render_voice_script(render_id: str) -> dict[str, Any]:
+    """読み上げに使う朗読台本。保存があればそれ、無ければ規則ベースで作り、同じシーンの前の清書の
+    台本から同じ文の行を引き継ぐ(このときは保存しない)。"""
+    import voice
+
+    render = _render_or_404(render_id)
+    return {"render_id": render_id, **voice.resolve_script(store, render)}
+
+
+class VoiceScriptIn(BaseModel):
+    lines: list[dict[str, Any]]
+
+
+@app.put("/renders/{render_id}/voice_script")
+async def save_render_voice_script(render_id: str, body: VoiceScriptIn) -> dict[str, Any]:
+    """作者が直した台本を保存する。source(LLM で付けたか)は保存済みのものを引き継ぐ。"""
+    import voice
+
+    render = _render_or_404(render_id)
+    try:
+        lines = voice.normalize_lines(body.lines)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if not lines:
+        raise HTTPException(400, "読む行が 1 つもありません")
+    current = store.get_voice_script(render_id)
+    saved = store.save_voice_script(render_id, render["node_id"], lines, current["source"] if current else "rule")
+    return {"render_id": render_id, "lines": saved["lines"], "source": saved["source"], "saved": True, "carried": 0}
+
+
+@app.post("/renders/{render_id}/voice_script/reset")
+async def reset_render_voice_script(render_id: str) -> dict[str, Any]:
+    """清書から規則ベースで作り直して保存する(話者・感情・手直しを捨てる)。削除ではなく保存にするのは、
+    保存が無いと前の清書の台本から引き継いでしまい、やり直しにならないため。"""
+    import voice
+
+    render = _render_or_404(render_id)
+    lines = voice.build_script(render.get("prose") or "")
+    saved = store.save_voice_script(render_id, render["node_id"], lines, "rule")
+    return {"render_id": render_id, "lines": saved["lines"], "source": "rule", "saved": True, "carried": 0}
+
+
+class VoiceAnnotateIn(BaseModel):
+    # 画面で直しかけの台本(保存前)にそのまま付けたいときに渡す。省略時は読み上げに使う台本
+    lines: list[dict[str, Any]] | None = None
+
+
+@app.post("/renders/{render_id}/voice_script/annotate")
+async def annotate_render_voice_script(render_id: str, body: VoiceAnnotateIn | None = None) -> dict[str, Any]:
+    """LLM で台詞の話者と各行の感情・強さを付けて保存する。作者が直した行(edited)には触らない。"""
+    import voice
+
+    render = _render_or_404(render_id)
+    try:
+        lines = voice.normalize_lines(body.lines) if body and body.lines else voice.resolve_script(store, render)["lines"]
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if not lines:
+        raise HTTPException(400, "読む行が 1 つもありません")
+    try:
+        base_url = await llama.ensure_running(store.get_settings())
+        annotated = await voice.annotate_script(store, render, lines, base_url)
+    except RuntimeError as e:
+        raise HTTPException(502, str(e))
+    saved = store.save_voice_script(render_id, render["node_id"], annotated, "llm")
+    return {"render_id": render_id, "lines": saved["lines"], "source": "llm", "saved": True, "carried": 0}
+
+
+class TtsLineIn(BaseModel):
+    text: str
+    kind: str | None = None
+    speaker: str | None = None
+    emotion: str | None = None
+    intensity: float | None = None
+
+
+@app.post("/tts/speak")
+async def tts_speak(body: TtsLineIn) -> FileResponse:
+    """台本の 1 行を合成して音声を返す。キャッシュ(assets/audio)にあれば合成しない。
+    TTS サーバーが止まっていれば起動する(初回はモデルの取得で数分かかることがある)。"""
+    import voice
+
+    if not body.text.strip():
+        raise HTTPException(400, "読む文字がありません")
+    settings = store.get_settings()
+    engine = _tts_engine()
+    try:
+        base_url = await tts_mgr.ensure_running(settings)
+        path = await voice.speak(settings, engine, body.model_dump(), base_url, _audio_dir())
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except RuntimeError as e:
+        raise HTTPException(502, str(e))
+    media = {"wav": "audio/wav", "mp3": "audio/mpeg", "flac": "audio/flac", "opus": "audio/ogg", "aac": "audio/aac"}
+    return FileResponse(str(path), media_type=media.get(path.suffix.lstrip("."), "application/octet-stream"))
+
+
+@app.post("/tts/cache/clear")
+async def tts_cache_clear() -> dict[str, Any]:
+    import voice
+
+    audio = _audio_dir()
+    removed = await asyncio.to_thread(voice.clear_cache, audio)
+    return {"removed": removed, **(await asyncio.to_thread(voice.cache_status, audio))}
 
 
 class RefImagePromptIn(BaseModel):

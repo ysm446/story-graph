@@ -160,6 +160,19 @@ CREATE TABLE IF NOT EXISTS media(
 );
 CREATE INDEX IF NOT EXISTS idx_media_owner ON media(owner_type, owner_id, created_at);
 
+-- 朗読台本(docs/design/voice.md §4)。清書 1 件に 1 件。清書の本文は書き換わらない(作り直すと
+-- 新しい renders 行になる)ので、台本は render_id に紐づけ、作り直した清書へは同じ文の行を引き継ぐ。
+-- 保存するのは LLM で話者・感情を付けたときと、作者が手で直したときだけ(規則ベースは毎回作る)
+CREATE TABLE IF NOT EXISTS voice_scripts(
+  render_id TEXT PRIMARY KEY,
+  node_id TEXT NOT NULL,
+  lines TEXT NOT NULL,             -- JSON 配列(行の形は docs/design/voice.md §4.2)
+  source TEXT NOT NULL,            -- 'rule' | 'llm'(話者・感情を LLM で付けたか)
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_voice_scripts_node ON voice_scripts(node_id, updated_at);
+
 -- 頻出クエリの索引。parent_of / 子の列挙(edges)、最新清書の取得と stale 化(renders)、
 -- イベント削除に伴う記憶の削除(memories)はどれもミューテーションや画面更新の
 -- たびに走るので、全表走査にしない

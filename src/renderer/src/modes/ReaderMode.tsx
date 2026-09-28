@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { api, assetUrl, isAbortError, isVideoAsset, onRenderSaved, renderStream } from '../api'
 import { CrossfadeLoopVideo, DEFAULT_VIDEO_CROSSFADE_SECONDS } from '../CrossfadeLoopVideo'
+import { Icon } from '../icons'
 import { FONT_OPTIONS, FONT_SIZES, RenderStyleControls, useRenderStyle } from '../RenderStyle'
 import { cancelTask, enqueueTask, useTasks } from '../tasks'
 import { useElapsedSeconds } from '../useElapsed'
+import { useReadAloud } from '../useReadAloud'
+import VoiceScriptModal from '../VoiceScriptModal'
 import type { Group, SceneEntry } from '../types'
 
 type ViewMode = 'scroll' | 'split' | 'page'
@@ -480,11 +483,32 @@ export default function ReaderMode({
     URL.revokeObjectURL(url)
   }
 
+  // 読み上げ(docs/design/voice.md)。次のシーンに移ったら、そのシーンを画面に出す
+  const onReadSceneStart = useCallback(
+    (nodeId: string): void => {
+      if (viewMode === 'page') {
+        const index = scenes.findIndex((s) => s.node.id === nodeId)
+        const page = pages.findIndex((p) => p.sceneIndex === index && !p.chapter)
+        if (page >= 0) setPageIndex(page)
+        return
+      }
+      document.getElementById(`reader-scene-${nodeId}`)?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+    },
+    [viewMode, scenes, pages]
+  )
+  const readAloud = useReadAloud(onReadSceneStart)
+  const reading = readAloud.state.nodeId !== null
+  const readElapsed = useElapsedSeconds(readAloud.state.phase === 'synth')
+  // 朗読台本のモーダルを開いているシーン
+  const [scriptNodeId, setScriptNodeId] = useState<string | null>(null)
+  const scriptScene = scriptNodeId ? scenes.find((s) => s.node.id === scriptNodeId && s.render) : undefined
+
   const hasAnyRender = scenes.some((s) => s.render)
   const selectStyle = { background: 'var(--bg-input)', borderColor: 'var(--border)' }
 
   const renderSceneHeader = (scene: SceneEntry): React.JSX.Element => {
     const stale = scene.render?.stale === 1
+    const readingThis = readAloud.state.nodeId === scene.node.id
     return (
       <div className="mb-3 flex items-center gap-2">
         <h2 className="text-[16px] font-semibold" style={{ color: 'var(--text)' }}>
@@ -499,6 +523,42 @@ export default function ReaderMode({
           </span>
         )}
         <div className="ml-auto flex gap-1.5">
+          <button
+            onClick={() =>
+              readingThis ? readAloud.stop() : readAloud.play(scenes, scenes.findIndex((s) => s.node.id === scene.node.id))
+            }
+            disabled={!scene.render}
+            className="inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-40"
+            style={
+              readingThis
+                ? { borderColor: 'var(--accent-border)', background: 'var(--accent-soft)', color: 'var(--text)' }
+                : { borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }
+            }
+            aria-label={readingThis ? '読み上げを止める' : 'ここから読み上げる'}
+            data-tip={
+              !scene.render
+                ? '清書してから読み上げられます'
+                : readingThis
+                  ? '読み上げを止める'
+                  : 'このシーンから、清書済みのシーンを順に読み上げます'
+            }
+          >
+            <Icon name={readingThis ? 'stop' : 'speaker'} size={11} />
+            {readingThis ? '停止' : '読み上げ'}
+          </button>
+          <button
+            onClick={() => setScriptNodeId(scene.node.id)}
+            disabled={!scene.render}
+            className="rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-40"
+            style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+            data-tip={
+              scene.render
+                ? '読み上げ用の台本を開きます(話者・感情・読みの手直し、行を選んで読み上げ)'
+                : '清書してから台本を作れます'
+            }
+          >
+            台本
+          </button>
           <button
             onClick={() => void runRender(scene.node.id, 'single')}
             disabled={!presetId || renderQueued}
@@ -558,6 +618,16 @@ export default function ReaderMode({
 
   return (
     <div className="flex h-full flex-col">
+      {scriptScene && (
+        <VoiceScriptModal
+          scene={scriptScene}
+          onClose={() => setScriptNodeId(null)}
+          onPlayFrom={(line) => {
+            setScriptNodeId(null)
+            readAloud.play(scenes, scenes.indexOf(scriptScene), line)
+          }}
+        />
+      )}
       {/* コントロールバー */}
       <div
         className="flex shrink-0 flex-wrap items-center gap-2 border-b px-4 py-2"
@@ -591,6 +661,46 @@ export default function ReaderMode({
         >
           ⬇ Markdown
         </button>
+        {reading && (
+          <div
+            className="flex items-center gap-2 rounded-lg border px-2.5 py-1 text-[12px]"
+            style={{ background: 'var(--accent-soft)', borderColor: 'var(--accent-border)' }}
+          >
+            <span className="shrink-0" style={{ color: 'var(--accent)' }}>
+              <Icon name="speaker" size={13} />
+            </span>
+            <span className="max-w-[220px] truncate" style={{ color: 'var(--text)' }} data-tip={readAloud.state.title}>
+              {readAloud.state.title}
+            </span>
+            <span className="shrink-0 tabular-nums" style={{ color: 'var(--text-faint)' }}>
+              {readAloud.state.lineCount > 0 && `${readAloud.state.lineIndex + 1} / ${readAloud.state.lineCount}`}
+              {readAloud.state.paused
+                ? ' 一時停止中'
+                : readAloud.state.phase === 'synth' && ` 合成しています…(${readElapsed}s)`}
+            </span>
+            <button
+              onClick={readAloud.state.paused ? readAloud.resume : readAloud.pause}
+              className="shrink-0 rounded-md border px-2 py-0.5 text-[11px]"
+              style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+              data-tip={readAloud.state.paused ? '続きから読みます' : 'いまの行で止めます(続きから再開できます)'}
+            >
+              {readAloud.state.paused ? '▶ 再開' : '❚❚ 一時停止'}
+            </button>
+            <button
+              onClick={readAloud.stop}
+              className="shrink-0 rounded-md border px-2 py-0.5 text-[11px]"
+              style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+              data-tip="読み上げを止める"
+            >
+              ■ 停止
+            </button>
+          </div>
+        )}
+        {readAloud.state.error && (
+          <span className="text-[12px]" style={{ color: '#f2a3a3' }} data-tip={readAloud.state.error}>
+            読み上げに失敗しました: {readAloud.state.error.slice(0, 120)}
+          </span>
+        )}
         <div className="flex overflow-hidden rounded-lg border" style={{ borderColor: 'var(--border-strong)' }}>
           {VIEW_MODES.map((v) => (
             <button

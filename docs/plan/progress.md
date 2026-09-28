@@ -1,7 +1,7 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-07-24 22:38
-更新日時: 2026-09-06 12:00
+更新日時: 2026-09-28 20:56
 
 ## 現在の状態
 
@@ -9,7 +9,7 @@
 - **ライブラリ方式を導入**(lm-graph 踏襲): ストーリーごとのフォルダに `story-graph.db` を置く。現在のライブラリと最近使ったライブラリは `%APPDATA%/story-graph/app.json`(Electron userData)に保存。ヘッダー右のドロップダウンで切替(切替時はレンダラをリロード)。デフォルトはリポジトリ内 `data/`。
 - `npm run dev` で Electron が起動し、FastAPI sidecar(ポート 8765〜自動探索)が自動 spawn される。
 - バックエンドは単体でも起動可能: `cd backend && ../.venv/Scripts/python.exe -m uvicorn app:app --port 8765`
-- テスト: `cd backend && ../.venv/Scripts/python.exe -m pytest tests/ -q`(254件、全て成功)
+- テスト: `cd backend && ../.venv/Scripts/python.exe -m pytest tests/ -q`(278件、全て成功)
 - モデルは **31B を主に使用**(12B は検証用。2026-08-11 ユーザー談)
 
 ## 完了済み
@@ -371,6 +371,26 @@
   - **埋め込み encode は依然イベントループ上**: ロード中のフリーズは解消済み(trylock)だが、
     ロード後も 1 クエリごとに数十〜数百 ms ブロックする。to_thread 化は SQLite 接続の
     スレッド越えと「書き込みはループ上で直列」の前提に触るので、遅さが気になったら設計して入れる
+- [ ] **音声読み上げ(TTS 連携)**(2026-09-28 ユーザー発案、実験的): 清書を朗読台本に変換し、
+  ローカルの TTS(最初は Irodori-TTS)で読み上げる。エンジンは `tts_engines/*.json` で差し替え可能にし、
+  本体は `runtime/tts/<engine>/`、モデルは `D:\ai-models\tts\`(ユーザー指定)。
+  設計は [docs/design/voice.md](../design/voice.md)。
+  - [x] 設計メモ(2026-09-28)
+  - [x] Step 1 最小版(2026-09-28): エンジン定義(`tts_engines/irodori.json`)・インストーラ
+    (`tts_installer.py`、git clone + `uv sync`)・マネージャ(`tts_manager.py`)・クライアントと style_map
+    (`tts.py`)・規則ベースの台本と音声キャッシュ(`voice.py`)。UI は右上の TtsBar(ComfyBar と共通の
+    `ServiceBar.tsx`)、設定 →「音声読み上げ」(`VoiceSettings.tsx`)、鑑賞モードのシーン見出しの「読み上げ」
+    (`useReadAloud.ts`)。pytest `tests/test_tts.py` 18 件
+  - [x] Step 1 の実測(2026-09-28): 2 回目以降の起動 18 秒、VRAM +3.7〜6GB、1 行の合成 1〜2 秒で
+    再生より 3〜5 倍速い(数値は voice.md §3)。バックエンドの API(自動起動 → 合成 → キャッシュ → 停止)も通した
+  - [x] Step 1 の品質をユーザーが確認(2026-09-28「いいと思います」)
+  - [x] Step 2 台本の LLM 化と編集(2026-09-28): `voice_scripts` テーブル(清書 ID に紐づけ。保存は LLM で
+    付けたときと手直ししたときだけ。作り直した清書へは同じ文の行を引き継ぐ)、LLM で番号ごとに話者・感情・
+    強さを選ばせる `annotate_script`(文は書かせない)、台本のモーダル `VoiceScriptModal.tsx`(行ごとの手直し・
+    試聴・その行から読み上げ)、読み上げの一時停止 / 再開。31B で 57 行のシーンに約 1 分。pytest 278 件
+  - [ ] Step 2 のアプリ画面での通し確認(ユーザー待ち)。地の文の感情付けが多すぎないか聞いて判断する
+  - [ ] Step 3 キャラごとの声(`voice_profiles`、`characters.voice_profile_id`、参照音声の取り込み)
+  - [ ] Step 4 2 つ目のエンジンで差し替えを確認
 - [ ] **場面の画像生成(ComfyUI 連携)**(2026-08-26 ユーザー発案): ビートから挿絵を
   自動生成し、既存の挿絵アセット(`nodes.image_path`)に流し込む。
   - [x] **ストック**(2026-08-28 ユーザー発案): 挿絵・参照画像を持ち主ごとに複数枚溜めて 1 枚を選ぶ

@@ -1,0 +1,332 @@
+# 音声読み上げ(TTS 連携)— 朗読台本と差し替え可能なエンジン
+
+作成日時: 2026-09-28 19:58
+更新日時: 2026-09-28 20:56
+
+ローカルの TTS で清書(鑑賞モードの散文)を読み上げる仕組みの設計メモ。2026-09-28 のユーザー発案。
+最初のエンジンは [Irodori-TTS](https://github.com/Aratako/Irodori-TTS)(Aratako、MIT)とするが、
+**今後ほかの音声モデルが出たときに差し替えられること**を最優先の要件にする(実験的な位置づけ)。
+
+音声は挿絵と同じく**装飾専用**で、ビート・イベント・状態・清書のどれも変更しない
+([goals.md](../plan/goals.md) 原則 4)。
+
+## 1. 全体像
+
+```
+清書(renders.prose)                                   ← 正史の散文。ここには一切書き込まない
+   │  ① 台本化(規則ベース → のちに LLM)
+   ▼
+朗読台本(voice_scripts)                                ← エンジン非依存。作者が手で直せる導出物
+   │  ② style_map(エンジンごと。例: 感情タグ → Irodori の絵文字)
+   ▼
+POST /v1/audio/speech(OpenAI 互換)──▶ TTS サーバー(runtime/tts/<engine>/)
+   │
+   ▼
+assets/audio/<hash>.wav                                 ← キャッシュ。同じ行は再合成しない
+```
+
+守ることは 3 つ。
+
+1. **清書を汚さない。** 読み仮名の修正・話者の判定・感情の指定はすべて台本側に持つ。
+2. **台本はエンジンを知らない。** エンジン固有の表現(Irodori の絵文字など)への変換は合成の直前に行う。
+   エンジンを差し替えても台本は作り直さない。
+3. **アプリとエンジンの間は OpenAI 互換の `POST /v1/audio/speech` 1 本にする。** エンジン固有の
+   パラメータはエンジン定義 JSON に書いて素通しし、アプリのコードは中身を解釈しない。
+
+## 2. エンジン定義(`tts_engines/*.json`)
+
+リポジトリ直下の `tts_engines/` に、エンジン 1 つにつき 1 ファイルの JSON を置く
+(`workflows/*.json` と同じ考え方で、コードに直書きしない)。
+
+実物は [tts_engines/irodori.json](../../tts_engines/irodori.json)。
+
+```json
+{
+  "id": "irodori",
+  "label": "Irodori-TTS",
+  "install": {
+    "git": "https://github.com/Aratako/Irodori-TTS-Server.git",
+    "ref": "main",
+    "setup": [["{uv}", "sync", "--extra", "cu128"]]
+  },
+  "launch": {
+    "cmd": ["{uv}", "run", "--no-sync", "python", "-m", "irodori_openai_tts", "--host", "{host}", "--port", "{port}"],
+    "env": { "HF_HOME": "{models_dir}/hf-cache", "IRODORI_PRELOAD": "true" }
+  },
+  "default_port": 8088,
+  "health_path": "/health",
+  "startup_timeout_sec": 900,
+  "request": { "model": "irodori-tts", "response_format": "wav", "voice": "none", "extra_body": {} },
+  "voice": {
+    "modes": ["caption", "reference"],
+    "caption_body": { "irodori": { "caption": "{caption}" } },
+    "reference_body": { "irodori": { "ref_wavs": ["{ref_path}"] } },
+    "seed_body": { "irodori": { "seed": "{seed}" } }
+  },
+  "style_map": "irodori_emoji"
+}
+```
+
+| 欄 | 意味 |
+|---|---|
+| `install` | `runtime/tts/<id>/` への導入手順。`git` を clone し、`setup` のコマンドを順に実行する。`{uv}` `{install_dir}` を埋める |
+| `launch` | 起動コマンドと環境変数。`{uv}` `{host}` `{port}` `{models_dir}` `{install_dir}` を埋める |
+| `startup_timeout_sec` | ヘルスチェックを待つ上限。初回はモデルの取得を含むので長めにする |
+| `request` | `/v1/audio/speech` の body の土台。`extra_body` はエンジン固有パラメータの置き場で、そのまま重ねる |
+| `voice` | 声の指定方法(§5)。`modes` を UI が見て入力欄を出し分け、`*_body` を声の値で埋めて body に重ねる |
+| `style_map` | 台本の感情タグを、そのエンジンの表現に変換する関数名(§4.3)。`none` ならタグを捨てて読むだけ |
+
+- **テンプレートの約束**(`tts.fill`): 値が `{name}` だけの欄は型を保って差し込む(seed を数値のまま渡す)。
+  埋める値が空の欄は、キーごと・配列の要素ごと落とす(モデルフォルダが未設定なら `HF_HOME` を渡さない)。
+- **body を重ねる順**: `request` → 声(caption → 参照音声 → seed)→ style_map の結果 → 設定の追加パラメータ
+  (`tts_extra_body`)。後ろほど強い。
+
+- **新しいエンジンを足すときは、JSON を 1 つ置き、必要なら `style_map` を 1 つ書くだけ**にする。
+  OpenAI 互換の口を持たないエンジンは、互換ラッパー(薄い FastAPI)を同じ `runtime/tts/<id>/` に置いて包む。
+- 使うエンジンは設定 `tts_engine`(既定 `irodori`)で選ぶ。
+
+## 3. プロセスと配置(ComfyUI と同じ作法)
+
+| 役割 | ファイル | 相当する ComfyUI 側 |
+|---|---|---|
+| clone・セットアップ・削除 | `backend/tts_installer.py` | `comfy_installer.py` |
+| spawn / ヘルスチェック / 停止 | `backend/tts_manager.py` | `comfy_manager.py` |
+| HTTP クライアント(`/v1/audio/speech`)+ style_map | `backend/tts.py` | `comfy.py` |
+| 台本化 + 合成の段取り + キャッシュ | `backend/voice.py` | `image_gen.py` |
+
+- **外部起動を優先**: 設定 `tts_base_url`(既定 `http://127.0.0.1:8088`)が応答すればそれを使う。
+  応答しなければ `runtime/tts/<engine>/` から `launch` で spawn する。
+- **本体は `runtime/tts/<engine>/`**(gitignore 済みの `runtime/` の下)。エンジンごとに別フォルダで、
+  それぞれが自分の Python 環境(uv の `.venv`)を持つ。**アプリの `.venv` には TTS の依存を入れない**
+  (torch のバージョンが衝突しうるため)。
+- **uv が前提。** PATH に無ければ、アプリの `.venv` に `pip install uv` して、その `uv.exe` を使う。
+  Irodori-TTS-Server はアプリの `.venv`(3.13)と違う Python のバージョンを指定しているが、uv が Python ごと用意する。
+  **`UV_PYTHON_PREFERENCE=only-managed` を付けて実行する**(付けないと uv は PC にある任意の Python ——
+  ほかのアプリが同梱しているものまで —— を拾い、そのアプリを消すと TTS の環境ごと壊れる。2026-09-28 に実際に
+  StabilityMatrix 同梱の 3.10 を拾った)。
+- **clone 先で直接セットアップする**(ComfyUI のように staging で作ってから rename しない)。
+  uv sync はプロジェクト自身を editable で入れ、`.pth` に絶対パスを書くため、作った後に動かすと壊れる。
+  最後まで通ったら目印(`.story-graph-install.json`)を書き、目印の無いフォルダは「途中で失敗した残り」として
+  次のインストールで消してからやり直す。git が要る(依存に git のパッケージがあり、uv も git を呼ぶため)。
+- **サーバーの出力**は `runtime/tts/<engine>/story-graph-server.log` に書く(初回のモデル取得や、
+  起動に失敗した理由を後から読めるように)。
+- **モデルは `D:\ai-models\tts\`**(ユーザー指定 2026-09-28。既存の `llm` / `diffusion` と並べる)。
+  設定 `tts_models_dir` で上書きでき、既定フォルダが無い環境では空 = 各エンジンの既定キャッシュを使う。
+  Irodori は初回に Hugging Face から自動で落ちるので、`HF_HOME` を `<models_dir>/hf-cache` に向けて
+  そこへ溜める。手元の重みを使うときは `launch.env` に `IRODORI_CHECKPOINT` を足す。
+- **VRAM**: 31B Q6_K と ComfyUI の同居で既に 46.3GB / 48.9GB 使っている(image-gen.md §2)。
+  TTS(v4-Small)は小さいが、3 つ同時は溢れる前提で考える。**運用として ComfyUI と TTS は
+  同時に使わない**(ユーザー談 2026-09-28)ので、自動の排他は入れず、右上のバーから手で止める(§3.1)。
+  LLM + TTS の同居は実測して確かめる。
+- **実測(2026-09-28、RTX PRO 5000 48GB、Irodori-TTS-v4-Small、num_steps は既定)**:
+  - インストール: 376 秒(torch 2.7GB を含む初回。uv のキャッシュが効く 2 回目は 22 秒)。`runtime/tts/irodori/` は 5.4GB
+  - 初回の起動: 436 秒(モデル 3.4GB を `D:\ai-models\tts\hf-cache` へ取得。IRODORI_PRELOAD で取得・ロードが
+    終わるまでヘルスチェックが通らない)。2 回目以降の起動は 18 秒
+  - VRAM: ロード後 +3.7GB、合成中は最大 +6GB 前後。停止でもとに戻る。31B Q6_K(ctx 32k)と並べても余裕がある
+  - 合成: 12〜33 字の行で 1.0〜1.8 秒(最初の数行は 4 秒台のことがある)。音声の長さは 2.7〜8.3 秒なので、
+    **合成は再生より 3〜5 倍速く**、2 行先読みで途切れずに読める。キャッシュに当たれば 0.2 秒
+  - `/tts/status` は 0.6 秒(止まっているときのヘルスチェックの接続待ち)。インストール先の容量は初回だけ数える
+  - **LLM との同居**: 31B Q4_K_M をロード済み(ほかのアプリ込みで 27.8GB)に TTS を足して 33.5GB / 48.9GB。
+    同居しても合成は 1 行 1.2 秒で変わらない
+
+### 3.1 右上の状態バー(`TtsBar.tsx`)
+
+ヘッダー右の `ComfyBar` と**同じ部品の型・同じ約束**で、その左隣に並べる。
+
+```
+[ LibraryMenu ]        [ ModelBar ]        [ 🔊 Irodori-TTS ][⏏] [ 🖼 ComfyUI ][⏏] [⚙]
+```
+
+- 稼働中はアクセント枠 + 右に停止ボタン(⏏、「TTS を停止(VRAM を解放)」)、起動中はスピナー +
+  リング、停止中はクリックで起動、未導入なら設定へ誘導。状態は `/tts/status` をポーリングする
+  (読み上げ時の自動起動で始まった起動も拾う)。
+- 表示名はエンジン定義の `label`(差し替えたらバーの名前も変わる)。アイコンはスピーカー。
+- **停止はプロセスごと止める**(モデルのアンロード API はエンジンによって有無が違うので当てにしない)。
+  外部起動のサーバー(`tts_base_url` が応答していた場合)は止めず、ボタンを出さない。
+- 中身は `ComfyBar` と共通の `ServiceBar.tsx`。ComfyBar / TtsBar は名前・アイコン・状態の取り方を渡すだけ。
+
+## 4. 朗読台本(`voice_scripts`)
+
+### 4.1 位置づけ
+
+清書 1 件(`renders` の 1 行)に対して台本 1 件。清書と同じ「捨てて作り直せる導出物」だが、
+作者が手で直した行は再生成で消えないよう扱う(§4.4)。
+
+```sql
+CREATE TABLE IF NOT EXISTS voice_scripts(
+  render_id TEXT PRIMARY KEY,
+  node_id TEXT NOT NULL,
+  lines TEXT NOT NULL,       -- JSON 配列(§4.2)
+  source TEXT NOT NULL,      -- 'rule' | 'llm'(話者・感情を LLM で付けたか)
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+```
+
+- **stale の印は持たない。** 清書の本文は書き換わらず、作り直すと新しい `renders` 行になる。なので台本は
+  `render_id` に紐づけるだけで古くならない(当初の `input_hash` / `stale` 案は不要になった)。
+- **保存するのは、LLM で話者・感情を付けたときと、作者が直したときだけ。** 保存が無い清書は、読むたびに
+  規則ベースで作る(一瞬で終わる)。そのとき、同じシーンの別の清書に付いた台本(最後に更新したもの)から、
+  **元の文(`source_text`)が同じ行**の話者・感情・直した文・間を引き継ぐ(`voice.resolve_script` /
+  `carry_over`)。同じ文が何度も出るときは出てくる順に対応させる。引き継いだだけでは保存しない。
+- 「清書から作り直す」は台本を消すのではなく、**規則ベースの台本を保存する**(消すと、次に読んだとき前の
+  清書の台本からまた引き継いでしまい、やり直しにならないため)。
+- シーンを消すと、そのシーンの台本も消す(`delete_node`)。
+
+### 4.2 行の形(エンジン非依存)
+
+```json
+{
+  "speaker": "narrator",
+  "kind": "narration",
+  "text": "扉の向こうで、誰かが息をひそめていた。",
+  "source_text": "扉の向こうで、誰かが息をひそめていた。",
+  "emotion": "neutral",
+  "intensity": 0.5,
+  "pause_after_ms": 300,
+  "edited": false
+}
+```
+
+| 欄 | 値 |
+|---|---|
+| `speaker` | `"narrator"` か `"char:<characters.id>"` |
+| `kind` | `"narration"`(地の文)か `"dialogue"`(`「」` `『』` の台詞)。話者の判定が無い Step 1 でも読み分けの手がかりになる |
+| `text` | 読ませる文字列。**読み仮名の修正はここで行う**(例: 固有名詞をひらがなに開く) |
+| `source_text` | 清書から切り出したときの文。`text` を直しても変えない。作り直した清書への引き継ぎの突き合わせに使う |
+| `emotion` | 固定の語彙: `neutral` / `joy` / `sad` / `anger` / `fear` / `surprise` / `whisper` / `shout` / `laugh` / `cry` |
+| `intensity` | 0〜1。対応しないエンジンでは無視 |
+| `pause_after_ms` | 行の後の間。合成ではなく再生側で空ける |
+| `edited` | 作者が手で直したか |
+
+感情の語彙を固定にするのは、どのエンジンの `style_map` でも同じ入力を受けられるようにするため。
+語彙を増やすときは、既存の `style_map` がすべて未知の語を `neutral` 扱いにできることを確かめる。
+
+### 4.3 style_map
+
+`backend/tts.py` に、エンジンごとの変換関数を名前で登録する。
+
+```python
+STYLE_MAPS = {
+    "irodori_emoji": irodori_emoji,   # (line) -> (text, extra_body)
+    "none": lambda line: (line["text"], {}),
+}
+```
+
+- `irodori_emoji` は感情タグを Irodori の絵文字に写し、`text` の先頭に付ける。
+  **絵文字は台本にも清書にも保存しない。** 送る直前に作って捨てる。
+- 対応表(Irodori-TTS v4 の EMOJI_ANNOTATIONS.md から選んだもの):
+
+  | 感情 | 絵文字 | 感情 | 絵文字 |
+  |---|---|---|---|
+  | joy | 😊(明るく) | whisper | 👂(ささやき) |
+  | sad | 😟(不安げに) | shout | 💥(勢いよく) |
+  | anger | 😠 | laugh | 😆(楽しげに) |
+  | fear | 😰(慌てて・おびえて) | cry | 😭(泣きながら) |
+  | surprise | 😲 | neutral | なし |
+
+  `intensity` が 0.8 以上なら同じ絵文字を 2 つ重ねる(重ねると効果が強まる仕様)。
+  感情が無い地の文(`kind: narration`)には 📖(ナレーション)を付ける。どれも実測で調整する。
+
+### 4.4 作り方
+
+- **Step 1(規則ベース、`voice.build_script`)**: 清書を段落(改行)で割り、段落の中を `「…」` `『…』` の
+  台詞と地の文に分け、地の文は文末(`。！？!?` の連なり)で割る。台詞は 1 つを 1 行にし、160 字を超えるときだけ
+  文末で割る。記号だけの段落(`＊＊＊` など)は場面の区切りとして読まずに間だけ空ける。
+  間は文の後 250ms・段落の後 600ms・場面の区切り 1200ms。
+  話者は判定せず、台詞も含めてすべて `narrator`、感情は `neutral`。LLM は使わない。
+- **Step 2(LLM、`voice.annotate_script`)**: 行への分割は規則ベースのまま、**LLM には行の文を書かせない**。
+  番号付きの行(`[i] 台詞: 「…」` / `[i] 地の文: …`)と話者の候補を渡し、JSON schema 制約
+  (`speaker` は候補の enum、`emotion` は語彙の enum)で番号ごとに `speaker` / `emotion` / `intensity` だけを
+  選ばせる。当初は「文ごと写させて清書と突き合わせ、ずれたらリトライ」の案だったが、番号で選ばせれば
+  文が欠けたり変わったりすることが起こり得ないので、こちらにした。
+  - 話者の候補は、シーンの cast と、本文に名前が出てくる登録キャラ。POV があれば「視点人物」として添え、
+    一人称の「俺」「私」の台詞はその人物にするよう指示する。地の文の話者は LLM の答えに関わらず `narrator`
+  - **作者が直した行(`edited`)には触らない**。範囲外の番号・候補外の話者は捨てる
+  - 温度 0.2。100 行ごとに分けて呼び、前の 4 行を文脈として添える。max_tokens は 512 + 48 × 行数(上限 8192)
+  - 呼び出しは `tasks.ts` のキューに積む(llama-server は 1 件ずつしか処理しない)。画面で直しかけの台本を
+    そのまま渡せる(保存前の直しにも付けられる)
+  - **実測(31B Q4_K_M、57 行のシーン)**: 56〜59 秒(LLM のロード込み)。最初のプロンプト(「地の文は
+    ほとんど neutral」)では地の文 53 行のうち 36 行に感情が付き、読みが大げさになった。「地の文は原則 neutral、
+    叫びのような短い独白だけ。地の文全体の 1 割以下」と締めて 13 行まで減った(まだ 1 割は超えるが、付いたのは
+    心情が強く出る文)。通行人の台詞は `narrator`、視点人物の台詞は視点人物に振れている
+
+## 5. 声(voice profile)
+
+```sql
+CREATE TABLE IF NOT EXISTS voice_profiles(
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  engine_id TEXT NOT NULL,   -- どのエンジン用の声か
+  mode TEXT NOT NULL,        -- 'reference' | 'caption' | 'preset'
+  ref_paths TEXT,            -- JSON 配列。assets/voices/ 内のファイル名(reference)
+  caption TEXT,              -- 声の説明文(caption)
+  preset TEXT,               -- エンジン側の声 ID(preset)
+  params TEXT,               -- JSON。この声だけの extra_body 上書き(seed など)
+  created_at TEXT
+);
+```
+
+- **参照音声はライブラリの `assets/voices/` に置く**(挿絵と同じく、声もライブラリに付いてくる)。
+  リクエスト時に `irodori.ref_wavs` などとして渡すので、TTS サーバー側の `voices.json` には依存しない。
+- **キャラクターへの割り当ては `characters.voice_profile_id` の新しい列**にする。
+  既存の `characters.voice` は「口調・一人称」のテキストで、LLM に渡す資料なので混ぜない。
+- **地の文の声**は設定 `tts_narrator_profile`。声が割り当てられていないキャラの台詞も、この声で読む
+  (止まらないことを優先する)。**Step 1 では voice_profiles を作らず**、語り手の声を設定キー
+  (`tts_narrator_caption` / `tts_narrator_ref` / `tts_narrator_seed`)で直接持つ。Step 3 で profile に移す。
+- **seed は固定する**(既定 1234)。キャプションだけで声を作ると、seed が行ごとに変わると別人の声になるため。
+- 声はエンジンに紐づく。エンジンを切り替えたとき、対応する声が無いキャラは語り手の声になる。
+  参照音声のファイルはエンジンをまたいで使い回せるので、声を作り直すときは複製から始められるようにする。
+- 実在の人物の声を参照音声に使うのは避ける(権利の問題)。caption で声を作る方を既定の導線にする。
+
+## 6. 合成と再生
+
+- **合成は行単位**で `POST /tts/speak`(バックエンド)→ `/v1/audio/speech`(TTS サーバー)を呼ぶ
+  (SSE のチャンク配信は使わない。行が短く、行単位のキャッシュと相性がよいため)。body を重ねる順は §2。
+  TTS サーバーが止まっていれば、このときに起動する。
+- **キャッシュ**: `assets/audio/<sha256 の先頭 32 桁>.wav`。hash の材料は (engine_id, 重ねた後の body,
+  参照音声の大きさと更新時刻)。DB から参照しないので **`gc_assets` の対象にはしない**。消すのは設定画面の
+  「キャッシュを消す」だけ。いつでも作り直せるので、**外部バックアップの zip にも入れない**(`backup.write_zip`)。
+- **再生**(`useReadAloud.ts`): レンダラが台本の行を順に再生し、再生中に 2 行先まで先に合成しておく
+  (Irodori-TTS-Server は既定で 1 件ずつ合成するので、それ以上積んでも速くならない)。シーンの終わりで
+  次の清書済みシーンへ進み、そのシーンを画面に出す(縦読みはスクロール、ページはそのページへ)。
+  TTS は llama-server と別のプロセスなので、**LLM の `tasks.ts` のキューには積まない**(読み上げ中も
+  ビート生成などを止めない)。台本化(Step 2)だけは LLM を使うのでキューに積む。
+- **操作**: シーン見出しの「読み上げ」(そのシーンから最後まで)と「台本」、コントロールバーの
+  進行表示(シーン名・行番号・合成待ちの秒数)+「❚❚ 一時停止 / ▶ 再開」+「■ 停止」。
+  一時停止は再生中の音声を止め、行の合間なら次の行の前で待つ(先読みの合成は続ける)。
+- **台本のモーダル**(`VoiceScriptModal.tsx`): 行ごとに 話者 / 感情 / 強さ / 読む文 / 後ろの間 を直せる。
+  直した行は `edited` になり、枠をアクセント色にする。行ごとに試聴(保存前の直しも反映)と「ここから」
+  (保存済みの台本をその行から読み上げる。未保存の直しがあるときは押せない)。上部に「話者と感情を付ける」
+  (LLM)と「清書から作り直す」。**話者はまだ声に効かない**(Step 3 でキャラごとの声を割り当てるまで、
+  全員を語り手の声で読む)が、感情は絵文字を通して読みに効く。
+
+## 7. 設定キー
+
+| キー | 既定 | 意味 |
+|---|---|---|
+| `tts_engine` | `irodori` | 使うエンジン(`tts_engines/<id>.json`) |
+| `tts_base_url` | エンジンの `default_port` から | 起動済みサーバーの URL。応答すればそれを使う |
+| `tts_models_dir` | `D:\ai-models\tts`(無ければ空) | モデルの置き場 |
+| `tts_narrator_caption` | 空 | 語り手の声の説明(Step 1。Step 3 で `tts_narrator_profile` に移す) |
+| `tts_narrator_ref` | 空 | 語り手の参照音声(絶対パス。Step 1) |
+| `tts_narrator_seed` | `1234` | 語り手の seed(Step 1) |
+| `tts_extra_body` | 空 | `/v1/audio/speech` に重ねる追加パラメータ(JSON オブジェクト) |
+| `tts_narrator_profile` | 空 | 地の文の声(Step 3) |
+
+設定はほかと同じく DB の `settings` に置く(ライブラリに付いてくる)。
+
+## 8. 段階
+
+1. **最小版**: エンジン定義 + インストーラ + マネージャ + クライアント、右上の TtsBar、規則ベースの台本、
+   語り手 1 声での読み上げ、音声キャッシュ。ここで**合成の待ち時間と品質を実測**し、続けるかを判断する。
+2. **台本の LLM 化**: 話者の判定と感情タグ、台本の編集 UI。
+3. **声の割り当て**: `voice_profiles`、キャラごとの声、参照音声の取り込み。
+4. **2 つ目のエンジン**: 差し替えの仕組みが本当に効くかを、別エンジンを 1 つ足して確かめる。
+
+## 9. 未決事項
+
+- 絵文字の対応表(§4.3)と 📖 の有無が読みに効くか。Step 2 で感情タグが付くようになってから実測する。
+- 相談チャットの返答の読み上げは今回の範囲外。必要になったら、台本化を飛ばして語り手の声で読むだけにする。
+- 地の文の感情付けをもっと減らすか(いまは 1 割を少し超える)。聞いてみて、多ければプロンプトをさらに締めるか、
+  地の文は強さ 0.8 未満なら絵文字を付けない、のように style_map 側で抑える。
