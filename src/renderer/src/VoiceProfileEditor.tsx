@@ -10,7 +10,15 @@ const secondaryStyle = { borderColor: 'var(--border-strong)', color: 'var(--text
 const labelClass = 'mb-1 block text-[12px]'
 const hintClass = 'mt-1 text-[11px] leading-relaxed'
 
-export const DEFAULT_SAMPLE_TEXT = '雨は夜更け過ぎに、雪へと変わった。「……ねえ、起きてる?」'
+// 試し読みの既定の文。気に入れば、そのまま参照音声(声の手本)にできるよう、手本に向く文にしてある:
+// 10〜15 秒(50〜70 字。落ち着いた声ほどゆっくり読むので 1 秒 4〜5 字)、感情を込めない平らな調子、いろいろな音を含む、「……」・ささやき・叫びを入れない。
+// 「」なしは地の文(ナレーション調)で読むので、語り手向け。キャラ向けは台詞(「」付き)で読む
+export const DEFAULT_SAMPLE_TEXT =
+  '朝の駅は、いつもより少しだけ静かだった。改札を抜けると、冷たい風が頬をなでる。私は深く息を吸って、ゆっくりと歩き出した。'
+export const characterSampleText = (name: string): string =>
+  `「はじめまして、${name}です。最近は朝の散歩が楽しみで、少し早起きするようになりました。今日はどうぞ、よろしくお願いします」`
+// 参照音声にするときの目安。これより短いと、手本として声が安定しにくい
+const MIN_REF_SECONDS = 8
 
 /** 声(voice_profiles)1 つの編集欄。設定の「音声読み上げ」とキャラクター画面の両方で使う。
  *  欄ごとに、欄外へフォーカスが移ったときに保存する(設定画面の他の欄と同じ約束)。 */
@@ -41,7 +49,13 @@ export default function VoiceProfileEditor({
   const [uploading, setUploading] = useState(false)
   const [testing, setTesting] = useState(false)
   // 最後に試し読みした文と、そのときの声(updated_at)。声を直さずに同じ文なら、それを参照音声にできる
-  const [lastTested, setLastTested] = useState<{ text: string; kind: 'narration' | 'dialogue'; version: string } | null>(null)
+  const [lastTested, setLastTested] = useState<{
+    text: string
+    kind: 'narration' | 'dialogue'
+    version: string
+    /** 試し読みの音声の長さ(秒)。取れなければ null */
+    seconds: number | null
+  } | null>(null)
   const [pinning, setPinning] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement | null>(null)
@@ -148,7 +162,12 @@ export default function VoiceProfileEditor({
       audio.onended = () => URL.revokeObjectURL(url)
       audioRef.current = audio
       await audio.play()
-      setLastTested({ text, kind, version: profile.updated_at })
+      setLastTested({
+        text,
+        kind,
+        version: profile.updated_at,
+        seconds: Number.isFinite(audio.duration) ? audio.duration : null
+      })
     } catch (e) {
       setError(`試し読みに失敗しました: ${String(e).replace(/^Error:\s*/, '')}`)
     } finally {
@@ -390,15 +409,31 @@ export default function VoiceProfileEditor({
           >
             <Icon name="speaker" size={11} />
             {pinning ? '取り込んでいます…' : 'この声を参照音声にして固定'}
+            {lastTested.seconds !== null && (
+              <span className="tabular-nums" style={{ color: 'var(--text-faint)' }}>
+                ({lastTested.seconds.toFixed(1)} 秒)
+              </span>
+            )}
           </button>
         )}
+        {lastTested &&
+          lastTested.text === sample.trim() &&
+          lastTested.version === profile.updated_at &&
+          lastTested.seconds !== null &&
+          lastTested.seconds < MIN_REF_SECONDS && (
+            <p className={hintClass} style={{ color: '#f59e0b' }}>
+              手本にするには少し短めです({lastTested.seconds.toFixed(1)} 秒)。10 秒前後になるよう文を足すと、声が安定しやすくなります。
+            </p>
+          )}
         {notice && (
           <p className={hintClass} style={{ color: 'var(--text-dim)' }}>
             {notice}
           </p>
         )}
         <p className={hintClass} style={{ color: 'var(--text-faint)' }}>
-          説明文だけの声は、文ごとに声色が少し揺れます。気に入った声が出たら参照音声にして固定してください(10 秒前後の長めの文がおすすめ)。
+          説明文だけの声は、文ごとに声色が少し揺れます。気に入った声が出たら参照音声にして固定してください。
+          手本には、感情を込めない平らな文で 10 秒前後(50〜70 字)が向いています。「……」やささやき・叫びは避けてください。
+          「」なしは地の文(ナレーション調)、「」で囲むと台詞(会話調)で読むので、キャラの声は「」付きの文で固定するのがおすすめです。
         </p>
       </div>
 

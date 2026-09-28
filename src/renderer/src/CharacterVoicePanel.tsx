@@ -3,7 +3,7 @@ import { api, isAbortError, voiceApi, type VoiceProfileList } from './api'
 import { Icon } from './icons'
 import { enqueueTask } from './tasks'
 import type { Character } from './types'
-import VoiceProfileEditor from './VoiceProfileEditor'
+import VoiceProfileEditor, { characterSampleText } from './VoiceProfileEditor'
 
 const secondaryStyle = { borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }
 
@@ -134,7 +134,7 @@ export default function CharacterVoicePanel({
             profile={assigned}
             usedBy={usedBy(assigned.id)}
             draftFromCharId={character.id}
-            sampleText={`「はじめまして。${character.name}です。今日はよろしくお願いします」`}
+            sampleText={characterSampleText(character.name)}
             onChanged={(p) =>
               setList((prev) => (prev ? { ...prev, profiles: prev.profiles.map((x) => (x.id === p.id ? p : x)) } : prev))
             }
