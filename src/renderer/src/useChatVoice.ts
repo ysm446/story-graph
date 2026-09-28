@@ -59,7 +59,7 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
 class SpeechQueue {
   private lines: VoiceLine[] = []
   private next = 0
-  private synth = new Map<number, Promise<Blob>>()
+  private synth = new Map<number, Promise<Blob | null>>()
   private running = false
   private chunks: Promise<void> = Promise.resolve()
   private pendingChunks = 0
@@ -103,7 +103,7 @@ class SpeechQueue {
     this.onActive(false)
   }
 
-  private fetchLine(i: number): Promise<Blob> {
+  private fetchLine(i: number): Promise<Blob | null> {
     let p = this.synth.get(i)
     if (!p) {
       p = ttsSpeak(this.lines[i], this.controller.signal)
@@ -131,7 +131,7 @@ class SpeechQueue {
         const blob = await this.fetchLine(i)
         for (let a = 1; a <= PREFETCH_AHEAD && i + a < this.lines.length; a += 1) void this.fetchLine(i + a)
         this.synth.delete(i)
-        await this.play(blob, signal)
+        if (blob) await this.play(blob, signal) // null = エンジンが鳴らせない効果音(間だけ置く)
         await sleep(Math.min(this.lines[i].pause_after_ms, 600), signal)
         this.next += 1
       }

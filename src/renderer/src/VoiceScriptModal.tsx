@@ -108,6 +108,10 @@ export default function VoiceScriptModal({
     setError(null)
     try {
       const blob = await ttsSpeak(lines[index])
+      if (!blob) {
+        setError('この行は効果音ですが、いまのエンジンでは鳴らせないので間になります')
+        return
+      }
       const url = URL.createObjectURL(blob)
       const audio = new Audio(url)
       audio.onended = () => URL.revokeObjectURL(url)
@@ -199,9 +203,15 @@ export default function VoiceScriptModal({
                 <span
                   className="shrink-0 rounded px-1 text-[10px]"
                   style={{ background: 'var(--bg-input)', color: 'var(--text-faint)' }}
-                  data-tip={line.kind === 'dialogue' ? '「」の台詞' : '地の文'}
+                  data-tip={
+                    line.effect
+                      ? '効果音(言葉ではなく息を呑む音として鳴らします。鳴らせないエンジンでは間になります)'
+                      : line.kind === 'dialogue'
+                        ? '「」の台詞'
+                        : '地の文'
+                  }
                 >
-                  {line.kind === 'dialogue' ? '台詞' : '地'}
+                  {line.effect ? '音' : line.kind === 'dialogue' ? '台詞' : '地'}
                 </span>
                 <select
                   value={line.speaker}

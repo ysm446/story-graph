@@ -175,8 +175,15 @@ def build_request(
 
     voice は {caption, ref_paths(絶対パスの配列), seed, preset}。"""
     req = engine.get("request") or {}
-    style = STYLE_MAPS.get(engine.get("style_map") or "none", plain)
-    text, style_body = style(line)
+    effect = line.get("effect")
+    if effect:
+        # 効果音は言葉ではないので感情の style_map は通さず、エンジン定義の effects の書き方で送る
+        # ({text} は台本の文。例: Irodori は "😮{text}" で息を呑む音になる)
+        text = str((engine.get("effects") or {})[effect]).replace("{text}", line["text"])
+        style_body: dict[str, Any] = {}
+    else:
+        style = STYLE_MAPS.get(engine.get("style_map") or "none", plain)
+        text, style_body = style(line)
     body: dict[str, Any] = {
         "model": req.get("model", "tts-1"),
         "input": text,

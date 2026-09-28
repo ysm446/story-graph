@@ -32,6 +32,10 @@ _TRIM = " \t　"
 PAUSE_SENTENCE_MS = 250
 PAUSE_PARAGRAPH_MS = 600
 PAUSE_SCENE_BREAK_MS = 1200
+# 声に出ない文・台詞(「……」「……っ！」など)は読まずに、この長さの間にする
+PAUSE_SILENT_MS = 900
+# 小さい仮名と長音は、それだけでは声にならない(「っ」「ぁ」「ー」を TTS に渡すと妙な音になる)
+_SILENT_KANA = set("っッぁぃぅぇぉァィゥェォゃゅょャュョゎヮゕゖヵヶーｰ〜～")
 # 台詞 1 つがこれより長ければ、文の終わりで分ける(1 回の合成が長すぎると最初の音が遅れる)
 MAX_DIALOGUE_CHARS = 160
 # 地の文は、同じ段落の続く文をこの字数までまとめて 1 行にする。1 行ずつ別々に合成するので、
@@ -40,8 +44,8 @@ MERGE_NARRATION_CHARS = 100
 DEFAULT_SEED = 1234
 
 
-def _line(text: str, kind: str) -> dict[str, Any]:
-    return {
+def _line(text: str, kind: str, effect: str | None = None) -> dict[str, Any]:
+    line = {
         "speaker": "narrator",
         "kind": kind,
         "text": text,
@@ -53,10 +57,58 @@ def _line(text: str, kind: str) -> dict[str, Any]:
         "pause_after_ms": PAUSE_SENTENCE_MS,
         "edited": False,
     }
+    if effect:
+        line["effect"] = effect
+    return line
 
 
-def _sentences(text: str) -> list[str]:
-    return [s.strip(_TRIM) for s in _SENTENCE_END.split(text) if s.strip(_TRIM)]
+_ENDERS = "。！？!?"
+_TRAILING = "。！？!?」』）)"
+
+
+def is_voiceable(text: str) -> bool:
+    """声に出せる文字があるか。記号・三点リーダ・ダッシュ・小さい仮名・長音だけなら False
+    (「……」「……っ！」「――」「ッ!?」など。息づかいや間であって、読む言葉ではない)。"""
+    return any(_READABLE.match(ch) and ch not in _SILENT_KANA for ch in text)
+
+
+# 声に出ない文・台詞の代わりに置く印。build_script が取り除き、直前の行の後ろの間を延ばす
+_SILENT = {"silent": True}
+
+# 効果音(台本の行の effect)。言葉ではなく音として鳴らすもの。エンジン非依存の名前で持ち、どう鳴らすかは
+# エンジン定義の effects で決める(持たないエンジンでは鳴らさず間にする)
+EFFECTS = ("gasp",)
+
+
+def effect_of(text: str) -> str | None:
+    """声に出ない文・台詞が効果音になるか。「……っ！」「ッ!?」のような詰まる音は息を呑む音(gasp)。
+    「……」「――」のような沈黙は None(間にする)。"""
+    return "gasp" if any(ch in "っッ" for ch in text) else None
+
+
+def _silent_or_effect(text: str, kind: str) -> dict[str, Any]:
+    effect = effect_of(text)
+    return _line(text, kind, effect) if effect else _SILENT
+
+
+def _sentences(text: str, quote_aware: bool = True) -> list[str]:
+    """文末(。！？!? の連なり)で割る。quote_aware なら「」の中では割らない(地の文に含めた強調の
+    「」の中の句点で文を割らないため)。長い台詞を割るときは、台詞の中で割るので quote_aware=False。"""
+    if not quote_aware:
+        return [s.strip(_TRIM) for s in _SENTENCE_END.split(text) if s.strip(_TRIM)]
+    out: list[str] = []
+    depth = 0
+    start = 0
+    for i, ch in enumerate(text):
+        if ch in OPEN_QUOTES:
+            depth += 1
+        elif ch in CLOSE_QUOTES and depth > 0:
+            depth -= 1
+        elif depth == 0 and ch in _ENDERS and (i + 1 >= len(text) or text[i + 1] not in _TRAILING):
+            out.append(text[start : i + 1])
+            start = i + 1
+    out.append(text[start:])
+    return [s.strip(_TRIM) for s in out if s.strip(_TRIM)]
 
 
 def _group_sentences(sentences: list[str], limit: int = MERGE_NARRATION_CHARS) -> list[str]:
@@ -70,42 +122,84 @@ def _group_sentences(sentences: list[str], limit: int = MERGE_NARRATION_CHARS) -
     return groups
 
 
-def _split_paragraph(para: str) -> list[dict[str, Any]]:
-    lines: list[dict[str, Any]] = []
-    buf = ""
+# 「」の直後にこれが続くなら、その「」は名詞句(強調・引用・名前)であって台詞ではない
+# (「重要な相談」という言葉、「約束」とは、「はい」って、「田村工業」から、など)
+_NOUN_PHRASE_AFTER = ("という", "といった", "とは", "とか", "との", "として", "って")
+_PARTICLES = "がをはにでへもやのから"
+
+
+def _top_level_quotes(para: str) -> list[tuple[int, int]]:
+    """段落の中のいちばん外側の「」『』の範囲 (開始, 終了の次)。閉じ忘れは段落の終わりまで。"""
+    spans: list[tuple[int, int]] = []
     depth = 0
+    start = 0
+    for i, ch in enumerate(para):
+        if ch in OPEN_QUOTES:
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch in CLOSE_QUOTES and depth > 0:
+            depth -= 1
+            if depth == 0:
+                spans.append((start, i + 1))
+    if depth > 0:
+        spans.append((start, len(para)))
+    return spans
+
+
+def _is_speech(before: str, after: str) -> bool:
+    """「」が台詞かどうか(2026-09-28 ユーザー指摘。文の途中の「」は強調のことが多い)。
+
+    - 文の頭で始まっている: 段落の頭か、直前が文末(。！？)か別の「」の閉じ
+    - 閉じた後が台詞らしい: 段落の終わり・次の「」・句読点、または「と言った」の「と」
+      (「という」「とは」「って」や助詞が続くなら名詞句として扱う)
+    """
+    prev = before.rstrip(_TRIM)
+    if prev and prev[-1] not in _ENDERS + CLOSE_QUOTES:
+        return False
+    rest = after.lstrip(_TRIM)
+    if not rest or rest[0] in OPEN_QUOTES or rest[0] in "。、！？!?…―":
+        return True
+    if rest.startswith(_NOUN_PHRASE_AFTER):
+        return False
+    if rest[0] == "と":
+        return True
+    return rest[0] not in _PARTICLES
+
+
+def _split_paragraph(para: str) -> list[dict[str, Any]]:
+    """段落を台詞と地の文の行に分ける。台詞と判定しなかった「」は、前後の文とつなげて地の文のまま読む。"""
+    lines: list[dict[str, Any]] = []
+    buf = ""  # まだ行にしていない地の文(強調の「」を含む)
+    pos = 0
 
     def flush_narration() -> None:
         nonlocal buf
-        lines.extend(_line(s, "narration") for s in _group_sentences(_sentences(buf)))
+        # 声に出ない文は、効果音(「……っ！」→ 息を呑む音)か間にする。そこをまたいで文をまとめない
+        run: list[str] = []
+        for s in _sentences(buf):
+            if is_voiceable(s):
+                run.append(s)
+                continue
+            lines.extend(_line(g, "narration") for g in _group_sentences(run))
+            run = []
+            lines.append(_silent_or_effect(s, "narration"))
+        lines.extend(_line(g, "narration") for g in _group_sentences(run))
         buf = ""
 
-    def flush_dialogue() -> None:
-        nonlocal buf
-        text = buf.strip(_TRIM)
-        buf = ""
-        if not text:
-            return
-        parts = _sentences(text) if len(text) > MAX_DIALOGUE_CHARS else [text]
-        lines.extend(_line(p, "dialogue") for p in parts)
-
-    for ch in para:
-        if ch in OPEN_QUOTES:
-            if depth == 0:
-                flush_narration()
-            depth += 1
-            buf += ch
-        elif ch in CLOSE_QUOTES and depth > 0:
-            buf += ch
-            depth -= 1
-            if depth == 0:
-                flush_dialogue()
+    for start, end in _top_level_quotes(para):
+        buf += para[pos:start]
+        quote = para[start:end]
+        if _is_speech(buf, para[end:]):
+            flush_narration()
+            text = quote.strip(_TRIM)
+            parts = _sentences(text, quote_aware=False) if len(text) > MAX_DIALOGUE_CHARS else [text]
+            lines.extend(_line(p, "dialogue") if is_voiceable(p) else _silent_or_effect(p, "dialogue") for p in parts)
         else:
-            buf += ch
-    if depth > 0:
-        flush_dialogue()  # 閉じ忘れの台詞も読む
-    else:
-        flush_narration()
+            buf += quote
+        pos = end
+    buf += para[pos:]
+    flush_narration()
     return lines
 
 
@@ -118,13 +212,24 @@ def build_script(prose: str) -> list[dict[str, Any]]:
             if lines:
                 lines[-1]["pause_after_ms"] = max(lines[-1]["pause_after_ms"], PAUSE_PARAGRAPH_MS)
             continue
-        if not _READABLE.search(para):
+        if not is_voiceable(para) and not effect_of(para):
             if lines:
-                lines[-1]["pause_after_ms"] = PAUSE_SCENE_BREAK_MS
+                # 「……」「……っ！」のような無言の台詞・息づかいは間、＊＊＊ のような記号だけの段落は場面の区切り
+                # 「……」だけの段落も沈黙の間(場面転換は ＊＊＊ や ◇ のような記号で書かれる)
+                silent_speech = any(ch in OPEN_QUOTES + "…‥" for ch in para) or bool(_READABLE.search(para))
+                pause = PAUSE_SILENT_MS if silent_speech else PAUSE_SCENE_BREAK_MS
+                lines[-1]["pause_after_ms"] = max(lines[-1]["pause_after_ms"], pause)
             continue
-        para_lines = _split_paragraph(para)
+        para_lines: list[dict[str, Any]] = []
+        for line in _split_paragraph(para):
+            if line is _SILENT:
+                target = para_lines[-1] if para_lines else (lines[-1] if lines else None)
+                if target is not None:
+                    target["pause_after_ms"] = max(target["pause_after_ms"], PAUSE_SILENT_MS)
+                continue
+            para_lines.append(line)
         if para_lines:
-            para_lines[-1]["pause_after_ms"] = PAUSE_PARAGRAPH_MS
+            para_lines[-1]["pause_after_ms"] = max(para_lines[-1]["pause_after_ms"], PAUSE_PARAGRAPH_MS)
             lines.extend(para_lines)
     return lines
 
@@ -201,8 +306,7 @@ def normalize_lines(lines: Any) -> list[dict[str, Any]]:
             pause = min(MAX_PAUSE_MS, max(0, int(raw.get("pause_after_ms", PAUSE_SENTENCE_MS))))
         except (TypeError, ValueError):
             pause = PAUSE_SENTENCE_MS
-        out.append(
-            {
+        line = {
                 "speaker": speaker if _SPEAKER_RE.match(speaker) else "narrator",
                 "kind": "dialogue" if raw.get("kind") == "dialogue" else "narration",
                 "text": text,
@@ -211,8 +315,10 @@ def normalize_lines(lines: Any) -> list[dict[str, Any]]:
                 "intensity": intensity,
                 "pause_after_ms": pause,
                 "edited": bool(raw.get("edited")),
-            }
-        )
+        }
+        if raw.get("effect") in EFFECTS:
+            line["effect"] = raw["effect"]
+        out.append(line)
     return out
 
 
@@ -260,6 +366,17 @@ def apply_pov_narration(lines: list[dict[str, Any]], speaker: str | None) -> Non
             line["speaker"] = speaker
 
 
+def drop_silent_lines(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """声に出ない行(以前の区切り方で保存された「……っ！」など)を取り除き、直前の行の間を延ばす。"""
+    out: list[dict[str, Any]] = []
+    for line in lines:
+        if is_voiceable(line.get("text") or "") or line.get("effect") in EFFECTS:
+            out.append(line)
+        elif out:
+            out[-1]["pause_after_ms"] = max(out[-1].get("pause_after_ms", 0), PAUSE_SILENT_MS)
+    return out
+
+
 def resolve_script(store: Any, render: dict[str, Any]) -> dict[str, Any]:
     """読み上げに使う台本。保存があればそれ、無ければ規則ベースで作って前の台本から引き継ぐ(保存はしない)。
     一人称の清書は、ここで地の文の話者を視点人物にする。読み上げ・台本の画面・音声キャッシュの掃除が
@@ -267,8 +384,9 @@ def resolve_script(store: Any, render: dict[str, Any]) -> dict[str, Any]:
     narrator = pov_narrator(store, render)
     saved = store.get_voice_script(render["id"])
     if saved is not None:
-        apply_pov_narration(saved["lines"], narrator)
-        return {"lines": saved["lines"], "source": saved["source"], "saved": True, "carried": 0}
+        lines = drop_silent_lines(saved["lines"])
+        apply_pov_narration(lines, narrator)
+        return {"lines": lines, "source": saved["source"], "saved": True, "carried": 0}
     lines = build_script(render.get("prose") or "")
     carried = 0
     previous = store.previous_voice_script(render["node_id"], render["id"])
@@ -570,8 +688,11 @@ class VoiceBook:
 
     def line_audio(
         self, engine: dict[str, Any], line: dict[str, Any], profile_id: str | None = None
-    ) -> tuple[str, dict[str, Any]]:
-        """1 行の (キャッシュのファイル名, リクエストの body)。声だけの追加パラメータは設定の上に重ねる。"""
+    ) -> tuple[str, dict[str, Any]] | None:
+        """1 行の (キャッシュのファイル名, リクエストの body)。声だけの追加パラメータは設定の上に重ねる。
+        効果音の行で、エンジンがその効果音を鳴らせない(定義の effects に無い)ときは None(鳴らさず間にする)。"""
+        if line.get("effect") and line["effect"] not in (engine.get("effects") or {}):
+            return None
         voice = self.voice_for(line, profile_id)
         extra = tts.deep_merge(self.extra, voice.get("params") or {})
         body = tts.build_request(engine, line, voice, extra)
@@ -586,9 +707,13 @@ async def speak(
     base_url: str,
     audio_dir: Path,
     profile_id: str | None = None,
-) -> Path:
-    """1 行を合成して音声ファイルのパスを返す。キャッシュにあれば合成しない。"""
-    name, body = book.line_audio(engine, line, profile_id)
+) -> Path | None:
+    """1 行を合成して音声ファイルのパスを返す。キャッシュにあれば合成しない。
+    エンジンが鳴らせない効果音の行は None(呼び出し側は鳴らさずに間だけ置く)。"""
+    audio = book.line_audio(engine, line, profile_id)
+    if audio is None:
+        return None
+    name, body = audio
     ext = name.rsplit(".", 1)[1]
     path = audio_dir / name
     if path.exists():
@@ -615,7 +740,9 @@ def expected_audio(store: Any, settings: dict[str, str]) -> set[str]:
     names: set[str] = set()
     for render in store.latest_renders():
         for line in resolve_script(store, render)["lines"]:
-            names.add(book.line_audio(engine, line)[0])
+            audio = book.line_audio(engine, line)
+            if audio is not None:
+                names.add(audio[0])
     return names
 
 

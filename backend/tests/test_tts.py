@@ -540,3 +540,96 @@ def test_first_person_narration_is_read_in_pov_voice(lib):
     line = voice.resolve_script(lib, first)["lines"][0]
     _, body = voice.VoiceBook(lib, {}).line_audio(tts.get_engine("irodori"), line)
     assert body["irodori"]["caption"] == "明るい少女"
+
+
+# ---- 文中の「」は強調として地の文のまま読む --------------------------------------
+
+def _kinds(prose):
+    return [(l["kind"], l["text"]) for l in voice.build_script(prose)]
+
+
+def test_inline_quote_is_read_as_narration():
+    assert _kinds("取引先である「田村工業」から、重要な相談が来た。") == [
+        ("narration", "取引先である「田村工業」から、重要な相談が来た。"),
+    ]
+
+
+def test_paragraph_start_quote_followed_by_particle_is_emphasis():
+    assert _kinds("「重要な相談」という言葉が、心に波紋を広げる。") == [
+        ("narration", "「重要な相談」という言葉が、心に波紋を広げる。"),
+    ]
+    assert _kinds("「約束」は守られなかった。")[0][0] == "narration"
+
+
+def test_speech_at_sentence_start_even_mid_paragraph():
+    assert _kinds("「待て」と彼は言った。「話がある」") == [
+        ("dialogue", "「待て」"),
+        ("narration", "と彼は言った。"),
+        ("dialogue", "「話がある」"),
+    ]
+    assert _kinds("「はい」「いいえ」") == [("dialogue", "「はい」"), ("dialogue", "「いいえ」")]
+    assert _kinds("「えっ!?」")[0] == ("dialogue", "「えっ!?」")
+
+
+def test_emphasis_quote_with_period_inside_is_not_split():
+    lines = _kinds("彼は「もう遅い。」という言葉を飲み込んだ。次の日が来た。")
+    assert lines == [("narration", "彼は「もう遅い。」という言葉を飲み込んだ。次の日が来た。")]
+
+
+# ---- 声に出ない文・台詞は読まずに間にする --------------------------------------
+
+def test_is_voiceable():
+    for silent in ("……っ！", "「……っ！」", "ッ!?", "――", "ー", "「……」", "＊＊＊"):
+        assert not voice.is_voiceable(silent), silent
+    for spoken in ("あっ！", "ん……", "はぁ……", "「待って」", "OK"):
+        assert voice.is_voiceable(spoken), spoken
+
+
+def test_silent_sentences_become_pauses_and_gasps_become_effects():
+    lines = voice.build_script("彼は振り返った。……っ！　息が止まる。――。\n「……」\n「待って」")
+    assert [(l["kind"], l["text"], l.get("effect")) for l in lines] == [
+        ("narration", "彼は振り返った。", None),
+        ("narration", "……っ！", "gasp"),  # 詰まる音は息を呑む効果音
+        ("narration", "息が止まる。", None),  # 効果音・無音をまたいで文をまとめない
+        ("dialogue", "「待って」", None),
+    ]
+    assert lines[2]["pause_after_ms"] == voice.PAUSE_SILENT_MS  # 「――。」と「……」の間
+
+
+def test_gasp_quote_keeps_dialogue_kind():
+    lines = voice.build_script("「ッ!?」")
+    assert [(l["kind"], l.get("effect")) for l in lines] == [("dialogue", "gasp")]
+
+
+def test_silent_paragraph_is_a_beat_not_a_scene_break():
+    assert voice.build_script("走った。\n……\n止まった。")[0]["pause_after_ms"] == voice.PAUSE_SILENT_MS
+    assert voice.build_script("走った。\n「……」\n止まった。")[0]["pause_after_ms"] == voice.PAUSE_SILENT_MS
+    assert voice.build_script("走った。\n＊＊＊\n止まった。")[0]["pause_after_ms"] == voice.PAUSE_SCENE_BREAK_MS
+
+
+def test_effect_request_uses_engine_effects_and_skips_unsupported(store):
+    line = voice.build_script("……っ！")[0]
+    engine = tts.get_engine("irodori")
+    name, body = voice.VoiceBook(store, {}).line_audio(engine, line)
+    assert body["input"] == "😮……っ！"  # 感情の絵文字(📖 など)は付けない
+    no_effects = {k: v for k, v in engine.items() if k != "effects"}
+    assert voice.VoiceBook(store, {}).line_audio(no_effects, line) is None
+
+
+def test_normalize_lines_keeps_known_effect_only():
+    lines = voice.normalize_lines([{"text": "……っ！", "effect": "gasp"}, {"text": "……っ", "effect": "boom"}])
+    assert lines[0]["effect"] == "gasp" and "effect" not in lines[1]
+
+
+def test_saved_script_drops_silent_lines(store):
+    nid = _node_id(store)
+    render = store.save_render(nid, "p", None, "x")
+    lines = [
+        dict(voice.build_script("走った。")[0], pause_after_ms=250),
+        {"speaker": "narrator", "kind": "dialogue", "text": "「……っ！」", "emotion": "neutral", "intensity": 0.5, "pause_after_ms": 250, "edited": False},
+        voice.build_script("「待って」")[0],
+    ]
+    store.save_voice_script(render["id"], nid, lines, "rule")
+    out = voice.resolve_script(store, render)["lines"]
+    assert [l["text"] for l in out] == ["走った。", "「待って」"]
+    assert out[0]["pause_after_ms"] == voice.PAUSE_SILENT_MS

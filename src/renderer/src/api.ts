@@ -789,6 +789,8 @@ export interface VoiceLine {
   edited: boolean
   /** この行を読む声を名指しする(チャットの相談相手の声)。無ければ話者から決まる */
   profile_id?: string | null
+  /** 効果音の行(言葉ではなく音として鳴らす。gasp = 息を呑む音)。鳴らせないエンジンでは間になる */
+  effect?: string
 }
 
 export interface VoiceScript {
@@ -926,8 +928,9 @@ export function voiceFileUrl(name: string): string | null {
 }
 
 /** 台本の 1 行を合成して音声(Blob)を返す。TTS サーバーが止まっていれば起動する。
- *  profileId を渡すとその声で読む(声の試し読み)。省略時は話者から決まる */
-export async function ttsSpeak(line: VoiceLine, signal?: AbortSignal, profileId?: string): Promise<Blob> {
+ *  profileId を渡すとその声で読む(声の試し読み)。省略時は話者から決まる。
+ *  エンジンが鳴らせない効果音の行は null(鳴らさずに間だけ置く) */
+export async function ttsSpeak(line: VoiceLine, signal?: AbortSignal, profileId?: string): Promise<Blob | null> {
   if (!baseUrl) throw new Error('backend not ready')
   const res = await fetch(`${baseUrl}/tts/speak`, {
     method: 'POST',
@@ -938,7 +941,8 @@ export async function ttsSpeak(line: VoiceLine, signal?: AbortSignal, profileId?
       speaker: line.speaker,
       emotion: line.emotion,
       intensity: line.intensity,
-      profile_id: profileId ?? line.profile_id ?? null
+      profile_id: profileId ?? line.profile_id ?? null,
+      effect: line.effect ?? null
     }),
     signal
   })
@@ -951,6 +955,7 @@ export async function ttsSpeak(line: VoiceLine, signal?: AbortSignal, profileId?
     }
     throw new Error(detail)
   }
+  if (res.status === 204) return null
   return res.blob()
 }
 

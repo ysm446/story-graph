@@ -1,7 +1,7 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-07-24 22:38
-更新日時: 2026-09-28 22:36
+更新日時: 2026-09-28 22:56
 
 ## 現在の状態
 
@@ -9,7 +9,7 @@
 - **ライブラリ方式を導入**(lm-graph 踏襲): ストーリーごとのフォルダに `story-graph.db` を置く。現在のライブラリと最近使ったライブラリは `%APPDATA%/story-graph/app.json`(Electron userData)に保存。ヘッダー右のドロップダウンで切替(切替時はレンダラをリロード)。デフォルトはリポジトリ内 `data/`。
 - `npm run dev` で Electron が起動し、FastAPI sidecar(ポート 8765〜自動探索)が自動 spawn される。
 - バックエンドは単体でも起動可能: `cd backend && ../.venv/Scripts/python.exe -m uvicorn app:app --port 8765`
-- テスト: `cd backend && ../.venv/Scripts/python.exe -m pytest tests/ -q`(298件、全て成功)
+- テスト: `cd backend && ../.venv/Scripts/python.exe -m pytest tests/ -q`(309件、全て成功)
 - モデルは **31B を主に使用**(12B は検証用。2026-08-11 ユーザー談)
 
 ## 完了済み
@@ -404,6 +404,9 @@
   - [x] 文ごとの声色の揺れ対策(2026-09-28 ユーザー指摘): 試し読みを参照音声にして固定する(声の高さの幅
     47 Hz → 11 Hz)、地の文を段落内で 100 字までまとめる、チャットは 2 文目以降を 80 字ずつまとめて送る。pytest 295 件
   - [x] 一人称の清書の地の文を視点人物の声で読む(2026-09-28 ユーザー指摘。`voice.pov_narrator`)。pytest 298 件
+  - [x] 文中の「」(強調・名前)は台詞にせず地の文として 1 文で読む(2026-09-28 ユーザー指摘。`voice._is_speech`)。pytest 302 件
+  - [x] 声に出ない文・台詞(「……っ！」など)は読まずに間にする(2026-09-28 ユーザー指摘。`voice.is_voiceable`)。pytest 306 件
+  - [x] 詰まる音(「……っ！」「ッ!?」)は Irodori の 😮 で息を呑む効果音として鳴らす(行の `effect`、エンジン定義の `effects`)。pytest 309 件
   - [ ] Step 4 2 つ目のエンジンで差し替えを確認
 - [ ] **場面の画像生成(ComfyUI 連携)**(2026-08-26 ユーザー発案): ビートから挿絵を
   自動生成し、既存の挿絵アセット(`nodes.image_path`)に流し込む。

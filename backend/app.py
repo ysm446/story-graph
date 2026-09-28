@@ -1435,6 +1435,7 @@ class TtsLineIn(BaseModel):
     intensity: float | None = None
     # この声で読む(声の試し読み用)。省略時は話者から決める(キャラの声 → 語り手の声)
     profile_id: str | None = None
+    effect: str | None = None  # 効果音の行(gasp など。voice.EFFECTS)
 
 
 @app.post("/tts/speak")
@@ -1447,7 +1448,7 @@ async def tts_speak(body: TtsLineIn) -> FileResponse:
         raise HTTPException(400, "読む文字がありません")
     settings = store.get_settings()
     engine = _tts_engine()
-    line = body.model_dump(exclude={"profile_id"})
+    line = body.model_dump(exclude={"profile_id"}, exclude_none=True)
     try:
         book = voice.VoiceBook(store, settings)
         base_url = await tts_mgr.ensure_running(settings)
@@ -1456,6 +1457,11 @@ async def tts_speak(body: TtsLineIn) -> FileResponse:
         raise HTTPException(400, str(e))
     except RuntimeError as e:
         raise HTTPException(502, str(e))
+    if path is None:
+        # エンジンが鳴らせない効果音の行。フロントは鳴らさずに間だけ置く
+        from fastapi.responses import Response
+
+        return Response(status_code=204)  # type: ignore[return-value]
     media = {"wav": "audio/wav", "mp3": "audio/mpeg", "flac": "audio/flac", "opus": "audio/ogg", "aac": "audio/aac"}
     return FileResponse(str(path), media_type=media.get(path.suffix.lstrip("."), "application/octet-stream"))
 
@@ -1589,7 +1595,10 @@ async def add_voice_ref_from_sample(profile_id: str, body: VoiceSampleIn) -> dic
     engine = _tts_engine()
     try:
         book = voice.VoiceBook(store, settings)
-        _, request_body = book.line_audio(engine, line, profile_id)
+        audio = book.line_audio(engine, line, profile_id)
+        if audio is None:
+            raise HTTPException(400, "この文は参照音声にできません")
+        _, request_body = audio
         request_body["response_format"] = "wav"
         base_url = await tts_mgr.ensure_running(settings)
         data = await tts.synthesize(base_url, request_body)

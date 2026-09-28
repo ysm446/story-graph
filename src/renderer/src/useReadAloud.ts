@@ -146,8 +146,8 @@ export function useReadAloud(onSceneStart?: (nodeId: string) => void): {
         if (first >= lines.length) continue
         onSceneStartRef.current?.(scene.node.id)
 
-        const pending = new Map<number, Promise<Blob>>()
-        const fetchLine = (i: number): Promise<Blob> => {
+        const pending = new Map<number, Promise<Blob | null>>()
+        const fetchLine = (i: number): Promise<Blob | null> => {
           let p = pending.get(i)
           if (!p) {
             p = ttsSpeak(lines[i] as VoiceLine, signal)
@@ -164,7 +164,7 @@ export function useReadAloud(onSceneStart?: (nodeId: string) => void): {
           pending.delete(li)
           if (signal.aborted) return
           setState((s) => ({ ...s, phase: 'play' }))
-          await playBlob(blob, gate, signal)
+          if (blob) await playBlob(blob, gate, signal) // null = エンジンが鳴らせない効果音(間だけ置く)
           await sleep(lines[li].pause_after_ms, signal)
           await gate.wait(signal)
         }

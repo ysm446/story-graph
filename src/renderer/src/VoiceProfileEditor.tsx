@@ -142,6 +142,7 @@ export default function VoiceProfileEditor({
         undefined,
         profile.id
       )
+      if (!blob) throw new Error('音声が返りませんでした')
       const url = URL.createObjectURL(blob)
       const audio = new Audio(url)
       audio.onended = () => URL.revokeObjectURL(url)

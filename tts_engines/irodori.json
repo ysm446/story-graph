@@ -29,5 +29,6 @@
     "reference_body": { "irodori": { "ref_wavs": "{ref_paths}" } },
     "seed_body": { "irodori": { "seed": "{seed}" } }
   },
-  "style_map": "irodori_emoji"
+  "style_map": "irodori_emoji",
+  "effects": { "gasp": "😮{text}" }
 }
