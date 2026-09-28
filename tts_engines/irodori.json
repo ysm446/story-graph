@@ -26,7 +26,7 @@
   "voice": {
     "modes": ["caption", "reference"],
     "caption_body": { "irodori": { "caption": "{caption}" } },
-    "reference_body": { "irodori": { "ref_wavs": ["{ref_path}"] } },
+    "reference_body": { "irodori": { "ref_wavs": "{ref_paths}" } },
     "seed_body": { "irodori": { "seed": "{seed}" } }
   },
   "style_map": "irodori_emoji"

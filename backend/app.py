@@ -100,6 +100,21 @@ def _schedule_audio_gc(delay: float = AUDIO_GC_DELAY_SEC) -> None:
     _spawn_bg(run())
 
 
+def _voice_housekeeping() -> None:
+    """ライブラリを開いたときの声まわりの片付け。Step 1 の語り手の設定キーを声に移し、
+    どの声からも参照されない参照音声(assets/voices)を消す。失敗しても開くのは止めない。"""
+    import voice
+
+    try:
+        if voice.migrate_legacy_narrator(store):
+            print("[voice] 語り手の設定を「語り手」の声に移しました")
+        removed = store.gc_voices()
+        if removed:
+            print(f"[voice] 使われていない参照音声を {removed} 件削除しました")
+    except Exception as e:  # noqa: BLE001
+        print(f"[voice] 片付けに失敗: {e}")
+
+
 async def _gc_audio_now() -> int:
     """いま読むと使う音声以外を assets/audio から消す。声の設定が壊れているときは何も消さない
     (「使う音声」が割り出せないのに消すと、全部消えてしまうため)。"""
@@ -153,6 +168,7 @@ async def _startup() -> None:
             print(f"[assets] 未参照ファイルを {removed} 件削除しました")
     except Exception as e:  # GC の失敗で起動を止めない
         print(f"[assets] GC に失敗: {e}")
+    _voice_housekeeping()
     _schedule_audio_gc()
     _spawn_bg(_deferred_auto_backup())
 
@@ -189,6 +205,7 @@ class CharacterPatch(BaseModel):
     ref_image_prompt: str | None = None
     ref_image_instructions: str | None = None
     ref_image_seed: int | None = None
+    voice_profile_id: str | None = None  # 読み上げの声(null で外す = 語り手の声で読む)
 
 
 class PlaceIn(BaseModel):
@@ -283,6 +300,7 @@ async def switch_library(body: LibrarySwitchIn) -> dict[str, Any]:
         store.gc_assets()
     except Exception as e:  # GC の失敗で切替を止めない
         print(f"[assets] GC に失敗: {e}")
+    _voice_housekeeping()
     _schedule_audio_gc()
     _spawn_bg(_auto_backup_quietly())  # 開いたライブラリの日次チェック
     return {"root": store.root}
@@ -310,9 +328,14 @@ async def get_character(char_id: str) -> dict[str, Any]:
 
 @app.patch("/characters/{char_id}")
 async def update_character(char_id: str, body: CharacterPatch) -> dict[str, Any]:
-    char = store.update_character(char_id, body.model_dump(exclude_unset=True))
+    patch = body.model_dump(exclude_unset=True)
+    if patch.get("voice_profile_id") and store.get_voice_profile(patch["voice_profile_id"]) is None:
+        raise HTTPException(400, "voice profile not found")
+    char = store.update_character(char_id, patch)
     if char is None:
         raise HTTPException(404, "character not found")
+    if "voice_profile_id" in patch:
+        _schedule_audio_gc()  # 前の声で作った台詞の音声は使われなくなる
     return char
 
 
@@ -1409,6 +1432,8 @@ class TtsLineIn(BaseModel):
     speaker: str | None = None
     emotion: str | None = None
     intensity: float | None = None
+    # この声で読む(声の試し読み用)。省略時は話者から決める(キャラの声 → 語り手の声)
+    profile_id: str | None = None
 
 
 @app.post("/tts/speak")
@@ -1421,15 +1446,127 @@ async def tts_speak(body: TtsLineIn) -> FileResponse:
         raise HTTPException(400, "読む文字がありません")
     settings = store.get_settings()
     engine = _tts_engine()
+    line = body.model_dump(exclude={"profile_id"})
     try:
+        book = voice.VoiceBook(store, settings)
         base_url = await tts_mgr.ensure_running(settings)
-        path = await voice.speak(settings, engine, body.model_dump(), base_url, _audio_dir())
+        path = await voice.speak(book, engine, line, base_url, _audio_dir(), body.profile_id)
     except ValueError as e:
         raise HTTPException(400, str(e))
     except RuntimeError as e:
         raise HTTPException(502, str(e))
     media = {"wav": "audio/wav", "mp3": "audio/mpeg", "flac": "audio/flac", "opus": "audio/ogg", "aac": "audio/aac"}
     return FileResponse(str(path), media_type=media.get(path.suffix.lstrip("."), "application/octet-stream"))
+
+
+# ---- 読み上げの声(docs/design/voice.md §5) ----------------------------
+
+ALLOWED_VOICE_EXTS = {".wav", ".mp3", ".flac", ".ogg"}
+MAX_VOICE_BYTES = 30 * 1024 * 1024
+
+
+class VoiceProfileIn(BaseModel):
+    name: str | None = None
+    caption: str | None = None
+    seed: int | None = None
+    preset: str | None = None
+    params: dict[str, Any] | None = None
+    ref_paths: list[str] | None = None  # 並べ替え・取り外し用(取り込みは /refs)
+
+
+def _voice_profile_or_404(profile_id: str) -> dict[str, Any]:
+    profile = store.get_voice_profile(profile_id)
+    if profile is None:
+        raise HTTPException(404, "voice profile not found")
+    return profile
+
+
+@app.get("/voice_profiles")
+async def list_voice_profiles() -> dict[str, Any]:
+    """声の一覧と、語り手・キャラへの割り当て。"""
+    return {
+        "profiles": store.list_voice_profiles(),
+        "narrator_profile_id": (store.get_settings().get("tts_narrator_profile") or None),
+        "assignments": {c["id"]: c.get("voice_profile_id") for c in store.list_characters() if c.get("voice_profile_id")},
+    }
+
+
+@app.post("/voice_profiles")
+async def create_voice_profile(body: VoiceProfileIn) -> dict[str, Any]:
+    return store.create_voice_profile(body.model_dump(exclude_unset=True))
+
+
+@app.patch("/voice_profiles/{profile_id}")
+async def update_voice_profile(profile_id: str, body: VoiceProfileIn) -> dict[str, Any]:
+    profile = _voice_profile_or_404(profile_id)
+    patch = body.model_dump(exclude_unset=True)
+    if "ref_paths" in patch:
+        # 取り外しと並べ替えだけを受け付ける(知らないファイル名を足させない)
+        known = set(profile["ref_paths"])
+        patch["ref_paths"] = [p for p in patch["ref_paths"] or [] if p in known]
+    updated = store.update_voice_profile(profile_id, patch)
+    _schedule_audio_gc()  # 声を変えると、前の声で作った音声は使われなくなる
+    return updated  # type: ignore[return-value]
+
+
+@app.delete("/voice_profiles/{profile_id}")
+async def delete_voice_profile(profile_id: str) -> dict[str, str]:
+    _voice_profile_or_404(profile_id)
+    store.delete_voice_profile(profile_id)
+    _schedule_audio_gc()
+    return {"status": "deleted"}
+
+
+@app.post("/voice_profiles/{profile_id}/refs")
+async def add_voice_ref(profile_id: str, file: UploadFile) -> dict[str, Any]:
+    """参照音声を取り込み(ライブラリの assets/voices へ)、声の末尾に足す。"""
+    import uuid
+    from pathlib import Path as _Path
+
+    profile = _voice_profile_or_404(profile_id)
+    voices = store.voices_dir()
+    if voices is None:
+        raise HTTPException(500, "ライブラリが未設定です")
+    ext = _Path(file.filename or "").suffix.lower()
+    if ext not in ALLOWED_VOICE_EXTS:
+        raise HTTPException(400, f"対応していない形式です: {ext or '(拡張子なし)'}(wav / mp3 / flac / ogg)")
+    data = bytearray()
+    while chunk := await file.read(1 << 20):
+        data.extend(chunk)
+        if len(data) > MAX_VOICE_BYTES:
+            raise HTTPException(400, f"{MAX_VOICE_BYTES // (1024 * 1024)}MB を超える音声は取り込めません")
+    name = f"{uuid.uuid4().hex[:12]}{ext}"
+    await asyncio.to_thread((_Path(voices) / name).write_bytes, bytes(data))
+    updated = store.update_voice_profile(profile_id, {"ref_paths": [*profile["ref_paths"], name]})
+    _schedule_audio_gc()
+    return updated  # type: ignore[return-value]
+
+
+@app.get("/voices/{filename}")
+async def get_voice_file(filename: str) -> FileResponse:
+    """参照音声の再生用。"""
+    from pathlib import Path as _Path
+
+    voices = store.voices_dir()
+    path = _Path(voices) / _Path(filename).name if voices else None  # パストラバーサル防止
+    if path is None or not path.exists():
+        raise HTTPException(404, "not found")
+    return FileResponse(str(path), headers={"Access-Control-Allow-Origin": "*"})
+
+
+@app.post("/characters/{char_id}/voice_caption")
+async def draft_character_voice_caption(char_id: str) -> dict[str, str]:
+    """キャラの資料から声の説明の下書きを LLM で作る(保存はしない)。"""
+    import voice
+
+    char = store.get_character(char_id)
+    if char is None:
+        raise HTTPException(404, "character not found")
+    try:
+        base_url = await llama.ensure_running(store.get_settings())
+        return {"caption": await voice.draft_caption(char, base_url)}
+    except RuntimeError as e:
+        raise HTTPException(502, str(e))
 
 
 @app.post("/tts/cache/clear")

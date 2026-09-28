@@ -173,6 +173,21 @@ CREATE TABLE IF NOT EXISTS voice_scripts(
 );
 CREATE INDEX IF NOT EXISTS idx_voice_scripts_node ON voice_scripts(node_id, updated_at);
 
+-- 読み上げの声(docs/design/voice.md §5)。語り手(settings の tts_narrator_profile)と
+-- キャラ(characters.voice_profile_id)に割り当てる。エンジンには縛らない(説明文と参照音声は
+-- どのエンジンにも渡せる形で持ち、受け付けない指定はエンジン側で無視される)
+CREATE TABLE IF NOT EXISTS voice_profiles(
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  caption TEXT,                    -- 声の説明(ボイスデザイン)
+  ref_paths TEXT,                  -- JSON 配列。assets/voices 内のファイル名(参照音声。複数可)
+  seed INTEGER,                    -- NULL = 既定(voice.DEFAULT_SEED)。固定しないと行ごとに声が揺れる
+  preset TEXT,                     -- エンジン側に登録済みの声 ID(voice.modes に preset があるエンジン用)
+  params TEXT,                     -- JSON。この声だけ /v1/audio/speech に重ねるパラメータ
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
 -- 頻出クエリの索引。parent_of / 子の列挙(edges)、最新清書の取得と stale 化(renders)、
 -- イベント削除に伴う記憶の削除(memories)はどれもミューテーションや画面更新の
 -- たびに走るので、全表走査にしない
@@ -283,6 +298,9 @@ def init_schema(conn: sqlite3.Connection) -> None:
         "ALTER TABLE nodes ADD COLUMN image_workflow TEXT",
         "ALTER TABLE characters ADD COLUMN ref_image_workflow TEXT",
         "ALTER TABLE media ADD COLUMN workflow TEXT",
+        # 読み上げの声(voice_profiles.id。NULL = 語り手の声で読む。docs/design/voice.md §5)。
+        # 既存の voice 列は「口調・一人称」のテキストで、LLM に渡す資料なので別物
+        "ALTER TABLE characters ADD COLUMN voice_profile_id TEXT",
     ):
         try:
             conn.execute(ddl)

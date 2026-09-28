@@ -847,8 +847,70 @@ export function ttsInstallStream(onProgress: (p: TtsInstallProgress) => void, si
   return postSse('/tts/install', {}, onProgress, signal)
 }
 
-/** 台本の 1 行を合成して音声(Blob)を返す。TTS サーバーが止まっていれば起動する */
-export async function ttsSpeak(line: VoiceLine, signal?: AbortSignal): Promise<Blob> {
+/** 読み上げの声(docs/design/voice.md §5) */
+export interface VoiceProfile {
+  id: string
+  name: string
+  /** 声の説明(ボイスデザイン) */
+  caption: string | null
+  /** 参照音声(ライブラリの assets/voices 内のファイル名) */
+  ref_paths: string[]
+  /** null = 既定の seed */
+  seed: number | null
+  preset: string | null
+  /** この声だけ /v1/audio/speech に重ねるパラメータ */
+  params: Record<string, unknown> | null
+  created_at: string
+  updated_at: string
+}
+
+export interface VoiceProfileList {
+  profiles: VoiceProfile[]
+  /** 語り手の声(null = 未設定) */
+  narrator_profile_id: string | null
+  /** キャラ ID → 声 ID(声を割り当てたキャラだけ) */
+  assignments: Record<string, string>
+}
+
+export type VoiceProfilePatch = Partial<Pick<VoiceProfile, 'name' | 'caption' | 'seed' | 'preset' | 'params' | 'ref_paths'>>
+
+export const voiceApi = {
+  list: () => request<VoiceProfileList>('/voice_profiles'),
+  create: (data: VoiceProfilePatch) =>
+    request<VoiceProfile>('/voice_profiles', { method: 'POST', body: JSON.stringify(data) }),
+  update: (id: string, data: VoiceProfilePatch) =>
+    request<VoiceProfile>(`/voice_profiles/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  remove: (id: string) => request<{ status: string }>(`/voice_profiles/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  /** キャラの資料から声の説明の下書きを LLM で作る(保存はしない) */
+  draftCaption: (charId: string, signal?: AbortSignal) =>
+    request<{ caption: string }>(`/characters/${encodeURIComponent(charId)}/voice_caption`, { method: 'POST', signal })
+}
+
+/** 参照音声を取り込んで声の末尾に足す */
+export async function uploadVoiceRef(profileId: string, file: File): Promise<VoiceProfile> {
+  if (!baseUrl) throw new Error('backend not ready')
+  const form = new FormData()
+  form.append('file', file)
+  const res = await fetch(`${baseUrl}/voice_profiles/${encodeURIComponent(profileId)}/refs`, { method: 'POST', body: form })
+  if (!res.ok) {
+    let detail = await res.text()
+    try {
+      detail = (JSON.parse(detail) as { detail?: string }).detail ?? detail
+    } catch {
+      // JSON でなければ本文のまま
+    }
+    throw new Error(detail)
+  }
+  return res.json() as Promise<VoiceProfile>
+}
+
+export function voiceFileUrl(name: string): string | null {
+  return baseUrl ? `${baseUrl}/voices/${encodeURIComponent(name)}` : null
+}
+
+/** 台本の 1 行を合成して音声(Blob)を返す。TTS サーバーが止まっていれば起動する。
+ *  profileId を渡すとその声で読む(声の試し読み)。省略時は話者から決まる */
+export async function ttsSpeak(line: VoiceLine, signal?: AbortSignal, profileId?: string): Promise<Blob> {
   if (!baseUrl) throw new Error('backend not ready')
   const res = await fetch(`${baseUrl}/tts/speak`, {
     method: 'POST',
@@ -858,7 +920,8 @@ export async function ttsSpeak(line: VoiceLine, signal?: AbortSignal): Promise<B
       kind: line.kind,
       speaker: line.speaker,
       emotion: line.emotion,
-      intensity: line.intensity
+      intensity: line.intensity,
+      profile_id: profileId ?? null
     }),
     signal
   })

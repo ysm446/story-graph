@@ -1,15 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
-import { api, isAbortError, ttsInstallStream, ttsSpeak, type TtsInstallProgress, type TtsStatus } from './api'
+import { api, isAbortError, ttsInstallStream, type TtsInstallProgress, type TtsStatus } from './api'
 import AutoTextarea from './AutoTextarea'
+import VoiceProfilesCard from './VoiceProfilesCard'
 import { useElapsedSeconds } from './useElapsed'
 
 function fmtBytes(bytes: number): string {
   const gb = bytes / 1024 ** 3
   return gb >= 1 ? `${gb.toFixed(2)} GB` : `${(bytes / 1024 ** 2).toFixed(0)} MB`
 }
-
-const SAMPLE_TEXT = '雨は夜更け過ぎに、雪へと変わった。「……ねえ、起きてる?」'
-const CAPTION_PLACEHOLDER = '落ち着いた大人の女性の声。静かな部屋で、柔らかく丁寧に物語を読み聞かせている'
 
 // 設定 →「音声読み上げ」。TTS サーバーの稼働・接続先・モデルフォルダ・語り手の声・インストール・
 // 音声キャッシュ(docs/design/voice.md)。画像生成(ComfyUI)のセクションと同じ並びにしてある
@@ -29,14 +27,9 @@ export default function VoiceSettingsSection({
   const [step, setStep] = useState<string | null>(null)
   const [logLines, setLogLines] = useState<string[]>([])
   const [removing, setRemoving] = useState(false)
-  const [sample, setSample] = useState(SAMPLE_TEXT)
-  const [testing, setTesting] = useState(false)
-  const [testError, setTestError] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
-  const audioRef = useRef<HTMLAudioElement | null>(null)
   const busyElapsed = useElapsedSeconds(busy !== null)
   const installElapsed = useElapsedSeconds(installing)
-  const testElapsed = useElapsedSeconds(testing)
 
   const refresh = async (): Promise<void> => {
     try {
@@ -50,7 +43,6 @@ export default function VoiceSettingsSection({
     void refresh()
     return () => {
       abortRef.current?.abort()
-      audioRef.current?.pause()
     }
   }, [])
 
@@ -126,34 +118,6 @@ export default function VoiceSettingsSection({
     }
   }
 
-  const handleTest = async (): Promise<void> => {
-    if (!sample.trim()) return
-    audioRef.current?.pause()
-    setTesting(true)
-    setTestError(null)
-    try {
-      const blob = await ttsSpeak({
-        speaker: 'narrator',
-        kind: sample.trim().startsWith('「') ? 'dialogue' : 'narration',
-        text: sample.trim(),
-        emotion: 'neutral',
-        intensity: 0.5,
-        pause_after_ms: 0,
-        edited: false
-      })
-      const url = URL.createObjectURL(blob)
-      const audio = new Audio(url)
-      audio.onended = () => URL.revokeObjectURL(url)
-      audioRef.current = audio
-      await audio.play()
-    } catch (e) {
-      setTestError(String(e).replace(/^Error:\s*/, ''))
-    } finally {
-      setTesting(false)
-      void refresh()
-    }
-  }
-
   const handleClearCache = async (): Promise<void> => {
     try {
       await api.ttsClearCache()
@@ -182,7 +146,6 @@ export default function VoiceSettingsSection({
   )
 
   const engineLabel = status?.engine.label ?? 'TTS'
-  const modes = status?.engine.voice_modes ?? []
   const canStart = !!status && !status.healthy && (status.installed || !!values.tts_base_url)
 
   return (
@@ -304,46 +267,9 @@ export default function VoiceSettingsSection({
         </div>
       </div>
 
+      <VoiceProfilesCard />
+
       <div className="settings-card">
-        <div className="settings-field">
-          <div className="settings-field-header">
-            <span className="settings-field-label">語り手の声</span>
-          </div>
-          <p className="settings-field-hint">地の文を読む声です。いまは台詞もこの声で読みます(キャラクターごとの声はこれから対応します)。</p>
-        </div>
-        {modes.includes('caption') && (
-          <div className="settings-field">
-            <div className="settings-field-header">
-              <span className="settings-field-label">声の説明(キャプション)</span>
-            </div>
-            <AutoTextarea
-              minRows={2}
-              value={values.tts_narrator_caption ?? ''}
-              placeholder={CAPTION_PLACEHOLDER}
-              onChange={(next) => setValues((v) => ({ ...v, tts_narrator_caption: next }))}
-              onBlur={() => void save({ tts_narrator_caption: values.tts_narrator_caption ?? '' })}
-              className="w-full rounded-lg border px-3 py-2 text-[13px] outline-none"
-              style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
-            />
-            <p className="settings-field-hint">
-              どんな声か・どんな場面でどう話しているかを日本語で書きます。参照音声と両方あるときは、参照音声の声に説明の話し方を重ねます。
-            </p>
-          </div>
-        )}
-        {modes.includes('reference') &&
-          textField(
-            'tts_narrator_ref',
-            '参照音声(任意)',
-            'D:\\voices\\narrator.wav',
-            'この声を真似て読みます。wav などの絶対パス。実在の人の声を無断で使わないでください。'
-          )}
-        {textField(
-          'tts_narrator_seed',
-          'seed',
-          '1234',
-          '同じ seed だと行ごとの声の揺れが小さくなります。キャプションだけで声を作るときは固定してください。',
-          'w-32'
-        )}
         <div className="settings-field">
           <div className="settings-field-header">
             <span className="settings-field-label">追加パラメータ(JSON)</span>
@@ -360,33 +286,6 @@ export default function VoiceSettingsSection({
           <p className="settings-field-hint">
             /v1/audio/speech の本文にそのまま重ねます(エンジン固有のパラメータ用)。ステップ数を減らすと速く、増やすと丁寧になります。
           </p>
-        </div>
-        <div className="settings-field">
-          <div className="settings-field-header">
-            <span className="settings-field-label">試しに読む</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <input
-              value={sample}
-              onChange={(e) => setSample(e.target.value)}
-              className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[13px] outline-none"
-              style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
-            />
-            <button
-              onClick={() => void handleTest()}
-              disabled={testing || !sample.trim()}
-              className="shrink-0 rounded-lg border px-3 py-1.5 text-[13px] disabled:opacity-40"
-              style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-              data-tip="いまの声の設定で合成して再生します(止まっていればサーバーを起動します)"
-            >
-              {testing ? `合成しています…(${testElapsed}s)` : '▶ 再生'}
-            </button>
-          </div>
-          {testError && (
-            <p className="whitespace-pre-wrap text-[12px]" style={{ color: '#f2a3a3' }}>
-              {testError}
-            </p>
-          )}
         </div>
       </div>
 

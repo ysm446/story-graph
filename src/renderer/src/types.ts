@@ -19,6 +19,8 @@ export interface Character {
   ref_image_seed: number | null
   /** 生成に使ったワークフローの組(workflows/variants.json の id。null = 既定) */
   ref_image_workflow?: string | null
+  /** 読み上げの声(voice_profiles.id)。null = 語り手の声で読む */
+  voice_profile_id?: string | null
   created_at: string
 }
 

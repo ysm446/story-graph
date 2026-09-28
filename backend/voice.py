@@ -317,20 +317,91 @@ async def annotate_script(
     return out
 
 
-# ---- 声と設定 --------------------------------------------------------------
+# ---- 声と設定(docs/design/voice.md §5) --------------------------------------
 
-def narrator_voice(settings: dict[str, str]) -> dict[str, Any]:
-    """地の文の声(Step 1 は台詞もこの声で読む)。seed を固定しないと行ごとに声が変わる。"""
+def legacy_narrator_voice(settings: dict[str, str]) -> dict[str, Any]:
+    """Step 1 の設定キー(tts_narrator_caption / _ref / _seed)で決める語り手の声。語り手の声
+    (tts_narrator_profile)が未設定のときの受け皿。seed を固定しないと行ごとに声が変わる。"""
     seed_text = (settings.get("tts_narrator_seed") or "").strip()
     try:
         seed = int(seed_text) if seed_text else DEFAULT_SEED
     except ValueError:
         raise ValueError(f"語り手の seed が整数ではありません: {seed_text}")
+    ref = (settings.get("tts_narrator_ref") or "").strip()
     return {
         "caption": (settings.get("tts_narrator_caption") or "").strip(),
-        "ref_path": (settings.get("tts_narrator_ref") or "").strip(),
+        "ref_paths": [ref] if ref else [],
         "seed": seed,
+        "preset": None,
+        "params": None,
     }
+
+
+def migrate_legacy_narrator(store: Any) -> dict[str, Any] | None:
+    """Step 1 の語り手の設定キーを「語り手」という名前の声に移し、語り手に割り当てる(1 回だけ)。
+    参照音声(絶対パス)はライブラリの assets/voices へ複製する。移したら声を返す。"""
+    import shutil
+    import uuid
+
+    settings = store.get_settings()
+    if (settings.get("tts_narrator_profile") or "").strip():
+        return None
+    caption = (settings.get("tts_narrator_caption") or "").strip()
+    ref = (settings.get("tts_narrator_ref") or "").strip()
+    seed_text = (settings.get("tts_narrator_seed") or "").strip()
+    if not (caption or ref or seed_text):
+        return None
+    ref_paths: list[str] = []
+    voices = store.voices_dir()
+    if ref and voices and Path(ref).is_file():
+        name = f"{uuid.uuid4().hex[:12]}{Path(ref).suffix.lower()}"
+        shutil.copyfile(ref, Path(voices) / name)
+        ref_paths.append(name)
+    profile = store.create_voice_profile(
+        {
+            "name": "語り手",
+            "caption": caption or None,
+            "ref_paths": ref_paths,
+            "seed": int(seed_text) if seed_text.lstrip("-").isdigit() else None,
+        }
+    )
+    store.set_settings(
+        {"tts_narrator_profile": profile["id"], "tts_narrator_caption": "", "tts_narrator_ref": "", "tts_narrator_seed": ""}
+    )
+    return profile
+
+
+CAPTION_TEMPERATURE = 0.5
+CAPTION_PROMPT = """あなたは音声合成(TTS)の声を設計するボイスディレクターです。小説の登場人物の資料から、
+その人物の声を作るための「声の説明」を書きます。
+
+- 1〜2 文の日本語。性別・年代、声の高さと質感、話す速さと調子、普段どんな話し方をするかを入れる
+- 例: 「落ち着いた大人の男性。深く響く低めの声で、ゆっくりと丁寧に話している」
+  「若く元気な女性の声。明るくハキハキとした少し高めのトーンで、早口気味に話している」
+- 資料に無いことは、人物像から自然に推し量ってよい。名前・固有名詞・台詞の引用は書かない
+- 説明文だけを出力する(前置き・かぎ括弧・箇条書きは付けない)"""
+
+
+async def draft_caption(char: dict[str, Any], base_url: str) -> str:
+    """キャラの資料(プロフィール・外見・口調)から声の説明の下書きを LLM で作る。保存はしない。"""
+    notes = [f"名前: {char['name']}"]
+    for key, label in (("profile", "プロフィール"), ("appearance", "外見"), ("voice", "口調・一人称")):
+        if (char.get(key) or "").strip():
+            notes.append(f"{label}: {char[key].strip()}")
+    result = await llm.chat(
+        [
+            {"role": "system", "content": CAPTION_PROMPT},
+            {"role": "user", "content": "## 人物の資料\n" + "\n".join(notes) + "\n\nこの人物の声の説明を書いてください。"},
+        ],
+        base_url=base_url,
+        max_tokens=300,
+        temperature=CAPTION_TEMPERATURE,
+        label=f"声の説明: {char['name']}",
+    )
+    text = (result.get("content") or "").strip().strip("「」\"'")
+    if not text:
+        raise RuntimeError("声の説明を作れませんでした(LLM の出力が空)")
+    return text
 
 
 def extra_body(settings: dict[str, str]) -> dict[str, Any]:
@@ -356,36 +427,83 @@ def extra_body(settings: dict[str, str]) -> dict[str, Any]:
 def cache_key(engine_id: str, body: dict[str, Any], voice: dict[str, Any]) -> str:
     """同じ (エンジン, リクエスト, 参照音声の中身) なら同じ鍵。参照音声は差し替えに気付けるよう
     パスだけでなく大きさと更新時刻も混ぜる。"""
-    ref_stat = None
-    ref = voice.get("ref_path")
-    if ref:
+    ref_stats: list[Any] = []
+    for ref in voice.get("ref_paths") or []:
         try:
             st = Path(ref).stat()
-            ref_stat = [st.st_size, int(st.st_mtime)]
+            ref_stats.append([st.st_size, int(st.st_mtime)])
         except OSError:
-            ref_stat = "missing"
-    payload = json.dumps({"engine": engine_id, "body": body, "ref": ref_stat}, sort_keys=True, ensure_ascii=False)
+            ref_stats.append("missing")
+    payload = json.dumps({"engine": engine_id, "body": body, "ref": ref_stats or None}, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
 
 
-def line_audio(settings: dict[str, str], engine: dict[str, Any], line: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-    """1 行の (キャッシュのファイル名, リクエストの body)。合成(speak)と掃除(gc_audio)が同じ計算を使う
-    ことで、「いま読むと使うファイル」を合成せずに割り出せる。声の決め方を変えるときはここだけを直す。"""
-    voice = narrator_voice(settings)
-    body = tts.build_request(engine, line, voice, extra_body(settings))
-    ext = str(body.get("response_format") or "wav")
-    return f"{cache_key(engine['id'], body, voice)}.{ext}", body
+class VoiceBook:
+    """行の話者から声を引く帳面。声・キャラの割り当て・設定をまとめて読んでおき、1 回の読み上げ(1 行)や
+    掃除の間だけ使う。合成(speak)と掃除(expected_audio)が同じ計算を使うことで、「いま読むと使う
+    ファイル」を合成せずに割り出せる。声の決め方を変えるときはここだけを直す。
+
+    - 台詞(speaker = char:<id>)は、そのキャラに割り当てた声。割り当てが無ければ語り手の声
+    - 地の文と narrator の台詞は語り手の声(tts_narrator_profile。未設定なら Step 1 の設定キー)
+    - 声が壊れた設定(追加パラメータの JSON が読めない等)なら作るときに ValueError
+    """
+
+    def __init__(self, store: Any, settings: dict[str, str]) -> None:
+        self.settings = settings
+        voices = store.voices_dir()
+        self.voices_dir = Path(voices) if voices else None
+        self.profiles = {p["id"]: p for p in store.list_voice_profiles()}
+        self.char_profile = {c["id"]: c.get("voice_profile_id") for c in store.list_characters()}
+        self.extra = extra_body(settings)
+        narrator_id = (settings.get("tts_narrator_profile") or "").strip()
+        self.narrator = (
+            self.profile_voice(self.profiles[narrator_id])
+            if narrator_id in self.profiles
+            else legacy_narrator_voice(settings)
+        )
+
+    def profile_voice(self, profile: dict[str, Any]) -> dict[str, Any]:
+        refs = [str(self.voices_dir / name) for name in profile.get("ref_paths") or []] if self.voices_dir else []
+        return {
+            "caption": profile.get("caption") or "",
+            "ref_paths": refs,
+            "seed": profile["seed"] if profile.get("seed") is not None else DEFAULT_SEED,
+            "preset": profile.get("preset"),
+            "params": profile.get("params"),
+        }
+
+    def voice_for(self, line: dict[str, Any], profile_id: str | None = None) -> dict[str, Any]:
+        """行を読む声。profile_id を渡すとその声で読む(声の試し読み用)。"""
+        if profile_id and profile_id in self.profiles:
+            return self.profile_voice(self.profiles[profile_id])
+        speaker = str(line.get("speaker") or "narrator")
+        if speaker.startswith("char:"):
+            assigned = self.char_profile.get(speaker[5:])
+            if assigned in self.profiles:
+                return self.profile_voice(self.profiles[assigned])
+        return self.narrator
+
+    def line_audio(
+        self, engine: dict[str, Any], line: dict[str, Any], profile_id: str | None = None
+    ) -> tuple[str, dict[str, Any]]:
+        """1 行の (キャッシュのファイル名, リクエストの body)。声だけの追加パラメータは設定の上に重ねる。"""
+        voice = self.voice_for(line, profile_id)
+        extra = tts.deep_merge(self.extra, voice.get("params") or {})
+        body = tts.build_request(engine, line, voice, extra)
+        ext = str(body.get("response_format") or "wav")
+        return f"{cache_key(engine['id'], body, voice)}.{ext}", body
 
 
 async def speak(
-    settings: dict[str, str],
+    book: VoiceBook,
     engine: dict[str, Any],
     line: dict[str, Any],
     base_url: str,
     audio_dir: Path,
+    profile_id: str | None = None,
 ) -> Path:
     """1 行を合成して音声ファイルのパスを返す。キャッシュにあれば合成しない。"""
-    name, body = line_audio(settings, engine, line)
+    name, body = book.line_audio(engine, line, profile_id)
     ext = name.rsplit(".", 1)[1]
     path = audio_dir / name
     if path.exists():
@@ -408,10 +526,11 @@ def expected_audio(store: Any, settings: dict[str, str]) -> set[str]:
     声の設定が壊れている(seed が数でない等)と ValueError。そのときに空集合を返すと全部消えてしまうので、
     呼び出し側は掃除をやめる。"""
     engine = tts.get_engine(tts.resolve_engine_id(settings))
+    book = VoiceBook(store, settings)
     names: set[str] = set()
     for render in store.latest_renders():
         for line in resolve_script(store, render)["lines"]:
-            names.add(line_audio(settings, engine, line)[0])
+            names.add(book.line_audio(engine, line)[0])
     return names
 
 

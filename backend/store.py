@@ -43,6 +43,9 @@ ASSET_REF_SQLS = (
     "SELECT thumb_path FROM media WHERE thumb_path IS NOT NULL",
 )
 
+# 参照音声(assets/voices)を参照する SQL。gc_voices がスナップショット DB にも同じものを流す
+VOICE_REF_SQLS = ("SELECT j.value FROM voice_profiles p, json_each(p.ref_paths) j",)
+
 MEDIA_OWNER_TYPES = ("node", "character")
 
 
@@ -111,7 +114,7 @@ class Store:
         fields = ["name", "profile", "appearance", "voice", "color", "graph_x", "graph_y",
                   "portrait_path", "portrait_source_path", "portrait_crop",
                   "ref_image_path", "ref_image_prompt", "ref_image_instructions", "ref_image_seed",
-                  "ref_image_workflow"]
+                  "ref_image_workflow", "voice_profile_id"]
         updates = {k: data[k] for k in fields if k in data}
         if updates:
             sets = ", ".join(f"{k} = ?" for k in updates)
@@ -1415,6 +1418,113 @@ class Store:
         path = Path(self.root) / "assets" / "images"
         path.mkdir(parents=True, exist_ok=True)
         return str(path)
+
+    def voices_dir(self) -> str | None:
+        """参照音声の置き場(assets/voices)。声(voice_profiles.ref_paths)から参照する作者の素材なので、
+        キャッシュ(assets/audio)と違って外部バックアップにも入る。"""
+        if not self.root:
+            return None
+        from pathlib import Path
+
+        path = Path(self.root) / "assets" / "voices"
+        path.mkdir(parents=True, exist_ok=True)
+        return str(path)
+
+    def gc_voices(self) -> int:
+        """assets/voices のうち、どの声(スナップショット含む)からも参照されないファイルを消す。
+        gc_assets と同じく、置いた直後の 1 時間は守る(取り込み直後に声へ登録する前の窓)。"""
+        import time
+        from pathlib import Path
+
+        voices = self.voices_dir()
+        if voices is None:
+            return 0
+        referenced: set[str] = set()
+        for sql in VOICE_REF_SQLS:
+            referenced |= {Path(r[0]).name for r in self.conn.execute(sql).fetchall() if r[0]}
+        if self.root:
+            import snapshots
+
+            referenced |= snapshots.collect_asset_references(self.root, VOICE_REF_SQLS)
+        removed = 0
+        grace_limit = time.time() - 3600
+        for f in Path(voices).iterdir():
+            if not f.is_file() or f.name in referenced:
+                continue
+            try:
+                if f.stat().st_mtime > grace_limit:
+                    continue
+                f.unlink()
+                removed += 1
+            except OSError:
+                pass
+        return removed
+
+    # ---- 読み上げの声(docs/design/voice.md §5) -------------------------
+
+    @staticmethod
+    def _voice_profile_row(row: sqlite3.Row | None) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        profile = dict(row)
+        profile["ref_paths"] = json.loads(profile["ref_paths"] or "[]")
+        profile["params"] = json.loads(profile["params"]) if profile.get("params") else None
+        return profile
+
+    def list_voice_profiles(self) -> list[dict[str, Any]]:
+        rows = self.conn.execute("SELECT * FROM voice_profiles ORDER BY created_at").fetchall()
+        return [self._voice_profile_row(r) for r in rows]  # type: ignore[misc]
+
+    def get_voice_profile(self, profile_id: str) -> dict[str, Any] | None:
+        row = self.conn.execute("SELECT * FROM voice_profiles WHERE id = ?", (profile_id,)).fetchone()
+        return self._voice_profile_row(row)
+
+    def create_voice_profile(self, data: dict[str, Any]) -> dict[str, Any]:
+        profile_id = _new_id()
+        now = _now()
+        self.conn.execute(
+            """INSERT INTO voice_profiles(id, name, caption, ref_paths, seed, preset, params, created_at, updated_at)
+               VALUES(?,?,?,?,?,?,?,?,?)""",
+            (
+                profile_id,
+                data.get("name") or "新しい声",
+                data.get("caption"),
+                json.dumps(data.get("ref_paths") or [], ensure_ascii=False),
+                data.get("seed"),
+                data.get("preset"),
+                json.dumps(data["params"], ensure_ascii=False) if data.get("params") else None,
+                now,
+                now,
+            ),
+        )
+        self.conn.commit()
+        return self.get_voice_profile(profile_id)  # type: ignore[return-value]
+
+    def update_voice_profile(self, profile_id: str, data: dict[str, Any]) -> dict[str, Any] | None:
+        updates: dict[str, Any] = {}
+        for key in ("name", "caption", "seed", "preset"):
+            if key in data:
+                updates[key] = data[key]
+        if "ref_paths" in data:
+            updates["ref_paths"] = json.dumps(data["ref_paths"] or [], ensure_ascii=False)
+        if "params" in data:
+            updates["params"] = json.dumps(data["params"], ensure_ascii=False) if data["params"] else None
+        if updates:
+            updates["updated_at"] = _now()
+            sets = ", ".join(f"{k} = ?" for k in updates)
+            self.conn.execute(f"UPDATE voice_profiles SET {sets} WHERE id = ?", (*updates.values(), profile_id))
+            self.conn.commit()
+        return self.get_voice_profile(profile_id)
+
+    def delete_voice_profile(self, profile_id: str) -> None:
+        """声を消し、割り当てを外す(キャラも語り手も、外れたら語り手 / 既定の声で読む)。
+        参照音声のファイルは gc_voices が回収する(スナップショットが参照していれば残る)。"""
+        self.conn.execute("DELETE FROM voice_profiles WHERE id = ?", (profile_id,))
+        self.conn.execute("UPDATE characters SET voice_profile_id = NULL WHERE voice_profile_id = ?", (profile_id,))
+        self.conn.execute(
+            "DELETE FROM settings WHERE key = 'tts_narrator_profile' AND value = ?", (profile_id,)
+        )
+        self.conn.commit()
 
     def audio_dir(self) -> str | None:
         """読み上げ音声のキャッシュ(assets/audio)。DB からは参照しないので gc_assets の対象外。

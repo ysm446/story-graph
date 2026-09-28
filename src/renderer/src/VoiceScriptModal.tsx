@@ -177,7 +177,7 @@ export default function VoiceScriptModal({
           清書は変えずに、読み上げ用の台本だけを直します。読みにくい語はひらがなに開いてください。直した行は LLM で付け直しても上書きされず、
           清書を作り直しても同じ文なら引き継がれます。
           {script && !script.saved && script.carried > 0 && ` 前の清書の台本から ${script.carried} 行を引き継いでいます。`}
-          いまは話者に関わらず語り手の声で読みます(キャラクターごとの声はこれから対応します)。
+          台詞は、話者のキャラクターに割り当てた声で読みます(割り当てが無ければ語り手の声)。
         </p>
 
         <div className="inspector-scrollbar min-h-0 flex-1 overflow-y-auto pr-1">

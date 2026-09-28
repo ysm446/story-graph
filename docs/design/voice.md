@@ -1,7 +1,7 @@
 # 音声読み上げ(TTS 連携)— 朗読台本と差し替え可能なエンジン
 
 作成日時: 2026-09-28 19:58
-更新日時: 2026-09-28 21:17
+更新日時: 2026-09-28 21:41
 
 ローカルの TTS で清書(鑑賞モードの散文)を読み上げる仕組みの設計メモ。2026-09-28 のユーザー発案。
 最初のエンジンは [Irodori-TTS](https://github.com/Aratako/Irodori-TTS)(Aratako、MIT)とするが、
@@ -257,27 +257,51 @@ STYLE_MAPS = {
 CREATE TABLE IF NOT EXISTS voice_profiles(
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
-  engine_id TEXT NOT NULL,   -- どのエンジン用の声か
-  mode TEXT NOT NULL,        -- 'reference' | 'caption' | 'preset'
-  ref_paths TEXT,            -- JSON 配列。assets/voices/ 内のファイル名(reference)
-  caption TEXT,              -- 声の説明文(caption)
-  preset TEXT,               -- エンジン側の声 ID(preset)
-  params TEXT,               -- JSON。この声だけの extra_body 上書き(seed など)
-  created_at TEXT
+  caption TEXT,              -- 声の説明(ボイスデザイン)
+  ref_paths TEXT,            -- JSON 配列。assets/voices 内のファイル名(参照音声。複数可)
+  seed INTEGER,              -- NULL = 既定(1234)
+  preset TEXT,               -- エンジン側に登録済みの声 ID(voice.modes に preset があるエンジン用)
+  params TEXT,               -- JSON。この声だけ /v1/audio/speech に重ねるパラメータ
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
 );
+-- characters.voice_profile_id TEXT(NULL = 語り手の声で読む)
+-- settings の tts_narrator_profile(語り手の声)
 ```
 
-- **参照音声はライブラリの `assets/voices/` に置く**(挿絵と同じく、声もライブラリに付いてくる)。
-  リクエスト時に `irodori.ref_wavs` などとして渡すので、TTS サーバー側の `voices.json` には依存しない。
-- **キャラクターへの割り当ては `characters.voice_profile_id` の新しい列**にする。
-  既存の `characters.voice` は「口調・一人称」のテキストで、LLM に渡す資料なので混ぜない。
-- **地の文の声**は設定 `tts_narrator_profile`。声が割り当てられていないキャラの台詞も、この声で読む
-  (止まらないことを優先する)。**Step 1 では voice_profiles を作らず**、語り手の声を設定キー
-  (`tts_narrator_caption` / `tts_narrator_ref` / `tts_narrator_seed`)で直接持つ。Step 3 で profile に移す。
-- **seed は固定する**(既定 1234)。キャプションだけで声を作ると、seed が行ごとに変わると別人の声になるため。
-- 声はエンジンに紐づく。エンジンを切り替えたとき、対応する声が無いキャラは語り手の声になる。
-  参照音声のファイルはエンジンをまたいで使い回せるので、声を作り直すときは複製から始められるようにする。
-- 実在の人物の声を参照音声に使うのは避ける(権利の問題)。caption で声を作る方を既定の導線にする。
+- **声はエンジンに縛らない**(当初案の `engine_id` / `mode` はやめた)。説明文・参照音声・seed は
+  どのエンジンにも渡せる形で持ち、エンジンが受け付けない指定(`voice.modes` に無いもの)は `build_request` が
+  落とす。エンジンを替えても声を作り直さずに済む。エンジン固有の値は `params` に書く
+- **声の決め方は `voice.VoiceBook` の 1 か所**。台詞(`speaker = char:<id>`)はそのキャラに割り当てた声、
+  割り当てが無ければ語り手の声。地の文と `narrator` の台詞も語り手の声。語り手の声が未設定なら Step 1 の
+  設定キーで読む。合成(`speak`)と掃除(`expected_audio`)が同じ VoiceBook を使うので、声を変えると
+  前の声の音声は掃除で消える
+- **body を重ねる順**: エンジン定義 → 声(説明 → 参照音声 → seed → preset)→ style_map →
+  設定の追加パラメータ(`tts_extra_body`)→ 声の `params`(声ごとの指定がいちばん強い)
+- **参照音声はライブラリの `assets/voices/` に取り込む**(`POST /voice_profiles/{id}/refs`。wav / mp3 / flac / ogg、
+  30MB まで)。声もライブラリに付いてきて、外部バックアップにも入る(キャッシュの assets/audio と違い作者の素材)。
+  リクエストでは絶対パスにして `irodori.ref_wavs` に渡すので、TTS サーバー側の `voices.json` には依存しない
+- **参照音声の掃除**は画像と同じ作法(`store.gc_voices`)。ライブラリを開いたとき、どの声からも ——
+  スナップショットの DB も含めて —— 参照されないファイルを消す。取り込み直後の 1 時間は守る。
+  声から外す・声を消すときにファイルをその場で消さないのは、スナップショットに戻すと声が参照音声ごと戻るように
+- **声を消すと割り当ても外れる**(キャラも語り手も、外れたら語り手 / 既定の声で読む)
+- **seed は固定する**(既定 1234)。説明文だけで声を作ると、seed が行ごとに変わると別人の声になるため。
+  seed を変えると別の声になるので、気に入った声が出たら seed ごと残す
+- **声の説明の下書き**(`voice.draft_caption`、`POST /characters/{id}/voice_caption`): キャラのプロフィール・
+  外見・口調から、LLM が 1〜2 文の説明を書く(温度 0.5)。実測 15 秒(31B)。例: たかし →
+  「快活な青年から成人男性の声。明るく聞き取りやすい中音域のトーンで、ハキハキと自信を持って話している。」
+- **Step 1 の設定キーからの移行**(`voice.migrate_legacy_narrator`): ライブラリを開いたとき、語り手の声が未設定で
+  Step 1 の `tts_narrator_caption` / `_ref` / `_seed` のどれかがあれば、「語り手」という声を作って語り手に割り当て、
+  参照音声(絶対パス)は assets/voices へ複製し、古いキーを空にする
+- **画面**:
+  - 設定 →「音声読み上げ」: 語り手の声の選択、声の一覧(誰が使っているか・参照音声の数)、選んだ声の編集
+    (`VoiceProfilesCard.tsx`)
+  - キャラクター画面の「読み上げの声」: 声の選択(その場で保存)、「この人の声を作る」(声を作って割り当て、
+    説明文の下書きを LLM で作る)、「声を直す」で割り当てた声をその場で編集(`CharacterVoicePanel.tsx`)
+  - 声の編集欄は両方で同じ部品(`VoiceProfileEditor.tsx`): 名前・説明(「資料から下書き」)・参照音声
+    (取り込み・再生・外す)・seed・この声だけの追加パラメータ・試し読み。欄外へ出たときに保存する。
+    同じ声を複数の人が使っていれば、直すと全員に効くことを添える
+- 実在の人物の声を参照音声に使うのは避ける(権利の問題)。説明文で声を作る方を既定の導線にする。
 
 ## 6. 合成と再生
 
@@ -313,8 +337,7 @@ CREATE TABLE IF NOT EXISTS voice_profiles(
 - **台本のモーダル**(`VoiceScriptModal.tsx`): 行ごとに 話者 / 感情 / 強さ / 読む文 / 後ろの間 を直せる。
   直した行は `edited` になり、枠をアクセント色にする。行ごとに試聴(保存前の直しも反映)と「ここから」
   (保存済みの台本をその行から読み上げる。未保存の直しがあるときは押せない)。上部に「話者と感情を付ける」
-  (LLM)と「清書から作り直す」。**話者はまだ声に効かない**(Step 3 でキャラごとの声を割り当てるまで、
-  全員を語り手の声で読む)が、感情は絵文字を通して読みに効く。
+  (LLM)と「清書から作り直す」。話者はキャラに割り当てた声で、感情は絵文字を通して読みに効く。
 
 ## 7. 設定キー
 
@@ -323,11 +346,9 @@ CREATE TABLE IF NOT EXISTS voice_profiles(
 | `tts_engine` | `irodori` | 使うエンジン(`tts_engines/<id>.json`) |
 | `tts_base_url` | エンジンの `default_port` から | 起動済みサーバーの URL。応答すればそれを使う |
 | `tts_models_dir` | `D:\ai-models\tts`(無ければ空) | モデルの置き場 |
-| `tts_narrator_caption` | 空 | 語り手の声の説明(Step 1。Step 3 で `tts_narrator_profile` に移す) |
-| `tts_narrator_ref` | 空 | 語り手の参照音声(絶対パス。Step 1) |
-| `tts_narrator_seed` | `1234` | 語り手の seed(Step 1) |
-| `tts_extra_body` | 空 | `/v1/audio/speech` に重ねる追加パラメータ(JSON オブジェクト) |
-| `tts_narrator_profile` | 空 | 地の文の声(Step 3) |
+| `tts_narrator_profile` | 空 | 語り手の声(`voice_profiles.id`) |
+| `tts_extra_body` | 空 | `/v1/audio/speech` に重ねる追加パラメータ(JSON オブジェクト。全部の声に効く) |
+| `tts_narrator_caption` / `_ref` / `_seed` | 空 | Step 1 の語り手の設定。ライブラリを開いたとき「語り手」の声に移して空にする |
 
 設定はほかと同じく DB の `settings` に置く(ライブラリに付いてくる)。
 
@@ -336,7 +357,7 @@ CREATE TABLE IF NOT EXISTS voice_profiles(
 1. **最小版**: エンジン定義 + インストーラ + マネージャ + クライアント、右上の TtsBar、規則ベースの台本、
    語り手 1 声での読み上げ、音声キャッシュ。ここで**合成の待ち時間と品質を実測**し、続けるかを判断する。
 2. **台本の LLM 化**: 話者の判定と感情タグ、台本の編集 UI。
-3. **声の割り当て**: `voice_profiles`、キャラごとの声、参照音声の取り込み。
+3. **声の割り当て**(2026-09-28 済): `voice_profiles`、キャラごとの声、参照音声の取り込み、声の説明の下書き。
 4. **2 つ目のエンジン**: 差し替えの仕組みが本当に効くかを、別エンジンを 1 つ足して確かめる。
 
 ## 9. 未決事項

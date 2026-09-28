@@ -82,7 +82,7 @@ def fill(obj: Any, values: dict[str, Any]) -> Any:
 
     - 文字列がちょうど `{name}` なら値をそのまま(型を保って)入れる
     - 文字列の一部なら str にして置き換える
-    - 値が None / 空文字の欄は、辞書のキーごと・配列の要素ごと落とす
+    - 値が None / 空文字 / 空配列の欄は、辞書のキーごと・配列の要素ごと落とす
     """
     result = _fill(obj, values)
     return None if result is _DROP else result
@@ -93,7 +93,7 @@ def _fill(obj: Any, values: dict[str, Any]) -> Any:
         names = _PLACEHOLDER.findall(obj)
         if not names:
             return obj
-        if any(values.get(n) in (None, "") for n in names):
+        if any(values.get(n) in (None, "", []) for n in names):
             return _DROP
         whole = _PLACEHOLDER.fullmatch(obj)
         if whole:
@@ -171,7 +171,9 @@ def build_request(
     extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """1 行ぶんの `/v1/audio/speech` の body を組む。重ねる順は
-    エンジン定義の extra_body → 声(caption / 参照音声 / seed)→ style_map → 設定の追加パラメータ。"""
+    エンジン定義の extra_body → 声(caption / 参照音声 / seed / preset)→ style_map → 追加パラメータ(extra)。
+
+    voice は {caption, ref_paths(絶対パスの配列), seed, preset}。"""
     req = engine.get("request") or {}
     style = STYLE_MAPS.get(engine.get("style_map") or "none", plain)
     text, style_body = style(line)
@@ -187,17 +189,17 @@ def build_request(
     spec = engine.get("voice") or {}
     values = {
         "caption": (voice.get("caption") or "").strip(),
-        "ref_path": (voice.get("ref_path") or "").strip(),
+        "ref_paths": [p for p in (voice.get("ref_paths") or []) if p],
         "seed": voice.get("seed"),
     }
     modes = spec.get("modes") or []
     if "caption" in modes and values["caption"]:
         body = deep_merge(body, fill(spec.get("caption_body") or {}, values) or {})
-    if "reference" in modes and values["ref_path"]:
+    if "reference" in modes and values["ref_paths"]:
         body = deep_merge(body, fill(spec.get("reference_body") or {}, values) or {})
     if values["seed"] is not None:
         body = deep_merge(body, fill(spec.get("seed_body") or {}, values) or {})
-    if voice.get("preset"):
+    if "preset" in modes and voice.get("preset"):
         body["voice"] = voice["preset"]
 
     body = deep_merge(body, style_body)

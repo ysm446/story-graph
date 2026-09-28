@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, assetUrl, uploadAsset } from '../api'
+import CharacterVoicePanel from '../CharacterVoicePanel'
 import ImageCropModal, { type CropState } from '../ImageCropModal'
 import PlaceEditor from './PlaceEditor'
 import RefImagePanel from '../RefImagePanel'
@@ -544,6 +545,8 @@ export default function CharactersMode(): React.JSX.Element {
                 />
               </label>
             ))}
+            {/* 読み上げの声(docs/design/voice.md §5)。選んだその場で保存する */}
+            <CharacterVoicePanel character={selected} onChanged={reload} />
             <div className="flex items-center gap-2">
               <button
                 onClick={() => void handleSave()}

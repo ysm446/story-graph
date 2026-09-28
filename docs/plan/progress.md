@@ -1,7 +1,7 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-07-24 22:38
-更新日時: 2026-09-28 21:17
+更新日時: 2026-09-28 21:41
 
 ## 現在の状態
 
@@ -9,7 +9,7 @@
 - **ライブラリ方式を導入**(lm-graph 踏襲): ストーリーごとのフォルダに `story-graph.db` を置く。現在のライブラリと最近使ったライブラリは `%APPDATA%/story-graph/app.json`(Electron userData)に保存。ヘッダー右のドロップダウンで切替(切替時はレンダラをリロード)。デフォルトはリポジトリ内 `data/`。
 - `npm run dev` で Electron が起動し、FastAPI sidecar(ポート 8765〜自動探索)が自動 spawn される。
 - バックエンドは単体でも起動可能: `cd backend && ../.venv/Scripts/python.exe -m uvicorn app:app --port 8765`
-- テスト: `cd backend && ../.venv/Scripts/python.exe -m pytest tests/ -q`(283件、全て成功)
+- テスト: `cd backend && ../.venv/Scripts/python.exe -m pytest tests/ -q`(291件、全て成功)
 - モデルは **31B を主に使用**(12B は検証用。2026-08-11 ユーザー談)
 
 ## 完了済み
@@ -391,7 +391,13 @@
   - [x] 音声キャッシュの管理(2026-09-28 ユーザー指摘): いま読むと使う音声だけを残す掃除(`voice.expected_audio` +
     `sweep_audio`。清書の保存・台本や声の変更・シーン削除などで予約し、3 秒まとめて走らせる)と、opus での保存(wav の約 1/12)。pytest 283 件
   - [ ] Step 2 のアプリ画面での通し確認(ユーザー待ち)。地の文の感情付けが多すぎないか聞いて判断する
-  - [ ] Step 3 キャラごとの声(`voice_profiles`、`characters.voice_profile_id`、参照音声の取り込み)
+  - [x] Step 3 キャラごとの声(2026-09-28): `voice_profiles`(エンジンに縛らない)、`characters.voice_profile_id`、
+    語り手は `tts_narrator_profile`。声の決め方は `voice.VoiceBook` の 1 か所(合成と掃除で共有)。参照音声は
+    `assets/voices` に取り込み、画像と同じく参照の無いものを開いたときに回収(`gc_voices`)。声の説明の下書き
+    (`draft_caption`、31B で 15 秒)。Step 1 の語り手の設定キーは開いたときに「語り手」の声へ移す。
+    UI は設定の声の一覧(`VoiceProfilesCard.tsx`)とキャラ画面の「読み上げの声」(`CharacterVoicePanel.tsx`)、
+    共通の編集欄 `VoiceProfileEditor.tsx`。pytest 291 件
+  - [ ] Step 3 のアプリ画面での通し確認(ユーザー待ち)
   - [ ] Step 4 2 つ目のエンジンで差し替えを確認
 - [ ] **場面の画像生成(ComfyUI 連携)**(2026-08-26 ユーザー発案): ビートから挿絵を
   自動生成し、既存の挿絵アセット(`nodes.image_path`)に流し込む。
