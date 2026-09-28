@@ -32,14 +32,15 @@ export default function VoiceProfilesCard(): React.JSX.Element {
   const usedBy = (id: string): string[] => {
     const users: string[] = []
     if (list?.narrator_profile_id === id) users.push('語り手')
+    if (list?.chat_profile_id === id) users.push('相談チャット')
     for (const c of characters) if (list?.assignments[c.id] === id) users.push(c.name)
     return users
   }
 
-  const handleNarrator = async (id: string): Promise<void> => {
+  const assignSetting = async (key: 'tts_narrator_profile' | 'tts_chat_profile', id: string): Promise<void> => {
     setError(null)
     try {
-      await api.putSettings({ tts_narrator_profile: id })
+      await api.putSettings({ [key]: id })
       await reload()
     } catch (e) {
       setError(String(e))
@@ -70,7 +71,7 @@ export default function VoiceProfilesCard(): React.JSX.Element {
         </div>
         <select
           value={list?.narrator_profile_id ?? ''}
-          onChange={(e) => void handleNarrator(e.target.value)}
+          onChange={(e) => void assignSetting('tts_narrator_profile', e.target.value)}
           className="w-full rounded-lg border px-3 py-2 text-[13px] outline-none"
           style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
         >
@@ -83,6 +84,28 @@ export default function VoiceProfilesCard(): React.JSX.Element {
         </select>
         <p className="settings-field-hint">
           地の文と、声を割り当てていない人物の台詞を読む声です。キャラクターの声はキャラクター画面の「読み上げの声」で選びます。
+        </p>
+      </div>
+
+      <div className="settings-field">
+        <div className="settings-field-header">
+          <span className="settings-field-label">相談チャットの声</span>
+        </div>
+        <select
+          value={list?.chat_profile_id ?? ''}
+          onChange={(e) => void assignSetting('tts_chat_profile', e.target.value)}
+          className="w-full rounded-lg border px-3 py-2 text-[13px] outline-none"
+          style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
+        >
+          <option value="">(語り手の声)</option>
+          {list?.profiles.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+        <p className="settings-field-hint">
+          相談チャットの返事を読む声です(チャットのヘッダーの「声」でオンにしたとき)。キャラクターとの会話は、そのキャラの声で読みます。
         </p>
       </div>
 

@@ -469,3 +469,30 @@ def test_draft_caption_uses_character_notes(monkeypatch):
     assert asyncio.run(voice.draft_caption(char, "http://llm")) == "若く元気な女性の声。"
     assert "17 歳の高校生" in captured["user"] and "口調・一人称: 一人称は「あたし」" in captured["user"]
     assert "外見" not in captured["user"]
+
+
+# ---- チャットの返答の読み上げ ------------------------------------------------
+
+def test_strip_markdown_drops_symbols_and_code():
+    md = "## 見出し\n**太字**と*斜体*と`code`。\n- 項目1\n1. 項目2\n> 引用\n```python\nprint(1)\n```\n[リンク](http://x)\n---\n| a | b |\n|---|---|\n| 1 | 2 |"
+    out = voice.strip_markdown(md)
+    assert "#" not in out and "*" not in out and "`" not in out and "print" not in out and "http" not in out
+    assert "太字と斜体とcode。" in out and "項目1" in out and "項目2" in out and "引用" in out and "リンク" in out
+    assert "a、b" in out and "---" not in out
+
+
+def test_chat_lines_assigns_voices_by_mode():
+    text = "彼女は笑った。\n「こんにちは」"
+    consult = voice.chat_lines(text, None, None, "p1")
+    assert all(l["speaker"] == "narrator" and l["profile_id"] == "p1" for l in consult)
+    interview = voice.chat_lines(text, "aya", "interview", "p1")
+    assert all(l["speaker"] == "char:aya" and "profile_id" not in l for l in interview)
+    roleplay = voice.chat_lines(text, "aya", "roleplay", None)
+    assert [(l["kind"], l["speaker"]) for l in roleplay] == [("narration", "narrator"), ("dialogue", "char:aya")]
+
+
+def test_delete_voice_profile_clears_chat_profile(lib):
+    profile = lib.create_voice_profile({"name": "相談"})
+    lib.set_settings({"tts_chat_profile": profile["id"]})
+    lib.delete_voice_profile(profile["id"])
+    assert not lib.get_settings().get("tts_chat_profile")

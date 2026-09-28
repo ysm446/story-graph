@@ -1,7 +1,7 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-07-24 22:38
-更新日時: 2026-09-28 21:41
+更新日時: 2026-09-28 22:10
 
 ## 現在の状態
 
@@ -9,7 +9,7 @@
 - **ライブラリ方式を導入**(lm-graph 踏襲): ストーリーごとのフォルダに `story-graph.db` を置く。現在のライブラリと最近使ったライブラリは `%APPDATA%/story-graph/app.json`(Electron userData)に保存。ヘッダー右のドロップダウンで切替(切替時はレンダラをリロード)。デフォルトはリポジトリ内 `data/`。
 - `npm run dev` で Electron が起動し、FastAPI sidecar(ポート 8765〜自動探索)が自動 spawn される。
 - バックエンドは単体でも起動可能: `cd backend && ../.venv/Scripts/python.exe -m uvicorn app:app --port 8765`
-- テスト: `cd backend && ../.venv/Scripts/python.exe -m pytest tests/ -q`(291件、全て成功)
+- テスト: `cd backend && ../.venv/Scripts/python.exe -m pytest tests/ -q`(294件、全て成功)
 - モデルは **31B を主に使用**(12B は検証用。2026-08-11 ユーザー談)
 
 ## 完了済み
@@ -398,6 +398,9 @@
     UI は設定の声の一覧(`VoiceProfilesCard.tsx`)とキャラ画面の「読み上げの声」(`CharacterVoicePanel.tsx`)、
     共通の編集欄 `VoiceProfileEditor.tsx`。pytest 291 件
   - [ ] Step 3 のアプリ画面での通し確認(ユーザー待ち)
+  - [x] チャットの返事の読み上げ(2026-09-28 ユーザー要望): ヘッダーの「声」でオン。相談は「相談チャットの声」
+    (`tts_chat_profile`)、キャラのインタビューはキャラの声、劇中会話は台詞だけキャラの声。ストリーミング中に
+    文の切れ目ごとに読み始める(`useChatVoice.ts`、`POST /tts/chat_lines`)。Markdown は外して読む。pytest 294 件
   - [ ] Step 4 2 つ目のエンジンで差し替えを確認
 - [ ] **場面の画像生成(ComfyUI 連携)**(2026-08-26 ユーザー発案): ビートから挿絵を
   自動生成し、既存の挿絵アセット(`nodes.image_path`)に流し込む。

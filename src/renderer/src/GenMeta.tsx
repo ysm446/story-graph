@@ -11,7 +11,7 @@ export function MsgActionButton({
   tip,
   onClick
 }: {
-  kind: 'edit' | 'regenerate' | 'delete' | 'prompt'
+  kind: 'edit' | 'regenerate' | 'delete' | 'prompt' | 'speak'
   /** ツールチップ(Tooltip.tsx)。素の title ではないので名前を分けている */
   tip: string
   onClick: () => void
@@ -64,6 +64,13 @@ export function MsgActionButton({
             <line x1="16" y1="13" x2="8" y2="13" />
             <line x1="16" y1="17" x2="8" y2="17" />
             <polyline points="10 9 9 9 8 9" />
+          </>
+        )}
+        {kind === 'speak' && (
+          <>
+            <path d="M11 5 6 9H2v6h4l5 4z" />
+            <path d="M15.5 8.5a5 5 0 0 1 0 7" />
+            <path d="M19 5a10 10 0 0 1 0 14" />
           </>
         )}
       </svg>

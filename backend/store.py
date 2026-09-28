@@ -1517,12 +1517,13 @@ class Store:
         return self.get_voice_profile(profile_id)
 
     def delete_voice_profile(self, profile_id: str) -> None:
-        """声を消し、割り当てを外す(キャラも語り手も、外れたら語り手 / 既定の声で読む)。
+        """声を消し、割り当てを外す(キャラ・語り手・相談チャット。外れたら語り手 / 既定の声で読む)。
         参照音声のファイルは gc_voices が回収する(スナップショットが参照していれば残る)。"""
         self.conn.execute("DELETE FROM voice_profiles WHERE id = ?", (profile_id,))
         self.conn.execute("UPDATE characters SET voice_profile_id = NULL WHERE voice_profile_id = ?", (profile_id,))
         self.conn.execute(
-            "DELETE FROM settings WHERE key = 'tts_narrator_profile' AND value = ?", (profile_id,)
+            "DELETE FROM settings WHERE key IN ('tts_narrator_profile', 'tts_chat_profile') AND value = ?",
+            (profile_id,),
         )
         self.conn.commit()
 

@@ -115,6 +115,51 @@ def build_script(prose: str) -> list[dict[str, Any]]:
     return lines
 
 
+# ---- チャットの返答の読み上げ(docs/design/voice.md §6.1) -----------------------
+
+_MD_FENCE = re.compile(r"```.*?(```|$)", re.DOTALL)
+_MD_RULES: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"!\[([^\]]*)\]\([^)]*\)"), r"\1"),  # 画像 → 代替テキスト
+    (re.compile(r"\[([^\]]+)\]\([^)]*\)"), r"\1"),  # リンク → 文字
+    (re.compile(r"`([^`]*)`"), r"\1"),  # インラインコード
+    (re.compile(r"^\s{0,3}#{1,6}\s+", re.MULTILINE), ""),  # 見出し
+    (re.compile(r"^\s*>\s?", re.MULTILINE), ""),  # 引用
+    (re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+", re.MULTILINE), ""),  # 箇条書きの記号
+    (re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$", re.MULTILINE), ""),  # 表の区切り行
+    (re.compile(r"^\s*(?:-{3,}|\*{3,}|_{3,})\s*$", re.MULTILINE), ""),  # 水平線
+    (re.compile(r"\*\*|__|~~"), ""),  # 太字・取り消し線
+    (re.compile(r"\*([^*\n]+)\*"), r"\1"),  # 斜体(太字を外した後に残る * の組)
+    (re.compile(r"[ \t]*\|[ \t]*"), "、"),  # 表のセル区切り(改行はまたがない)
+]
+
+
+def strip_markdown(text: str) -> str:
+    """チャットの返答(Markdown)から、読み上げに要らない記号を外す。コードブロックは丸ごと読まない。"""
+    text = _MD_FENCE.sub("", text)
+    for pattern, repl in _MD_RULES:
+        text = pattern.sub(repl, text)
+    return "\n".join(line.strip("、 ") for line in text.split("\n"))
+
+
+def chat_lines(text: str, char_id: str | None, mode: str | None, chat_profile_id: str | None) -> list[dict[str, Any]]:
+    """チャットの返答を読み上げの行にする。感情は付けない(LLM をもう一度呼ぶと返答が遅れるため)。
+
+    - 相談チャット(char_id なし): 全行を「相談相手の声」(未設定なら語り手の声)
+    - キャラのインタビュー: 返答全体がキャラ本人の発言なので、全行をキャラの声
+    - キャラの劇中会話: 「」の台詞はキャラの声、動作などの地の文は語り手の声
+    """
+    lines = build_script(strip_markdown(text))
+    for line in lines:
+        if not char_id:
+            line["profile_id"] = chat_profile_id or None
+        elif mode == "roleplay":
+            if line["kind"] == "dialogue":
+                line["speaker"] = f"char:{char_id}"
+        else:
+            line["speaker"] = f"char:{char_id}"
+    return lines
+
+
 # ---- 台本の検証・引き継ぎ ------------------------------------------------------
 
 _SPEAKER_RE = re.compile(r"^(narrator|char:[A-Za-z0-9_-]+)$")

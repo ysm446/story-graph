@@ -80,6 +80,7 @@ export default function CharacterVoicePanel({
   const usedBy = (id: string): string[] => {
     const users: string[] = []
     if (list?.narrator_profile_id === id) users.push('語り手')
+    if (list?.chat_profile_id === id) users.push('相談チャット')
     for (const c of characters) if (list?.assignments[c.id] === id) users.push(c.name)
     return users
   }

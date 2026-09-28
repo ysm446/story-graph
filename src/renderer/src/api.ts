@@ -787,6 +787,8 @@ export interface VoiceLine {
   intensity: number
   pause_after_ms: number
   edited: boolean
+  /** この行を読む声を名指しする(チャットの相談相手の声)。無ければ話者から決まる */
+  profile_id?: string | null
 }
 
 export interface VoiceScript {
@@ -868,6 +870,8 @@ export interface VoiceProfileList {
   profiles: VoiceProfile[]
   /** 語り手の声(null = 未設定) */
   narrator_profile_id: string | null
+  /** 相談チャットの声(null = 語り手の声) */
+  chat_profile_id: string | null
   /** キャラ ID → 声 ID(声を割り当てたキャラだけ) */
   assignments: Record<string, string>
 }
@@ -881,6 +885,13 @@ export const voiceApi = {
   update: (id: string, data: VoiceProfilePatch) =>
     request<VoiceProfile>(`/voice_profiles/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(data) }),
   remove: (id: string) => request<{ status: string }>(`/voice_profiles/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  /** チャットの返答(の一部)を読み上げの行にする(Markdown を外し、会話の種類で声を割り当てる) */
+  chatLines: (text: string, charId: string | null, mode: 'interview' | 'roleplay' | null, signal?: AbortSignal) =>
+    request<{ lines: VoiceLine[] }>('/tts/chat_lines', {
+      method: 'POST',
+      body: JSON.stringify({ text, char_id: charId, mode }),
+      signal
+    }),
   /** キャラの資料から声の説明の下書きを LLM で作る(保存はしない) */
   draftCaption: (charId: string, signal?: AbortSignal) =>
     request<{ caption: string }>(`/characters/${encodeURIComponent(charId)}/voice_caption`, { method: 'POST', signal })
@@ -921,7 +932,7 @@ export async function ttsSpeak(line: VoiceLine, signal?: AbortSignal, profileId?
       speaker: line.speaker,
       emotion: line.emotion,
       intensity: line.intensity,
-      profile_id: profileId ?? null
+      profile_id: profileId ?? line.profile_id ?? null
     }),
     signal
   })

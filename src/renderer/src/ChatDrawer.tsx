@@ -12,6 +12,7 @@ import CharAvatar from './CharAvatar'
 import { MsgActionButton, StatsLine, SystemPromptModal } from './GenMeta'
 import { Icon } from './icons'
 import { Markdown } from './Markdown'
+import { useChatVoice } from './useChatVoice'
 import type { Character, StoryNode } from './types'
 import { useElapsedSeconds } from './useElapsed'
 
@@ -233,6 +234,15 @@ export default function ChatDrawer({
   const rootRef = useRef<HTMLDivElement | null>(null) // 会話一覧の最大幅を決めるのに使う
   const usageSeqRef = useRef(0) // 使用量の取得は追い越しがあるので最後の応答だけ採用する
   const busyElapsed = useElapsedSeconds(busy)
+  // 返答の読み上げ(docs/design/voice.md §6.1)。キャラとの会話はキャラの声、相談は相談相手の声
+  const voice = useChatVoice({ charId, mode: charId ? (roleplay ? 'roleplay' : 'interview') : null })
+  const stopVoice = voice.stop
+  useEffect(() => {
+    if (!open) stopVoice()
+  }, [open, stopVoice])
+  useEffect(() => {
+    if (voice.error) setStatus(`読み上げに失敗しました: ${voice.error}`)
+  }, [voice.error])
 
   // 分割線のドラッグで会話一覧の幅を変える(構造モードの分割線と同じ作り)。
   // 会話エリアは最低 320px 残す
@@ -428,6 +438,7 @@ export default function ChatDrawer({
   }
 
   const startNewChat = (): void => {
+    voice.stop()
     if (busy) return
     setChatId(null)
     setItems([])
@@ -444,6 +455,7 @@ export default function ChatDrawer({
 
   // 相談 ⇄ キャラの切替。会話の前提(システムプロンプト)が変わるので新規チャット扱い
   const switchTarget = (nextCharId: string | null): void => {
+    voice.stop()
     setCharId(nextCharId)
     setChatId(null)
     setItems([])
@@ -466,6 +478,7 @@ export default function ChatDrawer({
       setStatus('会話の読み込みに失敗しました')
       return
     }
+    voice.stop()
     setChatId(chat.id)
     setAnchorNode(chat.anchor_node)
     setScope(chat.scope === 'all' ? 'all' : 'upto')
@@ -508,6 +521,7 @@ export default function ChatDrawer({
     // 再読み込み後はサーバーが付けた ts に置き換わる
     setItems((prev) => [...prev, { kind: 'user', text: message, ts: new Date().toISOString() }])
     setStatus('考え中…')
+    voice.begin() // オンなら、この返答を書き上がった文から読んでいく
     // 会話が始まる = ここでアンカーが確定する(以後は選択に追従しない)
     const effectiveAnchor = liveAnchor
     if (!chatId) setAnchorNode(effectiveAnchor)
@@ -542,6 +556,7 @@ export default function ChatDrawer({
             live += e.delta
             setLiveText(live)
             setStatus(null)
+            voice.feed(e.delta)
           }
           if (e.tool_call) {
             const name = e.tool_call.name
@@ -553,6 +568,7 @@ export default function ChatDrawer({
             setItems((prev) => [...prev, { kind: 'proposals', proposals: e.proposals! }])
           }
           if (e.answer !== undefined) {
+            voice.finish(e.answer || undefined)
             setStatus(null)
             live = ''
             setLiveText('')
@@ -572,6 +588,7 @@ export default function ChatDrawer({
         controller.signal
       )
     } catch (err) {
+      if (isAbortError(err)) voice.stop()
       setStatus(isAbortError(err) ? 'キャンセルしました(途中の回答は保存されません)' : String(err))
     } finally {
       abortRef.current = null
@@ -898,8 +915,36 @@ export default function ChatDrawer({
               </div>
             )}
             <button
+              onClick={() => voice.setEnabled(!voice.enabled)}
+              className="ml-auto inline-flex items-center gap-1 rounded-md border px-2 py-0.5"
+              style={
+                voice.enabled
+                  ? { borderColor: 'var(--accent-border)', background: 'var(--accent-soft)', color: 'var(--text)' }
+                  : { borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }
+              }
+              aria-label={voice.enabled ? '返事の読み上げをオフにする' : '返事の読み上げをオンにする'}
+              data-tip={
+                voice.enabled
+                  ? `返事を声で読みます(${activeChar ? `${activeChar.name}の声` : '相談相手の声'})。クリックでオフ`
+                  : '返事を声で読みます。キャラとの会話はキャラの声、相談は設定の「相談チャットの声」で読みます'
+              }
+            >
+              <Icon name="speaker" size={12} />
+              {voice.enabled ? '声 オン' : '声 オフ'}
+            </button>
+            {voice.speaking && (
+              <button
+                onClick={voice.stop}
+                className="rounded-md border px-2 py-0.5"
+                style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+                data-tip="いまの読み上げを止める"
+              >
+                ■ 停止
+              </button>
+            )}
+            <button
               onClick={onClose}
-              className="ml-auto rounded-md border px-2 py-0.5"
+              className="rounded-md border px-2 py-0.5"
               style={{ borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }}
               data-tip="相談チャットを閉じる(履歴は残ります)"
             >
@@ -1031,8 +1076,15 @@ export default function ChatDrawer({
                         </div>
                         <div className="flex items-center gap-2">
                           {item.stats && <StatsLine stats={item.stats} />}
-                          {(item.promptMessages || (item.turn !== undefined && !busy)) && (
+                          {(item.promptMessages || !busy) && (
                             <div className="mt-0.5 flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                              {!busy && (
+                                <MsgActionButton
+                                  kind="speak"
+                                  tip={`この返事を声で読む(${activeChar ? `${activeChar.name}の声` : '相談相手の声'})`}
+                                  onClick={() => voice.speakText(item.text)}
+                                />
+                              )}
                               {item.promptMessages && (
                                 <MsgActionButton
                                   kind="prompt"

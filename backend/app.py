@@ -1459,6 +1459,22 @@ async def tts_speak(body: TtsLineIn) -> FileResponse:
     return FileResponse(str(path), media_type=media.get(path.suffix.lstrip("."), "application/octet-stream"))
 
 
+class ChatLinesIn(BaseModel):
+    text: str
+    char_id: str | None = None
+    mode: str | None = None  # interview | roleplay(キャラモードのとき)
+
+
+@app.post("/tts/chat_lines")
+async def tts_chat_lines(body: ChatLinesIn) -> dict[str, Any]:
+    """チャットの返答(の一部)を読み上げの行にする(docs/design/voice.md §6.1)。
+    返答はストリーミングで届くので、フロントが文の切れ目ごとに呼ぶ。保存はしない。"""
+    import voice
+
+    chat_profile = (store.get_settings().get("tts_chat_profile") or "").strip() or None
+    return {"lines": voice.chat_lines(body.text, body.char_id, body.mode, chat_profile)}
+
+
 # ---- 読み上げの声(docs/design/voice.md §5) ----------------------------
 
 ALLOWED_VOICE_EXTS = {".wav", ".mp3", ".flac", ".ogg"}
@@ -1487,6 +1503,7 @@ async def list_voice_profiles() -> dict[str, Any]:
     return {
         "profiles": store.list_voice_profiles(),
         "narrator_profile_id": (store.get_settings().get("tts_narrator_profile") or None),
+        "chat_profile_id": (store.get_settings().get("tts_chat_profile") or None),
         "assignments": {c["id"]: c.get("voice_profile_id") for c in store.list_characters() if c.get("voice_profile_id")},
     }
 
