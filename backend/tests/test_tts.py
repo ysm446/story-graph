@@ -492,10 +492,23 @@ def test_chat_lines_assigns_voices_by_mode():
     text = "彼女は笑った。\n「こんにちは」"
     consult = voice.chat_lines(text, None, None, "p1")
     assert all(l["speaker"] == "narrator" and l["profile_id"] == "p1" for l in consult)
-    interview = voice.chat_lines(text, "aya", "interview", "p1")
-    assert all(l["speaker"] == "char:aya" and "profile_id" not in l for l in interview)
-    roleplay = voice.chat_lines(text, "aya", "roleplay", None)
-    assert [(l["kind"], l["speaker"]) for l in roleplay] == [("narration", "narrator"), ("dialogue", "char:aya")]
+    # キャラとの会話は、返事全体が本人の発言(「」の外も)。会話調で読む
+    for mode in ("interview", "roleplay"):
+        lines = voice.chat_lines(text, "aya", mode, "p1")
+        assert all(l["speaker"] == "char:aya" and l["kind"] == "dialogue" and "profile_id" not in l for l in lines)
+
+
+def test_chat_lines_stage_directions():
+    reply = "（少し視線を外して）\nそうですね。（小さく笑う。）それは秘密です。"
+    roleplay = voice.chat_lines(reply, "aya", "roleplay", None)
+    assert [(l["speaker"], l["text"]) for l in roleplay] == [
+        ("narrator", "少し視線を外して"),  # ト書きは語り手の声
+        ("char:aya", "そうですね。"),
+        ("narrator", "小さく笑う。"),
+        ("char:aya", "それは秘密です。"),
+    ]
+    interview = voice.chat_lines(reply, "aya", "interview", None)
+    assert [l["text"] for l in interview] == ["そうですね。", "それは秘密です。"]  # ト書きは読まない
 
 
 def test_delete_voice_profile_clears_chat_profile(lib):

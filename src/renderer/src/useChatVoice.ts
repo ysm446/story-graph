@@ -8,8 +8,10 @@ const PREFETCH_AHEAD = 2
 // 複数の文をまとめて継ぎ目(= 声色が揺れる所)を減らす。最初の 1 文だけは溜めずにすぐ読み始める
 const MERGE_CHARS = 80
 const STORAGE_KEY = 'chatVoice'
-const OPEN_QUOTES = '「『'
-const CLOSE_QUOTES = '」』'
+// 括弧の中では切らない。（）はキャラとの会話のト書き(途中で切ると、閉じていない切れ端がト書きと
+// 見分けられず、キャラの声で読まれてしまう)
+const OPEN_QUOTES = '「『（'
+const CLOSE_QUOTES = '」』）'
 const SENTENCE_END = '。！？!?\n'
 // 文末の直後にこれが続く間は切らない(「……!?」や「ね。」の閉じ括弧を割らない)
 const TRAILING = '。！？!?」』）)'

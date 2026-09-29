@@ -260,22 +260,45 @@ def strip_markdown(text: str) -> str:
     return "\n".join(line.strip("、 ") for line in text.split("\n"))
 
 
+# キャラとの会話の返事に混ざるト書き(「（少し視線を外し、落ち着いた様子で）」)。全角の丸括弧だけを見る
+# (半角の () は顔文字や補足にも使われるので、ト書きとは限らない)
+_STAGE_DIRECTION = re.compile(r"（[^（）]*）")
+
+
 def chat_lines(text: str, char_id: str | None, mode: str | None, chat_profile_id: str | None) -> list[dict[str, Any]]:
     """チャットの返答を読み上げの行にする。感情は付けない(LLM をもう一度呼ぶと返答が遅れるため)。
 
     - 相談チャット(char_id なし): 全行を「相談相手の声」(未設定なら語り手の声)
-    - キャラのインタビュー: 返答全体がキャラ本人の発言なので、全行をキャラの声
-    - キャラの劇中会話: 「」の台詞はキャラの声、動作などの地の文は語り手の声
+    - キャラとの会話: 返事はキャラ本人の発言(「」を使わず一人称で話す)なので、全行をキャラの声で、
+      台詞(会話調)として読む。（）のト書きは、劇中会話なら語り手の声で読み、インタビューでは読まない
+      (2026-09-29 修正。以前は劇中会話で「」の外を語り手の声にしていて、返事のほとんどが語り手の声になっていた)
     """
-    lines = build_script(strip_markdown(text))
-    for line in lines:
-        if not char_id:
+    text = strip_markdown(text)
+    if not char_id:
+        lines = build_script(text)
+        for line in lines:
             line["profile_id"] = chat_profile_id or None
-        elif mode == "roleplay":
-            if line["kind"] == "dialogue":
-                line["speaker"] = f"char:{char_id}"
-        else:
+        return lines
+    lines = []
+    pos = 0
+    segments: list[tuple[str, bool]] = []  # (文, ト書きか)
+    for m in _STAGE_DIRECTION.finditer(text):
+        segments.append((text[pos : m.start()], False))
+        segments.append((m.group(0)[1:-1], True))
+        pos = m.end()
+    segments.append((text[pos:], False))
+    for segment, direction in segments:
+        if not segment.strip():  # 空白(全角の空白・改行を含む)だけの切れ端
+            continue
+        if direction:
+            if mode != "roleplay":
+                continue  # インタビューのト書きは読まない
+            lines.extend(build_script(segment))  # 語り手の声(話者は narrator のまま)
+            continue
+        for line in build_script(segment):
             line["speaker"] = f"char:{char_id}"
+            line["kind"] = "dialogue"  # 会話調で読む(地の文のナレーション調にしない)
+            lines.append(line)
     return lines
 
 
