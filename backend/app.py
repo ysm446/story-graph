@@ -206,6 +206,7 @@ class CharacterPatch(BaseModel):
     ref_image_instructions: str | None = None
     ref_image_seed: int | None = None
     voice_profile_id: str | None = None  # 読み上げの声(null で外す = 語り手の声で読む)
+    reading: str | None = None  # 名前の読み(ひらがな。読み上げで名前を置き換える)
 
 
 class PlaceIn(BaseModel):
@@ -221,6 +222,7 @@ class PlacePatch(BaseModel):
     atmosphere: str | None = None
     color: str | None = None
     image_path: str | None = None
+    reading: str | None = None  # 名前の読み(ひらがな。読み上げで名前を置き換える)
 
 
 class FactionIn(BaseModel):
@@ -334,8 +336,8 @@ async def update_character(char_id: str, body: CharacterPatch) -> dict[str, Any]
     char = store.update_character(char_id, patch)
     if char is None:
         raise HTTPException(404, "character not found")
-    if "voice_profile_id" in patch:
-        _schedule_audio_gc()  # 前の声で作った台詞の音声は使われなくなる
+    if {"voice_profile_id", "reading", "name"} & patch.keys():
+        _schedule_audio_gc()  # 前の声・読みで作った音声は使われなくなる
     return char
 
 
@@ -367,9 +369,12 @@ async def get_place(place_id: str) -> dict[str, Any]:
 
 @app.patch("/places/{place_id}")
 async def update_place(place_id: str, body: PlacePatch) -> dict[str, Any]:
-    place = store.update_place(place_id, body.model_dump(exclude_unset=True))
+    patch = body.model_dump(exclude_unset=True)
+    place = store.update_place(place_id, patch)
     if place is None:
         raise HTTPException(404, "place not found")
+    if {"reading", "name"} & patch.keys():
+        _schedule_audio_gc()  # 前の読みで作った音声は使われなくなる
     return place
 
 

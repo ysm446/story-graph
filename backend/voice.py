@@ -707,6 +707,73 @@ def cache_key(engine_id: str, body: dict[str, Any], voice: dict[str, Any]) -> st
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
 
 
+# ---- 読み(名前や用語を正しく読ませる。docs/design/voice.md §4.5) -------------------
+
+_NAME_SPACE = re.compile(r"[ \u3000]+")
+# 姓だけ・名だけも覚えるのは 2 文字以上の部分だけ(「誠」のような 1 文字を置き換えると「誠実」まで読みが変わる)
+MIN_PART_CHARS = 2
+
+
+def reading_dict(settings: dict[str, str]) -> list[dict[str, str]]:
+    """設定の読み辞書(tts_reading_dict。[{word, reading}] の JSON)。読めない値は空として扱う
+    (読みが壊れていても読み上げは止めない)。"""
+    try:
+        value = json.loads(settings.get("tts_reading_dict") or "[]")
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(value, list):
+        return []
+    out = []
+    for item in value:
+        if isinstance(item, dict):
+            word = str(item.get("word") or "").strip()
+            reading = str(item.get("reading") or "").strip()
+            if word and reading and word != reading:
+                out.append({"word": word, "reading": reading})
+    return out
+
+
+def reading_pairs(
+    entities: list[dict[str, Any]], dictionary: list[dict[str, str]]
+) -> list[tuple[str, str]]:
+    """置き換える (語, 読み) の一覧。辞書が優先(同じ語ならキャラ・場所の読みより強い)。
+
+    キャラ・場所は、名前と読みの両方を入れる。名前が空白で区切られていれば、空白なしの続け書き
+    (「山崎 誠」→「山崎誠」)と、読みも同じ数に区切られているときの姓だけ・名だけも入れる。"""
+    pairs: dict[str, str] = {}
+    for item in dictionary:
+        pairs.setdefault(item["word"], item["reading"])
+    for entity in entities:
+        name = (entity.get("name") or "").strip()
+        reading = (entity.get("reading") or "").strip()
+        if not name or not reading:
+            continue
+        pairs.setdefault(name, reading)
+        name_parts = _NAME_SPACE.split(name)
+        reading_parts = _NAME_SPACE.split(reading)
+        if len(name_parts) > 1:
+            pairs.setdefault("".join(name_parts), "".join(reading_parts))
+            if len(name_parts) == len(reading_parts):
+                for part, part_reading in zip(name_parts, reading_parts):
+                    if len(part) >= MIN_PART_CHARS:
+                        pairs.setdefault(part, part_reading)
+    return [(w, r) for w, r in pairs.items() if w != r]
+
+
+class Readings:
+    """文中の語を読みに置き換える。長い語から先に当てる(「山崎 誠」を「山崎」より先に)。"""
+
+    def __init__(self, pairs: list[tuple[str, str]]) -> None:
+        self.table = dict(pairs)
+        words = sorted(self.table, key=len, reverse=True)
+        self.pattern = re.compile("|".join(re.escape(w) for w in words)) if words else None
+
+    def apply(self, text: str) -> str:
+        if self.pattern is None:
+            return text
+        return self.pattern.sub(lambda m: self.table[m.group(0)], text)
+
+
 class VoiceBook:
     """行の話者から声を引く帳面。声・キャラの割り当て・設定をまとめて読んでおき、1 回の読み上げ(1 行)や
     掃除の間だけ使う。合成(speak)と掃除(expected_audio)が同じ計算を使うことで、「いま読むと使う
@@ -724,6 +791,10 @@ class VoiceBook:
         self.profiles = {p["id"]: p for p in store.list_voice_profiles()}
         self.char_profile = {c["id"]: c.get("voice_profile_id") for c in store.list_characters()}
         self.extra = extra_body(settings)
+        # 読み: キャラ・場所の名前の読みと、設定の読み辞書。合成の直前に文へ当てる
+        self.readings = Readings(
+            reading_pairs([*store.list_characters(), *store.list_places()], reading_dict(settings))
+        )
         narrator_id = (settings.get("tts_narrator_profile") or "").strip()
         self.narrator = (
             self.profile_voice(self.profiles[narrator_id])
@@ -760,6 +831,9 @@ class VoiceBook:
         if line.get("effect") and line["effect"] not in (engine.get("effects") or {}):
             return None
         voice = self.voice_for(line, profile_id)
+        if not line.get("effect"):
+            # 名前や用語を読みに置き換えて送る(台本・清書・画面の表示は元の漢字のまま)
+            line = {**line, "text": self.readings.apply(str(line.get("text") or ""))}
         extra = tts.deep_merge(self.extra, voice.get("params") or {})
         body = tts.build_request(engine, line, voice, extra)
         ext = str(body.get("response_format") or "wav")

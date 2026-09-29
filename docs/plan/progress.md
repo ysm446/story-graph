@@ -1,7 +1,7 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-07-24 22:38
-更新日時: 2026-09-28 23:04
+更新日時: 2026-09-29 14:17
 
 ## 現在の状態
 
@@ -9,7 +9,7 @@
 - **ライブラリ方式を導入**(lm-graph 踏襲): ストーリーごとのフォルダに `story-graph.db` を置く。現在のライブラリと最近使ったライブラリは `%APPDATA%/story-graph/app.json`(Electron userData)に保存。ヘッダー右のドロップダウンで切替(切替時はレンダラをリロード)。デフォルトはリポジトリ内 `data/`。
 - `npm run dev` で Electron が起動し、FastAPI sidecar(ポート 8765〜自動探索)が自動 spawn される。
 - バックエンドは単体でも起動可能: `cd backend && ../.venv/Scripts/python.exe -m uvicorn app:app --port 8765`
-- テスト: `cd backend && ../.venv/Scripts/python.exe -m pytest tests/ -q`(312件、全て成功)
+- テスト: `cd backend && ../.venv/Scripts/python.exe -m pytest tests/ -q`(318件、全て成功)
 - モデルは **31B を主に使用**(12B は検証用。2026-08-11 ユーザー談)
 
 ## 完了済み
@@ -408,6 +408,7 @@
   - [x] 声に出ない文・台詞(「……っ！」など)は読まずに間にする(2026-09-28 ユーザー指摘。`voice.is_voiceable`)。pytest 306 件
   - [x] 詰まる音(「……っ！」「ッ!?」)は Irodori の 😮 で息を呑む効果音として鳴らす(行の `effect`、エンジン定義の `effects`)。pytest 309 件
   - [x] 鑑賞モードの読み上げを自動再生らしく: 読んでいる行を本文の中で強調、ページの自動送り・スクロールの追従、前の行へ / 次の行へ(2026-09-28 ユーザー要望。`voice.align_spans`、`useReadAloud` の飛び先)。pytest 312 件
+  - [x] 名前・用語の読み(2026-09-29 ユーザー要望): キャラ・場所の「読み」欄と、設定の読み辞書。合成の直前に読みへ置き換える(`voice.Readings`)。pytest 318 件
   - [ ] Step 4 2 つ目のエンジンで差し替えを確認
 - [ ] **場面の画像生成(ComfyUI 連携)**(2026-08-26 ユーザー発案): ビートから挿絵を
   自動生成し、既存の挿絵アセット(`nodes.image_path`)に流し込む。

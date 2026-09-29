@@ -669,3 +669,51 @@ def test_align_spans_marks_missing_lines():
 def test_resolve_script_includes_spans(store):
     render = store.save_render(_node_id(store), "p", None, "走った。\n「待て」")
     assert [l["span"] for l in voice.resolve_script(store, render)["lines"]] == [[0, 4], [5, 9]]
+
+
+# ---- 読み(名前・用語を正しく読ませる) --------------------------------------------
+
+def test_reading_pairs_names_parts_and_dictionary_priority():
+    pairs = dict(voice.reading_pairs(
+        [{"name": "山崎 誠", "reading": "やまざき まこと"}, {"name": "田村工業", "reading": "たむらこうぎょう"},
+         {"name": "アヤ", "reading": ""}],
+        [{"word": "田村工業", "reading": "たむらこーぎょー"}],
+    ))
+    assert pairs == {
+        "田村工業": "たむらこーぎょー",  # 辞書が優先
+        "山崎 誠": "やまざき まこと",
+        "山崎誠": "やまざきまこと",
+        "山崎": "やまざき",  # 1 文字の「誠」は覚えない(「誠実」まで変わるため)
+    }
+
+
+def test_readings_prefer_longest_word():
+    r = voice.Readings([("山崎", "やまざき"), ("山崎誠", "やまざきまこと")])
+    assert r.apply("山崎誠と山崎さん。誠実。") == "やまざきまこととやまざきさん。誠実。"
+
+
+def test_reading_dict_ignores_broken_values():
+    assert voice.reading_dict({"tts_reading_dict": "{oops"}) == []
+    assert voice.reading_dict({"tts_reading_dict": '[{"word": "工務店", "reading": "こうむてん"}, {"word": ""}, 3]'}) == [
+        {"word": "工務店", "reading": "こうむてん"}
+    ]
+
+
+def test_voicebook_sends_readings_but_keeps_line_text(lib):
+    lib.update_character("aya", {"reading": "あや"})
+    place = lib.create_place({"name": "月見坂", "reading": "つきみざか"})
+    lib.update_place(place["id"], {"reading": "つきみざか"})
+    settings = {"tts_reading_dict": '[{"word": "工務店", "reading": "こうむてん"}]'}
+    line = {"text": "アヤは月見坂の工務店へ行った。", "kind": "narration"}
+    _, body = voice.VoiceBook(lib, settings).line_audio(tts.get_engine("irodori"), line)
+    assert body["input"].endswith("あやはつきみざかのこうむてんへ行った。")
+    assert line["text"] == "アヤは月見坂の工務店へ行った。"  # 台本の行は変えない
+
+
+def test_effect_lines_are_not_rewritten(lib):
+    lib.update_character("aya", {"reading": "あや"})
+    line = {"text": "……っ！", "kind": "narration", "effect": "gasp"}
+    _, body = voice.VoiceBook(lib, {"tts_reading_dict": '[{"word": "っ", "reading": "つ"}]'}).line_audio(
+        tts.get_engine("irodori"), line
+    )
+    assert body["input"] == "😮……っ！"

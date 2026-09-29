@@ -32,7 +32,7 @@ export default function PlaceEditor({
     setDraft(place)
   }, [place.id])
 
-  const dirty = (['name', 'color', 'description', 'atmosphere'] as const).some(
+  const dirty = (['name', 'color', 'description', 'atmosphere', 'reading'] as const).some(
     (key) => (draft[key] ?? '') !== (place[key] ?? '')
   )
 
@@ -172,6 +172,22 @@ export default function PlaceEditor({
           />
         </label>
       </div>
+      <label className="mb-4 block">
+        <span className="mb-1 block text-[12px]" style={{ color: 'var(--text-dim)' }}>
+          読み(ひらがな)
+        </span>
+        <input
+          value={draft.reading ?? ''}
+          placeholder="やまざき まこと"
+          onChange={(e) => setDraft((d) => ({ ...d, reading: e.target.value }))}
+          className="block w-full rounded-lg border px-3 py-1.5 text-[13px] outline-none"
+          style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
+          data-tip={[
+            '読み上げで、この場所の名前をこの読みで読ませます(台本や本文の表示は漢字のまま)。',
+            '名前と読みを同じように空白で区切ると、姓だけ・名だけも正しく読みます(2 文字以上の部分だけ)。'
+          ].join('\n')}
+        />
+      </label>
       {FIELD_DEFS.map((f) => (
         <label key={f.key} className="mb-4 block">
           <span className="mb-1 block text-[12px]" style={{ color: 'var(--text-dim)' }}>

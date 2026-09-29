@@ -114,7 +114,7 @@ class Store:
         fields = ["name", "profile", "appearance", "voice", "color", "graph_x", "graph_y",
                   "portrait_path", "portrait_source_path", "portrait_crop",
                   "ref_image_path", "ref_image_prompt", "ref_image_instructions", "ref_image_seed",
-                  "ref_image_workflow", "voice_profile_id"]
+                  "ref_image_workflow", "voice_profile_id", "reading"]
         updates = {k: data[k] for k in fields if k in data}
         if updates:
             sets = ", ".join(f"{k} = ?" for k in updates)
@@ -175,7 +175,7 @@ class Store:
         return self.get_place(place_id)  # type: ignore[return-value]
 
     def update_place(self, place_id: str, data: dict[str, Any]) -> dict[str, Any] | None:
-        fields = ["name", "description", "atmosphere", "color", "image_path"]
+        fields = ["name", "description", "atmosphere", "color", "image_path", "reading"]
         updates = {k: data[k] for k in fields if k in data}
         if updates:
             sets = ", ".join(f"{k} = ?" for k in updates)

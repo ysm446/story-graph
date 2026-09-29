@@ -21,6 +21,8 @@ export interface Character {
   ref_image_workflow?: string | null
   /** 読み上げの声(voice_profiles.id)。null = 語り手の声で読む */
   voice_profile_id?: string | null
+  /** 名前の読み(ひらがな)。読み上げで名前をこの読みに置き換える */
+  reading?: string | null
   created_at: string
 }
 
@@ -53,6 +55,8 @@ export interface Place {
   atmosphere: string | null
   color: string | null
   image_path: string | null
+  /** 名前の読み(ひらがな)。読み上げで名前をこの読みに置き換える */
+  reading?: string | null
   created_at: string
 }
 

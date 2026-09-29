@@ -188,7 +188,7 @@ export default function CharactersMode(): React.JSX.Element {
       // 編集欄の項目だけ送る。draft は選択時点の丸ごとコピーなので、そのまま PATCH すると
       // 選択後にその場で保存された項目(参照画像・関係図の座標など)を古い値で巻き戻す
       const patch = Object.fromEntries(
-        (['name', 'color', 'profile', 'appearance', 'voice'] as const).map((k) => [k, draft[k] ?? ''])
+        (['name', 'color', 'profile', 'appearance', 'voice', 'reading'] as const).map((k) => [k, draft[k] ?? ''])
       )
       await api.updateCharacter(selectedId, patch)
       await reload()
@@ -201,7 +201,7 @@ export default function CharactersMode(): React.JSX.Element {
   // 切り抜き確定時にその場で保存されるので、ここでは判定に含めない
   const dirty =
     selected !== null &&
-    (['name', 'color', 'profile', 'appearance', 'voice'] as const).some(
+    (['name', 'color', 'profile', 'appearance', 'voice', 'reading'] as const).some(
       (key) => (draft[key] ?? '') !== (selected[key] ?? '')
     )
 
@@ -516,6 +516,22 @@ export default function CharactersMode(): React.JSX.Element {
                 </label>
               </div>
             </div>
+            <label className="mb-4 block">
+              <span className="mb-1 block text-[12px]" style={{ color: 'var(--text-dim)' }}>
+                読み(ひらがな)
+              </span>
+              <input
+                value={draft.reading ?? ''}
+                placeholder="やまざき まこと"
+                onChange={(e) => setDraft((d) => ({ ...d, reading: e.target.value }))}
+                className="block w-full rounded-lg border px-3 py-1.5 text-[13px] outline-none"
+                style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
+                data-tip={[
+                  '読み上げで、このキャラの名前をこの読みで読ませます(台本や本文の表示は漢字のまま)。',
+                  '名前と読みを同じように空白で区切ると、姓だけ・名だけも正しく読みます(2 文字以上の部分だけ)。'
+                ].join('\n')}
+              />
+            </label>
             {/* 参照画像(全身の立ち絵)。外見の記述から生成するか、手持ちの画像を置く。
                 場面画像を作るときに編集モデルの入力として渡す(docs/design/image-gen.md) */}
             <RefImagePanel

@@ -301,6 +301,9 @@ def init_schema(conn: sqlite3.Connection) -> None:
         # 読み上げの声(voice_profiles.id。NULL = 語り手の声で読む。docs/design/voice.md §5)。
         # 既存の voice 列は「口調・一人称」のテキストで、LLM に渡す資料なので別物
         "ALTER TABLE characters ADD COLUMN voice_profile_id TEXT",
+        # 名前の読み(ひらがな)。読み上げで、合成の直前に名前をこの読みに置き換える(docs/design/voice.md §4.5)
+        "ALTER TABLE characters ADD COLUMN reading TEXT",
+        "ALTER TABLE places ADD COLUMN reading TEXT",
     ):
         try:
             conn.execute(ddl)

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, isAbortError, ttsInstallStream, type TtsInstallProgress, type TtsStatus } from './api'
 import AutoTextarea from './AutoTextarea'
+import ReadingDictCard from './ReadingDictCard'
 import VoiceProfilesCard from './VoiceProfilesCard'
 import VoiceRateSelect from './VoiceRateSelect'
 import { useElapsedSeconds } from './useElapsed'
@@ -269,6 +270,8 @@ export default function VoiceSettingsSection({
       </div>
 
       <VoiceProfilesCard />
+
+      <ReadingDictCard value={values.tts_reading_dict} save={save} />
 
       <div className="settings-card">
         <div className="settings-field">
