@@ -426,6 +426,299 @@ def build_character_system(store: Store, path: list[str], char_id: str, mode: st
     return "\n".join(lines)
 
 
+# ---- キャラ同士の会話室(docs/design/chat.md §8) ------------------------
+#
+# 複数のキャラを同じ場に置き、作者は会話に参加せず演出家として指示だけ出す。
+# 目的は記憶・関係性の点検(片方だけが知っている秘密が漏れないか、関係値どおりの
+# 距離感で話すか)。会話は物語に戻さず、state にも書かない。
+#
+# 履歴に保存するのは「演出指示(user)」と「キャラの発言(assistant + speaker)」だけ。
+# recall の往復は保存せず、発言ごとの prompt_messages(控え)に残す。
+
+MAX_ROOM_TURNS = 8  # 1 リクエストで続けて話させる発言数の上限(UI の選択肢より広め)
+ROOM_MAX_TOKENS = 512  # 発言 1 つの長さ(長広舌にさせない)
+ROOM_PARTICIPANTS_MAX = 6
+
+
+def _strip_speaker_prefix(text: str, name: str) -> str:
+    """モデルが「名前:」「名前「…」」の形で返したときに接頭辞を落とす。"""
+    t = text.strip()
+    for sep in (":", "："):
+        if t.startswith(name + sep):
+            return t[len(name) + len(sep):].strip()
+    if t.startswith(name + "「") and t.endswith("」") and t.count("「") == 1:
+        return t[len(name) + 1 : -1].strip()
+    return t
+
+
+def build_room_system(store: Store, path: list[str], speaker_id: str, participants: list[str]) -> str:
+    """会話室での発言者 1 人分のシステムプロンプト。本人の知識はキャラチャットと同じ
+    build_character_system で作り、枠組み(この会話について)だけを会話室用に差し替える。"""
+    base = build_character_system(store, path, speaker_id, "roleplay")
+    # 「## この会話について」以降を会話室の枠組みに置き換える(知識の節はそのまま)
+    head = base.split("\n## この会話について", 1)[0].rstrip()
+    others = []
+    for cid in participants:
+        if cid == speaker_id:
+            continue
+        c = store.get_character(cid)
+        others.append(c["name"] if c else cid)
+    me = store.get_character(speaker_id)
+    my_name = me["name"] if me else speaker_id
+    lines = [
+        head,
+        "",
+        "## この会話について",
+        f"あなた({my_name})は今、{'、'.join(others) or '誰か'}と同じ場所で言葉を交わしています。",
+        "これは作者が人物どうしの関係と記憶を確かめるための試しの会話で、物語の本編には含まれません。",
+        "相手の発言は「名前「…」」の形で届きます。作者(演出家)からの指示は（演出: …）の形で届きます。",
+        "演出の指示には従ってください。ただし指示そのものを台詞にしたり、演出家に向けて話したりしないでください。",
+        "",
+        "## 厳守すること",
+        "- 知っているのは、上に書かれた状況・気持ち・記憶と、recall で思い出したこと、"
+        "そしてこの場で相手から直接聞いたことだけ",
+        "- 上に書かれていないことを話題にされたら、まず recall で思い出そうとする。"
+        "それでも出てこなければ、知らない・覚えていないものとして振る舞う",
+        "- 記憶にない大きな出来事や事実を発明しない(言い回しや細部の脚色は構いません)",
+        "- これから先に何が起きるかは知りません",
+        "- 相手への今の気持ちに沿った距離感で話す。初対面や警戒している相手には、秘密や本心を簡単には明かさない",
+        f"- あなた({my_name})の発言だけを書く。相手の台詞や相手の行動を書かない",
+        "- 発言は一人称で、あなたの口調で、長くても数文にとどめる。短い動作や表情は（）で添えてよい",
+        "- 名前の接頭辞(「名前:」)は付けない。物語・シーン・登場人物などのメタな言葉は使わない",
+    ]
+    return "\n".join(lines)
+
+
+def _room_transcript_messages(
+    store: Store, history: list[dict[str, Any]], speaker_id: str
+) -> list[dict[str, Any]]:
+    """保存済みの会話室の履歴を、発言者の視点の messages にする。
+
+    自分の発言は assistant、他のキャラの発言と演出指示は user に置く。user 側が続く
+    ところは 1 つにまとめる(役割の交互を崩さないため)。
+    """
+    names = _name_map(store)
+    out: list[dict[str, Any]] = []
+    pending: list[str] = []
+
+    def flush() -> None:
+        if pending:
+            out.append({"role": "user", "content": "\n".join(pending)})
+            pending.clear()
+
+    for m in history:
+        role = m.get("role")
+        content = m.get("content")
+        if not isinstance(content, str) or not content.strip():
+            continue
+        if role == "user":
+            pending.append(f"（演出: {content.strip()}）")
+        elif role == "assistant":
+            sp = m.get("speaker")
+            if sp == speaker_id:
+                flush()
+                out.append({"role": "assistant", "content": content})
+            else:
+                pending.append(f"{names.get(sp, sp or '?')}「{content.strip()}」")
+    flush()
+    if not out or out[-1]["role"] != "user":
+        # 口火を切るとき(履歴が空、または直前が自分)も user で終わらせる
+        out.append({"role": "user", "content": "（演出: あなたの番です。話してください）"})
+    return out
+
+
+def next_room_speaker(participants: list[str], history: list[dict[str, Any]]) -> str:
+    """指名が無いときの話者: 最後に話した人の次(ラウンドロビン)。誰も話していなければ先頭。"""
+    last = next((m.get("speaker") for m in reversed(history) if m.get("role") == "assistant"), None)
+    if last in participants:
+        return participants[(participants.index(last) + 1) % len(participants)]
+    return participants[0]
+
+
+async def room_stream(
+    store: Store,
+    base_url: str,
+    chat_id: str | None,
+    anchor_node: str | None,
+    participants: list[str] | None,
+    instruction: str | None,
+    speaker: str | None,
+    turns: int,
+) -> AsyncIterator[str]:
+    try:
+        async for chunk in _room_impl(store, base_url, chat_id, anchor_node, participants, instruction, speaker, turns):
+            yield chunk
+    except Exception as e:  # noqa: BLE001
+        try:
+            store.conn.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+        yield _sse({"error": f"{type(e).__name__}: {e}"})
+
+
+async def _room_impl(
+    store: Store,
+    base_url: str,
+    chat_id: str | None,
+    anchor_node: str | None,
+    participants: list[str] | None,
+    instruction: str | None,
+    speaker: str | None,
+    turns: int,
+) -> AsyncIterator[str]:
+    if chat_id:
+        chat = store.get_chat(chat_id)
+        if chat is None:
+            yield _sse({"error": f"チャットが見つかりません: {chat_id}"})
+            return
+        if chat.get("mode") != "room" or not chat.get("participants"):
+            yield _sse({"error": "キャラ同士の会話ではありません"})
+            return
+        anchor_node = chat["anchor_node"]
+        participants = list(chat["participants"])
+    else:
+        participants = list(dict.fromkeys(participants or []))
+        if len(participants) < 2:
+            yield _sse({"error": "参加者を 2 人以上選んでください"})
+            return
+        if len(participants) > ROOM_PARTICIPANTS_MAX:
+            yield _sse({"error": f"参加者は {ROOM_PARTICIPANTS_MAX} 人までです"})
+            return
+        for cid in participants:
+            if store.get_character(cid) is None:
+                yield _sse({"error": f"キャラが見つかりません: {cid}"})
+                return
+        # 会話室は常に upto(未来を知るキャラは成立しない)
+        chat = store.create_chat(anchor_node, "upto", mode="room", participants=participants)
+        chat_id = chat["id"]
+    yield _sse({"chat_id": chat_id})
+
+    turns = max(0, min(int(turns), MAX_ROOM_TURNS))
+    if speaker is not None and speaker not in participants:
+        yield _sse({"error": f"参加者ではありません: {speaker}"})
+        return
+
+    path = _visible_path(store, anchor_node, "upto")
+    history: list[dict[str, Any]] = list(chat["messages"])
+    if instruction and instruction.strip():
+        history.append({"role": "user", "content": instruction.strip(), "ts": _now()})
+    tools = build_character_tools()
+    names = _name_map(store)
+
+    try:
+        for turn in range(turns):
+            # 指名は最初の発言だけ。以降はその人の次から順に回す
+            current = speaker if (turn == 0 and speaker) else next_room_speaker(participants, history)
+            system = build_room_system(store, path, current, participants)
+            transcript = _room_transcript_messages(store, history, current)
+            # ツール往復はこの発言の間だけ持つ(履歴には残さない)
+            scratch: list[dict[str, Any]] = []
+
+            def messages() -> list[dict[str, Any]]:
+                return [{"role": "system", "content": system}, *transcript, *scratch]
+
+            yield _sse({"speaker": current, "turn": turn})
+            stats_total: dict[str, Any] = {"tokens": 0, "elapsed_sec": 0.0, "steps": 0, "finish_reason": None}
+            text = ""
+            used_tools: list[str] = []
+            for step in range(MAX_TOOL_STEPS):
+                yield _sse({"stage": "thinking", "speaker": current})
+                result: dict[str, Any] = {}
+                async for kind, value in llm.chat_stream_tools(
+                    messages(),
+                    base_url=base_url,
+                    temperature=CHAT_TEMPERATURE,
+                    max_tokens=ROOM_MAX_TOKENS,
+                    tools=tools,
+                    label=f"会話室 {names.get(current, current)}(step {step + 1})",
+                ):
+                    if kind == "content":
+                        yield _sse({"delta": value, "speaker": current})
+                    elif kind == "done":
+                        result = value
+                st = result.get("stats") or {}
+                stats_total["tokens"] += st.get("tokens") or 0
+                stats_total["elapsed_sec"] += st.get("elapsed_sec") or 0.0
+                stats_total["finish_reason"] = st.get("finish_reason") or stats_total["finish_reason"]
+                stats_total["steps"] += 1
+                tool_calls = result.get("tool_calls")
+                if not tool_calls:
+                    text = result.get("content") or ""
+                    break
+                scratch.append(result["message"])
+                for tc in tool_calls:
+                    name = tc.get("function", {}).get("name", "")
+                    try:
+                        args = json.loads(tc.get("function", {}).get("arguments") or "{}")
+                    except json.JSONDecodeError:
+                        args = {}
+                    yield _sse({"tool_call": {"name": name, "args": args}, "speaker": current})
+                    if name == "recall":
+                        payload: dict[str, Any] = _tool_search_memories(
+                            store, path, "upto", {"query": args.get("query") or "", "char_id": current}
+                        )
+                    else:
+                        payload = {"error": f"unknown tool: {name}"}
+                    used_tools.append(name)
+                    scratch.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tc.get("id", ""),
+                            "content": json.dumps(payload, ensure_ascii=False),
+                        }
+                    )
+                    yield _sse({"tool_result": {"name": name, "is_error": "error" in payload}, "speaker": current})
+            else:
+                scratch.append(
+                    {"role": "user", "content": "(これ以上 recall は使えません。思い出せたことで話してください)"}
+                )
+                yield _sse({"stage": "thinking", "speaker": current})
+                result = {}
+                async for kind, value in llm.chat_stream_tools(
+                    messages(),
+                    base_url=base_url,
+                    temperature=CHAT_TEMPERATURE,
+                    max_tokens=ROOM_MAX_TOKENS,
+                    label=f"会話室 {names.get(current, current)}(まとめ)",
+                ):
+                    if kind == "content":
+                        yield _sse({"delta": value, "speaker": current})
+                    elif kind == "done":
+                        result = value
+                text = result.get("content") or ""
+            text = _strip_speaker_prefix(text, names.get(current, current))
+            elapsed = stats_total["elapsed_sec"] or None
+            stats = (
+                {
+                    "tokens": stats_total["tokens"],
+                    "elapsed_sec": round(elapsed, 2) if elapsed else None,
+                    "tokens_per_sec": round(stats_total["tokens"] / elapsed, 1) if elapsed else None,
+                    "finish_reason": stats_total["finish_reason"],
+                    "steps": stats_total["steps"],
+                }
+                if stats_total["tokens"]
+                else None
+            )
+            history.append(
+                {
+                    "role": "assistant",
+                    "speaker": current,
+                    "content": text,
+                    "ts": _now(),
+                    "prompt_messages": messages(),
+                    **({"tools_used": used_tools} if used_tools else {}),
+                    **({"meta": stats} if stats else {}),
+                }
+            )
+            # 発言が確定するたびに保存する(途中で止めてもそこまでは残る)
+            store.save_chat_messages(chat_id, history)
+            yield _sse({"utterance": {"speaker": current, "text": text, "stats": stats, "index": len(history) - 1}})
+    finally:
+        store.save_chat_messages(chat_id, history)
+
+    yield _sse({"done": True, "chat_id": chat_id})
+
+
 # ---- システムプロンプト ----------------------------------------------
 
 def build_system(store: Store, path: list[str], scope: str) -> str:
@@ -674,8 +967,18 @@ def _usage_text(
     scope: str,
     char_id: str | None = None,
     mode: str = "interview",
+    participants: list[str] | None = None,
 ) -> str:
-    if char_id:
+    if participants:
+        # 会話室は発言者ごとにシステムプロンプトが違う。次に送る量の目安として一番長い人で数える
+        systems = [
+            build_room_system(store, path, cid, participants)
+            for cid in participants
+            if store.get_character(cid) is not None
+        ]
+        system = max(systems, key=len) if systems else ""
+        tools = build_character_tools()
+    elif char_id:
         system = build_character_system(store, path, char_id, mode)
         tools = build_character_tools()
     else:
@@ -701,6 +1004,7 @@ async def token_usage(
     scope: str,
     char_id: str | None = None,
     mode: str = "interview",
+    participants: list[str] | None = None,
 ) -> dict[str, Any]:
     chat = store.get_chat(chat_id) if chat_id else None
     if chat is not None:
@@ -708,10 +1012,11 @@ async def token_usage(
         scope = chat["scope"]
         char_id = chat.get("char_id")
         mode = chat.get("mode") or "interview"
+        participants = chat.get("participants") if mode == "room" else None
     path = _visible_path(store, anchor_node, scope)
     if char_id and store.get_character(char_id) is None:
         char_id = None  # 削除済みキャラの履歴はシステム部を相談扱いで数える
-    text = _usage_text(store, chat, path, scope, char_id, mode)
+    text = _usage_text(store, chat, path, scope, char_id, mode, participants)
     counted = await llm.count_tokens(text, base_url=base_url)
     if counted is None:
         return {"token_count": len(text) // CHAR_PER_TOKEN_FALLBACK, "estimated": True}

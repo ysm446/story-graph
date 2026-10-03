@@ -475,3 +475,167 @@ def test_visible_path_falls_back_when_anchor_was_deleted(store):
     path = chat_agent._visible_path(store, "no-such-node", "upto")
     assert path == store.canon_path()
     assert chat_agent._tool_get_beats(store, path, {})["total"] == 3
+
+
+# ---- キャラ同士の会話室(docs/design/chat.md §7) ------------------------
+
+
+def test_room_system_prompt_replaces_frame_and_keeps_knowledge(store):
+    path = store.canon_path()
+    system = chat_agent.build_room_system(store, path, "aya", ["aya", "ken"])
+    # 知識の節(記憶)はキャラチャットと同じものが載る
+    assert "石橋でケンの裏切りを知った" in system
+    # 枠組みは会話室用に差し替わる(インタビュー / 見知らぬ相手の文言は残らない)
+    assert "ケンと同じ場所で言葉を交わしています" in system
+    assert "インタビュー" not in system
+    assert "見知らぬ相手" not in system
+    assert system.count("## この会話について") == 1
+    assert system.count("## 厳守すること") == 1
+
+
+def test_room_transcript_is_from_speakers_point_of_view(store):
+    history = [
+        {"role": "user", "content": "再会の場面。まず挨拶から"},
+        {"role": "assistant", "speaker": "aya", "content": "久しぶりね。"},
+        {"role": "assistant", "speaker": "ken", "content": "……ああ。"},
+        {"role": "user", "content": "アヤは石橋の件を切り出す"},
+    ]
+    msgs = chat_agent._room_transcript_messages(store, history, "aya")
+    assert [m["role"] for m in msgs] == ["user", "assistant", "user"]
+    assert "（演出: 再会の場面。まず挨拶から）" in msgs[0]["content"]
+    assert msgs[1]["content"] == "久しぶりね。"
+    # 相手の発言と次の指示は 1 つの user にまとまる
+    assert "ケン「……ああ。」" in msgs[2]["content"]
+    assert "（演出: アヤは石橋の件を切り出す）" in msgs[2]["content"]
+    # 口火を切るとき(履歴が空)でも user で終わる
+    first = chat_agent._room_transcript_messages(store, [], "ken")
+    assert [m["role"] for m in first] == ["user"]
+
+
+def test_next_room_speaker_round_robin():
+    parts = ["aya", "ken", "mio"]
+    assert chat_agent.next_room_speaker(parts, []) == "aya"
+    assert chat_agent.next_room_speaker(parts, [{"role": "assistant", "speaker": "aya"}]) == "ken"
+    assert chat_agent.next_room_speaker(parts, [{"role": "assistant", "speaker": "mio"}]) == "aya"
+    # 参加者から外れた話者(削除済みなど)の後は先頭から
+    assert chat_agent.next_room_speaker(parts, [{"role": "assistant", "speaker": "zzz"}]) == "aya"
+
+
+def test_strip_speaker_prefix():
+    assert chat_agent._strip_speaker_prefix("アヤ: 久しぶりね。", "アヤ") == "久しぶりね。"
+    assert chat_agent._strip_speaker_prefix("アヤ「久しぶりね。」", "アヤ") == "久しぶりね。"
+    assert chat_agent._strip_speaker_prefix("久しぶりね。「そう」と言った。", "アヤ") == "久しぶりね。「そう」と言った。"
+
+
+def test_room_stream_alternates_speakers_and_saves_only_utterances(store, monkeypatch):
+    tc = _tool_call("recall", {"query": "石橋"})
+    monkeypatch.setattr(
+        llm_mod,
+        "chat_stream_tools",
+        _fake_stream([
+            # 1 人目: recall してから話す
+            {"content": "", "tool_calls": [tc], "message": {"role": "assistant", "content": None, "tool_calls": [tc]}},
+            {"content": "アヤ: 久しぶりね。", "tool_calls": None, "message": {"role": "assistant", "content": "アヤ: 久しぶりね。"},
+             "stats": {"tokens": 10, "elapsed_sec": 1.0}},
+            # 2 人目
+            {"content": "……ああ。", "tool_calls": None, "message": {"role": "assistant", "content": "……ああ。"}},
+        ]),
+    )
+    anchor = store.canon_path()[-1]
+    events = collect_sse(
+        chat_agent.room_stream(store, "http://fake", None, anchor, ["aya", "ken"], "再会の場面", None, 2)
+    )
+    chat_id = next(e["chat_id"] for e in events if "chat_id" in e)
+    speakers = [e["speaker"] for e in events if "turn" in e]
+    assert speakers == ["aya", "ken"]
+    utterances = [e["utterance"] for e in events if "utterance" in e]
+    assert [u["speaker"] for u in utterances] == ["aya", "ken"]
+    assert utterances[0]["text"] == "久しぶりね。"  # 接頭辞が落ちる
+    assert events[-1] == {"done": True, "chat_id": chat_id}
+    saved = store.get_chat(chat_id)
+    assert saved["mode"] == "room"
+    assert saved["participants"] == ["aya", "ken"]
+    assert saved["scope"] == "upto"
+    assert saved["char_id"] is None
+    # 履歴は 演出指示 + 発言 2 つ。recall の往復は保存されず、控えに残る
+    assert [m["role"] for m in saved["messages"]] == ["user", "assistant", "assistant"]
+    assert saved["messages"][1]["speaker"] == "aya"
+    assert saved["messages"][1]["tools_used"] == ["recall"]
+    assert saved["messages"][1]["meta"]["tokens"] == 10
+    assert any(m.get("role") == "tool" for m in saved["messages"][1]["prompt_messages"])
+    # 2 人目のプロンプトには 1 人目の発言が「名前「…」」で届いている
+    ken_prompt = saved["messages"][2]["prompt_messages"]
+    assert any("アヤ「久しぶりね。」" in (m.get("content") or "") for m in ken_prompt)
+    assert ken_prompt[0]["content"].startswith("あなたは「ケン」という人物です。")
+
+
+def test_room_stream_speaker_override_then_round_robin(store, monkeypatch):
+    monkeypatch.setattr(
+        llm_mod,
+        "chat_stream_tools",
+        _fake_stream([{"content": "ふむ。", "tool_calls": None, "message": {"role": "assistant", "content": "ふむ。"}}]),
+    )
+    anchor = store.canon_path()[-1]
+    events = collect_sse(chat_agent.room_stream(store, "http://fake", None, anchor, ["aya", "ken"], None, "ken", 3))
+    assert [e["speaker"] for e in events if "turn" in e] == ["ken", "aya", "ken"]
+    chat_id = next(e["chat_id"] for e in events if "chat_id" in e)
+    # 指示なしなので user は無い
+    assert [m["role"] for m in store.get_chat(chat_id)["messages"]] == ["assistant"] * 3
+    # 続き(既存チャット)は前の話者の次から
+    events2 = collect_sse(chat_agent.room_stream(store, "http://fake", chat_id, None, None, None, None, 1))
+    assert [e["speaker"] for e in events2 if "turn" in e] == ["aya"]
+
+
+def test_room_stream_validates_participants(store):
+    anchor = store.canon_path()[-1]
+    one = collect_sse(chat_agent.room_stream(store, "http://fake", None, anchor, ["aya"], None, None, 1))
+    assert "2 人以上" in one[-1]["error"]
+    missing = collect_sse(chat_agent.room_stream(store, "http://fake", None, anchor, ["aya", "nobody"], None, None, 1))
+    assert "nobody" in missing[-1]["error"]
+    assert store.list_chats() == []  # 失敗時はチャットを作らない
+
+
+def test_room_turns_are_capped(store, monkeypatch):
+    monkeypatch.setattr(
+        llm_mod,
+        "chat_stream_tools",
+        _fake_stream([{"content": "…", "tool_calls": None, "message": {"role": "assistant", "content": "…"}}]),
+    )
+    events = collect_sse(
+        chat_agent.room_stream(store, "http://fake", None, store.canon_path()[-1], ["aya", "ken"], None, None, 100)
+    )
+    assert len([e for e in events if "utterance" in e]) == chat_agent.MAX_ROOM_TURNS
+
+
+def test_room_list_and_delete_message(store):
+    chat = store.create_chat(store.canon_path()[-1], "upto", mode="room", participants=["aya", "ken"])
+    store.save_chat_messages(chat["id"], [
+        {"role": "user", "content": "指示"},
+        {"role": "assistant", "speaker": "aya", "content": "a"},
+        {"role": "assistant", "speaker": "ken", "content": "k"},
+    ])
+    listed = store.list_chats()[0]
+    assert listed["mode"] == "room"
+    assert listed["participants"] == ["aya", "ken"]
+    assert listed["participant_names"] == ["アヤ", "ケン"]
+    # 1 件だけ消す(往復ではなく)
+    after = store.delete_chat_message(chat["id"], 1)
+    assert [m.get("speaker", m["role"]) for m in after["messages"]] == ["user", "ken"]
+    assert store.delete_chat_message(chat["id"], 5) is None
+
+
+def test_token_usage_room_uses_longest_participant(store, monkeypatch):
+    seen = {}
+
+    async def fake_count(text, base_url):
+        seen["text"] = text
+        return 123
+
+    monkeypatch.setattr(llm_mod, "count_tokens", fake_count)
+    usage = asyncio.run(
+        chat_agent.token_usage(store, "http://fake", None, store.canon_path()[-1], "upto", None, "room", ["aya", "ken"])
+    )
+    assert usage == {"token_count": 123, "estimated": False}
+    # アヤは記憶を持つのでシステムプロンプトが長い → アヤ分で数える
+    assert "石橋でケンの裏切りを知った" in seen["text"]
+    assert "と同じ場所で言葉を交わしています" in seen["text"]

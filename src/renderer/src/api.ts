@@ -1083,6 +1083,9 @@ export interface ChatSummary {
   char_id: string | null
   char_name: string | null
   mode: string | null
+  /** キャラ同士の会話室(mode='room')の参加者。それ以外は null */
+  participants: string[] | null
+  participant_names: string[] | null
   title: string | null // null なら snippet を見出しに使う
   snippet: string
   updated_at: string
@@ -1094,6 +1097,7 @@ export interface ChatRecord {
   scope: string
   char_id: string | null
   mode: string | null
+  participants: string[] | null
   messages: Array<Record<string, unknown>>
 }
 
@@ -1116,6 +1120,13 @@ export interface ChatStreamEvent {
   tool_result?: { name: string; is_error: boolean }
   answer?: string
   error?: string
+  // ---- キャラ同士の会話室(/chat/room/send)だけが使う ----
+  /** いま話しているキャラ。turn 付きのイベントが発言の始まり */
+  speaker?: string
+  turn?: number
+  /** 発言 1 つの確定。index は保存済み履歴での位置 */
+  utterance?: { speaker: string; text: string; stats: ChatStats | null; index: number }
+  done?: boolean
 }
 
 export const chatApi = {
@@ -1128,6 +1139,9 @@ export const chatApi = {
   // 1 往復の削除。keepUser=true なら返事だけ消して発言を残す
   deleteTurn: (chatId: string, index: number, keepUser: boolean) =>
     request<ChatRecord>(`/chats/${chatId}/turn/${index}?keep_user=${keepUser}`, { method: 'DELETE' }),
+  // 履歴の 1 件だけを削除(会話室の発言 / 演出指示。往復の区切りが無いので 1 件単位)
+  deleteMessage: (chatId: string, index: number) =>
+    request<ChatRecord>(`/chats/${chatId}/message/${index}`, { method: 'DELETE' }),
   // 内容ベースの質問候補。設定オフ・LLM 未起動・生成失敗はすべて空配列で返る
   suggestQuestions: (body: { chat_id: string | null; anchor_node: string | null; scope: string }) =>
     request<{ questions: string[] }>('/chat/suggest_questions', {
@@ -1141,6 +1155,7 @@ export const chatApi = {
     scope: string
     char_id?: string | null
     mode?: string
+    participants?: string[] | null // 会話室の新規チャット
   }) =>
     request<{ token_count: number; ctx_size: number; estimated: boolean }>('/chat/token_usage', {
       method: 'POST',
@@ -1148,7 +1163,7 @@ export const chatApi = {
     })
 }
 
-export async function chatSendStream(
+export function chatSendStream(
   body: {
     chat_id: string | null
     anchor_node: string | null
@@ -1161,15 +1176,41 @@ export async function chatSendStream(
   onEvent: (data: ChatStreamEvent) => void,
   signal?: AbortSignal
 ): Promise<void> {
+  return chatSse('/chat/send', body, onEvent, signal)
+}
+
+/** キャラ同士の会話室(docs/design/chat.md §8)。作者は参加せず演出の指示だけ出し、
+ *  speaker を指名しなければ前の話者の次から turns 人ぶん続けて話させる */
+export function roomSendStream(
+  body: {
+    chat_id: string | null
+    anchor_node: string | null
+    participants: string[] | null
+    instruction: string | null
+    speaker: string | null
+    turns: number
+  },
+  onEvent: (data: ChatStreamEvent) => void,
+  signal?: AbortSignal
+): Promise<void> {
+  return chatSse('/chat/room/send', body, onEvent, signal)
+}
+
+async function chatSse(
+  path: string,
+  body: unknown,
+  onEvent: (data: ChatStreamEvent) => void,
+  signal?: AbortSignal
+): Promise<void> {
   if (!baseUrl) throw new Error('backend not ready')
-  const res = await fetch(`${baseUrl}/chat/send`, {
+  const res = await fetch(`${baseUrl}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
     signal
   })
   if (!res.ok || !res.body) {
-    throw new Error(`${res.status} /chat/send: ${await res.text()}`)
+    throw new Error(`${res.status} ${path}: ${await res.text()}`)
   }
   const reader = res.body.getReader()
   const decoder = new TextDecoder()

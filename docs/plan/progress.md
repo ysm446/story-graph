@@ -1,9 +1,14 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-07-24 22:38
-更新日時: 2026-10-03 11:48
+更新日時: 2026-10-03 17:01
 
 ## 現在の状態
+
+- **キャラ同士の会話室を実験導入**(2026-10-03 17:01 ユーザー発案): 相談チャットの相手に「キャラ同士の会話」を追加。
+  参加者 2〜6 人、作者は参加せず演出の指示だけ出す。話者はラウンドロビン(最初だけ指名可)、1 回の発言数は 1/2/4/6(上限 8)。
+  記憶・関係性の点検用で、物語には戻さず state にも書かない。保存は chats(mode='room' + participants)のみ。
+  詳細は [docs/design/chat.md §8](../design/chat.md)。pytest 328 件・typecheck 成功。**実機での会話品質の確認はまだ**。
 
 - **バックエンドのポート競合判定を修正**(2026-10-03 11:48): IPv4・IPv6 の使用中ポートを避け、8765〜8784 から自動選択。
   ヘルス応答のアプリ識別を追加。実機で 8766 に切り替えてデータ取得を確認。回帰テストは `node --test scripts/test-sidecar-network.cjs`(6件成功)。
@@ -14,7 +19,7 @@
 - **ライブラリ方式を導入**(lm-graph 踏襲): ストーリーごとのフォルダに `story-graph.db` を置く。現在のライブラリと最近使ったライブラリは `%APPDATA%/story-graph/app.json`(Electron userData)に保存。ヘッダー右のドロップダウンで切替(切替時はレンダラをリロード)。デフォルトはリポジトリ内 `data/`。
 - `npm run dev` で Electron が起動し、FastAPI sidecar(ポート 8765〜自動探索)が自動 spawn される。
 - バックエンドは単体でも起動可能: `cd backend && ../.venv/Scripts/python.exe -m uvicorn app:app --port 8765`
-- テスト: `cd backend && ../.venv/Scripts/python.exe -m pytest tests/ -q`(318件、全て成功)
+- テスト: `cd backend && ../.venv/Scripts/python.exe -m pytest tests/ -q`(328件、全て成功)
 - モデルは **31B を主に使用**(12B は検証用。2026-08-11 ユーザー談)
 
 ## 完了済み

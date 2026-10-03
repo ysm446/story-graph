@@ -181,11 +181,12 @@ export function useChatVoice(ctx: ChatVoiceContext): {
   setEnabled: (on: boolean) => void
   speaking: boolean
   error: string | null
-  /** 新しい返答の読み上げを始める(前の読み上げは止める)。オフなら何もしない */
-  begin: () => void
+  /** 新しい返答の読み上げを始める(前の読み上げは止める)。オフなら何もしない。
+   *  override は発言ごとに声の主が替わる会話室用(その発言だけ別のキャラの声で読む) */
+  begin: (override?: ChatVoiceContext) => void
   feed: (delta: string) => void
   finish: (fullText?: string) => void
-  speakText: (text: string) => void
+  speakText: (text: string, override?: ChatVoiceContext) => void
   stop: () => void
 } {
   const [enabled, setEnabledState] = useState(() => {
@@ -213,11 +214,11 @@ export function useChatVoice(ctx: ChatVoiceContext): {
     setSpeaking(false)
   }, [])
 
-  const start = useCallback((): SpeechQueue => {
+  const start = useCallback((override?: ChatVoiceContext): SpeechQueue => {
     stop()
     setError(null)
     const queue = new SpeechQueue(
-      { ...ctxRef.current },
+      { ...(override ?? ctxRef.current) },
       (active) => {
         if (queueRef.current === queue) setSpeaking(active)
       },
@@ -248,12 +249,15 @@ export function useChatVoice(ctx: ChatVoiceContext): {
   // 会話の相手が変わる・画面を離れるときは止める
   useEffect(() => stop, [ctx.charId, ctx.mode, stop])
 
-  const begin = useCallback((): void => {
-    fedRef.current = false
-    sentFirstRef.current = false
-    if (enabled) start()
-    else stop()
-  }, [enabled, start, stop])
+  const begin = useCallback(
+    (override?: ChatVoiceContext): void => {
+      fedRef.current = false
+      sentFirstRef.current = false
+      if (enabled) start(override)
+      else stop()
+    },
+    [enabled, start, stop]
+  )
 
   const feed = useCallback((delta: string): void => {
     fedRef.current = true
@@ -278,8 +282,8 @@ export function useChatVoice(ctx: ChatVoiceContext): {
   }, [])
 
   const speakText = useCallback(
-    (text: string): void => {
-      start().addText(text)
+    (text: string, override?: ChatVoiceContext): void => {
+      start(override).addText(text)
     },
     [start]
   )

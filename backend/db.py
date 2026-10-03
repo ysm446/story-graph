@@ -304,6 +304,9 @@ def init_schema(conn: sqlite3.Connection) -> None:
         # 名前の読み(ひらがな)。読み上げで、合成の直前に名前をこの読みに置き換える(docs/design/voice.md §4.5)
         "ALTER TABLE characters ADD COLUMN reading TEXT",
         "ALTER TABLE places ADD COLUMN reading TEXT",
+        # キャラ同士の会話室(mode='room')の参加者(JSON 配列の char_id。docs/design/chat.md §8)。
+        # 会話室は char_id NULL のまま participants で見分ける
+        "ALTER TABLE chats ADD COLUMN participants TEXT",
     ):
         try:
             conn.execute(ddl)

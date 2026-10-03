@@ -2169,10 +2169,55 @@ async def delete_chat_turn(chat_id: str, index: int, keep_user: bool = False) ->
     return chat
 
 
+@app.delete("/chats/{chat_id}/message/{index}")
+async def delete_chat_message(chat_id: str, index: int) -> dict[str, Any]:
+    """履歴の 1 件(キャラ同士の会話室の発言 / 演出指示)だけを削除する。"""
+    chat = store.delete_chat_message(chat_id, index)
+    if chat is None:
+        raise HTTPException(404, "chat or message not found")
+    return chat
+
+
 @app.delete("/chats/{chat_id}")
 async def delete_chat(chat_id: str) -> dict[str, str]:
     store.delete_chat(chat_id)
     return {"status": "deleted"}
+
+
+class RoomSendIn(BaseModel):
+    """キャラ同士の会話室(docs/design/chat.md §8)。作者は参加せず演出の指示だけ出す。"""
+
+    chat_id: str | None = None
+    anchor_node: str | None = None
+    participants: list[str] | None = None  # 新規のとき必須(2〜6 人)。以後は chats に固定
+    instruction: str | None = None  # 演出の指示(空なら指示なしで会話を進める)
+    speaker: str | None = None  # 最初に話す人の指名(None = 前の話者の次)
+    turns: int = 1  # 続けて話させる発言数(サーバー側で MAX_ROOM_TURNS に丸める)
+
+
+@app.post("/chat/room/send")
+async def chat_room_send(body: RoomSendIn) -> StreamingResponse:
+    try:
+        base_url = await llama.ensure_running(store.get_settings())
+    except Exception as e:
+        return _sse_error_response(str(e))
+    anchor = body.anchor_node
+    if anchor is None:
+        canon = store.canon_path()
+        anchor = canon[-1] if canon else None
+    return StreamingResponse(
+        chat_agent.room_stream(
+            store,
+            base_url,
+            body.chat_id,
+            anchor,
+            body.participants,
+            body.instruction,
+            body.speaker,
+            body.turns,
+        ),
+        media_type="text/event-stream",
+    )
 
 
 @app.post("/chat/send")
@@ -2207,6 +2252,7 @@ class ChatSuggestIn(BaseModel):
     scope: str = "upto"
     char_id: str | None = None  # token_usage 用(キャラモードの新規チャット)
     mode: str = "interview"
+    participants: list[str] | None = None  # token_usage 用(会話室の新規チャット)
 
 
 @app.post("/chat/token_usage")
@@ -2220,7 +2266,7 @@ async def chat_token_usage(body: ChatSuggestIn) -> dict[str, Any]:
         canon = store.canon_path()
         anchor = canon[-1] if canon else None
     usage = await chat_agent.token_usage(
-        store, base_url, body.chat_id, anchor, body.scope, body.char_id, body.mode
+        store, base_url, body.chat_id, anchor, body.scope, body.char_id, body.mode, body.participants
     )
     return {**usage, "ctx_size": int(settings.get("llm_ctx_size") or 16384)}
 

@@ -3018,13 +3018,25 @@ class Store:
         scope: str,
         char_id: str | None = None,
         mode: str | None = None,
+        participants: list[str] | None = None,
     ) -> dict[str, Any]:
+        """participants はキャラ同士の会話室(mode='room')の参加者。会話室は char_id を持たない。"""
         chat_id = _new_id()
         now = _now()
         self.conn.execute(
-            "INSERT INTO chats(id, anchor_node, scope, char_id, mode, messages, created_at, updated_at)"
-            " VALUES(?,?,?,?,?,?,?,?)",
-            (chat_id, anchor_node, scope, char_id, mode, "[]", now, now),
+            "INSERT INTO chats(id, anchor_node, scope, char_id, mode, participants, messages, created_at, updated_at)"
+            " VALUES(?,?,?,?,?,?,?,?,?)",
+            (
+                chat_id,
+                anchor_node,
+                scope,
+                char_id,
+                mode,
+                json.dumps(participants, ensure_ascii=False) if participants is not None else None,
+                "[]",
+                now,
+                now,
+            ),
         )
         self.conn.commit()
         return self.get_chat(chat_id)  # type: ignore[return-value]
@@ -3035,6 +3047,7 @@ class Store:
             return None
         chat = dict(row)
         chat["messages"] = json.loads(chat["messages"])
+        chat["participants"] = json.loads(chat["participants"]) if chat.get("participants") else None
         return chat
 
     @staticmethod
@@ -3050,7 +3063,7 @@ class Store:
         アンカーのタイトルとキャラ名も列だけ引く(get_node は全イベントまで読む)。
         """
         rows = self.conn.execute(
-            "SELECT id, anchor_node, scope, char_id, mode, title, snippet, updated_at"
+            "SELECT id, anchor_node, scope, char_id, mode, participants, title, snippet, updated_at"
             " FROM chats ORDER BY updated_at DESC"
         ).fetchall()
         snippets: dict[str, str] = {}
@@ -3076,8 +3089,14 @@ class Store:
             [r["anchor_node"] for r in rows if r["anchor_node"]],
             "SELECT id, title FROM nodes WHERE id IN ({marks})",
         )
+        participants = {
+            r["id"]: (json.loads(r["participants"]) if r["participants"] else None) for r in rows
+        }
+        char_ids = [r["char_id"] for r in rows if r["char_id"]]
+        for ids in participants.values():
+            char_ids.extend(ids or [])
         names = _lookup(
-            [r["char_id"] for r in rows if r["char_id"]],
+            list(dict.fromkeys(char_ids)),
             "SELECT id, name FROM characters WHERE id IN ({marks})",
         )
         return [
@@ -3089,6 +3108,13 @@ class Store:
                 "char_id": row["char_id"],
                 "char_name": names.get(row["char_id"]),
                 "mode": row["mode"],
+                "participants": participants[row["id"]],
+                # 会話室の見出し用(削除済みキャラは ID のまま)
+                "participant_names": (
+                    [names.get(cid, cid) for cid in participants[row["id"]]]
+                    if participants[row["id"]] is not None
+                    else None
+                ),
                 "title": row["title"],
                 "snippet": row["snippet"] if row["snippet"] is not None else snippets.get(row["id"], ""),
                 "updated_at": row["updated_at"],
@@ -3121,6 +3147,23 @@ class Store:
             end += 1
         head = messages[: index + 1] if keep_user else messages[:index]
         self.save_chat_messages(chat_id, head + messages[end:])
+        return self.get_chat(chat_id)
+
+    def delete_chat_message(self, chat_id: str, index: int) -> dict[str, Any] | None:
+        """履歴の 1 件(発言 1 つ)だけを取り除く。
+
+        キャラ同士の会話室用。会話室の履歴は演出指示(user)とキャラの発言(assistant)が
+        1 件ずつ独立していて往復の区切りが無いので、delete_chat_turn の「user から次の user まで」
+        ではなく 1 件単位で消す。
+        """
+        chat = self.get_chat(chat_id)
+        if chat is None:
+            return None
+        messages = list(chat["messages"])
+        if not (0 <= index < len(messages)):
+            return None
+        del messages[index]
+        self.save_chat_messages(chat_id, messages)
         return self.get_chat(chat_id)
 
     def set_chat_title(self, chat_id: str, title: str | None) -> dict[str, Any] | None:

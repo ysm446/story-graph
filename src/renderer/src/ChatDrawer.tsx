@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   chatApi,
   chatSendStream,
+  roomSendStream,
   isAbortError,
   type ChatStats,
   type ChatStreamEvent,
@@ -27,6 +28,8 @@ interface LegacyProposal {
 // turn = その項目が属する往復の開始位置(user 発言の messages 内インデックス)。
 // 編集 / 再生成 / 削除はこの位置を使ってサーバー側の履歴を操作する。
 // ストリーミング中に増えた項目は位置が未確定なので undefined。
+// キャラ同士の会話室(docs/design/chat.md §8)では往復の区切りが無いので、turn は
+// その項目自身の messages 内インデックス(削除は 1 件単位)。
 type DisplayItem =
   | { kind: 'user'; text: string; turn?: number; ts?: string }
   | {
@@ -37,8 +40,10 @@ type DisplayItem =
       ts?: string
       /** この返事の生成時に LLM へ実際に送った内容の控え(system + 履歴 + ツール結果) */
       promptMessages?: Array<Record<string, unknown>>
+      /** 会話室の発言者(キャラ ID)。相談 / キャラチャットでは無い */
+      speaker?: string
     }
-  | { kind: 'tool'; name: string; turn?: number }
+  | { kind: 'tool'; name: string; turn?: number; speaker?: string }
 
 /** 発言時刻(保存は UTC の ISO 8601)を「7/20 12:05」の形にする。
  *  古い履歴には時刻が無いので、その場合は何も出さない。 */
@@ -83,6 +88,23 @@ function buildDisplay(messages: Array<Record<string, unknown>>): DisplayItem[] {
       return
     }
     if (role !== 'assistant') return
+    const speaker = m.speaker as string | undefined
+    if (speaker) {
+      // 会話室の発言。recall の往復は保存されず tools_used に名前だけ残る
+      for (const name of (m.tools_used as string[] | undefined) ?? []) {
+        display.push({ kind: 'tool', name, turn: index, speaker })
+      }
+      display.push({
+        kind: 'assistant',
+        text: String(m.content ?? ''),
+        stats: (m.meta as ChatStats | undefined) ?? null,
+        turn: index,
+        ts: m.ts as string | undefined,
+        promptMessages: m.prompt_messages as Array<Record<string, unknown>> | undefined,
+        speaker
+      })
+      return
+    }
     const toolCalls = m.tool_calls as Array<{ function?: { name?: string; arguments?: string } }> | undefined
     for (const tc of toolCalls ?? []) {
       const name = tc.function?.name ?? ''
@@ -157,6 +179,18 @@ const CHAR_TEMPLATES: { label: string; text: string }[] = [
   { label: 'この場所', text: 'いまいる場所について、どう感じていますか?' },
   { label: '変わったこと', text: '出会ったころの自分と、いまの自分で変わったことは?' }
 ]
+// 会話室用の演出指示の候補(作者は参加せず指示だけ出す。docs/design/chat.md §8)
+const ROOM_TEMPLATES: { label: string; text: string }[] = [
+  { label: '挨拶から', text: 'まず挨拶から。互いの距離感が分かるように。' },
+  { label: '最近の出来事', text: '最近あった出来事について、それぞれの見方を話し合って。' },
+  { label: '探り合い', text: '相手が何を知っているか探り合って。知らないことは知らないままで。' },
+  { label: '言い合い', text: '意見が食い違う話題を見つけて、言い合いになって。' },
+  { label: '印象の変化', text: '相手の第一印象と、いまの印象がどう違うかを話して。' },
+  { label: '頼みごと', text: '相手に何か頼みごとをして。相手は気持ちに沿って応じるか断る。' },
+  { label: '本音', text: 'ふだん言えていない本音を、一つだけ漏らして。' },
+  { label: '締める', text: '別れの挨拶。会話を締めて。' }
+]
+const ROOM_TURN_OPTIONS = [1, 2, 4, 6] // 1 回で続けて話させる発言数の選択肢(サーバー上限は 8)
 // 候補は会話と一緒にスクロールするので、固定枠だった頃より多めに出せる
 const TEMPLATE_WINDOW = 5 // 同時に見せる件数
 const MAX_DYNAMIC = 3 // うち、内容から生成された質問に使う枠(生成側の上限も 3 件)
@@ -202,6 +236,13 @@ export default function ChatDrawer({
   // キャラモード: charId 設定時は「その時系列のキャラ本人」と話す(null = 相談)
   const [charId, setCharId] = useState<string | null>(null)
   const [roleplay, setRoleplay] = useState(false) // false = インタビュー
+  // 会話室モード: キャラ同士に会話させ、作者は演出の指示だけ出す(docs/design/chat.md §8)。
+  // 参加者は会話が始まったら固定(chats.participants)
+  const [room, setRoom] = useState(false)
+  const [participants, setParticipants] = useState<string[]>([])
+  const [nextSpeaker, setNextSpeaker] = useState<string | null>(null) // null = 前の話者の次
+  const [turns, setTurns] = useState(2) // 1 回「進める」で続けて話させる発言数
+  const [liveSpeaker, setLiveSpeaker] = useState<string | null>(null) // 会話室でいま話している人
   const [items, setItems] = useState<DisplayItem[]>([])
   const [liveText, setLiveText] = useState('') // ストリーミング中の回答(確定前)
   const [input, setInput] = useState('')
@@ -317,9 +358,13 @@ export default function ChatDrawer({
   const ringColor = usagePct >= 90 ? '#ef4444' : usagePct >= 70 ? '#f59e0b' : 'var(--accent)'
 
   const activeChar = charId ? characters.find((c) => c.id === charId) ?? null : null
-  // キャラモードは固定テンプレを差し替え、内容ベースの生成は使わない
-  const templates = charId ? CHAR_TEMPLATES : TEMPLATES
-  const dynamicShown = dynamicSuggestions && !charId ? dynamicQuestions.slice(0, MAX_DYNAMIC) : []
+  const charById = (id: string | null | undefined): Character | null =>
+    id ? characters.find((c) => c.id === id) ?? null : null
+  const roomChars = participants.map((id) => charById(id)).filter((c): c is Character => c !== null)
+  const roomReady = participants.length >= 2
+  // キャラモード・会話室は固定テンプレを差し替え、内容ベースの生成は使わない
+  const templates = room ? ROOM_TEMPLATES : charId ? CHAR_TEMPLATES : TEMPLATES
+  const dynamicShown = dynamicSuggestions && !charId && !room ? dynamicQuestions.slice(0, MAX_DYNAMIC) : []
   // 固定の候補で残りの枠を埋める(固定が上、生成された質問が下)
   const chips = [
     ...Array.from(
@@ -333,7 +378,7 @@ export default function ChatDrawer({
   // 内容ベースの質問候補を取り直す。失敗・未起動・設定オフはすべて無視して
   // 固定の候補のまま(バックエンドが空配列を返す)。キャラモードでは使わない
   const refreshSuggestions = async (cid: string | null, anchor: string | null): Promise<void> => {
-    if (!dynamicSuggestions || charId) return
+    if (!dynamicSuggestions || charId || room) return
     try {
       const res = await chatApi.suggestQuestions({ chat_id: cid, anchor_node: anchor, scope })
       if (res.questions.length > 0) setDynamicQuestions(res.questions)
@@ -347,17 +392,25 @@ export default function ChatDrawer({
   const refreshUsage = async (
     cid: string | null,
     anchor: string | null,
-    charOverride?: string | null
+    charOverride?: string | null,
+    participantsOverride?: string[] | null
   ): Promise<void> => {
     const c = charOverride !== undefined ? charOverride : charId
+    const p = participantsOverride !== undefined ? participantsOverride : room ? participants : null
     const seq = ++usageSeqRef.current
+    if (p && p.length < 2) {
+      // 参加者が揃うまでは数えるものが無い
+      setUsage(null)
+      return
+    }
     try {
       const res = await chatApi.tokenUsage({
         chat_id: cid,
         anchor_node: anchor,
-        scope: c ? 'upto' : scope,
+        scope: c || p ? 'upto' : scope,
         char_id: c,
-        mode: roleplay ? 'roleplay' : 'interview'
+        mode: p ? 'room' : roleplay ? 'roleplay' : 'interview',
+        participants: p
       })
       if (seq !== usageSeqRef.current) return // 新しい要求に追い越された
       setUsage({ tokens: res.token_count, ctx: res.ctx_size, estimated: res.estimated })
@@ -418,7 +471,7 @@ export default function ChatDrawer({
     const timer = window.setTimeout(() => void refreshUsage(null, liveAnchor), USAGE_DEBOUNCE_MS)
     return () => window.clearTimeout(timer)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, chatId, liveAnchor, scope, charId, roleplay])
+  }, [open, chatId, liveAnchor, scope, charId, roleplay, room, participants.join(',')])
 
   // 候補チップも会話の中(末尾)にあるので、チップが差し替わったときも下端へ寄せる
   useEffect(() => {
@@ -432,7 +485,9 @@ export default function ChatDrawer({
   // サイドバーの見出し。会話名が無ければ冒頭の発言、それも無ければアンカー名
   const chatLabel = (h: ChatSummary | undefined): string => {
     if (!h) return '(会話)'
-    return h.title || h.snippet || h.anchor_title || '(新しい会話)'
+    // 会話室は指示なしで始まることもある(snippet が空)ので、参加者の名前を見出しにする
+    const names = h.participant_names?.length ? h.participant_names.join('と') : ''
+    return h.title || h.snippet || names || h.anchor_title || '(新しい会話)'
   }
 
   const anchorTitle = (id: string | null): string => {
@@ -456,20 +511,32 @@ export default function ChatDrawer({
     void refreshUsage(null, anchor)
   }
 
-  // 相談 ⇄ キャラの切替。会話の前提(システムプロンプト)が変わるので新規チャット扱い
-  const switchTarget = (nextCharId: string | null): void => {
+  // 相談 ⇄ キャラ ⇄ 会話室の切替。会話の前提(システムプロンプト)が変わるので新規チャット扱い。
+  // value は '' = 相談、'room' = キャラ同士の会話、それ以外はキャラ ID
+  const switchTarget = (value: string | null): void => {
     voice.stop()
+    const nextRoom = value === 'room'
+    const nextCharId = nextRoom ? null : value || null
+    setRoom(nextRoom)
     setCharId(nextCharId)
     setChatId(null)
     setItems([])
     setDynamicQuestions([])
     setEditingTurn(null)
     setTemplateOffset(0)
+    setNextSpeaker(null)
     // 会話の途中で相手を変えたときは、その会話の時点(アンカー)を引き継ぐ。
     // まだ会話が始まっていなければ空に戻して選択に追従させる
     const carried = chatId ? anchorNode : null
     setAnchorNode(carried)
-    void refreshUsage(null, carried ?? anchorCandidateId ?? canonTailId, nextCharId)
+    void refreshUsage(null, carried ?? anchorCandidateId ?? canonTailId, nextCharId, nextRoom ? participants : null)
+  }
+
+  // 会話室の参加者の出し入れ(会話が始まる前だけ)
+  const toggleParticipant = (id: string): void => {
+    if (chatId || busy) return
+    setParticipants((prev) => (prev.includes(id) ? prev.filter((p) => p !== id) : [...prev, id]))
+    setNextSpeaker((s) => (s === id ? null : s))
   }
 
   const loadChat = async (id: string): Promise<void> => {
@@ -481,17 +548,21 @@ export default function ChatDrawer({
       return
     }
     voice.stop()
+    const isRoom = chat.mode === 'room' && !!chat.participants
     setChatId(chat.id)
     setAnchorNode(chat.anchor_node)
     setScope(chat.scope === 'all' ? 'all' : 'upto')
     setCharId(chat.char_id ?? null)
     setRoleplay(chat.mode === 'roleplay')
+    setRoom(isRoom)
+    if (isRoom) setParticipants(chat.participants ?? [])
+    setNextSpeaker(null)
     setDynamicQuestions([])
     // turn は会話ごとの添字なので、別の会話に持ち越すと同じ位置のメッセージに
     // 前の会話の編集欄(と本文)が現れてしまう
     setEditingTurn(null)
-    if (!chat.char_id) void refreshSuggestions(chat.id, chat.anchor_node)
-    void refreshUsage(chat.id, chat.anchor_node, chat.char_id ?? null)
+    if (!chat.char_id && !isRoom) void refreshSuggestions(chat.id, chat.anchor_node)
+    void refreshUsage(chat.id, chat.anchor_node, chat.char_id ?? null, isRoom ? chat.participants : null)
     setItems(buildDisplay(chat.messages))
   }
 
@@ -506,7 +577,93 @@ export default function ChatDrawer({
     }
   }
 
+  /** 会話室: 演出の指示(空でもよい)を積んでから、話者を決めて turns 人ぶん話させる。
+   *  speakerOverride は「この人に話させる」(再生成でも使う)。count は発言数の上書き */
+  const sendRoom = async (override?: string, speakerOverride?: string | null, count?: number): Promise<void> => {
+    const instruction = (override ?? input).trim()
+    if (busy || !roomReady) return
+    const controller = new AbortController()
+    abortRef.current = controller
+    setBusy(true)
+    if (override === undefined) setInput('')
+    if (instruction) {
+      setItems((prev) => [...prev, { kind: 'user', text: instruction, ts: new Date().toISOString() }])
+    }
+    setStatus('考え中…')
+    const effectiveAnchor = liveAnchor
+    if (!chatId) setAnchorNode(effectiveAnchor)
+    const speaker = speakerOverride !== undefined ? speakerOverride : nextSpeaker
+    setNextSpeaker(null) // 指名は 1 回きり(以降は順に回る)
+    let live = ''
+    let latestChatId = chatId
+    const nameOf = (id: string): string => charById(id)?.name ?? id
+    try {
+      await roomSendStream(
+        {
+          chat_id: chatId,
+          anchor_node: effectiveAnchor,
+          participants: chatId ? null : participants,
+          instruction: instruction || null,
+          speaker,
+          turns: count ?? turns
+        },
+        (e: ChatStreamEvent) => {
+          if (e.chat_id && !e.done) {
+            latestChatId = e.chat_id
+            setChatId(e.chat_id)
+          }
+          if (e.turn !== undefined && e.speaker) {
+            // 発言の始まり。この発言は本人の声で読む(（）のト書きは語り手)
+            live = ''
+            setLiveText('')
+            setLiveSpeaker(e.speaker)
+            setStatus(`${nameOf(e.speaker)} が考え中…`)
+            voice.begin({ charId: e.speaker, mode: 'roleplay' })
+          }
+          if (e.stage === 'thinking' && e.speaker) setStatus(`${nameOf(e.speaker)} が考え中…`)
+          if (e.delta) {
+            live += e.delta
+            setLiveText(live)
+            setStatus(null)
+            voice.feed(e.delta)
+          }
+          if (e.tool_call && e.speaker) {
+            setStatus(`${nameOf(e.speaker)} が記憶をたどっています…`)
+            setItems((prev) => [...prev, { kind: 'tool', name: e.tool_call!.name, speaker: e.speaker }])
+          }
+          if (e.utterance) {
+            const u = e.utterance
+            voice.finish(u.text || undefined)
+            live = ''
+            setLiveText('')
+            setLiveSpeaker(null)
+            setItems((prev) => [
+              ...prev,
+              { kind: 'assistant', text: u.text, stats: u.stats, speaker: u.speaker, turn: u.index, ts: new Date().toISOString() }
+            ])
+          }
+          if (e.done) setStatus(null)
+          if (e.error) setStatus(`エラー: ${e.error}`)
+        },
+        controller.signal
+      )
+    } catch (err) {
+      if (isAbortError(err)) voice.stop()
+      setStatus(isAbortError(err) ? '止めました(話し終えた発言までは保存されています)' : String(err))
+    } finally {
+      abortRef.current = null
+      setBusy(false)
+      setLiveText('')
+      setLiveSpeaker(null)
+      if (!latestChatId) setAnchorNode(null)
+      void refreshUsage(latestChatId, effectiveAnchor)
+      void refreshHistory()
+      void syncItems(latestChatId)
+    }
+  }
+
   const send = async (override?: string, replaceFrom?: number): Promise<void> => {
+    if (room) return sendRoom(override)
     const message = (override ?? input).trim()
     if (!message || busy) return
     // 編集・再生成: 画面上もその往復以降を消してから送り直す
@@ -629,6 +786,32 @@ export default function ChatDrawer({
     setEditText(text)
   }
 
+  // 会話室: 履歴の 1 件(発言 / 演出指示)だけを消す
+  const deleteRoomMessage = async (index: number, label: string): Promise<void> => {
+    if (!chatId || busy) return
+    if (!window.confirm(label)) return
+    try {
+      setItems(buildDisplay((await chatApi.deleteMessage(chatId, index)).messages))
+    } catch {
+      setStatus('削除に失敗しました')
+      return
+    }
+    void refreshUsage(chatId, anchorNode)
+    void refreshHistory()
+  }
+
+  // 会話室: 最後の発言を消して、同じ人にもう一度話させる
+  const redoLastUtterance = async (index: number, speaker: string): Promise<void> => {
+    if (!chatId || busy) return
+    try {
+      setItems(buildDisplay((await chatApi.deleteMessage(chatId, index)).messages))
+    } catch {
+      setStatus('作り直しに失敗しました')
+      return
+    }
+    void sendRoom('', speaker, 1)
+  }
+
   // サイドバーの ⋯ メニューから削除。表示中のチャットを消したら新規に戻す
   const deleteChat = async (id: string): Promise<void> => {
     if (busy) return
@@ -695,6 +878,12 @@ export default function ChatDrawer({
             // キャラ会話は本人のアイコンで示す。線画の仮面だと小さくて見分けが
             // つきにくいので、色と顔がそのまま出るアバターを使う
             const char = h.char_id ? characters.find((c) => c.id === h.char_id) ?? null : null
+            const isRoom = h.mode === 'room'
+            const subLabel = isRoom
+              ? h.participant_names?.join('・') ?? ''
+              : h.char_name
+                ? `${h.char_name} / `
+                : ''
             return (
               <div
                 key={h.id}
@@ -724,9 +913,9 @@ export default function ChatDrawer({
                       onClick={() => void loadChat(h.id)}
                       disabled={busy}
                       className="flex min-w-0 flex-1 items-center gap-1.5 px-1.5 py-1 text-left disabled:opacity-50"
-                      data-tip={`${h.char_name ? h.char_name + ' / ' : ''}${h.anchor_title || '(シーンなし)'} まで`}
+                      data-tip={`${isRoom ? subLabel + ' / ' : h.char_name ? h.char_name + ' / ' : ''}${h.anchor_title || '(シーンなし)'} まで`}
                     >
-                      {/* 相手の目印。キャラ会話はアバター、相談チャットは吹き出し。
+                      {/* 相手の目印。キャラ会話はアバター、会話室は二人のアイコン、相談チャットは吹き出し。
                           幅を揃えて見出しの開始位置がずれないようにする */}
                       <span
                         className="flex w-5 shrink-0 items-center justify-center"
@@ -734,6 +923,8 @@ export default function ChatDrawer({
                       >
                         {char ? (
                           <CharAvatar char={char} size={20} />
+                        ) : isRoom ? (
+                          <Icon name="users" size={15} />
                         ) : h.char_name ? (
                           <Icon name="mask" size={16} />
                         ) : (
@@ -751,7 +942,7 @@ export default function ChatDrawer({
                           className="block truncate text-[10px]"
                           style={{ color: 'var(--text-faint)' }}
                         >
-                          {h.char_name ? `${h.char_name} / ` : ''}
+                          {isRoom ? `${subLabel} / ` : subLabel}
                           {h.anchor_title || '(シーンなし)'}
                         </span>
                       </span>
@@ -817,9 +1008,15 @@ export default function ChatDrawer({
           {/* ヘッダー: 相手 / アンカー / スコープ */}
           <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px]" style={{ color: 'var(--text-faint)' }}>
             {/* 話す相手: 相談(編集者) or キャラ本人。切替は新規チャット扱い */}
-            {activeChar ? <CharAvatar char={activeChar} size={20} /> : <Icon name="chat" size={14} />}
+            {activeChar ? (
+              <CharAvatar char={activeChar} size={20} />
+            ) : room ? (
+              <Icon name="users" size={15} />
+            ) : (
+              <Icon name="chat" size={14} />
+            )}
             <select
-              value={charId ?? ''}
+              value={room ? 'room' : charId ?? ''}
               onChange={(e) => switchTarget(e.target.value || null)}
               disabled={busy}
               className="rounded-md border px-1.5 py-0.5 text-[11px]"
@@ -828,10 +1025,11 @@ export default function ChatDrawer({
                 borderColor: activeChar?.color || 'var(--border)',
                 color: 'var(--text-dim)'
               }}
-              data-tip="話す相手。キャラを選ぶと、アンカー時点のそのキャラ本人と話せます"
+              data-tip="話す相手。キャラを選ぶと、アンカー時点のそのキャラ本人と話せます。「キャラ同士の会話」は作者は参加せず、演出の指示だけ出します"
             >
               {/* option には SVG を置けないので、ここだけは文字だけで区別する */}
               <option value="">相談(編集者)</option>
+              <option value="room">キャラ同士の会話</option>
               {characters.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}と話す
@@ -841,7 +1039,38 @@ export default function ChatDrawer({
             <span>
               アンカー: <span style={{ color: 'var(--text-dim)' }}>{anchorTitle(liveAnchor)}</span> まで
             </span>
-            {charId ? (
+            {room ? (
+              // 参加者。会話が始まるまでは出し入れでき、始まったら固定(chats.participants)
+              <div className="flex flex-wrap items-center gap-1">
+                {(chatId ? roomChars : characters).map((c) => {
+                  const on = participants.includes(c.id)
+                  return (
+                    <button
+                      key={c.id}
+                      onClick={() => toggleParticipant(c.id)}
+                      disabled={!!chatId || busy}
+                      className="inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] disabled:cursor-not-allowed"
+                      style={
+                        on
+                          ? { borderColor: c.color || 'var(--border-strong)', background: 'var(--accent-soft)', color: 'var(--text)' }
+                          : { borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }
+                      }
+                      data-tip={
+                        chatId
+                          ? '参加者は会話の開始時に固定されます(変えるには新規)'
+                          : on
+                            ? `${c.name} を会話から外す`
+                            : `${c.name} を会話に加える`
+                      }
+                    >
+                      <CharAvatar char={c} size={14} />
+                      {c.name}
+                    </button>
+                  )
+                })}
+                {!chatId && !roomReady && <span>2 人以上選んでください</span>}
+              </div>
+            ) : charId ? (
               <div className="flex overflow-hidden rounded-md border" style={{ borderColor: 'var(--border-strong)' }}>
                 {([false, true] as const).map((rp) => (
                   <button
@@ -897,7 +1126,7 @@ export default function ChatDrawer({
               aria-label={voice.enabled ? '返事の読み上げをオフにする' : '返事の読み上げをオンにする'}
               data-tip={
                 voice.enabled
-                  ? `返事を声で読みます(${activeChar ? `${activeChar.name}の声` : '相談相手の声'})。クリックでオフ`
+                  ? `返事を声で読みます(${activeChar ? `${activeChar.name}の声` : room ? '話す人それぞれの声' : '相談相手の声'})。クリックでオフ`
                   : '返事を声で読みます。キャラとの会話はキャラの声、相談は設定の「相談チャットの声」で読みます'
               }
             >
@@ -934,7 +1163,18 @@ export default function ChatDrawer({
           >
             {items.length === 0 && (
               <div className="pt-6 text-center text-[12px]" style={{ color: 'var(--text-faint)' }}>
-                {activeChar ? (
+                {room ? (
+                  <>
+                    <div className="mb-2 flex justify-center gap-2">
+                      {roomChars.map((c) => (
+                        <CharAvatar key={c.id} char={c} size={44} />
+                      ))}
+                    </div>
+                    アンカー時点のキャラ同士に会話をさせます。あなたは会話に参加せず、演出の指示だけ出します。
+                    <br />
+                    記憶と関係の確かめ用で、この会話は物語には含まれません。指示を空にして「進める」だけでも話し始めます。
+                  </>
+                ) : activeChar ? (
                   <>
                     <div className="mb-2 flex justify-center">
                       <CharAvatar char={activeChar} size={56} />
@@ -1002,7 +1242,16 @@ export default function ChatDrawer({
                     >
                       {item.text}
                     </div>
-                    {turn !== undefined && !busy && (
+                    {turn !== undefined && !busy && room && (
+                      <div className="mt-0.5 flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                        <MsgActionButton
+                          kind="delete"
+                          tip="この指示を削除(発言は残す)"
+                          onClick={() => void deleteRoomMessage(turn, 'この指示を削除しますか?')}
+                        />
+                      </div>
+                    )}
+                    {turn !== undefined && !busy && !room && (
                       <div className="mt-0.5 flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
                         <MsgActionButton
                           kind="edit"
@@ -1025,22 +1274,33 @@ export default function ChatDrawer({
                 )
               }
               if (item.kind === 'assistant') {
+                // 会話室では発言者ごとにアバターと枠色が替わる(相談 / キャラチャットは相手固定)
+                const speakerChar = item.speaker ? charById(item.speaker) : activeChar
+                const speakerName = speakerChar?.name ?? item.speaker
+                const isLast = i === items.length - 1
                 return (
                   <div key={i} className="group mb-2">
                     {/* 時刻は行の外に出す。中に入れるとアイコンが時刻の高さに
                         引っ張られて吹き出しとずれる。アイコンぶん字下げして
                         吹き出しの真上に来るようにする */}
-                    <TimeLabel ts={item.ts} align="left" indent={activeChar ? 64 : 0} />
+                    <div className="flex items-baseline gap-2" style={{ marginLeft: speakerChar || item.speaker ? 64 : 0 }}>
+                      {item.speaker && (
+                        <span className="text-[10px]" style={{ color: speakerChar?.color || 'var(--text-dim)' }}>
+                          {speakerName}
+                        </span>
+                      )}
+                      <TimeLabel ts={item.ts} align="left" />
+                    </div>
                     <div className="flex items-start gap-2">
-                      {/* キャラモードでは発言者のアイコンを添える */}
-                      {activeChar && <CharAvatar char={activeChar} size={56} />}
+                      {/* キャラモード・会話室では発言者のアイコンを添える */}
+                      {speakerChar && <CharAvatar char={speakerChar} size={56} />}
                       <div className="min-w-0 max-w-[80%]">
                         <div
                           className="rounded-2xl rounded-bl-md border px-3 py-1.5 text-[13px] leading-relaxed"
                           style={{
                             background: 'var(--bg-card)',
                             // キャラモードはキャラ色の枠で「本人の発言」を示す
-                            borderColor: activeChar?.color || 'var(--border)',
+                            borderColor: speakerChar?.color || 'var(--border)',
                             color: 'var(--text)'
                           }}
                         >
@@ -1053,8 +1313,13 @@ export default function ChatDrawer({
                               {!busy && (
                                 <MsgActionButton
                                   kind="speak"
-                                  tip={`この返事を声で読む(${activeChar ? `${activeChar.name}の声` : '相談相手の声'})`}
-                                  onClick={() => voice.speakText(item.text)}
+                                  tip={`この返事を声で読む(${speakerChar ? `${speakerChar.name}の声` : '相談相手の声'})`}
+                                  onClick={() =>
+                                    voice.speakText(
+                                      item.text,
+                                      item.speaker ? { charId: item.speaker, mode: 'roleplay' } : undefined
+                                    )
+                                  }
                                 />
                               )}
                               {item.promptMessages && (
@@ -1064,7 +1329,21 @@ export default function ChatDrawer({
                                   onClick={() => setPromptView(item.promptMessages!)}
                                 />
                               )}
-                              {item.turn !== undefined && !busy && (
+                              {item.speaker && item.turn !== undefined && !busy && isLast && (
+                                <MsgActionButton
+                                  kind="regenerate"
+                                  tip={`この発言を消して、${speakerName} にもう一度話させる`}
+                                  onClick={() => void redoLastUtterance(item.turn!, item.speaker!)}
+                                />
+                              )}
+                              {item.speaker && item.turn !== undefined && !busy && (
+                                <MsgActionButton
+                                  kind="delete"
+                                  tip="この発言を削除"
+                                  onClick={() => void deleteRoomMessage(item.turn!, 'この発言を削除しますか?')}
+                                />
+                              )}
+                              {!item.speaker && item.turn !== undefined && !busy && (
                                 <MsgActionButton
                                   kind="delete"
                                   tip="この返事を削除(発言は残す)"
@@ -1080,15 +1359,16 @@ export default function ChatDrawer({
                 )
               }
               if (item.kind === 'tool') {
+                const who = item.speaker ? charById(item.speaker)?.name ?? item.speaker : null
                 return (
                   <div
                     key={i}
                     className="mb-1 flex items-center gap-1 text-[11px]"
-                    style={{ color: 'var(--text-faint)' }}
+                    style={{ color: 'var(--text-faint)', marginLeft: item.speaker ? 64 : 0 }}
                   >
                     {item.name === 'recall' ? (
                       <>
-                        <Icon name="recall" size={12} /> 記憶をたどった
+                        <Icon name="recall" size={12} /> {who ? `${who} が記憶をたどった` : '記憶をたどった'}
                       </>
                     ) : (
                       <>
@@ -1102,12 +1382,14 @@ export default function ChatDrawer({
             })}
             {liveText && (
               <div className="mb-2 flex items-start gap-2">
-                {activeChar && <CharAvatar char={activeChar} size={56} />}
+                {(charById(liveSpeaker) ?? activeChar) && (
+                  <CharAvatar char={(charById(liveSpeaker) ?? activeChar)!} size={56} />
+                )}
                 <div
                   className="max-w-[80%] rounded-2xl rounded-bl-md border px-3 py-1.5 text-[13px] leading-relaxed"
                   style={{
                     background: 'var(--bg-card)',
-                    borderColor: activeChar?.color || 'var(--border)',
+                    borderColor: (charById(liveSpeaker) ?? activeChar)?.color || 'var(--border)',
                     color: 'var(--text)'
                   }}
                 >
@@ -1176,11 +1458,49 @@ export default function ChatDrawer({
                 }
               }}
               placeholder={
-                activeChar ? `${activeChar.name} に話しかける…(Enter で送信)` : '物語について相談…(Enter で送信)'
+                room
+                  ? '演出の指示(空のまま進めてもよい)…(Enter で進める)'
+                  : activeChar
+                    ? `${activeChar.name} に話しかける…(Enter で送信)`
+                    : '物語について相談…(Enter で送信)'
               }
               className="min-w-0 flex-1 resize-none rounded-lg border px-3 py-1.5 text-[13px] outline-none"
               style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
             />
+            {room && (
+              <>
+                {/* 次に話す人の指名(1 回きり)と、続けて話させる発言数 */}
+                <select
+                  value={nextSpeaker ?? ''}
+                  onChange={(e) => setNextSpeaker(e.target.value || null)}
+                  disabled={busy || !roomReady}
+                  className="shrink-0 rounded-md border px-1.5 py-1 text-[11px] disabled:opacity-50"
+                  style={{ background: 'var(--bg-input)', borderColor: 'var(--border)', color: 'var(--text-dim)' }}
+                  data-tip="次に話す人。「順に」は前に話した人の次"
+                >
+                  <option value="">順に</option>
+                  {roomChars.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}から
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={turns}
+                  onChange={(e) => setTurns(Number(e.target.value))}
+                  disabled={busy}
+                  className="shrink-0 rounded-md border px-1.5 py-1 text-[11px]"
+                  style={{ background: 'var(--bg-input)', borderColor: 'var(--border)', color: 'var(--text-dim)' }}
+                  data-tip="1 回「進める」で続けて話させる発言数"
+                >
+                  {ROOM_TURN_OPTIONS.map((n) => (
+                    <option key={n} value={n}>
+                      {n} 発言
+                    </option>
+                  ))}
+                </select>
+              </>
+            )}
             {/* コンテキスト使用量のリング(lm-chat の token-ring を移植) */}
             {usage && (
               <div
@@ -1224,11 +1544,12 @@ export default function ChatDrawer({
             ) : (
               <button
                 onClick={() => void send()}
-                disabled={!input.trim()}
+                disabled={room ? !roomReady : !input.trim()}
                 className="rounded-lg px-4 py-1.5 text-[13px] font-medium text-white disabled:opacity-50"
                 style={{ background: 'var(--accent)' }}
+                data-tip={room ? (roomReady ? `${turns} 発言ぶん会話を進める` : '参加者を 2 人以上選んでください') : undefined}
               >
-                送信
+                {room ? '進める' : '送信'}
               </button>
             )}
           </div>
