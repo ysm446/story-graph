@@ -601,20 +601,23 @@ def test_is_voiceable():
         assert voice.is_voiceable(spoken), spoken
 
 
-def test_silent_sentences_become_pauses_and_gasps_become_effects():
+def test_silent_sentences_become_pauses():
     lines = voice.build_script("彼は振り返った。……っ！　息が止まる。――。\n「……」\n「待って」")
     assert [(l["kind"], l["text"], l.get("effect")) for l in lines] == [
         ("narration", "彼は振り返った。", None),
-        ("narration", "……っ！", "gasp"),  # 詰まる音は息を呑む効果音
-        ("narration", "息が止まる。", None),  # 効果音・無音をまたいで文をまとめない
+        ("narration", "息が止まる。", None),  # 無音の文(「……っ！」)をまたいで文をまとめない
         ("dialogue", "「待って」", None),
     ]
-    assert lines[2]["pause_after_ms"] == voice.PAUSE_SILENT_MS  # 「――。」と「……」の間
+    # 「……っ！」は効果音ではなく間(2026-10-03。Irodori が単独の「っ」を妙に読むため)
+    assert lines[0]["pause_after_ms"] == voice.PAUSE_SILENT_MS
+    assert lines[1]["pause_after_ms"] == voice.PAUSE_SILENT_MS  # 「――。」と「……」の間
 
 
-def test_gasp_quote_keeps_dialogue_kind():
-    lines = voice.build_script("「ッ!?」")
-    assert [(l["kind"], l.get("effect")) for l in lines] == [("dialogue", "gasp")]
+def test_gasp_quote_is_a_pause():
+    assert voice.build_script("「ッ!?」") == []
+    lines = voice.build_script("「待って」\n「ッ!?」")
+    assert [l["text"] for l in lines] == ["「待って」"]
+    assert lines[0]["pause_after_ms"] == voice.PAUSE_SILENT_MS
 
 
 def test_silent_paragraph_is_a_beat_not_a_scene_break():
@@ -624,7 +627,8 @@ def test_silent_paragraph_is_a_beat_not_a_scene_break():
 
 
 def test_effect_request_uses_engine_effects_and_skips_unsupported(store):
-    line = voice.build_script("……っ！")[0]
+    # 効果音の行は build_script からは作られなくなったが、仕組みは残している(手で組んだ行で確かめる)
+    line = {"text": "……っ！", "kind": "narration", "effect": "gasp", "speaker": "narrator", "emotion": "neutral", "intensity": 0.5}
     engine = tts.get_engine("irodori")
     name, body = voice.VoiceBook(store, {}).line_audio(engine, line)
     assert body["input"] == "😮……っ！"  # 感情の絵文字(📖 など)は付けない
@@ -643,6 +647,8 @@ def test_saved_script_drops_silent_lines(store):
     lines = [
         dict(voice.build_script("走った。")[0], pause_after_ms=250),
         {"speaker": "narrator", "kind": "dialogue", "text": "「……っ！」", "emotion": "neutral", "intensity": 0.5, "pause_after_ms": 250, "edited": False},
+        # 効果音として保存された行(2026-09-28〜10-03 の台本)も、いまは鳴らさず間にする
+        {"speaker": "narrator", "kind": "narration", "text": "ッ!?", "effect": "gasp", "emotion": "neutral", "intensity": 0.5, "pause_after_ms": 250, "edited": False},
         voice.build_script("「待って」")[0],
     ]
     store.save_voice_script(render["id"], nid, lines, "rule")

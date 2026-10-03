@@ -81,9 +81,14 @@ EFFECTS = ("gasp",)
 
 
 def effect_of(text: str) -> str | None:
-    """声に出ない文・台詞が効果音になるか。「……っ！」「ッ!?」のような詰まる音は息を呑む音(gasp)。
-    「……」「――」のような沈黙は None(間にする)。"""
-    return "gasp" if any(ch in "っッ" for ch in text) else None
+    """声に出ない文・台詞が効果音になるか。いまは常に None(間にする)。
+
+    2026-09-28〜10-03 は「……っ！」「ッ!?」のような詰まる音を息を呑む効果音(gasp)にしていたが、
+    Irodori に「😮……っ！！」をそのまま渡すと単独の「っ」を適当な音で読んで崩れることがあった
+    (2026-10-03 ユーザー報告)。沈黙の間にするのが無難、との判断で止めた。効果音の仕組み
+    (行の effect / エンジン定義の effects)は、保存済みの台本と将来の再利用のために残してある。"""
+    del text
+    return None
 
 
 def _silent_or_effect(text: str, kind: str) -> dict[str, Any]:
@@ -398,10 +403,11 @@ def apply_pov_narration(lines: list[dict[str, Any]], speaker: str | None) -> Non
 
 
 def drop_silent_lines(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """声に出ない行(以前の区切り方で保存された「……っ！」など)を取り除き、直前の行の間を延ばす。"""
+    """声に出ない行(以前の区切り方で保存された「……っ！」など)を取り除き、直前の行の間を延ばす。
+    効果音(gasp)として保存された行も、いまは鳴らさず間にする(effect_of の経緯を参照)。"""
     out: list[dict[str, Any]] = []
     for line in lines:
-        if is_voiceable(line.get("text") or "") or line.get("effect") in EFFECTS:
+        if is_voiceable(line.get("text") or ""):
             out.append(line)
         elif out:
             out[-1]["pause_after_ms"] = max(out[-1].get("pause_after_ms", 0), PAUSE_SILENT_MS)
