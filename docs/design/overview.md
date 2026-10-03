@@ -1,7 +1,7 @@
 # 全体設計(アーキテクチャ)
 
 作成日時: 2026-08-09 15:30
-更新日時: 2026-09-28 19:58
+更新日時: 2026-10-03 10:25
 
 このアプリが **どう組まれているか** をまとめた入口。「何を作るか」は
 [story-graph-spec.md](../story-graph-spec.md)(仕様)と [plan/goals.md](../plan/goals.md)(目的・価値)、
@@ -117,7 +117,7 @@ llama.cpp の制約付き構造化出力 —— どれも Python 側に既存の
 | `db.py` | 接続・スキーマ・マイグレーション(sqlite-vec / FTS5 のロード) | なし |
 | `generation.py` | ビート生成・イベント抽出・章まとめ(JSON schema 制約 + 検証 + リトライ) | llm / store / validation |
 | `rendering.py` | 鑑賞モードの散文化(直前の散文を渡して文体を接続) | llm / store |
-| `chat_agent.py` | 相談チャットの tool calling ループ(**読み取り専用**+ 提案カード) | llm / store / retrieval |
+| `chat_agent.py` | 相談チャットの tool calling ループ(**読み取り専用**、提案は文章) | llm / store / retrieval |
 | `retrieval.py` + `embed.py` | 記憶のハイブリッド検索(RRF + 重要度 + 物語内時間減衰)、Ruri 埋め込み | db |
 | `llm.py` | llama-server クライアント(httpx 非同期、構造化出力) | なし |
 | `llama_manager.py` / `llama_installer.py` | llama-server の起動・停止と自動インストール | なし |

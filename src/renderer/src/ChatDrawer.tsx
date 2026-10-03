@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
-  api,
   chatApi,
   chatSendStream,
   isAbortError,
@@ -16,7 +15,8 @@ import { useChatVoice } from './useChatVoice'
 import type { Character, StoryNode } from './types'
 import { useElapsedSeconds } from './useElapsed'
 
-interface Proposal {
+// 旧形式の会話履歴に保存された提案を文章として復元するための型。
+interface LegacyProposal {
   title: string
   beat: string
   emotional_core?: string
@@ -39,7 +39,6 @@ type DisplayItem =
       promptMessages?: Array<Record<string, unknown>>
     }
   | { kind: 'tool'; name: string; turn?: number }
-  | { kind: 'proposals'; proposals: Proposal[]; turn?: number }
 
 /** 発言時刻(保存は UTC の ISO 8601)を「7/20 12:05」の形にする。
  *  古い履歴には時刻が無いので、その場合は何も出さない。 */
@@ -89,8 +88,21 @@ function buildDisplay(messages: Array<Record<string, unknown>>): DisplayItem[] {
       const name = tc.function?.name ?? ''
       if (name === 'propose_beats') {
         try {
-          const args = JSON.parse(tc.function?.arguments ?? '{}') as { proposals?: Proposal[] }
-          if (args.proposals?.length) display.push({ kind: 'proposals', proposals: args.proposals, turn })
+          const args = JSON.parse(tc.function?.arguments ?? '{}') as { proposals?: LegacyProposal[] }
+          if (args.proposals?.length) {
+            const text = args.proposals
+              .map((p) =>
+                [
+                  p.title,
+                  p.beat,
+                  p.emotional_core ? `感情の核: ${p.emotional_core}` : '',
+                  p.cast?.length ? `登場人物: ${p.cast.join(', ')}` : '',
+                  p.location ? `場所: ${p.location}` : ''
+                ].filter(Boolean).join('\n\n')
+              )
+              .join('\n\n')
+            display.push({ kind: 'assistant', text, turn })
+          }
         } catch {
           // 引数が壊れている場合は無視
         }
@@ -119,14 +131,14 @@ function buildDisplay(messages: Array<Record<string, unknown>>): DisplayItem[] {
 }
 
 // 定型質問。読み取り3ツール(get_beats / get_state / search_memories)と
-// propose_beats が一通り使われる並びにしている。詳細は docs/design/chat.md
+// 文章での展開提案を含む並びにしている。詳細は docs/design/chat.md
 const TEMPLATES: { label: string; text: string }[] = [
   { label: '流れを要約', text: 'ここまでの流れを3行で要約して。' },
   { label: '状態を要約', text: '現在の各キャラの状態(facts と関係)を要約して。' },
   { label: '関係の変化', text: '関係値が大きく動いたところと、その理由を挙げて。' },
   { label: '未回収の伏線', text: '未回収の伏線・約束・謎を洗い出して。' },
   { label: '矛盾チェック', text: 'キャラの言動と facts に矛盾がないか点検して。' },
-  { label: '展開を提案', text: 'この先の展開を3案提案して。' },
+  { label: '展開を提案', text: 'この先の展開を提案して。' },
   { label: '山場', text: 'ここまでで一番の山場はどこですか。理由も添えて。' },
   { label: '弱いところ', text: '盛り上がりに欠けるシーンを挙げて、理由と直し方を教えて。' },
   { label: '各人の望み', text: '各キャラがいま何を求めているか整理して。' },
@@ -162,7 +174,6 @@ export default function ChatDrawer({
   canonTailId,
   nodesById,
   characters,
-  onGraphChanged,
   open,
   onClose,
   dynamicSuggestions
@@ -173,9 +184,6 @@ export default function ChatDrawer({
   canonTailId: string | null
   nodesById: Record<string, StoryNode>
   characters: Character[]
-  /** グラフを変えたことを親へ知らせる。シーンを作ったときはその ID も渡す
-   *  (親が実際の繋がりを見て置き場所を決める) */
-  onGraphChanged: (createdNodeId?: string) => void
   // 開閉と高さは親(構造モード)が持つ。相談チャットはノードエリアとの
   // 分割ペインなので、レイアウトの権限を親側に集約している
   open: boolean
@@ -200,7 +208,6 @@ export default function ChatDrawer({
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
   const [history, setHistory] = useState<ChatSummary[]>([])
-  const [insertedTitles, setInsertedTitles] = useState<Set<string>>(new Set())
   // 候補チップは常に入力欄の右上に積む。全部出すと縦を食うので窓を 3 件に
   // 絞り、⟳ で次の 3 件へ送る(ランダムではなく決まった順。docs/design/chat.md)
   const [templateOffset, setTemplateOffset] = useState(0)
@@ -223,8 +230,6 @@ export default function ChatDrawer({
   const [dynamicQuestions, setDynamicQuestions] = useState<string[]>([])
   // コンテキスト使用量(lm-chat のドーナツリング相当)
   const [usage, setUsage] = useState<{ tokens: number; ctx: number; estimated: boolean } | null>(null)
-  // 提案の挿入は連打防止(実行中フラグ)
-  const [inserting, setInserting] = useState(false)
   const abortRef = useRef<AbortController | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
   // 自動スクロールは下端付近にいるときだけ追従する(過去ログを読んでいる最中に飛ばさない)
@@ -430,7 +435,6 @@ export default function ChatDrawer({
     return h.title || h.snippet || h.anchor_title || '(新しい会話)'
   }
 
-  const nameOf = (id: string): string => characters.find((c) => c.id === id)?.name ?? id
   const anchorTitle = (id: string | null): string => {
     if (!id) return '(シーンなし)'
     const node = nodesById[id]
@@ -442,7 +446,6 @@ export default function ChatDrawer({
     if (busy) return
     setChatId(null)
     setItems([])
-    setInsertedTitles(new Set())
     setEditingTurn(null) // 開きっぱなしの編集欄を前の会話から持ち越さない
     // アンカーは空に戻す(= 選択に追従する)。ここで埋めてしまうと、会話を
     // 始める前にシーンを選び直してもアンカーが動かなくなる
@@ -459,7 +462,6 @@ export default function ChatDrawer({
     setCharId(nextCharId)
     setChatId(null)
     setItems([])
-    setInsertedTitles(new Set())
     setDynamicQuestions([])
     setEditingTurn(null)
     setTemplateOffset(0)
@@ -484,7 +486,6 @@ export default function ChatDrawer({
     setScope(chat.scope === 'all' ? 'all' : 'upto')
     setCharId(chat.char_id ?? null)
     setRoleplay(chat.mode === 'roleplay')
-    setInsertedTitles(new Set())
     setDynamicQuestions([])
     // turn は会話ごとの添字なので、別の会話に持ち越すと同じ位置のメッセージに
     // 前の会話の編集欄(と本文)が現れてしまう
@@ -562,10 +563,7 @@ export default function ChatDrawer({
             const name = e.tool_call.name
             flushLive() // ツール実行前までの途中テキストを確定させる
             setStatus(name === 'recall' ? '記憶をたどっています…' : `調査中: ${name}`)
-            if (name !== 'propose_beats') setItems((prev) => [...prev, { kind: 'tool', name }])
-          }
-          if (e.proposals?.length) {
-            setItems((prev) => [...prev, { kind: 'proposals', proposals: e.proposals! }])
+            setItems((prev) => [...prev, { kind: 'tool', name }])
           }
           if (e.answer !== undefined) {
             voice.finish(e.answer || undefined)
@@ -655,32 +653,6 @@ export default function ChatDrawer({
       return // 失敗時は一覧をそのままにしておく
     }
     setHistory((prev) => prev.map((h) => (h.id === id ? { ...h, title: title || null } : h)))
-  }
-
-  const insertProposal = async (proposal: Proposal): Promise<void> => {
-    if (inserting) return
-    setInserting(true)
-    // cast は ID or 名前で来る可能性があるため、登録キャラに解決できたものだけ使う
-    const cast = (proposal.cast ?? [])
-      .map((entry) => characters.find((c) => c.id === entry || c.name === entry)?.id)
-      .filter((id): id is string => !!id)
-    try {
-      const node = await api.createNode({
-        title: proposal.title,
-        beat: proposal.beat,
-        emotional_core: proposal.emotional_core,
-        cast,
-        location: proposal.location,
-        parent_id: anchorNode ?? undefined,
-        draft: true
-      })
-      setInsertedTitles((prev) => new Set(prev).add(proposal.title))
-      onGraphChanged(node.id)
-    } catch {
-      setStatus('シーンの挿入に失敗しました')
-    } finally {
-      setInserting(false)
-    }
   }
 
   if (!open) return null
@@ -1126,48 +1098,7 @@ export default function ChatDrawer({
                   </div>
                 )
               }
-              return (
-                <div key={i} className="mb-2 flex flex-wrap gap-2">
-                  {item.proposals.map((p, j) => (
-                    <div
-                      key={j}
-                      className="flex w-60 flex-col rounded-xl border p-2.5"
-                      style={{ background: 'var(--bg-card)', borderColor: 'var(--accent-border)' }}
-                    >
-                      <div className="mb-1 text-[12px] font-semibold" style={{ color: 'var(--text)' }}>
-                        {p.title}
-                      </div>
-                      {/* ビートは省略せず全文出す(挿入されるのはこの文章そのものなので、
-                          読み切ってから決められるようにする)。改行も保つ */}
-                      <div
-                        className="mb-1.5 whitespace-pre-wrap text-[11px] leading-relaxed"
-                        style={{ color: 'var(--text-dim)' }}
-                      >
-                        {p.beat}
-                      </div>
-                      {p.emotional_core && (
-                        <div className="mb-1.5 text-[10px] leading-relaxed" style={{ color: 'var(--text-faint)' }}>
-                          感情の核: {p.emotional_core}
-                        </div>
-                      )}
-                      {p.cast && p.cast.length > 0 && (
-                        <div className="mb-1.5 text-[10px]" style={{ color: 'var(--text-faint)' }}>
-                          {p.cast.map(nameOf).join(', ')}
-                          {p.location ? ` @${p.location}` : ''}
-                        </div>
-                      )}
-                      <button
-                        onClick={() => void insertProposal(p)}
-                        disabled={inserting || insertedTitles.has(p.title)}
-                        className="mt-auto w-full rounded-md px-2 py-1 text-[11px] font-medium text-white disabled:opacity-50"
-                        style={{ background: 'var(--accent)' }}
-                      >
-                        {insertedTitles.has(p.title) ? '挿入済み' : '⑂ ブランチとして挿入'}
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )
+              return null
             })}
             {liveText && (
               <div className="mb-2 flex items-start gap-2">

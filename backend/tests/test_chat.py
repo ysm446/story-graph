@@ -173,25 +173,25 @@ def test_prompt_messages_saved_but_not_sent(store, monkeypatch):
     assert all("prompt_messages" not in m for m in saved[-1]["prompt_messages"])
 
 
-def test_proposals_are_emitted(store, monkeypatch):
-    proposals = [
-        {"title": "決裂", "beat": "アヤはケンを追放する。", "cast": ["aya", "ken"]},
-        {"title": "和解", "beat": "アヤはケンを赦す。", "cast": ["aya", "ken"]},
-    ]
-    tc = _tool_call("propose_beats", {"proposals": proposals})
-    monkeypatch.setattr(
-        llm_mod,
-        "chat_stream_tools",
-        _fake_stream([
-            {"content": "", "tool_calls": [tc],
-             "message": {"role": "assistant", "content": None, "tool_calls": [tc]}},
-            {"content": "2案あります。", "tool_calls": None,
-             "message": {"role": "assistant", "content": "2案あります。"}},
-        ]),
-    )
-    events = collect_sse(chat_agent.chat_stream(store, "http://fake", None, None, "upto", "この先を提案して"))
-    emitted = next(e["proposals"] for e in events if "proposals" in e)
-    assert [p["title"] for p in emitted] == ["決裂", "和解"]
+def test_proposals_are_plain_text(store, monkeypatch):
+    answer = "決裂: アヤはケンを追放する。\n和解: アヤはケンを赦す。"
+    sent_tools = []
+
+    async def respond(messages, **kwargs):
+        sent_tools.extend(kwargs["tools"])
+        yield ("content", answer)
+        yield ("done", {"content": answer, "tool_calls": None,
+                        "message": {"role": "assistant", "content": answer}})
+
+    monkeypatch.setattr(llm_mod, "chat_stream_tools", respond)
+    before = store.canon_path()
+    events = collect_sse(chat_agent.chat_stream(store, "http://fake", None, None, "upto", "この先を2案提案して"))
+    assert {tool["function"]["name"] for tool in sent_tools} == {"get_beats", "get_state", "search_memories"}
+    assert "".join(e.get("delta", "") for e in events) == answer
+    assert not any("proposals" in e for e in events)
+    saved = store.get_chat(events[-1]["chat_id"])["messages"]
+    assert saved[-1]["content"] == answer
+    assert store.canon_path() == before
 
 
 def test_search_memories_tool_scope(store):

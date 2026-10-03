@@ -280,7 +280,7 @@ class SettingsPut(BaseModel):
 
 @app.get("/health")
 async def health() -> dict[str, str]:
-    return {"status": "ok"}
+    return {"status": "ok", "service": "story-graph"}
 
 
 class LibrarySwitchIn(BaseModel):

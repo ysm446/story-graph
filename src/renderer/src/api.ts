@@ -1114,13 +1114,6 @@ export interface ChatStreamEvent {
   stats?: ChatStats | null
   tool_call?: { name: string; args: Record<string, unknown> }
   tool_result?: { name: string; is_error: boolean }
-  proposals?: Array<{
-    title: string
-    beat: string
-    emotional_core?: string
-    cast?: string[]
-    location?: string
-  }>
   answer?: string
   error?: string
 }

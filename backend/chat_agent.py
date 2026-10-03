@@ -1,7 +1,7 @@
 """相談チャット — 状態の読み取り専用エージェント(spec §8)。
 
 news-picker の chat_agent.py の tool calling ループを踏襲。
-- ツール: get_beats / get_state / search_memories(読み取りのみ)+ propose_beats(提案カード)
+- ツール: get_beats / get_state / search_memories(読み取りのみ)。展開の提案は通常の文章で返す
 - スコープ: upto = アンカーノードまでの情報しか見えない(未来のネタバレ禁止)。
   all はユーザーが明示的に切り替えたときのみ
 - 履歴は chats テーブルにアンカーノード付きで保存(LLM メッセージ形式のまま)
@@ -81,34 +81,6 @@ def build_tools() -> list[dict[str, Any]]:
                         "char_id": {"type": "string", "description": "指定するとそのキャラの記憶のみ"},
                     },
                     "required": ["query"],
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "propose_beats",
-                # location は出させない: 場所は登録制の ID 参照なので LLM に文字列を
-                # 作らせない(docs/design/places.md)。空欄で挿入すれば親から引き継ぐ
-                "description": "この先の展開の提案をシーン下書きとして提出する(最大3案)。展開の提案を求められたときに使う。場所は指定しない(直前のシーンから引き継がれる)。",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "proposals": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "title": {"type": "string"},
-                                    "beat": {"type": "string", "description": "出来事の仕様書(数文)"},
-                                    "emotional_core": {"type": "string"},
-                                    "cast": {"type": "array", "items": {"type": "string"}, "description": "キャラ ID の配列"},
-                                },
-                                "required": ["title", "beat"],
-                            },
-                        },
-                    },
-                    "required": ["proposals"],
                 },
             },
         },
@@ -215,7 +187,7 @@ def _char_state_view(
     cs: dict[str, Any],
     memory_limit: int | None,
 ) -> dict[str, Any]:
-    # キーは ID のまま残す(propose_beats の cast などで LLM が ID を使うため)
+    # キーは ID のまま残す(get_state / search_memories の char_id で LLM が ID を使うため)
     view: dict[str, Any] = {
         "name": names.get(char_id, char_id),
         "status": cs.get("status"),
@@ -471,8 +443,8 @@ def build_system(store: Store, path: list[str], scope: str) -> str:
             "ルール:",
             "- 推測で答えず、必要に応じて get_beats / get_state / search_memories で事実を確認してから答える",
             f"- {anchor_text}",
-            "- 「この先の展開を提案して」のような依頼には propose_beats ツールで最大3案の下書きを提出し、"
-            "本文では各案の狙いを1行ずつ簡潔に説明する",
+            "- 展開の提案は通常の文章で返し、各案の内容と狙いを説明する。提案用のツールは使わない。"
+            "案数は固定せず、作者が数を指定した場合はその数に従う",
             "- 回答は簡潔に。作者の判断材料になる観察(関係値の流れ、未回収の記憶など)を優先する",
             "",
             "## キャラクター ID 一覧",
@@ -636,15 +608,6 @@ async def _chat_impl(
                         )
                     else:
                         payload = {"error": f"unknown tool: {name}"}
-                elif name == "propose_beats":
-                    proposals = (args.get("proposals") or [])[:3]
-                    # LLM が ID でなくキャラ名を cast に入れることがあるので、実在 ID に絞る
-                    known = store.known_char_ids()
-                    for p in proposals:
-                        if isinstance(p.get("cast"), list):
-                            p["cast"] = [c for c in p["cast"] if c in known]
-                    yield _sse({"proposals": proposals})
-                    payload = {"ok": True, "count": len(proposals)}
                 else:
                     payload = dispatch_tool(store, name, args, path, scope)
                 history.append(

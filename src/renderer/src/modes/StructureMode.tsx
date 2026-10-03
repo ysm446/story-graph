@@ -4988,15 +4988,6 @@ function StructureModeInner({
                 canonTailId={canonPath.length > 0 ? canonPath[canonPath.length - 1].id : null}
                 nodesById={Object.fromEntries(graphNodes.map((n) => [n.id, n]))}
                 characters={characters}
-                onGraphChanged={(createdNodeId) => {
-                  void (async () => {
-                    // 提案カードから作ったシーンも、繋がった場所の隣へ置いてから映す
-                    const g = createdNodeId
-                      ? await placeCreatedNode(createdNodeId).catch(() => undefined)
-                      : undefined
-                    await reload(g ?? undefined)
-                  })()
-                }}
                 dynamicSuggestions={chatDynamicSuggestions}
               />
             </div>

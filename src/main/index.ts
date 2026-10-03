@@ -3,7 +3,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { execSync } from 'node:child_process'
 import { join } from 'node:path'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { createServer } from 'node:net'
+import { findAvailablePort, isPortInUse, isStoryGraphHealthy } from './sidecarNetwork'
 
 const DEFAULT_API_PORT = 8765
 
@@ -89,42 +89,19 @@ function appIconPath(): string | undefined {
   return candidates.find((candidate) => existsSync(candidate))
 }
 
-async function findAvailablePort(startPort: number): Promise<number> {
-  for (let port = startPort; port < startPort + 20; port += 1) {
-    const available = await new Promise<boolean>((resolve) => {
-      const server = createServer()
-      server.once('error', () => resolve(false))
-      server.once('listening', () => server.close(() => resolve(true)))
-      server.listen(port, '127.0.0.1')
-    })
-    if (available) return port
-  }
-  throw new Error('no available port for sidecar')
-}
-
 async function waitForHealthy(baseUrl: string, timeoutMs: number): Promise<boolean> {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
-    try {
-      const res = await fetch(`${baseUrl}/health`, { signal: AbortSignal.timeout(2000) })
-      if (res.ok) return true
-    } catch {
-      // まだ起動中
-    }
+    if (await isStoryGraphHealthy(baseUrl, 2000)) return true
     await new Promise((resolve) => setTimeout(resolve, 300))
   }
   return false
 }
 
 async function probeHealthy(port: number): Promise<boolean> {
-  try {
-    const res = await fetch(`http://127.0.0.1:${port}/health`, {
-      signal: AbortSignal.timeout(1000)
-    })
-    return res.ok
-  } catch {
-    return false
-  }
+  // sidecar は IPv4 限定。IPv6 側に別サーバーがいるポートは再利用もしない。
+  if (await isPortInUse(port, '::1')) return false
+  return isStoryGraphHealthy(`http://127.0.0.1:${port}`)
 }
 
 async function startSidecar(): Promise<string> {
