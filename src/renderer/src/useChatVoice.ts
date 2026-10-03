@@ -79,14 +79,15 @@ class SpeechQueue {
     return this.controller.signal.aborted
   }
 
-  addText(text: string): void {
+  /** ctx を渡すと、その塊だけ別の声の主で読む(会話室: 1 本の列の中で発言者が替わる) */
+  addText(text: string, ctx: ChatVoiceContext = this.ctx): void {
     if (!text.trim() || this.stopped) return
     this.pendingChunks += 1
     this.onActive(true)
     // 塊の順番を保つため、行への分割も 1 つずつ順に行う
     this.chunks = this.chunks.then(async () => {
       try {
-        const { lines } = await voiceApi.chatLines(text, this.ctx.charId, this.ctx.mode, this.controller.signal)
+        const { lines } = await voiceApi.chatLines(text, ctx.charId, ctx.mode, this.controller.signal)
         if (this.stopped) return
         this.lines.push(...lines)
         this.kick()
@@ -184,6 +185,9 @@ export function useChatVoice(ctx: ChatVoiceContext): {
   /** 新しい返答の読み上げを始める(前の読み上げは止める)。オフなら何もしない。
    *  override は発言ごとに声の主が替わる会話室用(その発言だけ別のキャラの声で読む) */
   begin: (override?: ChatVoiceContext) => void
+  /** 会話室: 次に feed / finish する発言の声の主を替える(列は止めず、前の人の読み上げは続く)。
+   *  発言の区切りなので、最初の 1 文をすぐ読み始める判定もここで戻す */
+  setSpeaker: (ctx: ChatVoiceContext | null) => void
   feed: (delta: string) => void
   finish: (fullText?: string) => void
   speakText: (text: string, override?: ChatVoiceContext) => void
@@ -202,6 +206,7 @@ export function useChatVoice(ctx: ChatVoiceContext): {
   const bufferRef = useRef('')
   const fedRef = useRef(false) // この返答で差分を受け取ったか(受け取っていなければ finish で全文を読む)
   const sentFirstRef = useRef(false) // この返答の最初の塊を送ったか
+  const speakerRef = useRef<ChatVoiceContext | null>(null) // 会話室でいま話している人(null = 列の既定)
   const ctxRef = useRef(ctx)
   useEffect(() => {
     ctxRef.current = ctx
@@ -253,11 +258,25 @@ export function useChatVoice(ctx: ChatVoiceContext): {
     (override?: ChatVoiceContext): void => {
       fedRef.current = false
       sentFirstRef.current = false
+      speakerRef.current = null
       if (enabled) start(override)
       else stop()
     },
     [enabled, start, stop]
   )
+
+  const setSpeaker = useCallback((ctx: ChatVoiceContext | null): void => {
+    // 前の人の読み残し(文の切れ目に届かなかった末尾)は finish で送られているはずだが、
+    // 念のためここで前の人の声として流しておく
+    const queue = queueRef.current
+    if (queue && !queue.stopped && bufferRef.current) {
+      queue.addText(bufferRef.current, speakerRef.current ?? undefined)
+      bufferRef.current = ''
+    }
+    speakerRef.current = ctx
+    fedRef.current = false
+    sentFirstRef.current = false
+  }, [])
 
   const feed = useCallback((delta: string): void => {
     fedRef.current = true
@@ -267,7 +286,7 @@ export function useChatVoice(ctx: ChatVoiceContext): {
     const cut = safeBoundary(bufferRef.current)
     if (cut > 0 && (!sentFirstRef.current || cut >= MERGE_CHARS)) {
       sentFirstRef.current = true
-      queue.addText(bufferRef.current.slice(0, cut))
+      queue.addText(bufferRef.current.slice(0, cut), speakerRef.current ?? undefined)
       bufferRef.current = bufferRef.current.slice(cut)
     }
   }, [])
@@ -278,7 +297,7 @@ export function useChatVoice(ctx: ChatVoiceContext): {
     // 差分が来ずに全文だけ届いた返答(ツールを使った後の確定など)は全文を読む
     const rest = fedRef.current ? bufferRef.current : (fullText ?? '')
     bufferRef.current = ''
-    queue.addText(rest)
+    queue.addText(rest, speakerRef.current ?? undefined)
   }, [])
 
   const speakText = useCallback(
@@ -288,5 +307,5 @@ export function useChatVoice(ctx: ChatVoiceContext): {
     [start]
   )
 
-  return { enabled, setEnabled, speaking, error, begin, feed, finish, speakText, stop }
+  return { enabled, setEnabled, speaking, error, begin, setSpeaker, feed, finish, speakText, stop }
 }

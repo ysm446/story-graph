@@ -286,6 +286,34 @@ export default function VoiceSettingsSection({
             鑑賞モードの読み上げ中の表示からも変えられます。声の試し読みは、声を確かめるため等速のままです。
           </p>
         </div>
+        <div className="settings-field">
+          <div className="settings-field-header">
+            <span className="settings-field-label">チャットの（）のト書き</span>
+            <div className="settings-field-controls">
+              {(() => {
+                const on = (values.tts_chat_directions ?? '1') !== '0'
+                return (
+                  <button
+                    onClick={() => void save({ tts_chat_directions: on ? '0' : '1' })}
+                    className="rounded-md border px-2 py-0.5 text-[11px]"
+                    style={
+                      on
+                        ? { borderColor: 'var(--border-strong)', background: 'var(--accent-soft)', color: 'var(--text)' }
+                        : { borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }
+                    }
+                    data-tip={on ? 'オフにすると（）のト書きは読まず、台詞だけを読みます' : 'オンにすると（）のト書きを語り手の声で読みます'}
+                  >
+                    {on ? '☑' : '☐'} 読む
+                  </button>
+                )
+              })()}
+            </div>
+          </div>
+          <p className="settings-field-hint">
+            キャラとの劇中会話・キャラ同士の会話で、「（小さく笑って）台詞」のような（）の部分を語り手の声で読むかどうか。
+            オフにすると台詞だけが本人の声で流れます。インタビューのト書きはもとから読みません。
+          </p>
+        </div>
       </div>
 
       <div className="settings-card">

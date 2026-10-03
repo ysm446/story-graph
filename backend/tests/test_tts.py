@@ -509,6 +509,9 @@ def test_chat_lines_stage_directions():
     ]
     interview = voice.chat_lines(reply, "aya", "interview", None)
     assert [l["text"] for l in interview] == ["そうですね。", "それは秘密です。"]  # ト書きは読まない
+    # 設定で「ト書きを読まない」にすると劇中会話でも落とす
+    silent = voice.chat_lines(reply, "aya", "roleplay", None, read_directions=False)
+    assert [(l["speaker"], l["text"]) for l in silent] == [("char:aya", "そうですね。"), ("char:aya", "それは秘密です。")]
 
 
 def test_delete_voice_profile_clears_chat_profile(lib):

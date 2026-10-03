@@ -265,13 +265,21 @@ def strip_markdown(text: str) -> str:
 _STAGE_DIRECTION = re.compile(r"（[^（）]*）")
 
 
-def chat_lines(text: str, char_id: str | None, mode: str | None, chat_profile_id: str | None) -> list[dict[str, Any]]:
+def chat_lines(
+    text: str,
+    char_id: str | None,
+    mode: str | None,
+    chat_profile_id: str | None,
+    read_directions: bool = True,
+) -> list[dict[str, Any]]:
     """チャットの返答を読み上げの行にする。感情は付けない(LLM をもう一度呼ぶと返答が遅れるため)。
 
     - 相談チャット(char_id なし): 全行を「相談相手の声」(未設定なら語り手の声)
     - キャラとの会話: 返事はキャラ本人の発言(「」を使わず一人称で話す)なので、全行をキャラの声で、
       台詞(会話調)として読む。（）のト書きは、劇中会話なら語り手の声で読み、インタビューでは読まない
       (2026-09-29 修正。以前は劇中会話で「」の外を語り手の声にしていて、返事のほとんどが語り手の声になっていた)
+    - read_directions=False(設定 tts_chat_directions = '0')なら、劇中会話・会話室でもト書きを読まない
+      (2026-10-03 ユーザー要望。「（〇〇な表情で）台詞」のト書きが続くと台詞の流れが切れる)
     """
     text = strip_markdown(text)
     if not char_id:
@@ -291,8 +299,8 @@ def chat_lines(text: str, char_id: str | None, mode: str | None, chat_profile_id
         if not segment.strip():  # 空白(全角の空白・改行を含む)だけの切れ端
             continue
         if direction:
-            if mode != "roleplay":
-                continue  # インタビューのト書きは読まない
+            if mode != "roleplay" or not read_directions:
+                continue  # インタビューのト書きは読まない(設定で全部読まないこともできる)
             lines.extend(build_script(segment))  # 語り手の声(話者は narrator のまま)
             continue
         for line in build_script(segment):

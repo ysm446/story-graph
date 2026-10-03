@@ -590,6 +590,9 @@ export default function ChatDrawer({
       setItems((prev) => [...prev, { kind: 'user', text: instruction, ts: new Date().toISOString() }])
     }
     setStatus('考え中…')
+    // 読み上げの列は 1 回の「進める」で 1 本。発言ごとに声の主だけ替える(発言ごとに列を
+    // 作り直すと、前の人の読み上げがまだ鳴っている途中で止まり、最後の人しか聞こえなかった)
+    voice.begin()
     const effectiveAnchor = liveAnchor
     if (!chatId) setAnchorNode(effectiveAnchor)
     const speaker = speakerOverride !== undefined ? speakerOverride : nextSpeaker
@@ -618,7 +621,7 @@ export default function ChatDrawer({
             setLiveText('')
             setLiveSpeaker(e.speaker)
             setStatus(`${nameOf(e.speaker)} が考え中…`)
-            voice.begin({ charId: e.speaker, mode: 'roleplay' })
+            voice.setSpeaker({ charId: e.speaker, mode: 'roleplay' })
           }
           if (e.stage === 'thinking' && e.speaker) setStatus(`${nameOf(e.speaker)} が考え中…`)
           if (e.delta) {

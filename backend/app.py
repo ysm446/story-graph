@@ -1483,8 +1483,11 @@ async def tts_chat_lines(body: ChatLinesIn) -> dict[str, Any]:
     返答はストリーミングで届くので、フロントが文の切れ目ごとに呼ぶ。保存はしない。"""
     import voice
 
-    chat_profile = (store.get_settings().get("tts_chat_profile") or "").strip() or None
-    return {"lines": voice.chat_lines(body.text, body.char_id, body.mode, chat_profile)}
+    settings = store.get_settings()
+    chat_profile = (settings.get("tts_chat_profile") or "").strip() or None
+    # （）のト書きを読むか(既定: 読む。'0' で読まない)
+    read_directions = settings.get("tts_chat_directions") != "0"
+    return {"lines": voice.chat_lines(body.text, body.char_id, body.mode, chat_profile, read_directions)}
 
 
 # ---- 読み上げの声(docs/design/voice.md §5) ----------------------------
