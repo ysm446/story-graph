@@ -639,3 +639,24 @@ def test_token_usage_room_uses_longest_participant(store, monkeypatch):
     # アヤは記憶を持つのでシステムプロンプトが長い → アヤ分で数える
     assert "石橋でケンの裏切りを知った" in seen["text"]
     assert "と同じ場所で言葉を交わしています" in seen["text"]
+
+
+def test_room_replace_from_rewinds_and_recounts_speaker(store, monkeypatch):
+    monkeypatch.setattr(
+        llm_mod,
+        "chat_stream_tools",
+        _fake_stream([{"content": "ふむ。", "tool_calls": None, "message": {"role": "assistant", "content": "ふむ。"}}]),
+    )
+    anchor = store.canon_path()[-1]
+    events = collect_sse(chat_agent.room_stream(store, "http://fake", None, anchor, ["aya", "ken"], "挨拶", None, 2))
+    chat_id = next(e["chat_id"] for e in events if "chat_id" in e)
+    assert [m.get("speaker", m["role"]) for m in store.get_chat(chat_id)["messages"]] == ["user", "aya", "ken"]
+    # 作り直し: 指示(index 0)は残し、以降を捨てて進める → 話者は先頭から数え直す
+    events = collect_sse(chat_agent.room_stream(store, "http://fake", chat_id, None, None, None, None, 1, replace_from=1))
+    assert [e["speaker"] for e in events if "turn" in e] == ["aya"]
+    assert [m.get("speaker", m["role"]) for m in store.get_chat(chat_id)["messages"]] == ["user", "aya"]
+    # 編集: 指示そのものを置き換える
+    events = collect_sse(chat_agent.room_stream(store, "http://fake", chat_id, None, None, "再会", None, 1, replace_from=0))
+    saved = store.get_chat(chat_id)["messages"]
+    assert [m.get("speaker", m["role"]) for m in saved] == ["user", "aya"]
+    assert saved[0]["content"] == "再会"

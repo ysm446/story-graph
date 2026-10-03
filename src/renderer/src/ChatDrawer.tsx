@@ -579,9 +579,18 @@ export default function ChatDrawer({
 
   /** 会話室: 演出の指示(空でもよい)を積んでから、話者を決めて turns 人ぶん話させる。
    *  speakerOverride は「この人に話させる」(再生成でも使う)。count は発言数の上書き */
-  const sendRoom = async (override?: string, speakerOverride?: string | null, count?: number): Promise<void> => {
+  const sendRoom = async (
+    override?: string,
+    speakerOverride?: string | null,
+    count?: number,
+    replaceFrom?: number
+  ): Promise<void> => {
     const instruction = (override ?? input).trim()
     if (busy || !roomReady) return
+    // 演出指示の編集・作り直し: 画面上もその位置以降を消してから進める
+    if (replaceFrom !== undefined) {
+      setItems((prev) => prev.filter((it) => it.turn === undefined || it.turn < replaceFrom))
+    }
     const controller = new AbortController()
     abortRef.current = controller
     setBusy(true)
@@ -608,7 +617,8 @@ export default function ChatDrawer({
           participants: chatId ? null : participants,
           instruction: instruction || null,
           speaker,
-          turns: count ?? turns
+          turns: count ?? turns,
+          replace_from: replaceFrom ?? null
         },
         (e: ChatStreamEvent) => {
           if (e.chat_id && !e.done) {
@@ -666,7 +676,7 @@ export default function ChatDrawer({
   }
 
   const send = async (override?: string, replaceFrom?: number): Promise<void> => {
-    if (room) return sendRoom(override)
+    if (room) return sendRoom(override, undefined, undefined, replaceFrom)
     const message = (override ?? input).trim()
     if (!message || busy) return
     // 編集・再生成: 画面上もその往復以降を消してから送り直す
@@ -1247,6 +1257,16 @@ export default function ChatDrawer({
                     </div>
                     {turn !== undefined && !busy && room && (
                       <div className="mt-0.5 flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                        <MsgActionButton
+                          kind="edit"
+                          tip="この指示を書き直して、以降の発言を作り直す"
+                          onClick={() => startEditTurn(turn, item.text)}
+                        />
+                        <MsgActionButton
+                          kind="regenerate"
+                          tip={`この指示から以降の発言を作り直す(${turns} 発言)`}
+                          onClick={() => void sendRoom('', undefined, undefined, turn + 1)}
+                        />
                         <MsgActionButton
                           kind="delete"
                           tip="この指示を削除(発言は残す)"

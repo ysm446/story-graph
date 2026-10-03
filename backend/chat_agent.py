@@ -544,9 +544,12 @@ async def room_stream(
     instruction: str | None,
     speaker: str | None,
     turns: int,
+    replace_from: int | None = None,
 ) -> AsyncIterator[str]:
     try:
-        async for chunk in _room_impl(store, base_url, chat_id, anchor_node, participants, instruction, speaker, turns):
+        async for chunk in _room_impl(
+            store, base_url, chat_id, anchor_node, participants, instruction, speaker, turns, replace_from
+        ):
             yield chunk
     except Exception as e:  # noqa: BLE001
         try:
@@ -565,6 +568,7 @@ async def _room_impl(
     instruction: str | None,
     speaker: str | None,
     turns: int,
+    replace_from: int | None = None,
 ) -> AsyncIterator[str]:
     if chat_id:
         chat = store.get_chat(chat_id)
@@ -600,6 +604,9 @@ async def _room_impl(
 
     path = _visible_path(store, anchor_node, "upto")
     history: list[dict[str, Any]] = list(chat["messages"])
+    # 演出指示の編集・作り直し: 指定位置以降を捨ててから積み直す(話者の順もそこから数え直す)
+    if replace_from is not None and 0 <= replace_from <= len(history):
+        history = history[:replace_from]
     if instruction and instruction.strip():
         history.append({"role": "user", "content": instruction.strip(), "ts": _now()})
     tools = build_character_tools()

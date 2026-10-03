@@ -1,7 +1,7 @@
 # 相談チャット設計
 
 作成日時: 2026-07-25 22:52
-更新日時: 2026-10-03 17:01
+更新日時: 2026-10-04 02:54
 
 物語について作者が相談する「相談チャット」の設計まとめ。仕様の出発点は
 [docs/story-graph-spec.md](../story-graph-spec.md) §8、実装は `backend/chat_agent.py` と
@@ -283,7 +283,7 @@ fold 済みの facts / 関係 / 記憶をそのまま人格の材料に使う。
 
 ### 8.2 発言の作り方(`chat_agent.room_stream`)
 
-`POST /chat/room/send` `{chat_id?, anchor_node?, participants?, instruction?, speaker?, turns}`。
+`POST /chat/room/send` `{chat_id?, anchor_node?, participants?, instruction?, speaker?, turns, replace_from?}`。
 
 1. `instruction` があれば演出指示として履歴に積む(空なら積まない。指示なしで進めてよい)。
 2. `turns` 回(サーバー上限 `MAX_ROOM_TURNS = 8`)、話者を決めて 1 発言ずつ生成する。
@@ -313,7 +313,10 @@ SSE: `{chat_id}` → 発言ごとに `{speaker, turn}` → `{stage}` / `{delta, 
   主ボタンは「進める」。Enter でも進む。指名は 1 回きり(送ったら「順に」に戻る)。
 - 吹き出しは発言者ごとにアバター・枠色・名前(枠色の 10px)。recall は「○○ が記憶をたどった」。
 - ホバー操作: 発言は「声で読む(本人の声)」「送った内容を見る」「削除」、**最後の発言だけ
-  「消して同じ人にもう一度話させる」**。演出指示は「削除」のみ(編集・再生成は無い)。
+  「消して同じ人にもう一度話させる」**。演出指示は「書き直して以降を作り直す」「以降の発言を作り直す」「削除」
+  (2026-10-04 ユーザー要望で編集・作り直しを追加)。どちらも `replace_from` でその位置まで履歴を巻き戻してから
+  進める(編集はその位置に新しい指示を積む、作り直しは指示を残して次の位置から)。作り直す発言数は入力欄の
+  「n 発言」の設定。話者の順は巻き戻した履歴から数え直す。
 - 読み上げ: 発言ごとに `voice.begin({charId: speaker, mode: 'roleplay'})` で声の主を替える
   (`useChatVoice` の `begin` / `speakText` に override を足した)。（）のト書きは語り手の声。
 - コンテキスト使用量は**参加者のうちシステムプロンプトが一番長い人**で数える(`_usage_text`)。

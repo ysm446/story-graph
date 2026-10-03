@@ -2196,6 +2196,8 @@ class RoomSendIn(BaseModel):
     instruction: str | None = None  # 演出の指示(空なら指示なしで会話を進める)
     speaker: str | None = None  # 最初に話す人の指名(None = 前の話者の次)
     turns: int = 1  # 続けて話させる発言数(サーバー側で MAX_ROOM_TURNS に丸める)
+    # 演出指示の編集・作り直し用。指定すると履歴をこの位置まで巻き戻してから進める
+    replace_from: int | None = None
 
 
 @app.post("/chat/room/send")
@@ -2218,6 +2220,7 @@ async def chat_room_send(body: RoomSendIn) -> StreamingResponse:
             body.instruction,
             body.speaker,
             body.turns,
+            body.replace_from,
         ),
         media_type="text/event-stream",
     )

@@ -1189,6 +1189,7 @@ export function roomSendStream(
     instruction: string | null
     speaker: string | null
     turns: number
+    replace_from?: number | null // 演出指示の編集・作り直し: この位置まで履歴を巻き戻す
   },
   onEvent: (data: ChatStreamEvent) => void,
   signal?: AbortSignal
