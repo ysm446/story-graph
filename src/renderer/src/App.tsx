@@ -5,6 +5,7 @@ import TtsBar from './TtsBar'
 import ModelBar from './ModelBar'
 import StatusBar from './StatusBar'
 import TooltipHost from './Tooltip'
+import { useTasks } from './tasks'
 import StructureMode from './modes/StructureMode'
 import ReaderMode from './modes/ReaderMode'
 import CharactersMode from './modes/CharactersMode'
@@ -153,6 +154,7 @@ function LibraryMenu(): React.JSX.Element {
 }
 
 export default function App(): React.JSX.Element {
+  const productionLocked = useTasks().some((t) => t.kind === 'production')
   const [mode, setMode] = useState<Mode>('structure')
   // モードをまたいで持ち回る「いま見ているシーン」。構造モードでは選択シーン、
   // 鑑賞モードでは読んでいるシーンが入り、モードを切り替えるとそこへ飛ぶ
@@ -259,6 +261,7 @@ export default function App(): React.JSX.Element {
     <div className="flex h-screen flex-col" style={{ background: 'var(--bg)' }}>
       {/* 上部バー: 左=ライブラリ / 中央=モデル選択 / 右=TTS・ComfyUI 状態 + 設定 */}
       <header
+        inert={productionLocked}
         className="relative z-30 flex h-10 shrink-0 items-center border-b px-3"
         style={{ background: 'var(--bg-sidebar)', borderColor: 'var(--border)' }}
       >
@@ -285,6 +288,7 @@ export default function App(): React.JSX.Element {
       </header>
       {/* 下段メニューバー: モード切替 */}
       <nav
+        inert={productionLocked}
         className="flex h-9 shrink-0 items-center gap-1 border-b px-3"
         style={{ background: 'var(--bg-sidebar)', borderColor: 'var(--border)' }}
       >

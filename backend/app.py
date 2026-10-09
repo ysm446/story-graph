@@ -26,6 +26,8 @@ import chat_agent
 import db
 import generation
 import llm
+import node_operations
+import production_agent
 import rendering
 import snapshots
 from comfy_manager import ComfyManager
@@ -34,6 +36,7 @@ from store import Store
 from tts_manager import TtsManager
 
 app = FastAPI(title="story-graph backend")
+app.add_middleware(production_agent.ProductionMiddleware)
 app.add_middleware(
     CORSMiddleware,
     # 相手は Electron レンダラ(dev は http://localhost:<port>、本番は file:// で Origin が
@@ -440,7 +443,7 @@ async def insert_node_after(node_id: str, body: NodeIn) -> dict[str, Any]:
     data = body.model_dump(exclude={"events", "parent_id", "draft"})
     events = [e.model_dump() for e in body.events]
     try:
-        node = store.insert_node_after(node_id, data, events)
+        node = node_operations.insert(store, node_id, data, events)
     except KeyError as e:
         raise HTTPException(404, str(e))
     node["validation"] = store.validate(node["id"])
@@ -689,10 +692,10 @@ async def get_node(node_id: str) -> dict[str, Any]:
 @app.patch("/nodes/{node_id}")
 async def update_node(node_id: str, body: NodePatch) -> dict[str, Any]:
     await snapshots.auto(store, "シーン編集の前", 600)
-    node = store.update_node(node_id, body.model_dump(exclude_unset=True))
-    if node is None:
+    try:
+        node = node_operations.update(store, node_id, body.model_dump(exclude_unset=True))
+    except KeyError:
         raise HTTPException(404, "node not found")
-    node["validation"] = store.validate(node_id)
     return node
 
 
@@ -700,10 +703,10 @@ async def update_node(node_id: str, body: NodePatch) -> dict[str, Any]:
 async def delete_node(node_id: str) -> dict[str, str]:
     await snapshots.auto(store, "シーン削除の前", 30)
     try:
-        deleted = store.delete_node(node_id)
+        node_operations.delete(store, node_id)
     except ValueError as e:
         raise HTTPException(400, str(e))
-    if not deleted:
+    except KeyError:
         raise HTTPException(404, "node not found")
     _schedule_audio_gc()
     return {"status": "deleted"}
@@ -2142,7 +2145,7 @@ class ChatSendIn(BaseModel):
 
 @app.get("/chats")
 async def list_chats() -> list[dict[str, Any]]:
-    return store.list_chats()
+    return [c for c in store.list_chats() if c.get("mode") != "production"]
 
 
 @app.get("/chats/{chat_id}")
@@ -2261,6 +2264,8 @@ async def chat_room_send(body: RoomSendIn) -> StreamingResponse:
 
 @app.post("/chat/send")
 async def chat_send(body: ChatSendIn) -> StreamingResponse:
+    if body.chat_id and (store.get_chat(body.chat_id) or {}).get("mode") == "production":
+        raise HTTPException(400, "制作チャットは制作画面から開いてください")
     try:
         base_url = await llama.ensure_running(store.get_settings())
     except Exception as e:
@@ -2282,6 +2287,73 @@ async def chat_send(body: ChatSendIn) -> StreamingResponse:
             body.replace_from,
             body.replace_turn,
         ),
+        media_type="text/event-stream",
+    )
+
+
+class ProductionPolicyIn(BaseModel):
+    allowed_ids: list[str] | None = None
+    protected_ids: list[str] = Field(default_factory=list)
+    group_id: str | None = None
+
+
+class ProductionIn(BaseModel):
+    policy: ProductionPolicyIn = Field(default_factory=ProductionPolicyIn)
+    chat_id: str | None = None
+    message: str = Field(min_length=1, max_length=20000)
+    execute: bool = False
+
+
+@app.get("/production/chats")
+async def production_chats() -> list[dict[str, Any]]:
+    return [c for c in store.list_chats() if c.get("mode") == "production"]
+
+
+@app.get("/production/status")
+async def production_status() -> dict[str, bool]:
+    return {"active": production_agent.gate.active}
+
+
+class ProductionInstructionIn(BaseModel):
+    run_id: str = Field(min_length=1, max_length=64)
+    instruction_id: str = Field(min_length=1, max_length=64)
+    message: str = Field(min_length=1, max_length=20000)
+
+
+@app.post("/production/instruction")
+async def production_instruction(body: ProductionInstructionIn) -> dict[str, Any]:
+    run = production_agent.gate.run
+    if run is None or run.id != body.run_id:
+        raise HTTPException(409, "指定した制作は終了しています。次の依頼として送ってください")
+    if not body.message.strip():
+        raise HTTPException(400, "途中指示を入力してください")
+    try:
+        return run.submit(body.instruction_id, body.message.strip())
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+
+
+@app.post("/production/send")
+async def production_send(body: ProductionIn) -> StreamingResponse:
+    if not body.message.strip():
+        raise HTTPException(400, "依頼を入力してください")
+    if body.chat_id and (store.get_chat(body.chat_id) or {}).get("mode") != "production":
+        raise HTTPException(404, "制作チャットが見つかりません")
+    try:
+        await production_agent.gate.begin()
+    except (RuntimeError, TimeoutError) as e:
+        raise HTTPException(409, str(e) or "ほかの処理の終了を待っています。少し待ってから実行してください")
+    try:
+        policy = production_agent.ProductionPolicy(store, **body.policy.model_dump())
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    try:
+        base_url = await llama.ensure_running(store.get_settings())
+    except Exception as e:
+        production_agent.gate.active = False
+        return _sse_error_response(str(e))
+    return StreamingResponse(
+        production_agent.stream(store, base_url, body.chat_id, body.message, body.execute, _schedule_audio_gc, policy=policy),
         media_type="text/event-stream",
     )
 

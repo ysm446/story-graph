@@ -30,6 +30,7 @@ import {
 import AutoTextarea from '../AutoTextarea'
 import CharAvatar from '../CharAvatar'
 import ChatDrawer from '../ChatDrawer'
+import ProductionChat from '../ProductionChat'
 import EventsEditor from '../EventsEditor'
 import FactTimeline from '../FactTimeline'
 import { MsgActionButton, StatsLine, SystemPromptModal } from '../GenMeta'
@@ -2196,6 +2197,8 @@ function StructureModeInner({
   // LLM 処理中のノード(枠が時計まわりに光る)。生成・抽出・再抽出で共用。
   // モジュールレベル(tasks.ts)で持つので、モードを離れて戻っても復元される
   const busyNodeIds = useBusyNodeIds()
+  const productionLocked = useTasks().some((t) => t.kind === 'production')
+  const [chatKind, setChatKind] = useState<'consult' | 'production'>('consult')
   const markNodeBusy = setNodeBusy
   const [inspectorWidth, setInspectorWidth] = useState(() => {
     const saved = Number(localStorage.getItem('inspectorWidth'))
@@ -3531,7 +3534,13 @@ function StructureModeInner({
     []
   )
 
-  // 鑑賞モードで読んでいたシーンにフォーカスして開く(戻ったときに迷子にならない)。
+  // 制作では章に隠れたシーンも開く。通常の追加操作のfocusWhenReadyとは分ける。
+  const followProductionTarget = useCallback((nodeId: string | null): void => {
+    focusDoneRef.current = nodeId === null
+    setPendingFocusId(nodeId)
+  }, [])
+
+  // 鑑賞モードで読んでいたシーン、または制作の対象にフォーカスして開く(戻ったときに迷子にならない)。
   // 章に畳まれて見えないときは、その章の中に入ってから寄せる
   useEffect(() => {
     // 画面に何か出てから判断する(ノードの構築前は「見えない」と区別が付かない)
@@ -3546,7 +3555,8 @@ function StructureModeInner({
       // 章ビューでは章カードに畳まれている / 別の章の中を見ている
       if (target.group_id && chapterView !== target.group_id) return setChapterView(target.group_id)
       if (!target.group_id && chapterView !== 'flat') return setChapterView('flat')
-      return finish()
+      // reload直後はgraphNodesだけが先に更新される。新規ノードの描画を待つ。
+      return
     }
     // ノードの実寸が入ってから寄せる(初回描画では measured が空で中心がずれる)
     const timer = setTimeout(() => {
@@ -3644,6 +3654,7 @@ function StructureModeInner({
   // 矢印 = ノード間の移動(← → が親子、↑ ↓ が分岐レーン)
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent): void => {
+      if (productionLocked) return
       const target = event.target as HTMLElement | null
       if (
         target &&
@@ -3711,7 +3722,7 @@ function StructureModeInner({
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [reactFlow, displayNodes, selectedId, selectedEdgeId, detachEdge, deleteNodeById, navigateSelection])
+  }, [reactFlow, displayNodes, selectedId, selectedEdgeId, detachEdge, deleteNodeById, navigateSelection, productionLocked])
 
   // ---- 章の操作 -------------------------------------------------------
   // Electron は window.prompt を使えない(呼ぶと例外)ので、名前の入力は
@@ -4200,7 +4211,7 @@ function StructureModeInner({
       <div ref={rowRef} className="flex min-h-0 flex-1">
         {/* ノードエリア + 相談チャット(インスペクタに被らないよう左カラム内に収める) */}
         <div ref={canvasColumnRef} className="flex min-w-0 flex-1 flex-col">
-        <main ref={canvasRef} className="relative min-h-0 flex-1" style={{ background: 'var(--bg-canvas)' }}>
+        <main ref={canvasRef} inert={productionLocked} className="relative min-h-0 flex-1" style={{ background: 'var(--bg-canvas)' }}>
           <ReactFlow
             nodes={displayNodes}
             edges={displayEdges}
@@ -4980,9 +4991,25 @@ function StructureModeInner({
                 style={{ top: -3, bottom: -3 }}
               />
             </div>
-            <div className="min-h-0 shrink-0" style={{ height: chatHeight }}>
+            <div className="flex min-h-0 shrink-0 flex-col" style={{ height: chatHeight }}>
+              <div className="flex shrink-0 items-center gap-2 border-b px-4 py-1" style={{ background: 'var(--bg-chat)', borderColor: 'var(--border)' }}>
+                <div className="flex overflow-hidden rounded-md border" style={{ borderColor: 'var(--border-strong)' }}>
+                  {([['consult', '相談'], ['production', '制作']] as const).map(([value, label]) => (
+                    <button key={value} disabled={productionLocked} onClick={() => setChatKind(value)}
+                      className="px-2.5 py-0.5 text-[12px] disabled:opacity-50"
+                      style={chatKind === value ? { background: 'var(--accent-soft)', color: 'var(--text)' } : { color: 'var(--text-faint)' }}
+                      data-tip={productionLocked ? '制作が終わるか停止してから切り替えられます' : value === 'consult' ? '作品を変更せずに相談します' : '会話からシーンを作成・編集する実験機能'}>{label}</button>
+                  ))}
+                </div>
+                {productionLocked && <span className="text-[11px]" style={{ color: 'var(--text-dim)' }}>制作中は手動編集を停止しています</span>}
+                {chatKind === 'production' && <button disabled={productionLocked} onClick={toggleChat}
+                  className="ml-auto rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-50"
+                  style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+                  data-tip={productionLocked ? '停止してから閉じられます' : '制作チャットを閉じます'}>閉じる</button>}
+              </div>
+              <div className="min-h-0 flex-1" hidden={chatKind !== 'consult'}>
               <ChatDrawer
-                open
+                open={chatKind === 'consult'}
                 onClose={toggleChat}
                 anchorCandidateId={chatAnchorId}
                 canonTailId={canonPath.length > 0 ? canonPath[canonPath.length - 1].id : null}
@@ -4990,6 +5017,16 @@ function StructureModeInner({
                 characters={characters}
                 dynamicSuggestions={chatDynamicSuggestions}
               />
+              </div>
+              {chatKind === 'production' && <div className="min-h-0 flex-1"><ProductionChat
+                nodes={graphNodes} groups={groups}
+                beforeExecute={() => beatDraftCache.size > 0 ? '未保存のシーンがあります。保存してから制作を実行してください。' : null}
+                onFollowTarget={followProductionTarget}
+                onChanged={async (operation) => {
+                  await reload(operation.action === 'insert_scene' ? await placeCreatedNode(operation.node_id) : undefined)
+                  if (operation.action === 'delete_scene') setSelectedId((id) => id === operation.node_id ? null : id)
+                }}
+              /></div>}
             </div>
           </>
         )}
@@ -5007,6 +5044,7 @@ function StructureModeInner({
           />
         </div>
         <aside
+          inert={productionLocked}
           className="flex shrink-0 flex-col"
           style={{ background: 'var(--bg-sidebar)', width: inspectorWidth }}
         >

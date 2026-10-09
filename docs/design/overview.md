@@ -1,7 +1,7 @@
 # 全体設計(アーキテクチャ)
 
 作成日時: 2026-08-09 15:30
-更新日時: 2026-10-03 10:25
+更新日時: 2026-10-10 04:48
 
 このアプリが **どう組まれているか** をまとめた入口。「何を作るか」は
 [story-graph-spec.md](../story-graph-spec.md)(仕様)と [plan/goals.md](../plan/goals.md)(目的・価値)、
@@ -19,6 +19,7 @@
 | [places.md](places.md) | 場所を登録制の第一級エンティティにする |
 | [system-prompts.md](system-prompts.md) | LLM に送るプロンプトの構成と編集可能な範囲 |
 | [chat.md](chat.md) | 相談チャット(読み取り専用エージェント) |
+| [production-chat.md](production-chat.md) | 制作チャットの設計・実装計画（ノード操作・逐次表示は段階0実装済み。作業メモ等は計画） |
 | [snapshots.md](snapshots.md) | 時点に戻す(ライブラリの中) |
 | [backup.md](backup.md) | 外部バックアップ(zip でライブラリの外へ) |
 | [voice.md](voice.md) | 清書の読み上げ(朗読台本と差し替え可能な TTS エンジン)。設計のみ、未実装 |

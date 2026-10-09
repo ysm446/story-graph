@@ -1213,10 +1213,10 @@ export function roomSendStream(
   return chatSse('/chat/room/send', body, onEvent, signal)
 }
 
-async function chatSse(
+async function chatSse<T = ChatStreamEvent>(
   path: string,
   body: unknown,
-  onEvent: (data: ChatStreamEvent) => void,
+  onEvent: (data: T) => void | Promise<void>,
   signal?: AbortSignal
 ): Promise<void> {
   if (!baseUrl) throw new Error('backend not ready')
@@ -1242,13 +1242,61 @@ async function chatSse(
       for (const part of parts) {
         const line = part.trim()
         if (line.startsWith('data: ')) {
-          onEvent(JSON.parse(line.slice(6)) as ChatStreamEvent)
+          await onEvent(JSON.parse(line.slice(6)) as T)
         }
       }
     }
   } finally {
     void reader.cancel().catch(() => undefined)
   }
+}
+
+export interface ProductionPolicy {
+  allowed_ids: string[] | null
+  protected_ids: string[]
+  group_id: string | null
+}
+
+export interface ProductionOperation {
+  action: 'insert_scene' | 'update_scene' | 'delete_scene'
+  node_id: string
+  title: string | null
+  reason: string
+}
+
+export interface ProductionInstruction {
+  role: string
+  content: string
+  instruction: { id: string; status: 'accepted' | 'reflected' | 'unapplied'; run_id: string }
+}
+
+export interface ProductionEvent {
+  run_id?: string
+  accepting_instructions?: boolean
+  instruction?: ProductionInstruction
+  chat_id?: string
+  delta?: string
+  response_end?: boolean
+  stage?: string
+  active_node?: string | null
+  changed?: ProductionOperation
+  snapshot?: Snapshot
+  error?: string
+  tool_error?: string
+  done?: boolean
+}
+
+export const productionApi = {
+  instruct: (run_id: string, instruction_id: string, message: string) => request<ProductionInstruction>(
+    '/production/instruction', { method: 'POST', body: JSON.stringify({ run_id, instruction_id, message }) }
+  ),
+  list: () => request<ChatSummary[]>('/production/chats'),
+  status: () => request<{ active: boolean }>('/production/status'),
+  send: (
+    body: { chat_id: string | null; message: string; execute: boolean; policy: ProductionPolicy },
+    onEvent: (event: ProductionEvent) => void | Promise<void>,
+    signal: AbortSignal
+  ) => chatSse<ProductionEvent>('/production/send', body, onEvent, signal)
 }
 
 export interface GenerationEvent {
