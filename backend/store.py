@@ -3166,6 +3166,33 @@ class Store:
         self.save_chat_messages(chat_id, messages)
         return self.get_chat(chat_id)
 
+    def branch_chat(self, chat_id: str, index: int, whole_turn: bool = False) -> dict[str, Any] | None:
+        """履歴を index の位置まで複製した新しい会話を作る(lm-chat の「ここで分岐」)。
+
+        元の会話はそのまま残す。相手・アンカー・スコープ・参加者は元と同じ。見出しは元の
+        見出し(無ければ冒頭の発言)に「(分岐)」を足す。whole_turn=True なら index(user 発言)
+        から始まる往復の終わりまで(ツール行と返事も)複製する。相談 / キャラチャットの返事は
+        往復の開始位置しか持たないので、返事の位置で分岐するときに使う。
+        """
+        chat = self.get_chat(chat_id)
+        if chat is None:
+            return None
+        messages = list(chat["messages"])
+        if not (0 <= index < len(messages)):
+            return None
+        end = index + 1
+        if whole_turn:
+            while end < len(messages) and not _is_turn_start(messages[end]):
+                end += 1
+        head = messages[:end]
+        base = chat.get("title") or self._chat_snippet(head)
+        title = f"{base} (分岐)" if base else "(分岐)"
+        branched = self.create_chat(
+            chat["anchor_node"], chat["scope"], chat.get("char_id"), chat.get("mode"), chat.get("participants")
+        )
+        self.save_chat_messages(branched["id"], head)
+        return self.set_chat_title(branched["id"], title)
+
     def set_chat_title(self, chat_id: str, title: str | None) -> dict[str, Any] | None:
         """会話名を設定する(空文字は NULL = 冒頭の発言を見出しに使う)。"""
         cleaned = (title or "").strip() or None

@@ -1142,6 +1142,13 @@ export const chatApi = {
   // 履歴の 1 件だけを削除(会話室の発言 / 演出指示。往復の区切りが無いので 1 件単位)
   deleteMessage: (chatId: string, index: number) =>
     request<ChatRecord>(`/chats/${chatId}/message/${index}`, { method: 'DELETE' }),
+  /** 履歴をその位置まで複製した新しい会話を作る(元の会話は残る)。
+   *  wholeTurn は index の往復の終わり(返事・ツール行)まで含めるとき */
+  branch: (chatId: string, index: number, wholeTurn: boolean) =>
+    request<ChatRecord>(`/chats/${chatId}/branch`, {
+      method: 'POST',
+      body: JSON.stringify({ index, whole_turn: wholeTurn })
+    }),
   // 内容ベースの質問候補。設定オフ・LLM 未起動・生成失敗はすべて空配列で返る
   suggestQuestions: (body: { chat_id: string | null; anchor_node: string | null; scope: string }) =>
     request<{ questions: string[] }>('/chat/suggest_questions', {

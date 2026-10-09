@@ -794,6 +794,22 @@ export default function ChatDrawer({
     void refreshHistory()
   }
 
+  // ここで分岐(lm-chat 移植): 履歴をその位置まで複製した新しい会話を作って、そちらへ移る。
+  // 元の会話は残るので、同じ所から別の聞き方・別の展開を試せる。
+  // wholeTurn は返事の位置で分岐するとき(返事は往復の開始位置しか持たないので、往復ごと写す)
+  const branchChat = async (index: number, wholeTurn: boolean): Promise<void> => {
+    if (!chatId || busy) return
+    let branched
+    try {
+      branched = await chatApi.branch(chatId, index, wholeTurn)
+    } catch {
+      setStatus('分岐に失敗しました')
+      return
+    }
+    await loadChat(branched.id)
+    void refreshHistory()
+  }
+
   const startEditTurn = (turn: number, text: string): void => {
     setEditingTurn(turn)
     setEditText(text)
@@ -1258,6 +1274,11 @@ export default function ChatDrawer({
                     {turn !== undefined && !busy && room && (
                       <div className="mt-0.5 flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
                         <MsgActionButton
+                          kind="branch"
+                          tip="ここで分岐(この指示までを写した新しい会話を作る)"
+                          onClick={() => void branchChat(turn, false)}
+                        />
+                        <MsgActionButton
                           kind="edit"
                           tip="この指示を書き直して、以降の発言を作り直す"
                           onClick={() => startEditTurn(turn, item.text)}
@@ -1276,6 +1297,11 @@ export default function ChatDrawer({
                     )}
                     {turn !== undefined && !busy && !room && (
                       <div className="mt-0.5 flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                        <MsgActionButton
+                          kind="branch"
+                          tip="ここで分岐(この発言までを写した新しい会話を作る)"
+                          onClick={() => void branchChat(turn, false)}
+                        />
                         <MsgActionButton
                           kind="edit"
                           tip="この発言を編集して送り直す"
@@ -1333,6 +1359,17 @@ export default function ChatDrawer({
                           {item.stats && <StatsLine stats={item.stats} />}
                           {(item.promptMessages || !busy) && (
                             <div className="mt-0.5 flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                              {item.turn !== undefined && !busy && (
+                                <MsgActionButton
+                                  kind="branch"
+                                  tip={
+                                    item.speaker
+                                      ? 'ここで分岐(この発言までを写した新しい会話を作る)'
+                                      : 'ここで分岐(この返事までを写した新しい会話を作る)'
+                                  }
+                                  onClick={() => void branchChat(item.turn!, !item.speaker)}
+                                />
+                              )}
                               {!busy && (
                                 <MsgActionButton
                                   kind="speak"

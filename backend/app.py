@@ -2181,6 +2181,20 @@ async def delete_chat_message(chat_id: str, index: int) -> dict[str, Any]:
     return chat
 
 
+class ChatBranchIn(BaseModel):
+    index: int
+    whole_turn: bool = False  # True なら index の往復の終わり(返事・ツール行)まで含める
+
+
+@app.post("/chats/{chat_id}/branch")
+async def branch_chat(chat_id: str, body: ChatBranchIn) -> dict[str, Any]:
+    """履歴をその位置まで複製した新しい会話を作る(元の会話はそのまま)。"""
+    chat = store.branch_chat(chat_id, body.index, body.whole_turn)
+    if chat is None:
+        raise HTTPException(404, "chat or message not found")
+    return chat
+
+
 @app.delete("/chats/{chat_id}")
 async def delete_chat(chat_id: str) -> dict[str, str]:
     store.delete_chat(chat_id)

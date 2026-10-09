@@ -483,6 +483,25 @@ def test_delete_turn_rejects_non_user_index(store):
     assert store.delete_chat_turn(chat_id, 3, keep_user=False) is None  # assistant の位置
 
 
+def test_branch_chat_copies_history_up_to_index(store):
+    chat_id = _two_turn_chat(store)
+    store.set_chat_title(chat_id, "橋の相談")
+    branched = store.branch_chat(chat_id, 0)  # user 発言の位置(返事は含めない)
+    assert branched["id"] != chat_id
+    assert [m.get("content") for m in branched["messages"]] == ["1回目の質問"]
+    assert branched["title"] == "橋の相談 (分岐)"
+    assert branched["anchor_node"] == store.get_chat(chat_id)["anchor_node"]
+    assert len(store.get_chat(chat_id)["messages"]) == 6  # 元の会話は変わらない
+
+
+def test_branch_chat_whole_turn_includes_tool_rows_and_answer(store):
+    chat_id = _two_turn_chat(store)
+    branched = store.branch_chat(chat_id, 0, whole_turn=True)
+    assert [m.get("content") for m in branched["messages"]] == ["1回目の質問", None, "{}", "1回目の回答"]
+    assert branched["title"] == "1回目の質問 (分岐)"  # 見出しが無ければ冒頭の発言
+    assert store.branch_chat(chat_id, 6) is None  # 範囲外
+
+
 def test_tool_limit_marker_is_not_a_turn_start(store):
     chat = store.create_chat(None, "upto")
     store.save_chat_messages(chat["id"], [
