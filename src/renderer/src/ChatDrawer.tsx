@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import {
   chatApi,
   chatSendStream,
@@ -245,6 +245,8 @@ export default function ChatDrawer({
   const [liveSpeaker, setLiveSpeaker] = useState<string | null>(null) // 会話室でいま話している人
   const [items, setItems] = useState<DisplayItem[]>([])
   const [liveText, setLiveText] = useState('') // ストリーミング中の回答(確定前)
+  // 再生成中はこの項目の直後に書きかけの吹き出しを出す(null = 一番下)
+  const [liveAfter, setLiveAfter] = useState<number | null>(null)
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
@@ -476,8 +478,9 @@ export default function ChatDrawer({
   // 候補チップも会話の中(末尾)にあるので、チップが差し替わったときも下端へ寄せる
   useEffect(() => {
     if (!stickToBottomRef.current) return
+    if (liveAfter !== null) return // 途中の返事を作り直している間は差し込み位置から目を離さない
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
-  }, [items, status, liveText, chipsKey])
+  }, [items, status, liveText, chipsKey, liveAfter])
 
   // アンマウント時に進行中のストリーミングを中止する
   useEffect(() => () => abortRef.current?.abort(), [])
@@ -675,13 +678,30 @@ export default function ChatDrawer({
     }
   }
 
-  const send = async (override?: string, replaceFrom?: number): Promise<void> => {
-    if (room) return sendRoom(override, undefined, undefined, replaceFrom)
+  // replaceTurn: その発言の返事だけ作り直す(以降の往復は残す。ユーザー決定 2026-10-09)。
+  // 画面上はその往復の返事・ツール行を消し、新しい項目を発言の直後に差し込んでいく
+  const send = async (override?: string, replaceTurn?: number): Promise<void> => {
+    if (room) return sendRoom(override)
     const message = (override ?? input).trim()
     if (!message || busy) return
-    // 編集・再生成: 画面上もその往復以降を消してから送り直す
-    if (replaceFrom !== undefined) {
-      setItems((prev) => prev.filter((it) => it.turn === undefined || it.turn < replaceFrom))
+    let insertPos: number | null = null
+    if (replaceTurn !== undefined) {
+      const kept = items.filter((it) => !(it.turn === replaceTurn && it.kind !== 'user'))
+      const userIdx = kept.findIndex((it) => it.kind === 'user' && it.turn === replaceTurn)
+      if (userIdx < 0) return
+      insertPos = userIdx + 1
+      setItems(kept)
+      setLiveAfter(userIdx)
+    }
+    // 新しい項目を積む。再生成中は差し込み位置を進める(それ以外は末尾)
+    const pushItem = (it: DisplayItem): void => {
+      if (insertPos === null) {
+        setItems((prev) => [...prev, it])
+        return
+      }
+      const at = insertPos++
+      setItems((prev) => [...prev.slice(0, at), it, ...prev.slice(at)])
+      setLiveAfter(at)
     }
     const controller = new AbortController()
     abortRef.current = controller
@@ -689,8 +709,8 @@ export default function ChatDrawer({
     // 候補チップや再生成(override あり)では入力欄の書きかけを消さない
     if (override === undefined) setInput('')
     // 送信直後の吹き出しにも時刻を出す(保存側の ts と同じ形式)。
-    // 再読み込み後はサーバーが付けた ts に置き換わる
-    setItems((prev) => [...prev, { kind: 'user', text: message, ts: new Date().toISOString() }])
+    // 再読み込み後はサーバーが付けた ts に置き換わる。再生成では発言は既にある
+    if (replaceTurn === undefined) pushItem({ kind: 'user', text: message, ts: new Date().toISOString() })
     setStatus('考え中…')
     voice.begin() // オンなら、この返答を書き上がった文から読んでいく
     // 会話が始まる = ここでアンカーが確定する(以後は選択に追従しない)
@@ -704,7 +724,7 @@ export default function ChatDrawer({
       const text = live
       live = ''
       setLiveText('')
-      setItems((prev) => [...prev, { kind: 'assistant', text, ts: new Date().toISOString() }])
+      pushItem({ kind: 'assistant', text, ts: new Date().toISOString() })
     }
     try {
       await chatSendStream(
@@ -715,7 +735,7 @@ export default function ChatDrawer({
           message,
           char_id: charId,
           mode: roleplay ? 'roleplay' : 'interview',
-          replace_from: replaceFrom ?? null
+          replace_turn: replaceTurn ?? null
         },
         (e: ChatStreamEvent) => {
           if (e.chat_id) {
@@ -733,7 +753,7 @@ export default function ChatDrawer({
             const name = e.tool_call.name
             flushLive() // ツール実行前までの途中テキストを確定させる
             setStatus(name === 'recall' ? '記憶をたどっています…' : `調査中: ${name}`)
-            setItems((prev) => [...prev, { kind: 'tool', name }])
+            pushItem({ kind: 'tool', name })
           }
           if (e.answer !== undefined) {
             voice.finish(e.answer || undefined)
@@ -741,13 +761,15 @@ export default function ChatDrawer({
             live = ''
             setLiveText('')
             if (e.answer) {
-              setItems((prev) => [...prev, { kind: 'assistant', text: e.answer!, stats: e.stats ?? null, ts: new Date().toISOString() }])
+              pushItem({ kind: 'assistant', text: e.answer!, stats: e.stats ?? null, ts: new Date().toISOString() })
             } else if (e.stats) {
-              // ストリーミングで確定済みの吹き出しに統計だけ後付けする
+              // ストリーミングで確定済みの吹き出し(直前に積んだもの)に統計だけ後付けする
+              const at = insertPos === null ? -1 : insertPos - 1
               setItems((prev) => {
-                const last = prev[prev.length - 1]
-                if (last?.kind !== 'assistant') return prev
-                return [...prev.slice(0, -1), { ...last, stats: e.stats ?? null }]
+                const idx = at < 0 ? prev.length - 1 : at
+                const target = prev[idx]
+                if (target?.kind !== 'assistant') return prev
+                return [...prev.slice(0, idx), { ...target, stats: e.stats ?? null }, ...prev.slice(idx + 1)]
               })
             }
           }
@@ -762,6 +784,7 @@ export default function ChatDrawer({
       abortRef.current = null
       setBusy(false)
       setLiveText('')
+      setLiveAfter(null)
       // 最初の送信が失敗して会話が作られなかったら、確定しかけたアンカーを
       // 解いて選択への追従に戻す(凍ったままだと以後の送信が古いアンカーを使う)
       if (!latestChatId) setAnchorNode(null)
@@ -895,6 +918,30 @@ export default function ChatDrawer({
   }
 
   if (!open) return null
+
+  // ストリーミング中の吹き出し。再生成中はその発言の直後(liveAfter)に、通常は一番下に出す
+  const liveBubble = liveText ? (
+    <div className="mb-2 flex items-start gap-2">
+      {(charById(liveSpeaker) ?? activeChar) && (
+        <CharAvatar char={(charById(liveSpeaker) ?? activeChar)!} size={56} />
+      )}
+      <div
+        className="max-w-[80%] rounded-2xl rounded-bl-md border px-3 py-1.5 text-[13px] leading-relaxed"
+        style={{
+          background: 'var(--bg-card)',
+          borderColor: (charById(liveSpeaker) ?? activeChar)?.color || 'var(--border)',
+          color: 'var(--text)'
+        }}
+      >
+        <Markdown text={liveText} />
+        <span
+          className="ml-0.5 inline-block h-3.5 w-1.5 align-middle"
+          style={{ background: 'var(--accent)' }}
+        />
+      </div>
+    </div>
+  
+  ) : null
 
   return (
     <div ref={rootRef} className="flex h-full min-h-0" style={{ background: 'var(--bg-chat)' }}>
@@ -1250,255 +1297,244 @@ export default function ChatDrawer({
               </div>
             )}
             {items.map((item, i) => {
-              if (item.kind === 'user') {
-                const turn = item.turn
-                if (turn !== undefined && editingTurn === turn) {
-                  // 編集中: その場で本文だけ書き換える(返事は残る。作り直しは ⟳ で)
+              const el = ((): React.JSX.Element | null => {
+                if (item.kind === 'user') {
+                  const turn = item.turn
+                  if (turn !== undefined && editingTurn === turn) {
+                    // 編集中: その場で本文だけ書き換える(返事は残る。作り直しは ⟳ で)
+                    return (
+                      <div key={i} className="mb-2 flex justify-end">
+                        <div className="w-[70%]">
+                          <textarea
+                            autoFocus
+                            rows={3}
+                            value={editText}
+                            onChange={(e) => setEditText(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Escape') setEditingTurn(null)
+                              if (e.key === 'Enter' && e.ctrlKey) {
+                                e.preventDefault()
+                                void saveEditTurn(turn)
+                              }
+                            }}
+                            className="w-full resize-none rounded-2xl border px-3 py-1.5 text-[13px] outline-none"
+                            style={{ background: 'var(--bg-input)', borderColor: 'var(--accent-border)' }}
+                          />
+                          <div className="mt-1 flex justify-end gap-2 text-[11px]">
+                            <button onClick={() => setEditingTurn(null)} style={{ color: 'var(--text-faint)' }}>
+                              取消
+                            </button>
+                            <button
+                              onClick={() => void saveEditTurn(turn)}
+                              disabled={!editText.trim()}
+                              className="rounded-md px-2 py-0.5 font-medium text-white disabled:opacity-40"
+                              style={{ background: 'var(--accent)' }}
+                            >
+                              保存
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  }
                   return (
-                    <div key={i} className="mb-2 flex justify-end">
-                      <div className="w-[70%]">
-                        <textarea
-                          autoFocus
-                          rows={3}
-                          value={editText}
-                          onChange={(e) => setEditText(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Escape') setEditingTurn(null)
-                            if (e.key === 'Enter' && e.ctrlKey) {
-                              e.preventDefault()
-                              void saveEditTurn(turn)
-                            }
-                          }}
-                          className="w-full resize-none rounded-2xl border px-3 py-1.5 text-[13px] outline-none"
-                          style={{ background: 'var(--bg-input)', borderColor: 'var(--accent-border)' }}
-                        />
-                        <div className="mt-1 flex justify-end gap-2 text-[11px]">
-                          <button onClick={() => setEditingTurn(null)} style={{ color: 'var(--text-faint)' }}>
-                            取消
-                          </button>
-                          <button
-                            onClick={() => void saveEditTurn(turn)}
-                            disabled={!editText.trim()}
-                            className="rounded-md px-2 py-0.5 font-medium text-white disabled:opacity-40"
-                            style={{ background: 'var(--accent)' }}
+                    <div key={i} className="group mb-2 flex flex-col items-end">
+                      <TimeLabel ts={item.ts} align="right" />
+                      <div
+                        className="max-w-[70%] whitespace-pre-wrap rounded-2xl rounded-br-md px-3 py-1.5 text-[13px]"
+                        style={{ background: 'var(--accent-soft)', color: 'var(--text)' }}
+                      >
+                        {item.text}
+                      </div>
+                      {turn !== undefined && !busy && room && (
+                        <div className="mt-0.5 flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                          <MsgActionButton
+                            kind="branch"
+                            tip="ここで分岐(この指示までを写した新しい会話を作る)"
+                            onClick={() => void branchChat(turn, false)}
+                          />
+                          <MsgActionButton
+                            kind="copy"
+                            tip="本文をコピー"
+                            onClick={() => void copyText(item.text)}
+                          />
+                          <MsgActionButton
+                            kind="edit"
+                            tip="この指示を書き換える(発言はそのまま。作り直しは隣の ⟳)"
+                            onClick={() => startEditTurn(turn, item.text)}
+                          />
+                          <MsgActionButton
+                            kind="regenerate"
+                            tip={`この指示から以降の発言を作り直す(${turns} 発言)`}
+                            onClick={() => void sendRoom('', undefined, undefined, turn + 1)}
+                          />
+                          <MsgActionButton
+                            kind="delete"
+                            tip="この指示を削除(発言は残す)"
+                            onClick={() => void deleteRoomMessage(turn, 'この指示を削除しますか?')}
+                          />
+                        </div>
+                      )}
+                      {turn !== undefined && !busy && !room && (
+                        <div className="mt-0.5 flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                          <MsgActionButton
+                            kind="branch"
+                            tip="ここで分岐(この発言までを写した新しい会話を作る)"
+                            onClick={() => void branchChat(turn, false)}
+                          />
+                          <MsgActionButton
+                            kind="copy"
+                            tip="本文をコピー"
+                            onClick={() => void copyText(item.text)}
+                          />
+                          <MsgActionButton
+                            kind="edit"
+                            tip="この発言を書き換える(返事はそのまま。作り直しは隣の ⟳)"
+                            onClick={() => startEditTurn(turn, item.text)}
+                          />
+                          <MsgActionButton
+                            kind="regenerate"
+                            tip="この発言の返事だけ作り直す(以降のやり取りは残る)"
+                            onClick={() => regenerateTurn(turn, item.text)}
+                          />
+                          <MsgActionButton
+                            kind="delete"
+                            tip="このやり取りを削除"
+                            onClick={() => void deleteTurn(turn, false)}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )
+                }
+                if (item.kind === 'assistant') {
+                  // 会話室では発言者ごとにアバターと枠色が替わる(相談 / キャラチャットは相手固定)
+                  const speakerChar = item.speaker ? charById(item.speaker) : activeChar
+                  const speakerName = speakerChar?.name ?? item.speaker
+                  const isLast = i === items.length - 1
+                  return (
+                    <div key={i} className="group mb-2">
+                      {/* 時刻は行の外に出す。中に入れるとアイコンが時刻の高さに
+                          引っ張られて吹き出しとずれる。アイコンぶん字下げして
+                          吹き出しの真上に来るようにする */}
+                      <div className="flex items-baseline gap-2" style={{ marginLeft: speakerChar || item.speaker ? 64 : 0 }}>
+                        {item.speaker && (
+                          <span className="text-[10px]" style={{ color: speakerChar?.color || 'var(--text-dim)' }}>
+                            {speakerName}
+                          </span>
+                        )}
+                        <TimeLabel ts={item.ts} align="left" />
+                      </div>
+                      <div className="flex items-start gap-2">
+                        {/* キャラモード・会話室では発言者のアイコンを添える */}
+                        {speakerChar && <CharAvatar char={speakerChar} size={56} />}
+                        <div className="min-w-0 max-w-[80%]">
+                          <div
+                            className="rounded-2xl rounded-bl-md border px-3 py-1.5 text-[13px] leading-relaxed"
+                            style={{
+                              background: 'var(--bg-card)',
+                              // キャラモードはキャラ色の枠で「本人の発言」を示す
+                              borderColor: speakerChar?.color || 'var(--border)',
+                              color: 'var(--text)'
+                            }}
                           >
-                            保存
-                          </button>
+                            <Markdown text={item.text} />
+                          </div>
+                          <div className="flex items-center gap-2">
+                            {item.stats && <StatsLine stats={item.stats} />}
+                            {(item.promptMessages || !busy) && (
+                              <div className="mt-0.5 flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                                {item.turn !== undefined && !busy && (
+                                  <MsgActionButton
+                                    kind="branch"
+                                    tip={
+                                      item.speaker
+                                        ? 'ここで分岐(この発言までを写した新しい会話を作る)'
+                                        : 'ここで分岐(この返事までを写した新しい会話を作る)'
+                                    }
+                                    onClick={() => void branchChat(item.turn!, !item.speaker)}
+                                  />
+                                )}
+                                <MsgActionButton kind="copy" tip="本文をコピー" onClick={() => void copyText(item.text)} />
+                                {!busy && (
+                                  <MsgActionButton
+                                    kind="speak"
+                                    tip={`この返事を声で読む(${speakerChar ? `${speakerChar.name}の声` : '相談相手の声'})`}
+                                    onClick={() =>
+                                      voice.speakText(
+                                        item.text,
+                                        item.speaker ? { charId: item.speaker, mode: 'roleplay' } : undefined
+                                      )
+                                    }
+                                  />
+                                )}
+                                {item.promptMessages && (
+                                  <MsgActionButton
+                                    kind="prompt"
+                                    tip="この返事の生成に送った内容(システムプロンプトと履歴)を見る"
+                                    onClick={() => setPromptView(item.promptMessages!)}
+                                  />
+                                )}
+                                {item.speaker && item.turn !== undefined && !busy && isLast && (
+                                  <MsgActionButton
+                                    kind="regenerate"
+                                    tip={`この発言を消して、${speakerName} にもう一度話させる`}
+                                    onClick={() => void redoLastUtterance(item.turn!, item.speaker!)}
+                                  />
+                                )}
+                                {item.speaker && item.turn !== undefined && !busy && (
+                                  <MsgActionButton
+                                    kind="delete"
+                                    tip="この発言を削除"
+                                    onClick={() => void deleteRoomMessage(item.turn!, 'この発言を削除しますか?')}
+                                  />
+                                )}
+                                {!item.speaker && item.turn !== undefined && !busy && (
+                                  <MsgActionButton
+                                    kind="delete"
+                                    tip="この返事を削除(発言は残す)"
+                                    onClick={() => void deleteTurn(item.turn!, true)}
+                                  />
+                                )}
+                              </div>
+                            )}
+                          </div>
                         </div>
                       </div>
                     </div>
                   )
                 }
-                return (
-                  <div key={i} className="group mb-2 flex flex-col items-end">
-                    <TimeLabel ts={item.ts} align="right" />
+                if (item.kind === 'tool') {
+                  const who = item.speaker ? charById(item.speaker)?.name ?? item.speaker : null
+                  return (
                     <div
-                      className="max-w-[70%] whitespace-pre-wrap rounded-2xl rounded-br-md px-3 py-1.5 text-[13px]"
-                      style={{ background: 'var(--accent-soft)', color: 'var(--text)' }}
+                      key={i}
+                      className="mb-1 flex items-center gap-1 text-[11px]"
+                      style={{ color: 'var(--text-faint)', marginLeft: item.speaker ? 64 : 0 }}
                     >
-                      {item.text}
-                    </div>
-                    {turn !== undefined && !busy && room && (
-                      <div className="mt-0.5 flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
-                        <MsgActionButton
-                          kind="branch"
-                          tip="ここで分岐(この指示までを写した新しい会話を作る)"
-                          onClick={() => void branchChat(turn, false)}
-                        />
-                        <MsgActionButton
-                          kind="copy"
-                          tip="本文をコピー"
-                          onClick={() => void copyText(item.text)}
-                        />
-                        <MsgActionButton
-                          kind="edit"
-                          tip="この指示を書き換える(発言はそのまま。作り直しは隣の ⟳)"
-                          onClick={() => startEditTurn(turn, item.text)}
-                        />
-                        <MsgActionButton
-                          kind="regenerate"
-                          tip={`この指示から以降の発言を作り直す(${turns} 発言)`}
-                          onClick={() => void sendRoom('', undefined, undefined, turn + 1)}
-                        />
-                        <MsgActionButton
-                          kind="delete"
-                          tip="この指示を削除(発言は残す)"
-                          onClick={() => void deleteRoomMessage(turn, 'この指示を削除しますか?')}
-                        />
-                      </div>
-                    )}
-                    {turn !== undefined && !busy && !room && (
-                      <div className="mt-0.5 flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
-                        <MsgActionButton
-                          kind="branch"
-                          tip="ここで分岐(この発言までを写した新しい会話を作る)"
-                          onClick={() => void branchChat(turn, false)}
-                        />
-                        <MsgActionButton
-                          kind="copy"
-                          tip="本文をコピー"
-                          onClick={() => void copyText(item.text)}
-                        />
-                        <MsgActionButton
-                          kind="edit"
-                          tip="この発言を書き換える(返事はそのまま。作り直しは隣の ⟳)"
-                          onClick={() => startEditTurn(turn, item.text)}
-                        />
-                        <MsgActionButton
-                          kind="regenerate"
-                          tip="この発言から返事を作り直す"
-                          onClick={() => regenerateTurn(turn, item.text)}
-                        />
-                        <MsgActionButton
-                          kind="delete"
-                          tip="このやり取りを削除"
-                          onClick={() => void deleteTurn(turn, false)}
-                        />
-                      </div>
-                    )}
-                  </div>
-                )
-              }
-              if (item.kind === 'assistant') {
-                // 会話室では発言者ごとにアバターと枠色が替わる(相談 / キャラチャットは相手固定)
-                const speakerChar = item.speaker ? charById(item.speaker) : activeChar
-                const speakerName = speakerChar?.name ?? item.speaker
-                const isLast = i === items.length - 1
-                return (
-                  <div key={i} className="group mb-2">
-                    {/* 時刻は行の外に出す。中に入れるとアイコンが時刻の高さに
-                        引っ張られて吹き出しとずれる。アイコンぶん字下げして
-                        吹き出しの真上に来るようにする */}
-                    <div className="flex items-baseline gap-2" style={{ marginLeft: speakerChar || item.speaker ? 64 : 0 }}>
-                      {item.speaker && (
-                        <span className="text-[10px]" style={{ color: speakerChar?.color || 'var(--text-dim)' }}>
-                          {speakerName}
-                        </span>
+                      {item.name === 'recall' ? (
+                        <>
+                          <Icon name="recall" size={12} /> {who ? `${who} が記憶をたどった` : '記憶をたどった'}
+                        </>
+                      ) : (
+                        <>
+                          <Icon name="search" size={12} /> {item.name}
+                        </>
                       )}
-                      <TimeLabel ts={item.ts} align="left" />
                     </div>
-                    <div className="flex items-start gap-2">
-                      {/* キャラモード・会話室では発言者のアイコンを添える */}
-                      {speakerChar && <CharAvatar char={speakerChar} size={56} />}
-                      <div className="min-w-0 max-w-[80%]">
-                        <div
-                          className="rounded-2xl rounded-bl-md border px-3 py-1.5 text-[13px] leading-relaxed"
-                          style={{
-                            background: 'var(--bg-card)',
-                            // キャラモードはキャラ色の枠で「本人の発言」を示す
-                            borderColor: speakerChar?.color || 'var(--border)',
-                            color: 'var(--text)'
-                          }}
-                        >
-                          <Markdown text={item.text} />
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {item.stats && <StatsLine stats={item.stats} />}
-                          {(item.promptMessages || !busy) && (
-                            <div className="mt-0.5 flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
-                              {item.turn !== undefined && !busy && (
-                                <MsgActionButton
-                                  kind="branch"
-                                  tip={
-                                    item.speaker
-                                      ? 'ここで分岐(この発言までを写した新しい会話を作る)'
-                                      : 'ここで分岐(この返事までを写した新しい会話を作る)'
-                                  }
-                                  onClick={() => void branchChat(item.turn!, !item.speaker)}
-                                />
-                              )}
-                              <MsgActionButton kind="copy" tip="本文をコピー" onClick={() => void copyText(item.text)} />
-                              {!busy && (
-                                <MsgActionButton
-                                  kind="speak"
-                                  tip={`この返事を声で読む(${speakerChar ? `${speakerChar.name}の声` : '相談相手の声'})`}
-                                  onClick={() =>
-                                    voice.speakText(
-                                      item.text,
-                                      item.speaker ? { charId: item.speaker, mode: 'roleplay' } : undefined
-                                    )
-                                  }
-                                />
-                              )}
-                              {item.promptMessages && (
-                                <MsgActionButton
-                                  kind="prompt"
-                                  tip="この返事の生成に送った内容(システムプロンプトと履歴)を見る"
-                                  onClick={() => setPromptView(item.promptMessages!)}
-                                />
-                              )}
-                              {item.speaker && item.turn !== undefined && !busy && isLast && (
-                                <MsgActionButton
-                                  kind="regenerate"
-                                  tip={`この発言を消して、${speakerName} にもう一度話させる`}
-                                  onClick={() => void redoLastUtterance(item.turn!, item.speaker!)}
-                                />
-                              )}
-                              {item.speaker && item.turn !== undefined && !busy && (
-                                <MsgActionButton
-                                  kind="delete"
-                                  tip="この発言を削除"
-                                  onClick={() => void deleteRoomMessage(item.turn!, 'この発言を削除しますか?')}
-                                />
-                              )}
-                              {!item.speaker && item.turn !== undefined && !busy && (
-                                <MsgActionButton
-                                  kind="delete"
-                                  tip="この返事を削除(発言は残す)"
-                                  onClick={() => void deleteTurn(item.turn!, true)}
-                                />
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )
-              }
-              if (item.kind === 'tool') {
-                const who = item.speaker ? charById(item.speaker)?.name ?? item.speaker : null
-                return (
-                  <div
-                    key={i}
-                    className="mb-1 flex items-center gap-1 text-[11px]"
-                    style={{ color: 'var(--text-faint)', marginLeft: item.speaker ? 64 : 0 }}
-                  >
-                    {item.name === 'recall' ? (
-                      <>
-                        <Icon name="recall" size={12} /> {who ? `${who} が記憶をたどった` : '記憶をたどった'}
-                      </>
-                    ) : (
-                      <>
-                        <Icon name="search" size={12} /> {item.name}
-                      </>
-                    )}
-                  </div>
-                )
-              }
-              return null
+                  )
+                }
+                return null
+              })()
+              if (liveAfter !== i || !liveBubble) return el
+              return (
+                <Fragment key={`live-${i}`}>
+                  {el}
+                  {liveBubble}
+                </Fragment>
+              )
             })}
-            {liveText && (
-              <div className="mb-2 flex items-start gap-2">
-                {(charById(liveSpeaker) ?? activeChar) && (
-                  <CharAvatar char={(charById(liveSpeaker) ?? activeChar)!} size={56} />
-                )}
-                <div
-                  className="max-w-[80%] rounded-2xl rounded-bl-md border px-3 py-1.5 text-[13px] leading-relaxed"
-                  style={{
-                    background: 'var(--bg-card)',
-                    borderColor: (charById(liveSpeaker) ?? activeChar)?.color || 'var(--border)',
-                    color: 'var(--text)'
-                  }}
-                >
-                  <Markdown text={liveText} />
-                  <span
-                    className="ml-0.5 inline-block h-3.5 w-1.5 align-middle"
-                    style={{ background: 'var(--accent)' }}
-                  />
-                </div>
-              </div>
-            )}
+            {liveAfter === null && liveBubble}
             {status && (
               <div className="mb-1 text-[11px]" style={{ color: 'var(--text-dim)' }}>
                 {status}

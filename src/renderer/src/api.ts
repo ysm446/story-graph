@@ -1109,6 +1109,8 @@ export interface ChatStats {
   tokens_per_sec: number | null
   finish_reason: string | null
   steps?: number
+  /** 書いたモデル(llama-server の --alias = GGUF の stem)。列追加以前の記録には無い */
+  model?: string | null
 }
 
 export interface ChatStreamEvent {
@@ -1184,7 +1186,8 @@ export function chatSendStream(
     message: string
     char_id?: string | null // 設定時は「キャラクターと話す」モード
     mode?: string // interview | roleplay
-    replace_from?: number | null // 編集・再生成: この位置まで履歴を巻き戻す
+    replace_from?: number | null // 巻き戻し: この位置まで履歴を捨ててから送る(いまの UI では未使用)
+    replace_turn?: number | null // 再生成: この発言の返事だけ作り直す(以降は残る)
   },
   onEvent: (data: ChatStreamEvent) => void,
   signal?: AbortSignal

@@ -101,6 +101,7 @@ export function StatsLine({ stats }: { stats: ChatStats }): React.JSX.Element {
       {text}
     </span>
   )
+  if (stats.model) parts.push(item('model', <Icon name="sparkle" size={11} />, stats.model))
   if (stats.tokens_per_sec) {
     parts.push(item('speed', <Icon name="zap" size={11} />, `${stats.tokens_per_sec.toFixed(1)} tok/sec`))
   }

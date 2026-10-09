@@ -214,6 +214,7 @@ def _render_stats(raw: dict[str, Any]) -> dict[str, Any] | None:
         "elapsed_sec": round(elapsed, 2) if elapsed else None,
         "tokens_per_sec": round(per_sec, 1) if per_sec else None,
         "finish_reason": raw.get("finish_reason"),
+        **({"model": raw["model"]} if raw.get("model") else {}),
     }
 
 

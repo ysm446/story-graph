@@ -15,7 +15,7 @@ from typing import Any, AsyncIterator
 
 import llm
 import retrieval
-from store import Store
+from store import Store, _is_turn_start
 
 
 def _now() -> str:
@@ -685,6 +685,7 @@ async def _room_impl(
                 stats_total["tokens"] += st.get("tokens") or 0
                 stats_total["elapsed_sec"] += st.get("elapsed_sec") or 0.0
                 stats_total["finish_reason"] = st.get("finish_reason") or stats_total["finish_reason"]
+                stats_total["model"] = st.get("model") or stats_total.get("model")
                 stats_total["steps"] += 1
                 tool_calls = result.get("tool_calls")
                 if not tool_calls:
@@ -740,6 +741,7 @@ async def _room_impl(
                     "tokens_per_sec": round(stats_total["tokens"] / elapsed, 1) if elapsed else None,
                     "finish_reason": stats_total["finish_reason"],
                     "steps": stats_total["steps"],
+                    "model": stats_total.get("model"),
                 }
                 if stats_total["tokens"]
                 else None
@@ -813,10 +815,11 @@ async def chat_stream(
     char_id: str | None = None,
     mode: str = "interview",
     replace_from: int | None = None,
+    replace_turn: int | None = None,
 ) -> AsyncIterator[str]:
     try:
         async for chunk in _chat_impl(
-            store, base_url, chat_id, anchor_node, scope, user_message, char_id, mode, replace_from
+            store, base_url, chat_id, anchor_node, scope, user_message, char_id, mode, replace_from, replace_turn
         ):
             yield chunk
     except Exception as e:  # noqa: BLE001
@@ -839,7 +842,13 @@ async def _chat_impl(
     char_id: str | None,
     mode: str,
     replace_from: int | None = None,
+    replace_turn: int | None = None,
 ) -> AsyncIterator[str]:
+    """replace_from: その位置以降を捨てて user_message を積み直す(巻き戻し)。
+    replace_turn: その位置の user 発言はそのままに、**その往復の返事(ツール行込み)だけ**を
+    作り直す。以降の往復は残す(履歴がずれるのは承知の上、ユーザー決定 2026-10-09)。
+    生成に渡すのはその発言までの履歴だけ(未来を見せない)。user_message は使わない。
+    """
     if chat_id:
         chat = store.get_chat(chat_id)
         if chat is None:
@@ -859,10 +868,21 @@ async def _chat_impl(
 
     path = _visible_path(store, anchor_node, scope)
     history: list[dict[str, Any]] = list(chat["messages"])
-    # 編集・再生成: 指定位置以降を捨ててから、新しい発言を積み直す
-    if replace_from is not None and 0 <= replace_from <= len(history):
-        history = history[:replace_from]
-    history.append({"role": "user", "content": user_message, "ts": _now()})
+    tail: list[dict[str, Any]] = []  # replace_turn のとき、残しておく以降の往復
+    if replace_turn is not None:
+        if not (0 <= replace_turn < len(history)) or history[replace_turn].get("role") != "user":
+            yield _sse({"error": f"作り直す発言が見つかりません: {replace_turn}"})
+            return
+        end = replace_turn + 1
+        while end < len(history) and not _is_turn_start(history[end]):
+            end += 1
+        tail = history[end:]
+        history = history[: replace_turn + 1]
+    else:
+        # 巻き戻し: 指定位置以降を捨ててから、新しい発言を積み直す
+        if replace_from is not None and 0 <= replace_from <= len(history):
+            history = history[:replace_from]
+        history.append({"role": "user", "content": user_message, "ts": _now()})
     if char_id:
         system = build_character_system(store, path, char_id, mode)
         tools = build_character_tools()
@@ -890,6 +910,8 @@ async def _chat_impl(
             stats_total["elapsed_sec"] += s["elapsed_sec"]
         if s.get("finish_reason"):
             stats_total["finish_reason"] = s["finish_reason"]
+        if s.get("model"):
+            stats_total["model"] = s["model"]
         stats_total["steps"] += 1
 
     def final_stats() -> dict[str, Any] | None:
@@ -902,6 +924,7 @@ async def _chat_impl(
             "tokens_per_sec": round(stats_total["tokens"] / elapsed, 1) if elapsed else None,
             "finish_reason": stats_total["finish_reason"],
             "steps": stats_total["steps"],
+            "model": stats_total.get("model"),
         }
 
     final_answer: str | None = None
@@ -1001,7 +1024,7 @@ async def _chat_impl(
             )
     finally:
         # 途中失敗・切断でも、ここまでの往復(ユーザー発言・ツール結果)は保存する
-        store.save_chat_messages(chat_id, history)
+        store.save_chat_messages(chat_id, history + tail)
 
     yield _sse({"answer": final_answer or "", "chat_id": chat_id, "stats": final_stats()})
 

@@ -76,6 +76,8 @@ def _extract_stats(chunk: dict[str, Any], choice: dict[str, Any]) -> dict[str, A
         "tokens_per_sec": per_sec,
         "elapsed_sec": (elapsed_ms / 1000.0) if elapsed_ms is not None else None,
         "finish_reason": choice.get("finish_reason"),
+        # llama-server 起動時の --alias(GGUF の stem)。返事にどのモデルで書いたかを残す
+        "model": chunk.get("model"),
     }
 
 

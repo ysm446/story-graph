@@ -2133,8 +2133,11 @@ class ChatSendIn(BaseModel):
     message: str
     char_id: str | None = None  # 設定時は「キャラクターと話す」モード
     mode: str = "interview"  # interview | roleplay(char_id 設定時のみ意味を持つ)
-    # 編集・再生成用。指定すると履歴をこの位置まで巻き戻してから送る
+    # 巻き戻し用。指定すると履歴をこの位置まで捨ててから message を積み直す
     replace_from: int | None = None
+    # 再生成用。この位置の user 発言はそのままに、その往復の返事だけ作り直す(以降は残す)。
+    # message は使わない
+    replace_turn: int | None = None
 
 
 @app.get("/chats")
@@ -2277,6 +2280,7 @@ async def chat_send(body: ChatSendIn) -> StreamingResponse:
             body.char_id,
             body.mode,
             body.replace_from,
+            body.replace_turn,
         ),
         media_type="text/event-stream",
     )

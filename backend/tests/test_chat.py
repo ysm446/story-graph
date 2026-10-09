@@ -540,6 +540,38 @@ def test_replace_from_rewinds_history(store, monkeypatch):
     assert contents[4:] == ["2回目の質問(修正)", "作り直した回答"]
 
 
+def test_replace_turn_regenerates_only_that_answer(store, monkeypatch):
+    """再生成は次の返事だけ差し替え、以降の往復は残す(2026-10-09 ユーザー決定)。"""
+    chat_id = _two_turn_chat(store)
+    seen: list[list[dict]] = []
+
+    async def fake(messages, **_kw):
+        seen.append(messages)
+        yield "content", "作り直した回答"
+        yield "done", {"content": "作り直した回答", "tool_calls": None,
+                       "message": {"role": "assistant", "content": "作り直した回答"}}
+
+    monkeypatch.setattr(llm_mod, "chat_stream_tools", fake)
+    collect_sse(chat_agent.chat_stream(
+        store, "http://fake", chat_id, None, "upto", "(無視される)", replace_turn=0
+    ))
+    contents = [m.get("content") for m in store.get_chat(chat_id)["messages"]]
+    # 1 往復目のツール行と回答が新しい回答 1 件に置き換わり、2 往復目はそのまま
+    assert contents == ["1回目の質問", "作り直した回答", "2回目の質問", "2回目の回答"]
+    # 生成に渡した履歴はその発言まで(2 往復目は見せない)
+    sent = [m.get("content") for m in seen[0] if m["role"] != "system"]
+    assert sent == ["1回目の質問"]
+
+
+def test_replace_turn_rejects_non_user_index(store, monkeypatch):
+    chat_id = _two_turn_chat(store)
+    events = collect_sse(chat_agent.chat_stream(
+        store, "http://fake", chat_id, None, "upto", "x", replace_turn=1
+    ))
+    assert any("error" in e for e in events)
+    assert len(store.get_chat(chat_id)["messages"]) == 6
+
+
 def test_visible_path_falls_back_when_anchor_was_deleted(store):
     """保存済みチャットのアンカーが削除済みシーンを指していても、KeyError にせず
     正史全体を返す(2026-09-06 修正。delete_node は chats.anchor_node を掃除しない)。"""
