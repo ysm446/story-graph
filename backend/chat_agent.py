@@ -111,13 +111,26 @@ def _visible_path(store: Store, anchor: str | None, scope: str) -> list[str]:
 
 def _story_graph(store: Store) -> dict[str, Any]:
     """本文を含めない接続図。マーカーも残して章・結末への接続を切らない。"""
-    nodes = store.conn.execute("SELECT id, title, kind FROM nodes ORDER BY created_at, rowid").fetchall()
+    nodes = store.conn.execute("SELECT id, title, kind, group_id FROM nodes ORDER BY created_at, rowid").fetchall()
     edges = store.conn.execute("SELECT from_node, to_node FROM edges ORDER BY rowid").fetchall()
+    canon = store.canon_path()
+    ending = store.active_ending()
+    parents = {e["to_node"]: e["from_node"] for e in edges}
+    route = set(store.path_to(ending, parents) if ending and store._ending_is_rooted(ending, parents)
+                else store._canon_chain_from_start())
+    canon_groups = {n["group_id"] for n in nodes if n["id"] in route and n["group_id"]}
+    groups = [dict(r) for r in store.conn.execute("SELECT id, title FROM groups ORDER BY created_at, rowid")]
     return {
-        "nodes": [{"id": n["id"], "title": n["title"], "kind": n["kind"] or "scene"} for n in nodes],
+        "counts": {"all_scenes": sum(n["kind"] is None for n in nodes), "canon_scenes": len(canon),
+                   "all_chapters": len(groups), "canon_chapters": len(canon_groups)},
+        "groups": groups,
+        "branch_entries": [{"from_node": e["from_node"], "branch_root": e["to_node"]}
+                           for e in edges if e["from_node"] in route and e["to_node"] not in route],
+        "detached_roots": [n["id"] for n in nodes if n["id"] not in parents and n["kind"] != "start"],
+        "nodes": [{"id": n["id"], "title": n["title"], "kind": n["kind"] or "scene", "group_id": n["group_id"]} for n in nodes],
         "edges": [dict(e) for e in edges],
-        "canon_path": store.canon_path(),
-        "active_ending": store.active_ending(),
+        "canon_path": canon,
+        "active_ending": ending,
     }
 
 
@@ -801,6 +814,7 @@ def build_system(store: Store, path: list[str], scope: str) -> str:
                 "",
                 "## 物語全体の接続図",
                 "edges は from_node → to_node の有向接続。配列順や一覧番号は物語の時系列ではない。",
+                "counts はマーカーを除くシーン数と章数の集計。branch_entries は正史の分岐元from_nodeと枝の先頭branch_rootを区別する。枝を説明するときは分岐元→枝の先頭の両IDを示す。detached_rootsは親のない未接続の入口。",
                 "canon_path が現在の正史。その他の枝・別の結末・未接続ノードも相談対象に含める。",
                 "別経路の出来事を一続きの出来事として混ぜない。記憶の node_id を接続図と照合する。",
                 "get_state は node_id で経路を選ぶ。省略時は正史末尾であり、全枝を合成した状態ではない。",

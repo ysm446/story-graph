@@ -774,3 +774,44 @@ def test_room_replace_from_rewinds_and_recounts_speaker(store, monkeypatch):
     saved = store.get_chat(chat_id)["messages"]
     assert [m.get("speaker", m["role"]) for m in saved] == ["user", "aya"]
     assert saved[0]["content"] == "再会"
+
+
+
+def test_graph_summary_distinguishes_fork_from_branch_and_counts_scenes(store):
+    a, b, c = store.canon_path()
+    store.append_node({"id": "branch", "beat": "別案"}, parent_id=a, force_draft=True)
+    store.create_group("第一章", [a, b, c, "branch"])
+    store.append_node({"id": "island", "beat": "未接続"}, detached=True)
+    graph = chat_agent._story_graph(store)
+    assert graph["counts"] == {"all_scenes": 5, "canon_scenes": 3, "all_chapters": 1, "canon_chapters": 1}
+    assert {"from_node": a, "branch_root": "branch"} in graph["branch_entries"]
+    assert "island" in graph["detached_roots"]
+    assert graph["nodes"][0]["group_id"] is None  # はじまりは章の外
+    assert len(graph["groups"]) == 1
+    assert "branch_entries" not in chat_agent.build_system(store, [a], "upto")
+
+
+def test_graph_summary_counts_chapters_without_counting_markers_as_scenes(store):
+    path = store.canon_path()
+    for i, nid in enumerate(path):
+        store.create_group(f"第{i+1}章", [nid])
+    graph = chat_agent._story_graph(store)
+    assert graph["counts"]["canon_chapters"] == 3
+    assert graph["counts"]["canon_scenes"] == 3
+    assert len(graph["nodes"]) > 3
+    assert graph["branch_entries"] == []
+
+
+
+def test_graph_summary_uses_same_fallback_as_canon_when_ending_is_unrooted(store):
+    path = store.canon_path()
+    store.create_group("本編", path)
+    ending = store.active_ending()
+    # 接続を編集している途中の互換状態。Storeの正史取得と集計を一致させる。
+    store.conn.execute("DELETE FROM edges WHERE to_node = ?", (ending,))
+    store.conn.commit()
+    graph = chat_agent._story_graph(store)
+    assert graph["canon_path"] == path
+    assert graph["counts"]["canon_chapters"] == 1
+    assert graph["counts"]["canon_scenes"] == 3
+    assert ending in graph["detached_roots"]
