@@ -794,6 +794,18 @@ export default function ChatDrawer({
     void refreshHistory()
   }
 
+  // 本文をクリップボードへ(lm-chat 移植)。返事は Markdown のまま写す
+  const copyText = async (text: string): Promise<void> => {
+    try {
+      await navigator.clipboard.writeText(text)
+      setStatus('コピーしました')
+      // 状態行は次の送信まで残るので、合図だけ出して自分で消す
+      window.setTimeout(() => setStatus((s) => (s === 'コピーしました' ? null : s)), 1500)
+    } catch {
+      setStatus('コピーに失敗しました')
+    }
+  }
+
   // ここで分岐(lm-chat 移植): 履歴をその位置まで複製した新しい会話を作って、そちらへ移る。
   // 元の会話は残るので、同じ所から別の聞き方・別の展開を試せる。
   // wholeTurn は返事の位置で分岐するとき(返事は往復の開始位置しか持たないので、往復ごと写す)
@@ -1279,6 +1291,11 @@ export default function ChatDrawer({
                           onClick={() => void branchChat(turn, false)}
                         />
                         <MsgActionButton
+                          kind="copy"
+                          tip="本文をコピー"
+                          onClick={() => void copyText(item.text)}
+                        />
+                        <MsgActionButton
                           kind="edit"
                           tip="この指示を書き直して、以降の発言を作り直す"
                           onClick={() => startEditTurn(turn, item.text)}
@@ -1301,6 +1318,11 @@ export default function ChatDrawer({
                           kind="branch"
                           tip="ここで分岐(この発言までを写した新しい会話を作る)"
                           onClick={() => void branchChat(turn, false)}
+                        />
+                        <MsgActionButton
+                          kind="copy"
+                          tip="本文をコピー"
+                          onClick={() => void copyText(item.text)}
                         />
                         <MsgActionButton
                           kind="edit"
@@ -1370,6 +1392,7 @@ export default function ChatDrawer({
                                   onClick={() => void branchChat(item.turn!, !item.speaker)}
                                 />
                               )}
+                              <MsgActionButton kind="copy" tip="本文をコピー" onClick={() => void copyText(item.text)} />
                               {!busy && (
                                 <MsgActionButton
                                   kind="speak"
