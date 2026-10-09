@@ -483,6 +483,17 @@ def test_delete_turn_rejects_non_user_index(store):
     assert store.delete_chat_turn(chat_id, 3, keep_user=False) is None  # assistant の位置
 
 
+def test_set_message_content_keeps_answers(store):
+    chat_id = _two_turn_chat(store)
+    chat = store.set_chat_message_content(chat_id, 4, "2回目の質問(直した)")
+    contents = [m.get("content") for m in chat["messages"]]
+    assert contents[4] == "2回目の質問(直した)"
+    assert contents[5] == "2回目の回答"  # 返事は残る
+    assert len(contents) == 6
+    assert store.set_chat_message_content(chat_id, 5, "x") is None  # assistant は書き換えない
+    assert store.set_chat_message_content(chat_id, 9, "x") is None
+
+
 def test_branch_chat_copies_history_up_to_index(store):
     chat_id = _two_turn_chat(store)
     store.set_chat_title(chat_id, "橋の相談")

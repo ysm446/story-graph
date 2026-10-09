@@ -827,6 +827,21 @@ export default function ChatDrawer({
     setEditText(text)
   }
 
+  // 編集の保存: 本文だけ書き換えて返事は残す(lm-chat の Save)。作り直したいときは
+  // 保存してから隣の ⟳ を押す流れ(ユーザー決定 2026-10-09)。以前は保存 = 送り直しだった
+  const saveEditTurn = async (turn: number): Promise<void> => {
+    const text = editText.trim()
+    if (!chatId || !text) return
+    try {
+      setItems(buildDisplay((await chatApi.updateMessage(chatId, turn, text)).messages))
+    } catch {
+      setStatus('保存に失敗しました')
+      return
+    }
+    setEditingTurn(null)
+    void refreshHistory() // 冒頭の発言を直したら一覧の見出しも変わる
+  }
+
   // 会話室: 履歴の 1 件(発言 / 演出指示)だけを消す
   const deleteRoomMessage = async (index: number, label: string): Promise<void> => {
     if (!chatId || busy) return
@@ -1238,7 +1253,7 @@ export default function ChatDrawer({
               if (item.kind === 'user') {
                 const turn = item.turn
                 if (turn !== undefined && editingTurn === turn) {
-                  // 編集中: その場で書き換えて送り直す(以降のやり取りは作り直し)
+                  // 編集中: その場で本文だけ書き換える(返事は残る。作り直しは ⟳ で)
                   return (
                     <div key={i} className="mb-2 flex justify-end">
                       <div className="w-[70%]">
@@ -1249,6 +1264,10 @@ export default function ChatDrawer({
                           onChange={(e) => setEditText(e.target.value)}
                           onKeyDown={(e) => {
                             if (e.key === 'Escape') setEditingTurn(null)
+                            if (e.key === 'Enter' && e.ctrlKey) {
+                              e.preventDefault()
+                              void saveEditTurn(turn)
+                            }
                           }}
                           className="w-full resize-none rounded-2xl border px-3 py-1.5 text-[13px] outline-none"
                           style={{ background: 'var(--bg-input)', borderColor: 'var(--accent-border)' }}
@@ -1258,16 +1277,12 @@ export default function ChatDrawer({
                             取消
                           </button>
                           <button
-                            onClick={() => {
-                              const text = editText.trim()
-                              setEditingTurn(null)
-                              if (text) void send(text, turn)
-                            }}
+                            onClick={() => void saveEditTurn(turn)}
                             disabled={!editText.trim()}
                             className="rounded-md px-2 py-0.5 font-medium text-white disabled:opacity-40"
                             style={{ background: 'var(--accent)' }}
                           >
-                            送り直す
+                            保存
                           </button>
                         </div>
                       </div>
@@ -1297,7 +1312,7 @@ export default function ChatDrawer({
                         />
                         <MsgActionButton
                           kind="edit"
-                          tip="この指示を書き直して、以降の発言を作り直す"
+                          tip="この指示を書き換える(発言はそのまま。作り直しは隣の ⟳)"
                           onClick={() => startEditTurn(turn, item.text)}
                         />
                         <MsgActionButton
@@ -1326,7 +1341,7 @@ export default function ChatDrawer({
                         />
                         <MsgActionButton
                           kind="edit"
-                          tip="この発言を編集して送り直す"
+                          tip="この発言を書き換える(返事はそのまま。作り直しは隣の ⟳)"
                           onClick={() => startEditTurn(turn, item.text)}
                         />
                         <MsgActionButton

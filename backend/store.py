@@ -3166,6 +3166,22 @@ class Store:
         self.save_chat_messages(chat_id, messages)
         return self.get_chat(chat_id)
 
+    def set_chat_message_content(self, chat_id: str, index: int, content: str) -> dict[str, Any] | None:
+        """作者の発言(user ロール)1 件の本文だけを書き換える。返事や控えはそのまま。
+
+        言い回しの修正で以降のやり取りを失わないための操作(lm-chat の Save)。作り直したい
+        ときは、保存したあとに再生成(replace_from)を別に押す流れ。
+        """
+        chat = self.get_chat(chat_id)
+        if chat is None:
+            return None
+        messages = list(chat["messages"])
+        if not (0 <= index < len(messages)) or messages[index].get("role") != "user":
+            return None
+        messages[index] = {**messages[index], "content": content}
+        self.save_chat_messages(chat_id, messages)
+        return self.get_chat(chat_id)
+
     def branch_chat(self, chat_id: str, index: int, whole_turn: bool = False) -> dict[str, Any] | None:
         """履歴を index の位置まで複製した新しい会話を作る(lm-chat の「ここで分岐」)。
 

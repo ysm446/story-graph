@@ -2181,6 +2181,22 @@ async def delete_chat_message(chat_id: str, index: int) -> dict[str, Any]:
     return chat
 
 
+class ChatMessagePatchIn(BaseModel):
+    content: str
+
+
+@app.patch("/chats/{chat_id}/message/{index}")
+async def patch_chat_message(chat_id: str, index: int, body: ChatMessagePatchIn) -> dict[str, Any]:
+    """作者の発言 1 件の本文を書き換える(返事はそのまま。作り直しは再生成で別に行う)。"""
+    content = body.content.strip()
+    if not content:
+        raise HTTPException(400, "content is empty")
+    chat = store.set_chat_message_content(chat_id, index, content)
+    if chat is None:
+        raise HTTPException(404, "chat or user message not found")
+    return chat
+
+
 class ChatBranchIn(BaseModel):
     index: int
     whole_turn: bool = False  # True なら index の往復の終わり(返事・ツール行)まで含める
