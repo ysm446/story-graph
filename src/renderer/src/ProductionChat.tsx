@@ -25,7 +25,7 @@ const libraryFieldLabels: Record<string, string> = {
   description: '説明', atmosphere: '雰囲気'
 }
 
-/** 段階0の制作専用チャット。相談履歴とは分け、実行ボタンからだけ書き込みを許可する。 */
+/** 制作専用チャット。相談履歴とは分け、選択した送信モードで書き込みの可否を決める。 */
 export default function ProductionChat({ beforeExecute, onChanged, onFollowTarget, onManualEdit, nodes, groups }: {
   onManualEdit: (paused: boolean) => void
   nodes: StoryNode[]
@@ -40,6 +40,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
   const [memoryDirty, setMemoryDirty] = useState(false)
   const [memoryRefresh, setMemoryRefresh] = useState(0)
   const [input, setInput] = useState('')
+  const [sendMode, setSendMode] = useState<'consult' | 'execute'>('consult')
   const [policy, setPolicy] = useState<ProductionPolicy>(defaultProductionPolicy)
   const [live, setLive] = useState('')
   const [status, setStatus] = useState('')
@@ -245,6 +246,14 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
     setTaskId(id)
   }
 
+  const submit = (): void => {
+    if (busy) {
+      if (runId) void instruct()
+    } else {
+      send(sendMode === 'execute')
+    }
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-col gap-2 px-4 py-2 text-[12px]" style={{ background: 'var(--bg-chat)', color: 'var(--text)' }}>
       <div className="flex items-center gap-2">
@@ -269,7 +278,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
           data-tip="作業対象の章を開き、シーンをキャンバスの中央に表示します">{follow ? '☑' : '☐'} 作業対象を追う</button>
       </div>
       <p className="text-[11px]" style={{ color: 'var(--text-dim)' }}>
-        検証用ライブラリでお試しください。「制作を実行」でシーンの追加・編集・削除・つなぎ替えを行います。手動編集に切り替えて保存した後、制作を再開できます。
+        検証用ライブラリでお試しください。送信モードで「制作を実行」を選ぶとシーンや資料庫を編集します。手動編集に切り替えて保存した後、制作を再開できます。
       </p>
       {busy && runId && <button disabled={!manualReady || switching} onClick={() => void toggleManual()}
         className="rounded-md border px-2 py-0.5 text-[12px] disabled:opacity-50"
@@ -315,24 +324,35 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
         {task?.status === 'pending' ? '待機しています…' : status || '全体の接続関係と資料庫のキャラクター・場所を参照できます。相談するだけでは作品を変更しません。'}
       </p>
       <textarea aria-label="制作への依頼" value={input} onChange={(e) => setInput(e.target.value)} disabled={sendingInstruction || (busy && !runId)}
+        onKeyDown={(e) => {
+          if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return
+          e.preventDefault()
+          if (!e.repeat) submit()
+        }}
         rows={2} placeholder={runId ? "途中指示を入力（未確定の変更を見直してから続けます）" : "方針の相談、または作業の依頼を入力"}
         className="w-full rounded-md border px-2 py-0.5 text-[12px] outline-none disabled:opacity-50"
         style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }} />
-      <div className="flex justify-end gap-2">
-        {busy && runId && <button onClick={() => void instruct()} disabled={!input.trim() || sendingInstruction}
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <span className="mr-auto text-[11px]" style={{ color: 'var(--text-faint)' }}>Enterで送信・Shift＋Enterで改行</span>
+        <select aria-label="制作チャットの送信モード" value={sendMode} disabled={busy}
+          onChange={(e) => setSendMode(e.target.value as 'consult' | 'execute')}
+          className="rounded-md border px-2 py-0.5 text-[12px] outline-none disabled:opacity-50"
+          style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
+          data-tip="相談は読み取りのみ、制作は依頼に応じて作品を編集します">
+          <option value="consult">相談する</option>
+          <option value="execute">制作を実行</option>
+        </select>
+        {busy && runId && <button onClick={submit} disabled={!input.trim() || sendingInstruction}
           className="rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-50"
           style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
           data-tip="指示を受け付け、次の判断に取り込みます。確定済みの変更は自動では戻りません">途中指示を送る</button>}
         {busy ? <button onClick={() => { runRef.current = null; setRunId(null); if (taskId) cancelTask(taskId) }}
           className="rounded-md border px-2 py-0.5 text-[11px]"
-          style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }} data-tip="未確定の生成を止めます。確定済みの変更は残ります">停止</button> : <>
-          <button onClick={() => send(false)} disabled={!input.trim()}
-            className="rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-50"
-            style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }} data-tip="読み取りだけで回答します">相談する</button>
-          <button onClick={() => send(true)} disabled={!input.trim()}
+          style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }} data-tip="未確定の生成を止めます。確定済みの変更は残ります">停止</button> :
+          <button onClick={submit} disabled={!input.trim()}
             className="accent-action inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium disabled:opacity-40"
-            data-tip="作業前の状態を保存してから、依頼した編集を実行します">制作を実行</button>
-        </>}
+            data-tip={sendMode === 'execute' ? '作業前の状態を保存してから、依頼した編集を実行します' : '読み取りだけで回答します'}>送信</button>
+        }
       </div>
     </div>
   )
