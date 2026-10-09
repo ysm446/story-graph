@@ -9,6 +9,16 @@ FIELDS = {
     "character": ("name", "profile", "appearance", "voice", "reading", "color"),
     "place": ("name", "description", "atmosphere", "reading", "color"),
 }
+FIELD_DESCRIPTIONS = {
+    "name": "資料の名前。作者が指定した表記を使う。",
+    "profile": "人物のプロフィール・役割・背景。作者が指定した設定。",
+    "appearance": "人物の外見。髪・服装など、作者が指定した設定。",
+    "voice": "人物の口調・一人称。音声モデルの指定ではない。",
+    "description": "場所の説明・造り・地形などの固定設定。『説明は〜』という依頼はこの項目に保存する。保存結果のdescriptionに対応する。",
+    "atmosphere": "場所の雰囲気・空気感。説明(place_description)とは別項目。",
+    "reading": "名前の読み。読み上げに使う。",
+    "color": "表示色。#RRGGBB形式。",
+}
 WRITE_TOOLS = {f"{action}_{kind}" for kind in FIELDS for action in ("create", "update", "delete")}
 
 
@@ -32,7 +42,10 @@ def tools(allow_write):
                 properties["id"] = {"type": "string"}
                 required.append("id")
             if action != "delete":
-                properties.update({field: {"type": "string"} for field in fields})
+                # Gemmaのformat_parametersはdescriptionという引数名をスキーマの
+                # メタ情報とみなして除外する。公開引数だけ別名にし、DBの列は変えない。
+                properties.update({("place_description" if field == "description" else field):
+                    {"type": "string", "description": FIELD_DESCRIPTIONS[field]} for field in fields})
                 if action == "create":
                     required.append("name")
             description = {
@@ -113,6 +126,11 @@ def apply(store, name, args, policy=None, before_commit=None):
     if name not in WRITE_TOOLS or not isinstance(args, dict):
         raise ValueError("資料庫の操作が不正です")
     action, kind = name.split("_", 1)
+    if kind == "place" and action != "delete" and "place_description" in args:
+        if "description" in args and args["description"] != args["place_description"]:
+            raise ValueError("場所の説明が二重に指定されています")
+        args = {**args, "description": args["place_description"]}
+        del args["place_description"]
     allowed = {"reason", *(FIELDS[kind] if action != "delete" else ())}
     if action != "create":
         allowed.add("id")

@@ -34,6 +34,25 @@ def edit(store, tool_name, **args):
     return asyncio.run(production.apply_edit(store, "fake", tool_name, {"reason": "作者の依頼", **args}))
 
 
+def test_place_description_tool_alias_is_visible_and_saved(store):
+    definitions = {tool["function"]["name"]: tool["function"] for tool in library.tools(True)}
+    for name in ("create_place", "update_place"):
+        fields = definitions[name]["parameters"]["properties"]
+        assert "place_description" in fields
+        assert not {"description", "type", "properties", "required", "nullable"}.intersection(fields)
+    created = edit(store, "create_place", name="小屋", place_description="木造", atmosphere="静か")
+    place_id = created["entity_id"]
+    assert store.get_place(place_id)["description"] == "木造"
+    updated = edit(store, "update_place", id=place_id, place_description="石造")
+    assert updated["before"]["description"] == "木造"
+    assert updated["after"]["description"] == "石造"
+    assert library.read(store, {"kind": "place", "id": place_id})["item"]["description"] == "石造"
+    assert store.get_place(place_id)["atmosphere"] == "静か"
+    with pytest.raises(ValueError, match="二重"):
+        edit(store, "update_place", id=place_id, description="木造", place_description="鉄骨")
+    assert store.get_place(place_id)["description"] == "石造"
+
+
 @pytest.mark.parametrize("kind,field", [("character", "profile"), ("place", "description")])
 def test_create_read_update_delete_preserves_unspecified_fields(store, kind, field):
     created = edit(store, "create_" + kind, name="新規", reading="しんき", **{field: "設定"})
