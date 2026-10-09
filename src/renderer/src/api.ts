@@ -113,6 +113,10 @@ export const api = {
   updateNode: (id: string, data: Partial<Omit<StoryNode, 'id' | 'events'>>) =>
     request<StoryNode>(`/nodes/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteNode: (id: string) => request<unknown>(`/nodes/${id}`, { method: 'DELETE' }),
+  deleteSelection: (nodeIds: string[], groupIds: string[]) =>
+    request<{ node_ids: string[]; group_ids: string[] }>('/nodes/delete-selection', {
+      method: 'POST', body: JSON.stringify({ node_ids: nodeIds, group_ids: groupIds })
+    }),
   setNodePosition: (id: string, x: number, y: number) =>
     request<unknown>(`/nodes/${id}/position`, { method: 'POST', body: JSON.stringify({ x, y }) }),
   // 複数ノードの配置をまとめて保存する(自動レイアウトの結果を焼き付けるのに使う)

@@ -2587,12 +2587,16 @@ function StructureModeInner({
     setChapterNodes((nds) => applyNodeChanges(changes as NodeChange<ChapterFlowNode>[], nds))
   }, [])
 
-  // 選択ノードの削除(削除ボタンと Delete キーの共通処理)。子を持つノードは削除できない
+  const deletingNodes = useRef(false)
+
+  // 選択ノードの削除。後続シーンは前のシーンへ繋ぎ直す。
   const deleteNodeById = useCallback(
     async (nodeId: string): Promise<void> => {
+      if (deletingNodes.current) return
       const node = graphNodes.find((n) => n.id === nodeId)
       const label = node?.title || '(無題)'
       if (!window.confirm(`シーン「${label}」を削除しますか?(後続シーンは前のシーンに繋がります)`)) return
+      deletingNodes.current = true
       try {
         await api.deleteNode(nodeId)
         beatDraftCache.delete(nodeId)
@@ -2600,6 +2604,8 @@ function StructureModeInner({
         await reload()
       } catch (e) {
         setGenStatus(`削除できません: ${String(e)}`)
+      } finally {
+        deletingNodes.current = false
       }
     },
     [graphNodes, reload]
@@ -2963,20 +2969,37 @@ function StructureModeInner({
   )
 
   const deleteNodes = useCallback(
-    async (nodeIds: string[]): Promise<void> => {
-      if (!window.confirm(`${nodeIds.length} シーンを削除しますか?(後続シーンは前のシーンに繋がります)`)) return
-      let failed = 0
-      for (const id of nodeIds) {
-        await api.deleteNode(id).catch(() => {
-          failed += 1
-        })
-        beatDraftCache.delete(id)
+    async (nodeIds: string[], groupIds: string[] = []): Promise<void> => {
+      if (deletingNodes.current) return
+      const targets = [...new Set(nodeIds)].filter((id) => graphNodes.some((n) => n.id === id && !n.kind))
+      const chapters = [...new Set(groupIds)]
+      if (!targets.length && !chapters.length) return
+      const sceneCount = graphNodes.filter((n) => !n.kind &&
+        (targets.includes(n.id) || (n.group_id && chapters.includes(n.group_id)))).length
+      const message = chapters.length
+        ? `${chapters.length} 章と、章内を含む ${sceneCount} シーンを削除しますか?(章内の枝・未接続シーンも削除されます。後続シーンは前のシーンに繋がります)`
+        : `${sceneCount} シーンを削除しますか?(後続シーンは前のシーンに繋がります)`
+      if (!window.confirm(message)) return
+      deletingNodes.current = true
+      try {
+        const result = await api.deleteSelection(targets, chapters)
+        const deleted = new Set(result.node_ids)
+        for (const id of deleted) beatDraftCache.delete(id)
+        setSelectedId((current) => (current && deleted.has(current) ? null : current))
+        setSelectedChapterId((current) => (current && chapters.includes(current) ? null : current))
+        setChapterView((current) => (chapters.includes(current) ? 'chapters' : current))
+        try {
+          await reload()
+        } catch (e) {
+          setGenStatus(`削除後の表示を更新できませんでした: ${String(e)}`)
+        }
+      } catch (e) {
+        setGenStatus(`削除できませんでした: ${String(e)}`)
+      } finally {
+        deletingNodes.current = false
       }
-      setSelectedId((current) => (current && nodeIds.includes(current) ? null : current))
-      await reload().catch(() => undefined)
-      if (failed > 0) setGenStatus(`${failed} 件のシーンを削除できませんでした(子を持つシーンなど)`)
     },
-    [reload]
+    [graphNodes, reload]
   )
 
   // 右クリックメニューは外側クリックと Escape で閉じる
@@ -3665,17 +3688,28 @@ function StructureModeInner({
         return
       }
       if (event.key === 'Delete') {
+        if (event.repeat || deletingNodes.current) return
         // エッジを選択中なら「削除」ではなく「切断」(ノードは残す)
         if (selectedEdgeId) {
           event.preventDefault()
           void detachEdge(selectedEdgeId)
           return
         }
+        const selected = displayNodes.filter((n) => n.selected)
+        if (selected.length > 1 || selected[0]?.type === 'chapterNode') {
+          // 章は所属シーンごと削除し、単独のマーカーは対象に含めない。
+          const targets = selected
+            .filter((n) => n.type !== 'chapterNode' && !(n.data as BeatNodeData).storyNode?.kind)
+            .map((n) => n.id)
+          event.preventDefault()
+          const chapters = selected.filter((n) => n.type === 'chapterNode')
+            .map((n) => (n.data as ChapterNodeData).group.id)
+          void deleteNodes(targets, chapters)
+          return
+        }
         // キャンバス上で選択中のノードを優先し、無ければインスペクタの選択ノード
-        const targetId = displayNodes.find((n) => n.selected)?.id ?? selectedId
+        const targetId = selected[0]?.id ?? selectedId
         if (!targetId) return
-        // 章カードは表示上の導出ノード。章の解除は右クリックからだけにする
-        if (targetId.startsWith('chapter:')) return
         event.preventDefault()
         void deleteNodeById(targetId)
         return
@@ -3724,7 +3758,7 @@ function StructureModeInner({
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [reactFlow, displayNodes, selectedId, selectedEdgeId, detachEdge, deleteNodeById, navigateSelection, productionEditingLocked])
+  }, [reactFlow, displayNodes, selectedId, selectedEdgeId, detachEdge, deleteNodeById, deleteNodes, navigateSelection, productionEditingLocked])
 
   // ---- 章の操作 -------------------------------------------------------
   // Electron は window.prompt を使えない(呼ぶと例外)ので、名前の入力は
@@ -4727,6 +4761,11 @@ function StructureModeInner({
                           label: '章を解除',
                           hint: 'まとまりをやめる(シーンは残る)',
                           run: () => void dissolveChapter(group)
+                        },
+                        {
+                          label: '章と中のシーンを削除',
+                          hint: '枝・未接続シーンも含めて削除',
+                          run: () => void deleteNodes([], [group.id])
                         }
                       ]
                     })()

@@ -64,6 +64,33 @@ def delete(store: Store, node_id: str):
             raise KeyError(f"node not found: {node_id}")
 
 
+def delete_many(store: Store, node_ids: list[str], group_ids: list[str]):
+    """選択シーンと章の全所属シーンを削除する。失敗時は全体を戻す。"""
+    with atomic_store(store) as tx:
+        targets = dict.fromkeys(node_ids)
+        groups = list(dict.fromkeys(group_ids))
+        for group_id in groups:
+            if tx.get_group(group_id) is None:
+                raise KeyError(f"group not found: {group_id}")
+            for row in tx.conn.execute(
+                "SELECT id FROM nodes WHERE group_id = ? AND kind IS NULL", (group_id,)
+            ):
+                targets[row["id"]] = None
+        for node_id in targets:
+            node = tx.get_node(node_id)
+            if node is None:
+                raise KeyError(f"node not found: {node_id}")
+            if node.get("kind"):
+                raise ValueError("一括削除ではシーンと章を選択してください")
+        # 境界を先に解除し、章の枝や未接続シーンも所属を基準に削除する。
+        for group_id in groups:
+            tx.delete_group(group_id)
+        for node_id in targets:
+            if not tx.delete_node(node_id):
+                raise KeyError(f"node not found: {node_id}")
+    return {"node_ids": list(targets), "group_ids": groups}
+
+
 def _check_connections(graph):
     """親は1つ、循環なし、章への出入りはマーカー経由。"""
     nodes = {n["id"]: n for n in graph["nodes"]}

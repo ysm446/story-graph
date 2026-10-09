@@ -712,6 +712,24 @@ async def delete_node(node_id: str) -> dict[str, str]:
     return {"status": "deleted"}
 
 
+class DeleteSelectionIn(BaseModel):
+    node_ids: list[str] = []
+    group_ids: list[str] = []
+
+
+@app.post("/nodes/delete-selection")
+async def delete_selection(body: DeleteSelectionIn) -> dict[str, Any]:
+    await snapshots.auto(store, "選択したシーン・章の削除の前", 30)
+    try:
+        result = node_operations.delete_many(store, body.node_ids, body.group_ids)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except KeyError as e:
+        raise HTTPException(404, str(e))
+    _schedule_audio_gc()
+    return result
+
+
 class PositionIn(BaseModel):
     x: float
     y: float
