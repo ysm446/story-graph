@@ -1,5 +1,5 @@
 {
-  "_comment": "生成ウインドウで選べるワークフローの組。id は DB(nodes.image_workflow / characters.ref_image_workflow / media.workflow)に保存されるので変えない。t2i はキャラの参照画像と参照画像なしの場面、edit は参照画像ありの場面に使う(workflows/ 内のファイル名、拡張子なし)。values はテンプレートの {{name}} に入る値で、設定画面の値(checkpoint / steps / cfg / shift / negative)より優先する(モデルごとに向く値が違うため)。テンプレートの _optional ノードは、その名前の値が values に無ければ配線ごと外れる。",
+  "_comment": "生成ウインドウで選べるワークフローの組。id は DB(nodes.image_workflow / characters.ref_image_workflow / media.workflow)に保存されるので変えない。t2i はキャラの参照画像と参照画像なしの場面、edit は参照画像ありの場面に使う(workflows/ 内のファイル名、拡張子なし)。values はテンプレートの {{name}} に入る値で、設定画面の値(checkpoint / steps / cfg / shift / negative)より優先する(モデルごとに向く値が違うため)。テンプレートの _optional ノードは、その名前の値が values に無ければ配線ごと外れる。ref_label は参照画像の指し方がモデルで違うときに書く({n} が番号。プロンプト中の image1 をこの形に直してから渡す)。",
   "variants": [
     { "id": "default", "label": "既定(Qwen)", "t2i": "ref_t2i", "edit": "scene_edit", "values": {} },
     {
@@ -43,6 +43,21 @@
         "cfg": 1.0,
         "max_shift": 1.15,
         "base_shift": 0.5
+      }
+    },
+    {
+      "id": "qwen21",
+      "label": "Qwen Image 2.1",
+      "t2i": "qwen21_t2i",
+      "edit": "qwen21_edit",
+      "ref_label": "<image{n}>",
+      "values": {
+        "unet": "qwen_image_2.1_int8_convrot.safetensors",
+        "clip": "qwen3vl_8b_int8_convrot.safetensors",
+        "vae": "qwen_image_2.1_vae_bf16.safetensors",
+        "ref_resolution": 1024,
+        "steps": 25,
+        "cfg": 1.0
       }
     }
   ]

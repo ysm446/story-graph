@@ -1,7 +1,7 @@
 # 画像生成(ComfyUI 連携)— キャラクターの参照画像と場面の挿絵
 
 作成日時: 2026-08-26 15:15
-更新日時: 2026-08-28 07:30
+更新日時: 2026-10-10 04:03
 
 ローカルの ComfyUI で挿絵を作る仕組みの設計メモ。2026-08-26 のユーザー発案
 ([progress.md](../plan/progress.md) の「場面の画像生成」)。画像は**装飾専用**で、
@@ -225,3 +225,32 @@ API 形式の JSON テンプレート `workflows/ref_t2i.json` を `comfy.build_
   保てるかは未検証**(以前の調査メモどおり 1 枚寄り。2 人場面は Qwen 側が有利な見込み)。
 - 組は `krea2`(identity のみ)と `krea2_zeniji`(+ `krea2-zeniji-style` を "13" で重ねる)。
   設定画面のチェックポイントは使わず、モデル名は `values` で持つ。
+
+## 11. Qwen Image 2.1 の組
+
+2026-10-10 ユーザー要望「Qwen Image 2.1 を追加」。組の id は `qwen21`。
+
+- **ComfyUI v0.37.0 以降が必要**(2.1 の対応が入った版。v0.34.0 はモデルを判別できない)。同梱の portable 版を
+  v0.39.0 に入れ直した(設定 →「画像生成」のインストールでも同じことができる)。既定の組(Qwen-Rapid-AIO)は
+  v0.39.0 でもそのまま動く。
+- 公式テンプレート「Text to Image / Image Edit (Qwen Image 2.1)」から、プロンプト書き直し用の LLM
+  (prompt enhancer。別のモデルが要る)を除いて API 形式に写した `qwen21_t2i.json` / `qwen21_edit.json`。
+  プロンプトは従来どおりアプリ側の LLM が書く。
+- 読むのは 3 ファイル: `UNETLoader(diffusion_models/qwen_image_2.1_int8_convrot)` +
+  `CLIPLoader(text_encoders/qwen3vl_8b_int8_convrot, type=qwen_image)` + `VAELoader(vae/qwen_image_2.1_vae_bf16)`。
+  2.1 は従来の Qwen-Image とは別のモデル(VAE も別)なので、`qwen_image_vae` や Qwen-Image 用の LoRA は使えない。
+- **エンコードは 1 ノード** `TextEncodeQwenImage21`("3")。正・負の両方を出す(出力 0 / 1)ので "4" は無い。
+  参照画像は `images.image_1..`(公式は 16 枚まで。アプリは従来どおり 3 枚まで)。モデルの前に
+  `QwenImage21Cache`("2"、auto / default)を挟む。サンプリングは `KSampler`(euler / simple)で、shift のノードは無い。
+- **値は公式テンプレートどおり** steps 25 / cfg 1(cfg 1 では負のプロンプトは使われない。公式パイプラインは
+  40〜50 steps)。`ref_resolution` 1024 は参照画像を縮める目安(約 1024×1024 相当の画素数。縦横比は保つ)。
+- **参照画像の指し方は `<image1>`**。場面プロンプトは組を選ぶ前に `image1` の形で書かれるので、組の
+  `ref_label`(`<image{n}>`)を見て `image_gen.apply_ref_label` が渡す直前に直す(保存されるプロンプトは `image1` のまま)。
+- 公式の Image Edit は 1 枚目の参照画像の大きさで描く(1 枚目が「編集対象」)が、ここは立ち絵から横長の場面を
+  描くので `EmptyLatentImage` で 1216×832 を決める(公式の custom_size オンと同じ配線)。
+- `build_edit_workflow` は、使わない LoadImage を指す配線を**入力名によらず**外すようにした
+  (これまでは "3" / "4" の `image2` / `image3` を名前で外していた)。
+- **実測(2026-10-10、LLM 停止中)**: 立ち絵(832×1216)7〜12 秒(初回はモデルのロード込み)、
+  2 人の場面(参照 2 枚、1216×832)14.4 秒。2 人とも参照画像どおりの髪・服で描かれた。25 steps でも
+  4 steps の Qwen-Rapid-AIO(同じ条件で 3〜8 秒 / 11.4 秒)と大差ない。モデルは 3 ファイルで約 16GB と
+  AIO(26GB)より軽い。**31B と同居したときの VRAM、3 人の場面は未確認**。

@@ -1,0 +1,44 @@
+{
+  "_comment": "Qwen Image 2.1 の参照画像あり(場面の挿絵)。ComfyUI 公式テンプレート「Image Edit (Qwen Image 2.1)」から、プロンプト書き直し用の LLM(prompt enhancer)を除いて API 形式に写したもの。ComfyUI v0.37.0 以降が必要。参照画像は \"3\" の images.image_1..3({{ref_image_1}}..{{ref_image_3}})で、渡した枚数より後ろの LoadImage(11, 12)とその配線は build 時に外す。プロンプトからは <image1> の形で指す(variants.json の ref_label で image1 → <image1> に直す)。resolution は参照画像を縮める目安(1024 = 約 1024×1024 相当の画素数、縦横比は保つ)。公式は 1 枚目の参照画像の大きさで描くが、ここは立ち絵から横長の場面を描くので EmptyLatentImage で大きさを決める(公式の custom_size オンと同じ配線)。",
+  "1": { "class_type": "UNETLoader", "inputs": { "unet_name": "{{unet}}", "weight_dtype": "default" } },
+  "2": { "class_type": "QwenImage21Cache", "inputs": { "model": ["1", 0], "device": "auto", "dtype": "default" } },
+  "20": { "class_type": "CLIPLoader", "inputs": { "clip_name": "{{clip}}", "type": "qwen_image", "device": "default" } },
+  "21": { "class_type": "VAELoader", "inputs": { "vae_name": "{{vae}}" } },
+  "10": { "class_type": "LoadImage", "inputs": { "image": "{{ref_image_1}}", "upload": "image" } },
+  "11": { "class_type": "LoadImage", "inputs": { "image": "{{ref_image_2}}", "upload": "image" } },
+  "12": { "class_type": "LoadImage", "inputs": { "image": "{{ref_image_3}}", "upload": "image" } },
+  "3": {
+    "class_type": "TextEncodeQwenImage21",
+    "inputs": {
+      "clip": ["20", 0],
+      "vae": ["21", 0],
+      "prompt": "{{positive}}",
+      "negative_prompt": "{{negative}}",
+      "resolution": "{{ref_resolution}}",
+      "images.image_1": ["10", 0],
+      "images.image_2": ["11", 0],
+      "images.image_3": ["12", 0]
+    }
+  },
+  "5": {
+    "class_type": "EmptyLatentImage",
+    "inputs": { "width": "{{width}}", "height": "{{height}}", "batch_size": 1 }
+  },
+  "6": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": ["2", 0],
+      "positive": ["3", 0],
+      "negative": ["3", 1],
+      "latent_image": ["5", 0],
+      "seed": "{{seed}}",
+      "steps": "{{steps}}",
+      "cfg": "{{cfg}}",
+      "sampler_name": "{{sampler}}",
+      "scheduler": "{{scheduler}}",
+      "denoise": 1.0
+    }
+  },
+  "7": { "class_type": "VAEDecode", "inputs": { "samples": ["6", 0], "vae": ["21", 0] } },
+  "8": { "class_type": "SaveImage", "inputs": { "images": ["7", 0], "filename_prefix": "{{filename_prefix}}" } }
+}

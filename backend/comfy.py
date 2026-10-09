@@ -196,7 +196,8 @@ def build_edit_workflow(
     ref_images は ComfyUI の input フォルダにアップロード済みのファイル名。
     `TextEncodeQwenImageEditPlus` の image1..3 に順に繋ぎ、プロンプト側は
     「image1 = 誰」で参照する(docs/design/image-gen.md §3)。テンプレートは 3 枚分の
-    LoadImage("10"〜"12")を持っているので、渡した枚数より後ろのノードと配線を外す。"""
+    LoadImage("10"〜"12")を持っているので、渡した枚数より後ろのノードと配線を外す。
+    Krea2 / Qwen Image 2.1 の組も同じ形のテンプレートでここを通る。"""
     if not ref_images:
         raise ValueError("ref_images が空です(参照画像が無いときは build_t2i_workflow を使う)")
     if len(ref_images) > 3:
@@ -221,10 +222,14 @@ def build_edit_workflow(
     for i, name in enumerate(ref_images):
         values[f"ref_image_{i + 1}"] = name
     wf = load_workflow(template, values)
-    for i in range(len(ref_images), 3):
-        wf.pop(str(10 + i), None)
-        for enc in ("3", "4"):
-            wf[enc]["inputs"].pop(f"image{i + 1}", None)
+    # 入力名はモデルごとに違う(image2 / images.image_2)ので、外した LoadImage を指す配線を名前によらず外す
+    unused = {str(10 + i) for i in range(len(ref_images), 3)}
+    for nid in unused:
+        wf.pop(nid, None)
+    for node in wf.values():
+        inputs = node.get("inputs", {})
+        for key in [k for k, v in inputs.items() if isinstance(v, list) and len(v) == 2 and v[0] in unused]:
+            del inputs[key]
     return wf
 
 

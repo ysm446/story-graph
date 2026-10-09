@@ -1,0 +1,32 @@
+{
+  "_comment": "Qwen Image 2.1 の text-to-image(キャラの参照画像 / 参照画像なしの場面)。ComfyUI 公式テンプレート「Text to Image (Qwen Image 2.1)」から、プロンプト書き直し用の LLM(prompt enhancer)を除いて API 形式に写したもの。ComfyUI v0.37.0 以降が必要。UNET / CLIP(qwen3vl_8b, type=qwen_image)/ VAE は values で指定し、設定画面のチェックポイントは使わない。正・負のプロンプトは \"3\" の 1 ノードが両方出す(出力 0 = 正、1 = 負。cfg 1 では負は使われない)。ノード ID の 6(サンプラー)/ 7(VAEDecode)/ 8(SaveImage)は既定のテンプレートと揃えてある。",
+  "1": { "class_type": "UNETLoader", "inputs": { "unet_name": "{{unet}}", "weight_dtype": "default" } },
+  "2": { "class_type": "QwenImage21Cache", "inputs": { "model": ["1", 0], "device": "auto", "dtype": "default" } },
+  "20": { "class_type": "CLIPLoader", "inputs": { "clip_name": "{{clip}}", "type": "qwen_image", "device": "default" } },
+  "21": { "class_type": "VAELoader", "inputs": { "vae_name": "{{vae}}" } },
+  "3": {
+    "class_type": "TextEncodeQwenImage21",
+    "inputs": { "clip": ["20", 0], "prompt": "{{positive}}", "negative_prompt": "{{negative}}", "resolution": 1024 }
+  },
+  "5": {
+    "class_type": "EmptyLatentImage",
+    "inputs": { "width": "{{width}}", "height": "{{height}}", "batch_size": 1 }
+  },
+  "6": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": ["2", 0],
+      "positive": ["3", 0],
+      "negative": ["3", 1],
+      "latent_image": ["5", 0],
+      "seed": "{{seed}}",
+      "steps": "{{steps}}",
+      "cfg": "{{cfg}}",
+      "sampler_name": "{{sampler}}",
+      "scheduler": "{{scheduler}}",
+      "denoise": 1.0
+    }
+  },
+  "7": { "class_type": "VAEDecode", "inputs": { "samples": ["6", 0], "vae": ["21", 0] } },
+  "8": { "class_type": "SaveImage", "inputs": { "images": ["7", 0], "filename_prefix": "{{filename_prefix}}" } }
+}

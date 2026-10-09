@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, AsyncIterator
 
 import comfy
@@ -240,6 +241,17 @@ def stream_scene_prompt(
     )
 
 
+_REF_LABEL = re.compile(r"(?<![<\w])image\s?([1-9])(?![\w>])")
+
+
+def apply_ref_label(text: str, ref_label: str | None) -> str:
+    """プロンプト中の image1.. を、組の ref_label(例: `<image{n}>`)の形に直す。
+    場面プロンプトは組を選ぶ前に `image1` の形で書かれるので、指し方の違うモデルには渡す直前に合わせる。"""
+    if not ref_label:
+        return text
+    return _REF_LABEL.sub(lambda m: ref_label.replace("{n}", m.group(1)), text)
+
+
 def scene_workflow(
     settings: dict[str, str],
     description: str,
@@ -252,6 +264,8 @@ def scene_workflow(
     if not checkpoint:
         raise RuntimeError("設定 →「画像生成」でチェックポイント(モデル)を選んでください")
     v = comfy.get_variant(variant)
+    if ref_names:
+        description = apply_ref_label(description, v.get("ref_label"))
     common = dict(
         extra_values=v.get("values") or {},
         checkpoint=checkpoint,

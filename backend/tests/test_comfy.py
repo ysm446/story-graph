@@ -226,3 +226,31 @@ def test_variant_values_override_settings():
     assert wf["24"]["inputs"]["steps"] == 8 and wf["22"]["inputs"]["cfg"] == 1.0
     wf_default = image_gen.scene_workflow(settings, "x", [], seed=1)
     assert wf_default["6"]["inputs"]["steps"] == 4 and wf_default["6"]["inputs"]["cfg"] == 2.5
+
+
+def test_qwen21_workflows_use_single_encoder_and_angle_labels():
+    settings = {"comfy_checkpoint": "c.safetensors", "comfy_steps": "4"}
+    wf = image_gen.character_workflow(settings, "a girl", seed=5, variant="qwen21")
+    assert wf["1"]["inputs"]["unet_name"] == "qwen_image_2.1_int8_convrot.safetensors"
+    assert wf["20"]["inputs"]["type"] == "qwen_image" and wf["3"]["class_type"] == "TextEncodeQwenImage21"
+    ks = wf["6"]["inputs"]
+    assert ks["positive"] == ["3", 0] and ks["negative"] == ["3", 1]  # 正・負とも同じノードの出力
+    assert ks["model"] == ["2", 0] and ks["steps"] == 25 and ks["seed"] == 5
+
+    wf2 = image_gen.scene_workflow(
+        settings, "the man from image1 greets the woman from image 2", ["a.png", "b.png"], seed=1, variant="qwen21"
+    )
+    enc = wf2["3"]["inputs"]
+    assert enc["images.image_1"] == ["10", 0] and enc["images.image_2"] == ["11", 0]
+    assert "images.image_3" not in enc and "12" not in wf2
+    assert enc["vae"] == ["21", 0] and enc["resolution"] == 1024
+    assert enc["prompt"].startswith("the man from <image1> greets the woman from <image2>, ")
+    assert wf2["5"]["inputs"]["width"] == 1216
+
+
+def test_ref_label_is_only_applied_when_variant_asks():
+    assert image_gen.apply_ref_label("image1 and <image2>, image10, reimage1", "<image{n}>") == (
+        "<image1> and <image2>, image10, reimage1"
+    )
+    wf = image_gen.scene_workflow({"comfy_checkpoint": "c"}, "the man from image1", ["a.png"], seed=1)
+    assert wf["3"]["inputs"]["prompt"].startswith("the man from image1, ")
