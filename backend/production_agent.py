@@ -21,7 +21,7 @@ from production_policy import ProductionPolicy
 
 MAX_STEPS = 16
 CREATE_SCENE_TOOLS = {"insert_scene", "branch_scene"}
-WRITE_TOOLS = CREATE_SCENE_TOOLS | {"update_scene", "delete_scene", "reconnect_scene"} | production_library.WRITE_TOOLS
+WRITE_TOOLS = CREATE_SCENE_TOOLS | {"update_scene", "patch_scene", "delete_scene", "reconnect_scene"} | production_library.WRITE_TOOLS
 TOOL_LABELS = {
     "get_beats": "シーンを読んでいます…", "get_state": "状態を確認しています…",
     "search_memories": "記憶を調べています…", "insert_scene": "シーンを追加しています…",
@@ -29,6 +29,7 @@ TOOL_LABELS = {
     "reconnect_scene": "シーンをつなぎ替えています…",
     "update_work_memory": "作業メモを更新しています…",
     "update_scene": "シーンを編集しています…", "delete_scene": "シーンを削除しています…",
+    "patch_scene": "シーンの指定箇所を編集しています…",
     "read_library": "資料庫を読んでいます…",
     **{name: "資料庫を更新しています…" for name in production_library.WRITE_TOOLS},
 }
@@ -213,8 +214,12 @@ def tools(allow_write: bool):
          {"after_id": {"type": "string"}, **scene}, ["after_id", "title", "beat", "cast"]),
         ("branch_scene", "指定地点から新しい別ルートの先頭シーンを作る。after_idは分岐元のID。既存の後続・正史・結末を変更しない。枝の続きを作るときは返された新規IDの後ろにinsert_sceneで追加する。",
          {"after_id": {"type": "string"}, **scene}, ["after_id", "title", "beat", "cast"]),
-        ("update_scene", "既存シーンの本文を全文置換する。title/cast省略時は維持する。",
+        ("update_scene", "構成や文章全体の書き直しが必要な場合に本文を全文置換する。追記や一部の修正にはpatch_sceneを優先する。title/cast省略時は維持する。",
          {"node_id": {"type": "string"}, **scene}, ["node_id", "beat"]),
+        ("patch_scene", "本文の指定箇所だけを編集し、他の文章・タイトル・登場人物・場所を保持する。appendは末尾にtextをそのまま追記。replaceは本文中に1か所だけ存在するold_textをtextに置換（textが空ならその箇所を削除）。先にget_beatsで原文を読み、置換元を正確にコピーする。",
+         {"node_id": {"type": "string"}, "mode": {"type": "string", "enum": ["append", "replace"]},
+          "old_text": {"type": "string", "description": "replaceで必須。本文の一意な連続部分。appendでは指定しない。"},
+          "text": {"type": "string", "description": "追加または置換する部分だけ。必要な改行・句読点も含める。全文を送らない。"}}, ["node_id", "mode", "text"]),
         ("delete_scene", "指定シーンのみを削除し、親と子を直結する。子孫は削除しない。マーカーは削除不可。",
          {"node_id": {"type": "string"}}, ["node_id"]),
         ("reconnect_scene", "既存シーンを移動する。mode=sceneは1シーンだけ取り出し旧前後を直結してparent_idの直後へ挿入。mode=branchはその先の枝ごと親を付け替える（移動先の既存の子はそのまま）。本文・イベントは保持。",
@@ -268,6 +273,10 @@ async def apply_edit(store: Store, base_url: str, name: str, args: dict, before_
     versions.check(store, args)
     if name in production_library.WRITE_TOOLS:
         return production_library.apply(store, name, args, policy=policy, before_commit=before_commit)
+    if name == "patch_scene":
+        args = _patch_args(store, args)
+        # 確定・履歴・画面通知は既存の編集と共通。全文はサーバー側で組み立てる。
+        name = "update_scene"
     original = _validate_args(store, name, args)
     if policy is not None:
         policy.check_target(original["id"])
@@ -338,10 +347,42 @@ async def apply_edit(store: Store, base_url: str, name: str, args: dict, before_
         candidate_conn.close()
 
 
+def _patch_args(store, args):
+    if set(args) - {"node_id", "mode", "old_text", "text", "reason"}:
+        raise ValueError("部分編集では本文以外の項目は指定できません")
+    node = store.get_node(args.get("node_id"))
+    if node is None:
+        raise ValueError("対象シーンがありません")
+    beat = node.get("beat") or ""
+    text = args.get("text")
+    if not isinstance(text, str):
+        raise ValueError("追加・置換するtextは文字列で指定してください")
+    if args.get("mode") == "append":
+        if "old_text" in args or not text.strip():
+            raise ValueError("追記では空でないtextだけを指定してください")
+        if beat.endswith(text):
+            raise ValueError("その追記は末尾に反映済みです。本文を確認してください")
+        updated = beat + text
+    elif args.get("mode") == "replace":
+        old = args.get("old_text")
+        if not isinstance(old, str) or not old:
+            raise ValueError("置換には空でないold_textが必要です")
+        start = beat.find(old)
+        if start < 0 or beat.find(old, start + 1) >= 0:
+            raise ValueError("置換元が本文の1か所に一致しません。get_beatsで最新の本文を読み、前後を含めて一意に指定してください")
+        updated = beat[:start] + text + beat[start + len(old):]
+    else:
+        raise ValueError("部分編集のmodeはappendまたはreplaceです")
+    return {"node_id": args.get("node_id"), "beat": updated, "reason": args.get("reason")}
+
+
 def build_messages(store, history, message, execute, policy, previous_checkpoint, changes, recent_results, run_id=None):
     system = chat_agent.build_system(store, store.canon_path(), "all") + "\n" + (
         "あなたは制作の担当です。今回の依頼の範囲だけを編集してください。"
         "一度にツールは1つ。編集前に対象と前後の本文を読んでください。"
+        "追記や一部分の訂正・削除はpatch_sceneを優先し、既存本文を全文書き直さないでください。"
+        "作者が追加・置換する文章を明示した場合は、その文章をそのまま使い、理由や新設定を補わないでください。"
+        "編集ツールが返すscene.beatは保存後の本文です。依頼が反映されていれば完了を報告し、同じ追記・置換・削除を再実行しないでください。"
         "「ここから分岐」「別ルート」「正史を残して別展開」の依頼ではbranch_sceneで枝の先頭を作ってください。"
         "insert_sceneを正史の分岐元に使うと正史の間へ割り込むため、分岐作成の代用にはできません。"
         "枝の続きは作成した枝の末尾IDをafter_idにしてinsert_sceneで延長し、元の分岐元へ繰り返し挿入しないでください。"

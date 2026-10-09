@@ -60,6 +60,80 @@ def test_insert_update_delete_and_memory_consistency(store, monkeypatch):
     assert store.get_state("last")["chars"]["aya"]["memories"] == []
 
 
+@pytest.mark.parametrize("patch,expected", [
+    ({"mode": "append", "text": "\n約束を守る。"}, "村を出る\n約束を守る。"),
+    ({"mode": "replace", "old_text": "村", "text": "町"}, "町を出る"),
+    ({"mode": "replace", "old_text": "村を", "text": ""}, "出る"),
+])
+def test_patch_preserves_other_fields_and_reextracts_events(store, monkeypatch, patch, expected):
+    fake_extraction(monkeypatch)
+    before = store.graph()
+    change = run(production.apply_edit(store, "fake", "patch_scene", {
+        "node_id": "first", "reason": "指定箇所だけ変更", **patch}))
+    assert change["action"] == "update_scene"  # 既存の履歴表示・再取得・追従を使う
+    assert change["scene"]["beat"] == expected
+    assert store.get_node("first")["title"] == "出発"
+    assert store.get_node("first")["cast"] == ["aya"]
+    assert store.graph()["edges"] == before["edges"]
+    assert store.get_node("last")["beat"] == "村に戻る"
+    assert store.conn.execute("SELECT content FROM memories").fetchone()[0] == expected
+
+
+@pytest.mark.parametrize("patch", [
+    {"mode": "replace", "old_text": "不存在", "text": "変更"},
+    {"mode": "replace", "old_text": "", "text": "変更"},
+    {"mode": "replace", "old_text": "村を出る", "text": ""},
+    {"mode": "replace", "old_text": "村", "text": "村"},
+    {"mode": "append", "text": "出る"},
+    {"mode": "append", "text": " "},
+    {"mode": "append", "text": "追加", "old_text": "村"},
+    {"mode": "append", "text": "追加", "cast": []},
+    {"mode": "append", "text": None},
+    {"mode": "unknown", "text": "追加"},
+])
+def test_invalid_patch_leaves_graph_unchanged(store, patch):
+    before = store.graph()
+    with pytest.raises(ValueError):
+        run(production.apply_edit(store, "fake", "patch_scene", {
+            "node_id": "first", "reason": "修正", **patch}))
+    assert store.graph() == before
+
+
+@pytest.mark.parametrize("beat,old", [("村で会い、村を出る", "村"), ("あああ", "ああ")])
+def test_ambiguous_patch_requires_unique_source(store, beat, old):
+    node_operations.update(store, "first", {"beat": beat})
+    with pytest.raises(ValueError, match="1か所"):
+        run(production.apply_edit(store, "fake", "patch_scene", {
+            "node_id": "first", "mode": "replace", "old_text": old, "text": "町", "reason": "訂正"}))
+    assert store.get_node("first")["beat"] == beat
+
+
+@pytest.mark.parametrize("failure", [RuntimeError, asyncio.CancelledError, production.ManualEditPending])
+def test_patch_failure_does_not_publish_candidate(store, monkeypatch, failure):
+    before = store.graph()
+    async def fail(candidate, base_url, node_id):
+        assert candidate.get_node(node_id)["beat"] == "村を出る。約束を守る"
+        raise failure("停止")
+    monkeypatch.setattr(generation, "extract_events", fail)
+    with pytest.raises(failure):
+        run(production.apply_edit(store, "fake", "patch_scene", {
+            "node_id": "first", "mode": "append", "text": "。約束を守る", "reason": "追記"}))
+    assert store.graph() == before
+
+
+def test_patch_protection_and_concurrent_manual_edit(store, monkeypatch):
+    args = {"node_id": "first", "mode": "append", "text": "。約束を守る", "reason": "追記"}
+    with pytest.raises(ValueError, match="保護"):
+        run(production.apply_edit(store, "fake", "patch_scene", args,
+            policy=production.ProductionPolicy(store, protected_ids=["first"])))
+    async def manual(candidate, base_url, node_id):
+        node_operations.update(store, node_id, {"beat": "作者の修正"})
+    monkeypatch.setattr(generation, "extract_events", manual)
+    with pytest.raises(production.ManualEditPending):
+        run(production.apply_edit(store, "fake", "patch_scene", args))
+    assert store.get_node("first")["beat"] == "作者の修正"
+
+
 @pytest.mark.parametrize("action", ["insert_scene", "branch_scene", "update_scene"])
 @pytest.mark.parametrize("failure", [RuntimeError, asyncio.CancelledError])
 def test_extraction_failure_or_stop_never_changes_live_graph(store, monkeypatch, action, failure):
@@ -268,6 +342,24 @@ def test_start_waits_for_previous_request():
         with pytest.raises(RuntimeError):
             await gate.begin()
     run(check())
+
+
+@pytest.mark.parametrize("execute", [False, True])
+def test_patch_stream_respects_mode_and_uses_existing_edit_history(store, monkeypatch, execute):
+    fake_extraction(monkeypatch)
+    fake_llm(monkeypatch, [call("patch_scene", {
+        "node_id": "first", "mode": "append", "text": "。約束を守る", "reason": "追記",
+    }), {"content": "終了"}])
+    events = run(collect(store, execute))
+    changes = [e["changed"] for e in events if "changed" in e]
+    assert ("patch_scene" in {t["function"]["name"] for t in production.tools(execute)}) == execute
+    assert len(changes) == int(execute)
+    if execute:
+        assert changes[0]["action"] == "update_scene"
+        chat_id = next(e["chat_id"] for e in events if "chat_id" in e)
+        operations = [m["operation"] for m in store.get_chat(chat_id)["messages"] if "operation" in m]
+        assert operations == changes
+    assert store.get_node("first")["beat"] == ("村を出る。約束を守る" if execute else "村を出る")
 
 
 def test_stop_stream_persists_completed_changes_only(store, monkeypatch):

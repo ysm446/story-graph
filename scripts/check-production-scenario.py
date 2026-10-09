@@ -119,6 +119,7 @@ async def main():
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--addition-only", action="store_true", help="追記で既存の公開方針と矛盾する秘密設定を足さないか確認する")
     mode.add_argument("--manual-only", action="store_true", help="実モデルの編集確定前に一時停止し、手動変更を保存して再開する")
+    mode.add_argument("--patch-only", action="store_true", help="既存本文を保持した追記・部分置換・部分削除を確認する")
     args = parser.parse_args()
     root = ROOT / "data" / ("production-scenario-" + uuid.uuid4().hex[:8])
     root.mkdir(parents=True)
@@ -153,7 +154,8 @@ async def main():
                     events.append(e)
                     if instruction and pending is None and e.get("stage"):
                         pending = asyncio.create_task(interrupt())
-                    if manual_node and pending is None and e.get("active_node") == manual_node and e.get("stage") == production.TOOL_LABELS["update_scene"]:
+                    if manual_node and pending is None and e.get("active_node") == manual_node and e.get("stage") in (
+                            production.TOOL_LABELS["update_scene"], production.TOOL_LABELS["patch_scene"]):
                         production.gate.run.set_paused(True)
                         pending = asyncio.create_task(manual_edit())
                     if e.get("changed") or e.get("error") or e.get("tool_error"):
@@ -190,6 +192,25 @@ async def main():
         if await llm.health(args.base_url):
             raise RuntimeError("専用ポートが使用中です")
         await manager.start({"llm_base_url": args.base_url, "llm_model_path": args.model, "llm_ctx_size": "16384"})
+        if args.patch_only:
+            before = bodies(store)
+            edges_before = store.graph()["edges"]
+            original = store.get_node("n15")["beat"]
+            addition = "ケンは青い封筒を保管すると決める。"
+            for label, prompt, expected in [
+                ("patch-append", f"記録係の決意(n15)の末尾に『{addition}』をそのまま追記してください。元の文章には一文字も変更を加えず、新しい意味付けも足しません。", original + addition),
+                ("patch-replace", "記録係の決意(n15)の『青い封筒』だけを『白い封筒』に訂正してください。他の文章は一文字も変えません。", original + addition.replace("青い", "白い")),
+                ("patch-delete", "記録係の決意(n15)から『ケンは白い封筒を保管すると決める。』という一文だけを削除してください。他の文章は一文字も変えません。", original),
+            ]:
+                events = await turn(label, prompt, policy=production.ProductionPolicy(store, allowed_ids=["n15"], protected_ids=["n34"]))
+                assert any(e.get("stage") == production.TOOL_LABELS["patch_scene"] for e in events), "部分編集ツールを選ばなかった"
+                assert not any(e.get("tool_error") for e in events), "部分編集でツールエラー"
+                assert store.get_node("n15")["beat"] == expected, "指定外の本文変更"
+                assert all(bodies(store)[nid] == value for nid, value in before.items() if nid != "n15")
+                assert store.graph()["edges"] == edges_before
+            result["passed"] = True
+            print("PATCH CHECK PASSED", flush=True)
+            return
         if args.manual_only:
             before = bodies(store)
             edges_before = store.graph()["edges"]
