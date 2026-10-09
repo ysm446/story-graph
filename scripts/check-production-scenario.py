@@ -116,7 +116,9 @@ async def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", required=True)
     parser.add_argument("--base-url", default="http://127.0.0.1:8089")
-    parser.add_argument("--addition-only", action="store_true", help="追記で既存の公開方針と矛盾する秘密設定を足さないか確認する")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--addition-only", action="store_true", help="追記で既存の公開方針と矛盾する秘密設定を足さないか確認する")
+    mode.add_argument("--manual-only", action="store_true", help="実モデルの編集確定前に一時停止し、手動変更を保存して再開する")
     args = parser.parse_args()
     root = ROOT / "data" / ("production-scenario-" + uuid.uuid4().hex[:8])
     root.mkdir(parents=True)
@@ -128,13 +130,22 @@ async def main():
     summary = []
     result = {"passed": False, "model": args.model, "chapters": 6, "scenes": 48}
     print(f"RESULT: {root}", flush=True)
-    async def turn(label, prompt, execute=True, policy=None, instruction=None):
+    async def turn(label, prompt, execute=True, policy=None, instruction=None, manual_node=None):
         events = []
         started = time.monotonic()
         pending = None
         async def interrupt():
             await asyncio.sleep(0.5)
             production.gate.run.submit("scenario-direction", instruction)
+        async def manual_edit():
+            paused_graph = store.graph()
+            await asyncio.sleep(1)
+            assert store.graph() == paused_graph, "一時停止中にグラフが変わった"
+            node_operations.update(store, manual_node, {"beat": store.get_node(manual_node)["beat"]
+                + "青い封筒は診療所の鍵付きの棚で保管し、住民が閲覧を求めたときはミオが開ける。"})
+            (root / f"{label}-manual-graph.json").write_text(
+                json.dumps(store.graph(), ensure_ascii=False, indent=2), encoding="utf-8")
+            production.gate.run.set_paused(False)
         try:
             async with asyncio.timeout(360):
                 async for raw in production.stream(store, args.base_url, None, prompt, execute, lambda: None, policy=policy):
@@ -142,13 +153,18 @@ async def main():
                     events.append(e)
                     if instruction and pending is None and e.get("stage"):
                         pending = asyncio.create_task(interrupt())
+                    if manual_node and pending is None and e.get("active_node") == manual_node and e.get("stage") == production.TOOL_LABELS["update_scene"]:
+                        production.gate.run.set_paused(True)
+                        pending = asyncio.create_task(manual_edit())
                     if e.get("changed") or e.get("error") or e.get("tool_error"):
                         print(label, json.dumps(e, ensure_ascii=False), flush=True)
         finally:
             if pending:
                 if not pending.done():
                     pending.cancel()
-                await asyncio.gather(pending, return_exceptions=True)
+                outcomes = await asyncio.gather(pending, return_exceptions=True)
+                if any(isinstance(outcome, Exception) for outcome in outcomes):
+                    raise RuntimeError(f"途中操作に失敗: {outcomes}")
             (root / f"{label}-events.json").write_text(json.dumps(events, ensure_ascii=False, indent=2), encoding="utf-8")
             (root / f"{label}-graph.json").write_text(json.dumps(store.graph(), ensure_ascii=False, indent=2), encoding="utf-8")
             (root / f"{label}-prompts.json").write_text(json.dumps(list(llm.PROMPT_LOG), ensure_ascii=False, indent=2), encoding="utf-8")
@@ -157,6 +173,8 @@ async def main():
                     (root / f"{label}-chat.json").write_text(json.dumps(store.get_chat(event["chat_id"]), ensure_ascii=False, indent=2), encoding="utf-8")
                     break
         assert not any(e.get("error") for e in events), f"{label}: SSE error"
+        if manual_node:
+            assert pending is not None and not pending.cancelled(), "手動編集への切替が未実行"
         assert any(e.get("done") for e in events), f"{label}: unfinished"
         checkpoint = production_memory.read(store)["checkpoint"]
         if execute:
@@ -172,6 +190,25 @@ async def main():
         if await llm.health(args.base_url):
             raise RuntimeError("専用ポートが使用中です")
         await manager.start({"llm_base_url": args.base_url, "llm_model_path": args.model, "llm_ctx_size": "16384"})
+        if args.manual_only:
+            before = bodies(store)
+            edges_before = store.graph()["edges"]
+            canon_before = store.canon_path()
+            ending_before = store.active_ending()
+            events = await turn("manual-resume", "記録係の決意(n15)に『青い封筒』を保管する決意を加えてください。既存の公開方針は維持し、他のシーンや接続は変更しません。",
+                policy=production.ProductionPolicy(store, allowed_ids=["n15"], protected_ids=["n34"]), manual_node="n15")
+            assert any("未確定の操作を破棄" in e.get("tool_error", "") for e in events), "旧操作の破棄通知なし"
+            beat = store.get_node("n15")["beat"]
+            assert all(word in beat for word in ("青い封筒", "診療所", "鍵付き", "棚", "住民", "ミオ")), "手動変更の取りこぼし"
+            assert {nid for nid in before if before[nid] != bodies(store)[nid]} == {"n15"}
+            assert store.graph()["edges"] == edges_before and store.canon_path() == canon_before and store.active_ending() == ending_before
+            after = store.graph()
+            await turn("manual-no-repeat", "前回依頼した青い封筒の保管が実際の本文で完了しているか確認してください。診療所の鍵付きの棚で保管し、住民の閲覧時にミオが開ける設定です。完了済みなら編集せず報告してください。",
+                policy=production.ProductionPolicy(store, allowed_ids=["n15"], protected_ids=["n34"]))
+            assert store.graph() == after, "完了した手動変更を重ねて編集した"
+            result["passed"] = True
+            print("MANUAL RESUME CHECK PASSED", flush=True)
+            return
         if args.addition_only:
             before = bodies(store)
             await turn("addition", "記録係の決意(n15)に『青い封筒』を保管する決意を加えてください。", policy=production.ProductionPolicy(store, allowed_ids=["n15"]))
