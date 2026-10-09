@@ -84,6 +84,47 @@ def test_get_state_resolves_names_and_memory_contents(store):
     assert single["state"]["memories"]["recent"][0]["content"] == "石橋でケンの裏切りを知った"
 
 
+def test_all_scope_includes_branches_islands_and_connections(store):
+    canon = store.canon_path()
+    branch = store.append_node({"beat": "別の道", "title": "枝の話"}, parent_id=canon[0])
+    island = store.append_node({"beat": "独立した草案", "title": "島の話"}, detached=True)
+    path = chat_agent._visible_path(store, canon[0], "all")
+    result = chat_agent.dispatch_tool(store, "get_beats", {}, path, "all")
+    assert {b["node_id"] for b in result["beats"]} == set(canon + [branch["id"], island["id"]])
+    graph = chat_agent._story_graph(store)
+    assert {"from_node": canon[0], "to_node": branch["id"]} in graph["edges"]
+    assert not any(island["id"] in e.values() for e in graph["edges"])
+    assert graph["canon_path"] == canon
+    assert len(graph["nodes"]) == store.conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
+    system = chat_agent.build_system(store, path, "all")
+    assert json.dumps(graph, ensure_ascii=False) in system
+    selected = chat_agent.dispatch_tool(store, "get_beats", {"node_ids": [island["id"]]}, path, "all")
+    assert [b["node_id"] for b in selected["beats"]] == [island["id"]]
+    limited = chat_agent._visible_path(store, canon[0], "upto")
+    assert branch["id"] not in chat_agent.build_system(store, limited, "upto")
+    assert "error" in chat_agent.dispatch_tool(store, "get_beats", {"node_ids": [branch["id"]]}, limited, "upto")
+
+
+def test_branch_state_and_memory_origins_stay_separate(store):
+    canon = store.canon_path()
+    branch = store.append_node({"beat": "枝だけの秘密", "cast": ["aya"]}, [
+        {"type": "memory_add", "payload": {"char": "aya", "content": "枝だけの秘密を聞いた", "importance": 0.9}},
+    ], parent_id=canon[0])
+    path = chat_agent._visible_path(store, canon[0], "all")
+    state = chat_agent.dispatch_tool(store, "get_state", {"node_id": branch["id"], "char_id": "aya"}, path, "all")
+    assert state["node_id"] == branch["id"]
+    assert state["state"]["memories"]["total"] == 2
+    default = chat_agent.dispatch_tool(store, "get_state", {"char_id": "aya"}, path, "all")
+    assert default["node_id"] == canon[-1]
+    assert default["state"]["memories"]["total"] == 1
+    assert "error" in chat_agent.dispatch_tool(store, "get_state", {"node_id": branch["id"]}, canon, "upto")
+    assert "error" in chat_agent.dispatch_tool(store, "get_state", {"node_id": "missing"}, path, "all")
+    hits = chat_agent.dispatch_tool(store, "search_memories", {"query": "枝だけの秘密"}, path, "all")
+    assert any(m["node_id"] == branch["id"] for m in hits["memories"])
+    limited = chat_agent.dispatch_tool(store, "search_memories", {"query": "枝だけの秘密"}, canon, "upto")
+    assert all(m["node_id"] != branch["id"] for m in limited["memories"])
+
+
 def test_get_state_relationship_target_has_name_and_no_event_ids(store):
     store.append_node({"beat": "和解", "cast": ["aya", "ken"], "title": "第四話"}, [
         {"type": "relationship_update",

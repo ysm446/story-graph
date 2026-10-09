@@ -39,10 +39,11 @@ def build_tools() -> list[dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "get_beats",
-                "description": "シーン(ビート)の一覧を取得する。index は 1 始まり。省略すると全件(見えている範囲)。",
+                "description": "シーン本文を取得する。全体スコープでは枝・未接続シーンも含む。index は一覧の1始まりで、全体では時系列ではない。流れは接続図の edges を参照する。node_ids で対象を指定できる。省略すると全件(見えている範囲)。",
                 "parameters": {
                     "type": "object",
                     "properties": {
+                        "node_ids": {"type": "array", "items": {"type": "string"}, "description": "接続図のノードID。指定すると該当シーンだけ取得"},
                         "from_index": {"type": "integer", "description": "開始シーン番号(1始まり)"},
                         "to_index": {"type": "integer", "description": "終了シーン番号(含む)"},
                     },
@@ -61,6 +62,7 @@ def build_tools() -> list[dict[str, Any]]:
                 "parameters": {
                     "type": "object",
                     "properties": {
+                        "node_id": {"type": "string", "description": "状態を確認するシーンID。全体スコープで省略すると正史末尾。そのノードに至る経路だけを反映する"},
                         "char_id": {
                             "type": "string",
                             "description": "指定するとそのキャラの状態のみ(記憶も多めに返る)",
@@ -95,21 +97,45 @@ def _visible_path(store: Store, anchor: str | None, scope: str) -> list[str]:
     if anchor is not None and store.get_node(anchor) is None:
         anchor = None
     if scope == "all" or anchor is None:
+        # all の既定の状態取得先。全シーンの列挙・接続図は別に取得し、
+        # 複数の枝を一本の path として fold しない。
         return store.canon_path()
     # はじまり / 結末マーカーはシーンではないので除く(fold はイベントが無く素通り)
     return [nid for nid in store.path_to(anchor) if store._node_kind(nid) is None]
 
 
-def _tool_get_beats(store: Store, path: list[str], args: dict[str, Any]) -> dict[str, Any]:
+def _story_graph(store: Store) -> dict[str, Any]:
+    """本文を含めない接続図。マーカーも残して章・結末への接続を切らない。"""
+    nodes = store.conn.execute("SELECT id, title, kind FROM nodes ORDER BY created_at, rowid").fetchall()
+    edges = store.conn.execute("SELECT from_node, to_node FROM edges ORDER BY rowid").fetchall()
+    return {
+        "nodes": [{"id": n["id"], "title": n["title"], "kind": n["kind"] or "scene"} for n in nodes],
+        "edges": [dict(e) for e in edges],
+        "canon_path": store.canon_path(),
+        "active_ending": store.active_ending(),
+    }
+
+
+def _tool_get_beats(store: Store, path: list[str], args: dict[str, Any], scope: str = "upto") -> dict[str, Any]:
+    if scope == "all":
+        path = [r["id"] for r in store.conn.execute(
+            "SELECT id FROM nodes WHERE kind IS NULL ORDER BY created_at, rowid"
+        )]
+    requested = args.get("node_ids")
+    if requested is not None and (not isinstance(requested, list) or any(nid not in path for nid in requested)):
+        return {"error": "node_ids に参照範囲外またはシーン以外のIDが含まれています"}
     from_i = max(int(args.get("from_index") or 1), 1)
     to_i = min(int(args.get("to_index") or len(path)), len(path))
     beats = []
     for i in range(from_i - 1, to_i):
+        if requested is not None and path[i] not in requested:
+            continue
         node = store.get_node(path[i])
         if node is None:
             continue
         beats.append(
             {
+                "node_id": path[i],
                 "index": i + 1,
                 "title": node["title"],
                 "beat": node["beat"],
@@ -200,7 +226,13 @@ def _char_state_view(
     return view
 
 
-def _tool_get_state(store: Store, path: list[str], args: dict[str, Any]) -> dict[str, Any]:
+def _tool_get_state(store: Store, path: list[str], args: dict[str, Any], scope: str = "upto") -> dict[str, Any]:
+    node_id = args.get("node_id")
+    if node_id:
+        node = store.get_node(node_id)
+        if node is None or node.get("kind") is not None or (scope != "all" and node_id not in path):
+            return {"error": "参照範囲内のシーンIDを指定してください"}
+        path = store.path_to(node_id)
     if not path:
         return {"error": "シーンがまだありません"}
     state = store.get_state(path[-1])
@@ -210,8 +242,9 @@ def _tool_get_state(store: Store, path: list[str], args: dict[str, Any]) -> dict
         char_state = state["chars"].get(char_id)
         if char_state is None:
             return {"error": f"キャラ {char_id} はまだ登場していません"}
-        return {"char": char_id, "state": _char_state_view(store, names, char_id, char_state, None)}
+        return {"node_id": path[-1], "char": char_id, "state": _char_state_view(store, names, char_id, char_state, None)}
     result: dict[str, Any] = {
+        "node_id": path[-1],
         "world": state["world"],
         "chars": {
             cid: _char_state_view(store, names, cid, cs, STATE_OVERVIEW_MEMORIES)
@@ -244,9 +277,14 @@ def _tool_search_memories(store: Store, path: list[str], scope: str, args: dict[
             candidates.update(cs["memories"])
         current_order = len(path) - 1
     hits = retrieval.search_memories(store.conn, query, candidates, current_order, top_k=MEMORY_TOP_K)
+    origins = {
+        h["id"]: store.conn.execute("SELECT node_id FROM events WHERE id = ?", (h["event_id"],)).fetchone()
+        for h in hits
+    }
     return {
         "memories": [
-            {"char_id": h["char_id"], "content": h["content"], "importance": h["importance"]}
+            {"node_id": origins[h["id"]]["node_id"] if origins[h["id"]] else None,
+             "char_id": h["char_id"], "content": h["content"], "importance": h["importance"]}
             for h in hits
         ]
     }
@@ -255,9 +293,9 @@ def _tool_search_memories(store: Store, path: list[str], scope: str, args: dict[
 def dispatch_tool(store: Store, name: str, args: dict[str, Any], path: list[str], scope: str) -> dict[str, Any]:
     try:
         if name == "get_beats":
-            return _tool_get_beats(store, path, args)
+            return _tool_get_beats(store, path, args, scope)
         if name == "get_state":
-            return _tool_get_state(store, path, args)
+            return _tool_get_state(store, path, args, scope)
         if name == "search_memories":
             return _tool_search_memories(store, path, scope, args)
         return {"error": f"unknown tool: {name}"}
@@ -734,7 +772,7 @@ def build_system(store: Store, path: list[str], scope: str) -> str:
         f"あなたに見えているのはシーン {len(path)} までの情報だけです。"
         "それ以降の展開について聞かれたら、まだ見えていないことを伝えてください。"
         if scope == "upto"
-        else "物語全体が見えています。"
+        else "枝・未接続ノードを含む物語全体を参照できます。シーン本文は get_beats で確認してください。"
     )
     return "\n".join(
         [
@@ -749,6 +787,16 @@ def build_system(store: Store, path: list[str], scope: str) -> str:
             "",
             "## キャラクター ID 一覧",
             chars,
+            *([
+                "",
+                "## 物語全体の接続図",
+                "edges は from_node → to_node の有向接続。配列順や一覧番号は物語の時系列ではない。",
+                "canon_path が現在の正史。その他の枝・別の結末・未接続ノードも相談対象に含める。",
+                "別経路の出来事を一続きの出来事として混ぜない。記憶の node_id を接続図と照合する。",
+                "get_state は node_id で経路を選ぶ。省略時は正史末尾であり、全枝を合成した状態ではない。",
+                "過去の会話の取得結果より、この接続図と今回取得する本文を優先する。",
+                json.dumps(_story_graph(store), ensure_ascii=False),
+            ] if scope == "all" else []),
         ]
     )
 
