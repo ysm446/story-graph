@@ -15,17 +15,20 @@ import llm
 import node_operations
 import snapshots
 import production_memory
+import production_library
 from store import Store
 from production_policy import ProductionPolicy
 
 MAX_STEPS = 16
-WRITE_TOOLS = {"insert_scene", "update_scene", "delete_scene", "reconnect_scene"}
+WRITE_TOOLS = {"insert_scene", "update_scene", "delete_scene", "reconnect_scene"} | production_library.WRITE_TOOLS
 TOOL_LABELS = {
     "get_beats": "シーンを読んでいます…", "get_state": "状態を確認しています…",
     "search_memories": "記憶を調べています…", "insert_scene": "シーンを追加しています…",
     "reconnect_scene": "シーンをつなぎ替えています…",
     "update_work_memory": "作業メモを更新しています…",
     "update_scene": "シーンを編集しています…", "delete_scene": "シーンを削除しています…",
+    "read_library": "資料庫を読んでいます…",
+    **{name: "資料庫を更新しています…" for name in production_library.WRITE_TOOLS},
 }
 
 
@@ -63,9 +66,12 @@ class NodeVersions:
         fields = ("title", "beat", "cast", "emotional_core", "location", "story_time", "kind", "group_id", "events")
         self.nodes = {n["id"]: {k: n.get(k) for k in fields} for n in graph["nodes"]}
         self.edges = {(e["from_node"], e["to_node"], e["is_canon"]) for e in graph["edges"]}
+        self.library = (store.list_characters(), store.list_places())
 
     def check(self, store, args):
         current = NodeVersions(store)
+        if self.library != current.library:
+            raise ManualEditPending("資料庫が更新されたため、設定を読み直します")
         targets = {args.get(k) for k in ("node_id", "after_id", "parent_id")} - {None}
         # 操作対象の祖先(抽出の前提)、子孫(削除・接続変更の影響先)を別々にたどる。
         related = set(targets)
@@ -185,7 +191,7 @@ class ProductionMiddleware:
 
 
 def tools(allow_write: bool):
-    result = chat_agent.build_tools()
+    result = chat_agent.build_tools() + production_library.tools(allow_write)
     if not allow_write:
         return result
     result.append({"type": "function", "function": {
@@ -198,6 +204,7 @@ def tools(allow_write: bool):
         "title": {"type": "string"},
         "beat": {"type": "string", "description": "シーンの本文全文"},
         "cast": {"type": "array", "items": {"type": "string"}, "description": "既存キャラID"},
+        "location": {"type": ["string", "null"], "description": "登録済み場所ID。nullで親から引継ぐ。省略時は維持"},
     }
     for name, description, properties, required in [
         ("insert_scene", "指定ノードの直後にシーンを挿入する。後続があればその間に入る。はじまりのIDも指定可能。",
@@ -241,6 +248,9 @@ def _validate_args(store, name, args):
                 raise ValueError("castには既存のキャラクターIDを指定してください")
         if "title" in args and not isinstance(args["title"], str):
             raise ValueError("タイトルは文字列で指定してください")
+        if "location" in args and args["location"] is not None:
+            if not isinstance(args["location"], str) or args["location"] not in store.known_place_ids():
+                raise ValueError("locationには登録済みの場所IDかnullを指定してください")
         if name == "insert_scene" and not all(k in args for k in ("title", "cast")):
             raise ValueError("挿入にはtitleとcastが必要です")
     return node
@@ -252,17 +262,19 @@ async def apply_edit(store: Store, base_url: str, name: str, args: dict, before_
         raise ValueError("引数はオブジェクトで指定してください")
     versions = versions or NodeVersions(store)
     versions.check(store, args)
+    if name in production_library.WRITE_TOOLS:
+        return production_library.apply(store, name, args, policy=policy, before_commit=before_commit)
     original = _validate_args(store, name, args)
     if policy is not None:
         policy.check_target(original["id"])
     before = store.graph() if policy is not None or name == "reconnect_scene" else None
-    if name == "update_scene" and all(args[k] == original.get(k) for k in ("title", "beat", "cast") if k in args):
+    if name == "update_scene" and all(args[k] == original.get(k) for k in ("title", "beat", "cast", "location") if k in args):
         raise ValueError("その本文はすでに反映済みです。次の作業へ進んでください")
     candidate_conn = db.connect(":memory:")
     try:
         store.conn.backup(candidate_conn)
         candidate = Store(candidate_conn)
-        data = {k: args[k] for k in ("title", "beat", "cast") if k in args}
+        data = {k: args[k] for k in ("title", "beat", "cast", "location") if k in args}
         node_id = original["id"]
         if name == "insert_scene":
             node_id = uuid.uuid4().hex[:12]
@@ -315,7 +327,7 @@ async def apply_edit(store: Store, base_url: str, name: str, args: dict, before_
             result["connection"] = connection
         if name != "delete_scene":
             node = store.get_node(node_id)
-            result["scene"] = {k: node[k] for k in ("id", "title", "beat", "cast")}
+            result["scene"] = {k: node[k] for k in ("id", "title", "beat", "cast", "location")}
         return result
     finally:
         candidate_conn.close()
@@ -375,7 +387,11 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
                 "追記・補強では既存の出来事や約束を維持してください。依頼にない証拠・秘密・人物設定を新たに確定したり、既存の約束と矛盾する制限を加えたりしないでください。"
                 "質問・意見を求められただけなら編集しないで回答してください。"
                 "変更は短い理由を添え、目的を達成したら通常の文章で報告して終了してください。"
-                "新しいキャラや場所の登録はできません。マーカーは変更しません。"
+                "資料庫のキャラクター・場所はread_libraryで一覧と詳細を確認し、新規登録・編集・削除できます。"
+                "既存設定は省略で維持し、作者が頼んでいない項目は変更しません。物語中の変化や記憶は固定プロフィールに混ぜません。"
+                "新しい人物・場所をシーンに使うときは先に資料庫へ登録し、返されたIDをcast/locationに指定してください。"
+                "使用中の資料の削除が拒否されたら、参照や会話を勝手に消して回避せず作者へ報告してください。"
+                "派閥・画像・音声の編集には未対応です。マーカーは変更しません。"
                 "ツール結果と最新の接続図を使い、同じ変更を繰り返さないでください。"
                 "作者の途中指示は当初の依頼より優先し、変更済みの内容も踏まえて計画を調整してください。"
                 + ("\n今回は編集が許可されています。" if execute else "\n今回は相談のみ。編集は許可されていません。")
@@ -459,10 +475,12 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
                         recent_results.clear()
                         history.append({"role": "assistant", "content": args["reason"], "operation": payload})
                         store.save_chat_messages(chat_id, history)
-                        if name == "delete_scene":
+                        if name == "delete_scene" or name in production_library.WRITE_TOOLS:
                             on_delete()
                         save_checkpoint("running")
                         yield chat_agent._sse({"changed": payload})
+                    elif name == "read_library":
+                        payload = production_library.read(store, args)
                     else:
                         payload = chat_agent.dispatch_tool(store, name, args, store.canon_path(), "all")
                 except ManualEditPending as e:

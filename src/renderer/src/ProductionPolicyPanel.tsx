@@ -43,7 +43,7 @@ export default function ProductionPolicyPanel({ value, onChange, nodes, groups, 
         {groups.map((g) => <option key={g.id} value={`chapter:${g.id}`}>章: {g.title}</option>)}
         {value.group_id && !groups.some((g) => g.id === value.group_id) && <option value={mode}>対象の章が見つかりません</option>}
       </select>
-      <p className="text-[11px]" style={{ color: 'var(--text-dim)' }}>保護は本文・削除・直接の接続変更を禁止します。前のシーンの編集による状態・記憶の再計算は行います。条件は今回の実行中は固定です。</p>
+      <p className="text-[11px]" style={{ color: 'var(--text-dim)' }}>保護は本文・削除・直接の接続変更を禁止します。保護・範囲外のシーンが参照するキャラクターや場所の設定も変更できません。前のシーンの編集による状態・記憶の再計算は行います。条件は今回の実行中は固定です。</p>
       {mode === 'selected' && <p className="text-[11px]" style={{ color: 'var(--text-dim)' }}>挿入・削除では接続が変わる前後も選んでください。はじまり・章の境界・結末は接続の対象として選べます。</p>}
       {!!missing.length && <p role="alert" className="text-[11px]" style={{ color: 'var(--danger)' }}>存在しない指定があります: {missing.join('、')}。範囲を選び直すか保護を解除してください。
         <button disabled={busy} onClick={() => onChange({ ...value, allowed_ids: value.allowed_ids?.filter((id) => !missing.includes(id)) ?? null,

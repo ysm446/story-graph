@@ -48,7 +48,7 @@ def prompt(store, previous_checkpoint):
         data["checkpoint"] = {**previous_checkpoint,
             "request": previous_checkpoint["request"][:2000],
             "report": previous_checkpoint.get("report", "")[:1500],
-            "changes": [{k: str(v)[:300] for k, v in item.items() if k in ("action", "node_id", "title", "reason")}
+            "changes": [{k: str(v)[:300] for k, v in item.items() if k in ("action", "node_id", "entity_type", "entity_id", "title", "reason")}
                         for item in previous_checkpoint.get("changes", [])[-8:]],
             "instructions": [{"content": i["content"][:500], "status": i["status"]}
                              for i in previous_checkpoint.get("instructions", [])[-4:]]}

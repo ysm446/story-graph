@@ -17,7 +17,13 @@ interface Message {
   instruction?: ProductionInstruction['instruction']
 }
 
-const operationLabels = { insert_scene: '追加', update_scene: '編集', delete_scene: '削除', reconnect_scene: 'つなぎ替え' }
+const operationLabels = { insert_scene: '追加', update_scene: '編集', delete_scene: '削除', reconnect_scene: 'つなぎ替え',
+  create_character: 'キャラクター登録', update_character: 'キャラクター編集', delete_character: 'キャラクター削除',
+  create_place: '場所登録', update_place: '場所編集', delete_place: '場所削除' }
+const libraryFieldLabels: Record<string, string> = {
+  name: '名前', profile: 'プロフィール', appearance: '外見', voice: '口調', reading: '読み', color: '色',
+  description: '説明', atmosphere: '雰囲気'
+}
 
 /** 段階0の制作専用チャット。相談履歴とは分け、実行ボタンからだけ書き込みを許可する。 */
 export default function ProductionChat({ beforeExecute, onChanged, onFollowTarget, onManualEdit, nodes, groups }: {
@@ -193,10 +199,10 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
                   : operation.action === 'delete_scene' ? previous.allowed_ids.filter((id) => id !== operation.node_id) : previous.allowed_ids })
               setMessages((prev) => [...prev, { role: 'assistant', content: operation.reason, operation }])
               await onChanged(operation)
-              if (operation.action !== 'delete_scene') {
+              if (operation.node_id && operation.action !== 'delete_scene') {
                 followTargetRef.current = operation.node_id
                 if (followRef.current && !manualRef.current) onFollowTarget(operation.node_id)
-              } else if (followTargetRef.current === operation.node_id) {
+              } else if (operation.node_id && followTargetRef.current === operation.node_id) {
                 followTargetRef.current = null
                 onFollowTarget(null)
               }
@@ -282,6 +288,16 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
               {m.instruction ? `途中指示・${({ accepted: '受け付けました', reflected: '次の判断に反映しました', unapplied: '未反映のまま終了しました' })[m.instruction.status]}` : m.operation ? `${operationLabels[m.operation.action]}: ${m.operation.title || '(無題)'}` : m.role === 'user' ? 'あなた' : '制作'}
             </div>
             {m.policy && <p className="mb-1 text-[11px]" style={{ color: 'var(--text-dim)' }}>{m.policy_label || policySummary(m.policy, nodes, groups)}</p>}
+            {m.operation && 'entity_id' in m.operation && <details className="mb-1 text-[11px]" style={{ color: 'var(--text-dim)' }}>
+              <summary className="cursor-pointer">資料庫の変更内容</summary>
+              {Object.keys(m.operation.after ?? m.operation.before ?? {}).filter((field) =>
+                m.operation && 'entity_id' in m.operation && m.operation.before?.[field] !== m.operation.after?.[field]
+              ).map((field) => {
+                const operation = m.operation
+                if (!operation || !('entity_id' in operation)) return null
+                return <p key={field} className="whitespace-pre-wrap break-words">{libraryFieldLabels[field] ?? field}: {operation.before?.[field] || '（未設定）'} → {operation.after?.[field] || '（未設定）'}</p>
+              })}
+            </details>}
             {m.operation?.connection && <p className="mb-1 text-[11px]" style={{ color: 'var(--text-dim)' }}>
               {m.operation.connection.mode === 'scene' ? '1シーンを移動' : '枝ごと親を変更'}: {m.operation.connection.old_parent_title || '接続なし'} → {m.operation.connection.parent_title || m.operation.connection.parent_id} の後
             </p>}
@@ -296,7 +312,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
       </div>
       {error && <p role="alert" className="text-[12px]" style={{ color: 'var(--danger)' }}>{error}</p>}
       <p className="text-[11px]" style={{ color: 'var(--text-faint)' }}>
-        {task?.status === 'pending' ? '待機しています…' : status || '全体の接続関係を参照します。相談するだけでは作品を変更しません。'}
+        {task?.status === 'pending' ? '待機しています…' : status || '全体の接続関係と資料庫のキャラクター・場所を参照できます。相談するだけでは作品を変更しません。'}
       </p>
       <textarea aria-label="制作への依頼" value={input} onChange={(e) => setInput(e.target.value)} disabled={sendingInstruction || (busy && !runId)}
         rows={2} placeholder={runId ? "途中指示を入力（未確定の変更を見直してから続けます）" : "方針の相談、または作業の依頼を入力"}
