@@ -89,6 +89,11 @@ def build_tools() -> list[dict[str, Any]]:
     ]
 
 
+# LLM が「A $\to$ B」のように数式記法で矢印や記号を書く癖があり、吹き出しには
+# 数式の描画が無いので記号がそのまま見える(2026-10-09 ユーザー報告)。3 つのプロンプトで禁じ、
+# 漏れた分は renderer の Markdown.tsx が描画前に → などへ置き換える
+NO_MATH_RULE = "- 数式記法($…$、\\to、\\times など)は使わない。矢印は →、掛け算は × のように普通の文字で書く"
+
 # ---- ツール実装(すべて読み取り専用) --------------------------------
 
 def _visible_path(store: Store, anchor: str | None, scope: str) -> list[str]:
@@ -460,6 +465,7 @@ def build_character_system(store: Store, path: list[str], char_id: str, mode: st
         "- 記憶にない大きな出来事や事実を発明しない(言い回しや細部の脚色は構いません)",
         "- これから先に何が起きるかは知りません",
         "- 一人称で、あなたの口調で話す。物語・シーン・登場人物などのメタな言葉は使わない",
+        NO_MATH_RULE,
     ]
     return "\n".join(lines)
 
@@ -523,6 +529,7 @@ def build_room_system(store: Store, path: list[str], speaker_id: str, participan
         f"- あなた({my_name})の発言だけを書く。相手の台詞や相手の行動を書かない",
         "- 発言は一人称で、あなたの口調で、長くても数文にとどめる。短い動作や表情は（）で添えてよい",
         "- 名前の接頭辞(「名前:」)は付けない。物語・シーン・登場人物などのメタな言葉は使わない",
+        NO_MATH_RULE,
     ]
     return "\n".join(lines)
 
@@ -786,6 +793,7 @@ def build_system(store: Store, path: list[str], scope: str) -> str:
             "- 展開の提案は通常の文章で返し、各案の内容と狙いを説明する。提案用のツールは使わない。"
             "案数は固定せず、作者が数を指定した場合はその数に従う",
             "- 回答は簡潔に。作者の判断材料になる観察(関係値の流れ、未回収の記憶など)を優先する",
+            NO_MATH_RULE,
             "",
             "## キャラクター ID 一覧",
             chars,

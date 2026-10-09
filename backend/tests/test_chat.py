@@ -572,6 +572,17 @@ def test_replace_turn_rejects_non_user_index(store, monkeypatch):
     assert len(store.get_chat(chat_id)["messages"]) == 6
 
 
+def test_all_system_prompts_forbid_math_notation(store):
+    """「A $\\to$ B」のような数式記法を 3 つのプロンプトすべてで禁じる(2026-10-09)。"""
+    path = store.canon_path()
+    for system in (
+        chat_agent.build_system(store, path, "upto"),
+        chat_agent.build_character_system(store, path, "aya", "interview"),
+        chat_agent.build_room_system(store, path, "aya", ["aya", "ken"]),
+    ):
+        assert chat_agent.NO_MATH_RULE in system
+
+
 def test_visible_path_falls_back_when_anchor_was_deleted(store):
     """保存済みチャットのアンカーが削除済みシーンを指していても、KeyError にせず
     正史全体を返す(2026-09-06 修正。delete_node は chats.anchor_node を掃除しない)。"""
