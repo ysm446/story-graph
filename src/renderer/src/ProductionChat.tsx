@@ -5,6 +5,7 @@ import { cancelTask, enqueueTask, notifyGraphChanged, setNodeBusy, useTasks } fr
 import type { Group, Snapshot, StoryNode } from './types'
 import ProductionMemoryPanel from './ProductionMemoryPanel'
 import ProductionPolicyPanel, { defaultProductionPolicy, policySummary } from './ProductionPolicyPanel'
+import ContextUsageRing, { type ContextUsage } from './ContextUsageRing'
 
 interface Message {
   policy?: ProductionPolicy
@@ -41,6 +42,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
   const [memoryRefresh, setMemoryRefresh] = useState(0)
   const [input, setInput] = useState('')
   const [sendMode, setSendMode] = useState<'consult' | 'execute'>('consult')
+  const [usage, setUsage] = useState<ContextUsage | null>(null)
   const [policy, setPolicy] = useState<ProductionPolicy>(defaultProductionPolicy)
   const [live, setLive] = useState('')
   const [status, setStatus] = useState('')
@@ -63,6 +65,17 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
   const endRef = useRef<HTMLDivElement>(null)
   const taskRef = useRef<string | null>(null)
 
+  useEffect(() => {
+    if (busy) return
+    let stale = false
+    const timer = window.setTimeout(() => {
+      void productionApi.tokenUsage({ chat_id: chatId, message: input, execute: sendMode === 'execute', policy })
+        .then((result) => { if (!stale) setUsage(result) })
+        .catch(() => { if (!stale) setUsage(null) })
+    }, 400)
+    return () => { stale = true; window.clearTimeout(timer) }
+  }, [busy, chatId, input, sendMode, policy, memoryRefresh, memoryDirty, messages, nodes, groups])
+
   const refreshHistory = async (): Promise<void> => setHistory(await productionApi.list())
   useEffect(() => {
     void refreshHistory().catch((e) => setError(String(e)))
@@ -71,6 +84,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
   useEffect(() => { endRef.current?.scrollIntoView({ block: 'nearest' }) }, [messages, live, status])
 
   const load = async (id: string): Promise<void> => {
+    setUsage(null)
     try {
       const chat = await chatApi.get(id)
       if (chat.mode !== 'production') return
@@ -166,6 +180,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
         }
         try {
           await productionApi.send({ chat_id: currentChatId, message, execute, policy }, async (event) => {
+            if (event.usage) setUsage(event.usage)
             if (event.chat_id) { currentChatId = event.chat_id; setChatId(event.chat_id) }
             if (event.run_id && event.accepting_instructions) {
               runRef.current = event.run_id
@@ -262,7 +277,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
           aria-label="制作の会話" value={chatId ?? ''} disabled={busy}
           onChange={(e) => {
             if (e.target.value) void load(e.target.value)
-            else { setChatId(null); setMessages([]); setPolicy(defaultProductionPolicy()); setStatus(''); setError('') }
+            else { setChatId(null); setMessages([]); setUsage(null); setPolicy(defaultProductionPolicy()); setStatus(''); setError('') }
           }}
           className="min-w-0 flex-1 rounded-md border px-2 py-0.5 text-[12px] outline-none disabled:opacity-50"
           style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
@@ -334,6 +349,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
         style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }} />
       <div className="flex flex-wrap items-center justify-end gap-2">
         <span className="mr-auto text-[11px]" style={{ color: 'var(--text-faint)' }}>Enterで送信・Shift＋Enterで改行</span>
+        {usage && <ContextUsageRing usage={usage} />}
         <select aria-label="制作チャットの送信モード" value={sendMode} disabled={busy}
           onChange={(e) => setSendMode(e.target.value as 'consult' | 'execute')}
           className="rounded-md border px-2 py-0.5 text-[12px] outline-none disabled:opacity-50"

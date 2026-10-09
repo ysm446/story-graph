@@ -1,3 +1,4 @@
+import ContextUsageRing from './ContextUsageRing'
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import {
   chatApi,
@@ -200,8 +201,6 @@ const SIDEBAR_DEFAULT = 264 // 会話名 + キャラ名 / シーン名の 2 行�
 // アンカーが動いてから使用量を取り直すまでの待ち。選択が落ち着いてから 1 回だけ
 // 投げるための間で、矢印キーの連打(1 回 60ms 程度)は十分に吸収できる長さ
 const USAGE_DEBOUNCE_MS = 400
-const RING_RADIUS = 10 // コンテキスト使用量リング(26px の SVG 内)
-const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS
 
 export default function ChatDrawer({
   anchorCandidateId,
@@ -356,8 +355,6 @@ export default function ChatDrawer({
   }, [autosizeInput])
 
   // リングの色は lm-chat と同じ閾値(70% で警告、90% で危険)
-  const usagePct = usage ? Math.min((usage.tokens / Math.max(usage.ctx, 1)) * 100, 100) : 0
-  const ringColor = usagePct >= 90 ? '#ef4444' : usagePct >= 70 ? '#f59e0b' : 'var(--accent)'
 
   const activeChar = charId ? characters.find((c) => c.id === charId) ?? null : null
   const charById = (id: string | null | undefined): Character | null =>
@@ -1636,37 +1633,7 @@ export default function ChatDrawer({
               </>
             )}
             {/* コンテキスト使用量のリング(lm-chat の token-ring を移植) */}
-            {usage && (
-              <div
-                className="flex shrink-0 items-center gap-1"
-                data-tip={
-                  `会話トークン: ${usage.tokens.toLocaleString()}${usage.estimated ? '(概算)' : ''}\n` +
-                  `コンテキスト上限: ${usage.ctx.toLocaleString()}\n` +
-                  `${usagePct.toFixed(1)}% 使用中(${(100 - usagePct).toFixed(1)}% 残り)`
-                }
-              >
-                <svg width="26" height="26" viewBox="0 0 26 26">
-                  <circle cx="13" cy="13" r={RING_RADIUS} fill="none" stroke="var(--border-strong)" strokeWidth="2.2" />
-                  <circle
-                    cx="13"
-                    cy="13"
-                    r={RING_RADIUS}
-                    fill="none"
-                    stroke={ringColor}
-                    strokeWidth="2.2"
-                    strokeDasharray={RING_CIRCUMFERENCE}
-                    strokeDashoffset={RING_CIRCUMFERENCE * (1 - usagePct / 100)}
-                    strokeLinecap="round"
-                    transform="rotate(-90 13 13)"
-                    style={{ transition: 'stroke-dashoffset 0.4s ease, stroke 0.3s' }}
-                  />
-                </svg>
-                <span className="text-[11px] tabular-nums" style={{ color: ringColor }}>
-                  {usage.estimated ? '≈' : ''}
-                  {Math.round(usagePct)}%
-                </span>
-              </div>
-            )}
+            {usage && <ContextUsageRing usage={{ token_count: usage.tokens, ctx_size: usage.ctx, estimated: usage.estimated }} />}
             {busy ? (
               <button
                 onClick={() => abortRef.current?.abort()}

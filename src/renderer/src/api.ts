@@ -1297,6 +1297,7 @@ export interface ProductionMemory {
 }
 
 export interface ProductionEvent {
+  usage?: { token_count: number; ctx_size: number; estimated: boolean }
   memory?: ProductionMemory
   manual_edit_ready?: boolean
   run_id?: string
@@ -1315,6 +1316,10 @@ export interface ProductionEvent {
 }
 
 export const productionApi = {
+  tokenUsage: (body: { chat_id: string | null; message: string; execute: boolean; policy: ProductionPolicy }) =>
+    request<{ token_count: number; ctx_size: number; estimated: boolean }>('/production/token_usage', {
+      method: 'POST', body: JSON.stringify(body)
+    }),
   memory: () => request<ProductionMemory>('/production/memory'),
   memoryHistory: () => request<ProductionMemory[]>('/production/memory/history'),
   saveMemory: (content: string, revision: number) => request<ProductionMemory>('/production/memory', {

@@ -338,6 +338,51 @@ async def apply_edit(store: Store, base_url: str, name: str, args: dict, before_
         candidate_conn.close()
 
 
+def build_messages(store, history, message, execute, policy, previous_checkpoint, changes, recent_results, run_id=None):
+    system = chat_agent.build_system(store, store.canon_path(), "all") + "\n" + (
+        "あなたは制作の担当です。今回の依頼の範囲だけを編集してください。"
+        "一度にツールは1つ。編集前に対象と前後の本文を読んでください。"
+        "「ここから分岐」「別ルート」「正史を残して別展開」の依頼ではbranch_sceneで枝の先頭を作ってください。"
+        "insert_sceneを正史の分岐元に使うと正史の間へ割り込むため、分岐作成の代用にはできません。"
+        "枝の続きは作成した枝の末尾IDをafter_idにしてinsert_sceneで延長し、元の分岐元へ繰り返し挿入しないでください。"
+        "追記・補強では既存の出来事や約束を維持してください。依頼にない証拠・秘密・人物設定を新たに確定したり、既存の約束と矛盾する制限を加えたりしないでください。"
+        "質問・意見を求められただけなら編集しないで回答してください。"
+        "変更は短い理由を添え、目的を達成したら通常の文章で報告して終了してください。"
+        "資料庫のキャラクター・場所はread_libraryで一覧と詳細を確認し、新規登録・編集・削除できます。"
+        "既存設定は省略で維持し、作者が頼んでいない項目は変更しません。物語中の変化や記憶は固定プロフィールに混ぜません。"
+        "新しい人物・場所をシーンに使うときは先に資料庫へ登録し、返されたIDをcast/locationに指定してください。"
+        "使用中の資料の削除が拒否されたら、参照や会話を勝手に消して回避せず作者へ報告してください。"
+        "派閥・画像・音声の編集には未対応です。マーカーは変更しません。"
+        "ツール結果と最新の接続図を使い、同じ変更を繰り返さないでください。"
+        "作者の途中指示は当初の依頼より優先し、変更済みの内容も踏まえて計画を調整してください。"
+        + ("\n今回は編集が許可されています。" if execute else "\n今回は相談のみ。編集は許可されていません。")
+    )
+    system += production_memory.prompt(store, previous_checkpoint)
+    system += "\n作者が画面で指定した変更条件（最優先）: " + policy.describe()
+    # 各ステップで最新図を作り、本文を含むツール結果は直近だけ保持する。
+    conversation = [{"role": m["role"], "content": m["content"]} for m in history
+                    if m.get("role") in ("user", "assistant") and not m.get("operation") and not m.get("snapshot")
+                    and m.get("instruction", {}).get("status") != "unapplied"][-12:]
+    messages = [{"role": "system", "content": system}, *conversation]
+    messages.append({"role": "user", "content": "今回の依頼: " + message + "\n今回の実行記録: "
+                     + json.dumps(changes, ensure_ascii=False)
+                     + "\n今回の途中指示（当初の依頼より優先）: "
+                     + json.dumps([m["content"] for m in history
+                                   if m.get("instruction") and m["instruction"].get("run_id") == run_id
+                                   and m["instruction"]["status"] == "reflected"], ensure_ascii=False)
+                     + "\n直近の取得結果: "
+                     + json.dumps(recent_results[-3:], ensure_ascii=False)})
+    return messages
+
+
+async def context_usage(store, base_url, messages, execute):
+    # 実際に組み立てたプロンプトとツール定義を数える。会話テンプレート分は含まない目安。
+    text = json.dumps(messages, ensure_ascii=False) + "\n" + json.dumps(tools(execute), ensure_ascii=False)
+    counted = await llm.count_tokens(text, base_url=base_url)
+    return {"token_count": counted if counted is not None else len(text) // chat_agent.CHAR_PER_TOKEN_FALLBACK,
+            "estimated": counted is None, "ctx_size": int(store.get_settings().get("llm_ctx_size") or 16384)}
+
+
 async def stream(store: Store, base_url: str, chat_id: str | None, message: str, execute: bool, on_delete, policy=None):
     policy = policy or ProductionPolicy(store)
     chat = store.get_chat(chat_id) if chat_id else store.create_chat(None, "all", mode="production")
@@ -386,39 +431,9 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
             versions = NodeVersions(store)
             for item in run.take():
                 yield chat_agent._sse({"instruction": item})
-            system = chat_agent.build_system(store, store.canon_path(), "all") + "\n" + (
-                "あなたは制作の担当です。今回の依頼の範囲だけを編集してください。"
-                "一度にツールは1つ。編集前に対象と前後の本文を読んでください。"
-                "「ここから分岐」「別ルート」「正史を残して別展開」の依頼ではbranch_sceneで枝の先頭を作ってください。"
-                "insert_sceneを正史の分岐元に使うと正史の間へ割り込むため、分岐作成の代用にはできません。"
-                "枝の続きは作成した枝の末尾IDをafter_idにしてinsert_sceneで延長し、元の分岐元へ繰り返し挿入しないでください。"
-                "追記・補強では既存の出来事や約束を維持してください。依頼にない証拠・秘密・人物設定を新たに確定したり、既存の約束と矛盾する制限を加えたりしないでください。"
-                "質問・意見を求められただけなら編集しないで回答してください。"
-                "変更は短い理由を添え、目的を達成したら通常の文章で報告して終了してください。"
-                "資料庫のキャラクター・場所はread_libraryで一覧と詳細を確認し、新規登録・編集・削除できます。"
-                "既存設定は省略で維持し、作者が頼んでいない項目は変更しません。物語中の変化や記憶は固定プロフィールに混ぜません。"
-                "新しい人物・場所をシーンに使うときは先に資料庫へ登録し、返されたIDをcast/locationに指定してください。"
-                "使用中の資料の削除が拒否されたら、参照や会話を勝手に消して回避せず作者へ報告してください。"
-                "派閥・画像・音声の編集には未対応です。マーカーは変更しません。"
-                "ツール結果と最新の接続図を使い、同じ変更を繰り返さないでください。"
-                "作者の途中指示は当初の依頼より優先し、変更済みの内容も踏まえて計画を調整してください。"
-                + ("\n今回は編集が許可されています。" if execute else "\n今回は相談のみ。編集は許可されていません。")
-            )
-            system += production_memory.prompt(store, previous_checkpoint)
-            system += "\n作者が画面で指定した変更条件（最優先）: " + policy.describe()
-            # 各ステップで最新図を作り、本文を含むツール結果は直近だけ保持する。
-            conversation = [{"role": m["role"], "content": m["content"]} for m in history
-                            if m.get("role") in ("user", "assistant") and not m.get("operation") and not m.get("snapshot")
-                            and m.get("instruction", {}).get("status") != "unapplied"][-12:]
-            messages = [{"role": "system", "content": system}, *conversation]
-            messages.append({"role": "user", "content": "今回の依頼: " + message + "\n今回の実行記録: "
-                             + json.dumps(changes, ensure_ascii=False)
-                             + "\n今回の途中指示（当初の依頼より優先）: "
-                             + json.dumps([m["content"] for m in history
-                                           if m.get("instruction", {}).get("run_id") == run.id
-                                           and m["instruction"]["status"] == "reflected"], ensure_ascii=False)
-                             + "\n直近の取得結果: "
-                             + json.dumps(recent_results[-3:], ensure_ascii=False)})
+            messages = build_messages(store, history, message, execute, policy, previous_checkpoint,
+                                      changes, recent_results, run.id)
+            yield chat_agent._sse({"usage": await context_usage(store, base_url, messages, execute)})
             yield chat_agent._sse({"stage": f"確認しています… ({step + 1}/{MAX_STEPS})"})
             result = {}
             async for kind, value in llm.chat_stream_tools(

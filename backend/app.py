@@ -2327,6 +2327,32 @@ class ProductionMemoryIn(BaseModel):
     revision: int = Field(ge=0)
 
 
+class ProductionUsageIn(BaseModel):
+    policy: ProductionPolicyIn = Field(default_factory=ProductionPolicyIn)
+    chat_id: str | None = None
+    message: str = Field(default="", max_length=20000)
+    execute: bool = False
+
+
+@app.post("/production/token_usage")
+async def production_token_usage(body: ProductionUsageIn) -> dict[str, Any]:
+    chat = store.get_chat(body.chat_id) if body.chat_id else None
+    if body.chat_id and (chat is None or chat.get("mode") != "production"):
+        raise HTTPException(404, "制作の会話がありません")
+    try:
+        policy = production_agent.ProductionPolicy(store, **body.policy.model_dump())
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    history = list(chat["messages"]) if chat else []
+    if body.message.strip():
+        history.append({"role": "user", "content": body.message.strip()})
+    messages = production_agent.build_messages(store, history, body.message.strip(), body.execute, policy,
+        production_agent.production_memory.read(store)["checkpoint"], [], [])
+    settings = store.get_settings()
+    return await production_agent.context_usage(store, settings.get("llm_base_url") or llm.DEFAULT_BASE_URL,
+                                                messages, body.execute)
+
+
 @app.get("/production/memory")
 async def production_memory_get():
     return production_agent.production_memory.read(store)

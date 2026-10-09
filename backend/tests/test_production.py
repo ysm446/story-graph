@@ -158,6 +158,57 @@ def fake_llm(monkeypatch, responses):
     monkeypatch.setattr(llm, "chat_stream_tools", stream)
 
 
+def test_production_usage_includes_actual_context_and_step_results(store, monkeypatch):
+    captured = []
+    async def count(text, **kwargs):
+        captured.append(text)
+        return 1234
+    monkeypatch.setattr(llm, "count_tokens", count)
+    history = [{"role": "user", "content": "構成を相談"}]
+    messages = production.build_messages(store, history, "構成を相談", True,
+        production.ProductionPolicy(store), None, [{"action": "branch_scene", "title": "別ルート"}],
+        [{"tool": "read_library", "result": "取得した設定"}])
+    usage = run(production.context_usage(store, "fake", messages, True))
+    assert usage["token_count"] == 1234 and usage["estimated"] is False
+    assert all(value in captured[0] for value in ["出発", "構成を相談", "別ルート", "取得した設定", "create_character"])
+    async def unavailable(*args, **kwargs):
+        return None
+    monkeypatch.setattr(llm, "count_tokens", unavailable)
+    fallback = run(production.context_usage(store, "fake", messages, True))
+    assert fallback["estimated"] is True and fallback["token_count"] == len(captured[0]) // 2
+
+
+def test_production_usage_preview_is_read_only_and_separates_modes(store, monkeypatch):
+    import app as api
+    monkeypatch.setattr(api, "store", store)
+    async def count(text, **kwargs):
+        return len(text)
+    monkeypatch.setattr(llm, "count_tokens", count)
+    prod = store.create_chat(None, "all", mode="production")
+    store.save_chat_messages(prod["id"], [{"role": "user", "content": "過去の相談"}])
+    before = store.get_chat(prod["id"])
+    async def check():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=api.app), base_url="http://test") as client:
+            body = {"chat_id": prod["id"], "message": "次の依頼"}
+            consult = await client.post("/production/token_usage", json=body)
+            execute = await client.post("/production/token_usage", json={**body, "execute": True})
+            assert consult.status_code == execute.status_code == 200
+            assert execute.json()["token_count"] > consult.json()["token_count"]
+            invalid = await client.post("/production/token_usage", json={"chat_id": "missing"})
+            assert invalid.status_code == 404
+    run(check())
+    assert store.get_chat(prod["id"]) == before
+
+
+def test_production_stream_reports_context_usage(store, monkeypatch):
+    async def count(text, **kwargs):
+        return 2345
+    monkeypatch.setattr(llm, "count_tokens", count)
+    fake_llm(monkeypatch, [{"content": "回答"}])
+    events = run(collect(store, False))
+    assert next(e["usage"] for e in events if "usage" in e)["token_count"] == 2345
+
+
 def call(name, args):
     return {"content": "", "tool_calls": [{"function": {"name": name, "arguments": json.dumps(args)}}]}
 
