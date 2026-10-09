@@ -5065,7 +5065,7 @@ function StructureModeInner({
                 onManualEdit={setProductionManual}
                 onFollowTarget={followProductionTarget}
                 onChanged={async (operation) => {
-                  await reload(operation.node_id && (operation.action === 'insert_scene' || operation.connection?.mode === 'scene') ? await placeCreatedNode(operation.node_id) : undefined)
+                  await reload(operation.node_id && (operation.action === 'insert_scene' || operation.action === 'branch_scene' || operation.connection?.mode === 'scene') ? await placeCreatedNode(operation.node_id) : undefined)
                   if (operation.action === 'delete_scene') setSelectedId((id) => id === operation.node_id ? null : id)
                 }}
               /></div>}

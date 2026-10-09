@@ -46,6 +46,16 @@ def insert(store: Store, after_id: str, data: dict[str, Any], events=None, *, so
     return node
 
 
+def branch(store: Store, after_id: str, data: dict[str, Any], events=None, *, source="user"):
+    """既存の後続や正史を動かさず、指定地点から別の子を作る。"""
+    with atomic_store(store) as tx:
+        if tx.get_node(after_id) is None:
+            raise KeyError(f"parent not found: {after_id}")
+        node = tx.append_node(data, events, source=source, parent_id=after_id, force_draft=True)
+        node["validation"] = tx.validate(node["id"])
+    return node
+
+
 def update(store: Store, node_id: str, data: dict[str, Any], events=None):
     with atomic_store(store) as tx:
         node = tx.update_node(node_id, data)

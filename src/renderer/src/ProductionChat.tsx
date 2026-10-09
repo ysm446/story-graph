@@ -17,7 +17,7 @@ interface Message {
   instruction?: ProductionInstruction['instruction']
 }
 
-const operationLabels = { insert_scene: '追加', update_scene: '編集', delete_scene: '削除', reconnect_scene: 'つなぎ替え',
+const operationLabels = { insert_scene: '追加', branch_scene: '分岐を追加', update_scene: '編集', delete_scene: '削除', reconnect_scene: 'つなぎ替え',
   create_character: 'キャラクター登録', update_character: 'キャラクター編集', delete_character: 'キャラクター削除',
   create_place: '場所登録', update_place: '場所編集', delete_place: '場所削除' }
 const libraryFieldLabels: Record<string, string> = {
@@ -195,7 +195,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
             if (event.changed) {
               const operation = event.changed
               setPolicy((previous) => previous.allowed_ids === null ? previous : { ...previous,
-                allowed_ids: operation.action === 'insert_scene' ? [...previous.allowed_ids, operation.node_id]
+                allowed_ids: operation.action === 'insert_scene' || operation.action === 'branch_scene' ? [...previous.allowed_ids, operation.node_id]
                   : operation.action === 'delete_scene' ? previous.allowed_ids.filter((id) => id !== operation.node_id) : previous.allowed_ids })
               setMessages((prev) => [...prev, { role: 'assistant', content: operation.reason, operation }])
               await onChanged(operation)

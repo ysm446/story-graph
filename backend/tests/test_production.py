@@ -60,7 +60,7 @@ def test_insert_update_delete_and_memory_consistency(store, monkeypatch):
     assert store.get_state("last")["chars"]["aya"]["memories"] == []
 
 
-@pytest.mark.parametrize("action", ["insert_scene", "update_scene"])
+@pytest.mark.parametrize("action", ["insert_scene", "branch_scene", "update_scene"])
 @pytest.mark.parametrize("failure", [RuntimeError, asyncio.CancelledError])
 def test_extraction_failure_or_stop_never_changes_live_graph(store, monkeypatch, action, failure):
     before = store.graph()
@@ -95,6 +95,57 @@ def test_markers_and_unknown_cast_rejected(store):
         run(production.apply_edit(store, "fake", "update_scene", {
             "node_id": "first", "beat": "変更", "cast": ["missing"], "reason": "変更",
         }))
+
+
+def test_branch_and_extension_preserve_canon_connections_and_memories(store, monkeypatch):
+    fake_extraction(monkeypatch)
+    before = store.graph()
+    ending = store.active_ending()
+    policy = production.ProductionPolicy(store, allowed_ids=["first"], protected_ids=["last"])
+    branch = run(production.apply_edit(store, "fake", "branch_scene", {
+        "after_id": "first", "title": "別の道", "beat": "森へ進む", "cast": ["aya"], "reason": "分岐を作る",
+    }, policy=policy))["node_id"]
+    child = run(production.apply_edit(store, "fake", "insert_scene", {
+        "after_id": branch, "title": "森の奥", "beat": "小屋に着く", "cast": ["aya"], "reason": "枝の続きを作る",
+    }, policy=policy))["node_id"]
+    assert store.parent_of(branch) == "first"
+    assert store.parent_of(child) == branch
+    assert store.canon_path() == ["first", "last"]
+    assert store.active_ending() == ending
+    assert all(edge in store.graph()["edges"] for edge in before["edges"])
+    assert all(store.get_node(n["id"])["beat"] == n["beat"] for n in before["nodes"])
+    assert store.get_node(branch)["status"] == store.get_node(child)["status"] == "draft"
+    assert store.get_state("last")["chars"].get("aya", {}).get("memories", []) == []
+    assert len(store.get_state(child)["chars"]["aya"]["memories"]) == 2
+    assert branch in policy.allowed and child in policy.allowed
+
+
+def test_branch_in_chapter_and_multiple_sibling_routes(store, monkeypatch):
+    fake_extraction(monkeypatch)
+    group = store.create_group("章", ["first", "last"])
+    policy = production.ProductionPolicy(store, group_id=group["id"])
+    before = store.graph()
+    ids = [run(production.apply_edit(store, "fake", "branch_scene", {
+        "after_id": "first", "title": f"枝{i}", "beat": f"別の道{i}", "cast": ["aya"], "reason": "分岐",
+    }, policy=policy))["node_id"] for i in range(2)]
+    assert all(store.get_node(nid)["group_id"] == group["id"] for nid in ids)
+    assert all(store.parent_of(nid) == "first" for nid in ids)
+    assert all(edge in store.graph()["edges"] for edge in before["edges"])
+    assert store.canon_path() == ["first", "last"]
+
+
+@pytest.mark.parametrize("origin", ["protected", "outside", "ending", "missing"])
+def test_invalid_branch_does_not_change_graph(store, monkeypatch, origin):
+    fake_extraction(monkeypatch)
+    policy = production.ProductionPolicy(store, protected_ids=["first"]) if origin == "protected" else (
+        production.ProductionPolicy(store, allowed_ids=["last"]) if origin == "outside" else None)
+    after_id = store.active_ending() if origin == "ending" else "missing" if origin == "missing" else "first"
+    before = store.graph()
+    with pytest.raises((ValueError, KeyError)):
+        run(production.apply_edit(store, "fake", "branch_scene", {
+            "after_id": after_id, "title": "枝", "beat": "別の道", "cast": ["aya"], "reason": "分岐",
+        }, policy=policy))
+    assert store.graph() == before
 
 
 def fake_llm(monkeypatch, responses):

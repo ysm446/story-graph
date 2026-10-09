@@ -20,10 +20,12 @@ from store import Store
 from production_policy import ProductionPolicy
 
 MAX_STEPS = 16
-WRITE_TOOLS = {"insert_scene", "update_scene", "delete_scene", "reconnect_scene"} | production_library.WRITE_TOOLS
+CREATE_SCENE_TOOLS = {"insert_scene", "branch_scene"}
+WRITE_TOOLS = CREATE_SCENE_TOOLS | {"update_scene", "delete_scene", "reconnect_scene"} | production_library.WRITE_TOOLS
 TOOL_LABELS = {
     "get_beats": "シーンを読んでいます…", "get_state": "状態を確認しています…",
     "search_memories": "記憶を調べています…", "insert_scene": "シーンを追加しています…",
+    "branch_scene": "分岐シーンを追加しています…",
     "reconnect_scene": "シーンをつなぎ替えています…",
     "update_work_memory": "作業メモを更新しています…",
     "update_scene": "シーンを編集しています…", "delete_scene": "シーンを削除しています…",
@@ -207,7 +209,9 @@ def tools(allow_write: bool):
         "location": {"type": ["string", "null"], "description": "登録済み場所ID。nullで親から引継ぐ。省略時は維持"},
     }
     for name, description, properties, required in [
-        ("insert_scene", "指定ノードの直後にシーンを挿入する。後続があればその間に入る。はじまりのIDも指定可能。",
+        ("insert_scene", "既存ルートの途中への挿入、または枝の末尾を延長する。後続があればその間に入り、正史上では正史が変わる。別ルート・分岐の新規作成には使わずbranch_sceneを使う。",
+         {"after_id": {"type": "string"}, **scene}, ["after_id", "title", "beat", "cast"]),
+        ("branch_scene", "指定地点から新しい別ルートの先頭シーンを作る。after_idは分岐元のID。既存の後続・正史・結末を変更しない。枝の続きを作るときは返された新規IDの後ろにinsert_sceneで追加する。",
          {"after_id": {"type": "string"}, **scene}, ["after_id", "title", "beat", "cast"]),
         ("update_scene", "既存シーンの本文を全文置換する。title/cast省略時は維持する。",
          {"node_id": {"type": "string"}, **scene}, ["node_id", "beat"]),
@@ -231,11 +235,11 @@ def _validate_args(store, name, args):
         raise ValueError("引数はオブジェクトで指定してください")
     if not isinstance(args.get("reason"), str) or not args["reason"].strip():
         raise ValueError("変更理由が必要です")
-    field = "after_id" if name == "insert_scene" else "node_id"
+    field = "after_id" if name in CREATE_SCENE_TOOLS else "node_id"
     node = store.get_node(args.get(field))
     if node is None:
         raise ValueError(f"対象シーンがありません: {args.get(field)}")
-    if name != "insert_scene" and node.get("kind") is not None:
+    if name not in CREATE_SCENE_TOOLS and node.get("kind") is not None:
         raise ValueError("はじまり・結末・章の境界は編集できません")
     if name == "reconnect_scene":
         if args.get("mode") not in ("scene", "branch") or not isinstance(args.get("parent_id"), str):
@@ -251,8 +255,8 @@ def _validate_args(store, name, args):
         if "location" in args and args["location"] is not None:
             if not isinstance(args["location"], str) or args["location"] not in store.known_place_ids():
                 raise ValueError("locationには登録済みの場所IDかnullを指定してください")
-        if name == "insert_scene" and not all(k in args for k in ("title", "cast")):
-            raise ValueError("挿入にはtitleとcastが必要です")
+        if name in CREATE_SCENE_TOOLS and not all(k in args for k in ("title", "cast")):
+            raise ValueError("シーン作成にはtitleとcastが必要です")
     return node
 
 
@@ -276,10 +280,11 @@ async def apply_edit(store: Store, base_url: str, name: str, args: dict, before_
         candidate = Store(candidate_conn)
         data = {k: args[k] for k in ("title", "beat", "cast", "location") if k in args}
         node_id = original["id"]
-        if name == "insert_scene":
+        if name in CREATE_SCENE_TOOLS:
             node_id = uuid.uuid4().hex[:12]
             data["id"] = node_id
-            node_operations.insert(candidate, original["id"], data, source="llm")
+            create = node_operations.branch if name == "branch_scene" else node_operations.insert
+            create(candidate, original["id"], data, source="llm")
         elif name == "update_scene":
             node_operations.update(candidate, node_id, data)
         elif name == "delete_scene":
@@ -311,8 +316,8 @@ async def apply_edit(store: Store, base_url: str, name: str, args: dict, before_
             policy.check_candidate(before, candidate.graph())
         versions.check(store, args)
         # 最後のawaitが中断された場合はここに到達しない。ライブDBへの書き込み中はawaitしない。
-        if name == "insert_scene":
-            node_operations.insert(store, original["id"], data, events, source="llm")
+        if name in CREATE_SCENE_TOOLS:
+            create(store, original["id"], data, events, source="llm")
         elif name == "update_scene":
             node_operations.update(store, node_id, data, events)
         elif name == "reconnect_scene":
@@ -384,6 +389,9 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
             system = chat_agent.build_system(store, store.canon_path(), "all") + "\n" + (
                 "あなたは制作の担当です。今回の依頼の範囲だけを編集してください。"
                 "一度にツールは1つ。編集前に対象と前後の本文を読んでください。"
+                "「ここから分岐」「別ルート」「正史を残して別展開」の依頼ではbranch_sceneで枝の先頭を作ってください。"
+                "insert_sceneを正史の分岐元に使うと正史の間へ割り込むため、分岐作成の代用にはできません。"
+                "枝の続きは作成した枝の末尾IDをafter_idにしてinsert_sceneで延長し、元の分岐元へ繰り返し挿入しないでください。"
                 "追記・補強では既存の出来事や約束を維持してください。依頼にない証拠・秘密・人物設定を新たに確定したり、既存の約束と矛盾する制限を加えたりしないでください。"
                 "質問・意見を求められただけなら編集しないで回答してください。"
                 "変更は短い理由を添え、目的を達成したら通常の文章で報告して終了してください。"

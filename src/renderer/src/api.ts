@@ -1269,7 +1269,7 @@ interface ProductionOperationBase {
 export type ProductionOperation = ProductionOperationBase & ({
   connection?: { mode: 'scene' | 'branch'; old_parent_id: string | null; parent_id: string;
     old_parent_title: string | null; parent_title: string | null; affected_ids: string[] }
-  action: 'insert_scene' | 'update_scene' | 'delete_scene' | 'reconnect_scene'
+  action: 'insert_scene' | 'branch_scene' | 'update_scene' | 'delete_scene' | 'reconnect_scene'
   node_id: string
 } | {
   action: 'create_character' | 'update_character' | 'delete_character' | 'create_place' | 'update_place' | 'delete_place'

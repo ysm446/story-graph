@@ -66,7 +66,7 @@ class ProductionPolicy:
 
     def committed(self, action, node_id):
         if self.allowed is not None:
-            if action == "insert_scene":
+            if action in ("insert_scene", "branch_scene"):
                 self.allowed.add(node_id)
             elif action == "delete_scene":
                 self.allowed.discard(node_id)
