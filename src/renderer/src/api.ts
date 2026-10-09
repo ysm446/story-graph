@@ -1258,7 +1258,9 @@ export interface ProductionPolicy {
 }
 
 export interface ProductionOperation {
-  action: 'insert_scene' | 'update_scene' | 'delete_scene'
+  connection?: { mode: 'scene' | 'branch'; old_parent_id: string | null; parent_id: string;
+    old_parent_title: string | null; parent_title: string | null; affected_ids: string[] }
+  action: 'insert_scene' | 'update_scene' | 'delete_scene' | 'reconnect_scene'
   node_id: string
   title: string | null
   reason: string
@@ -1270,7 +1272,18 @@ export interface ProductionInstruction {
   instruction: { id: string; status: 'accepted' | 'reflected' | 'unapplied'; run_id: string }
 }
 
+export interface ProductionMemory {
+  revision: number
+  content: string
+  reason: string
+  source: string
+  created_at: string | null
+  checkpoint?: { request: string; status: string; report: string; updated_at: string; changes: ProductionOperation[] } | null
+}
+
 export interface ProductionEvent {
+  memory?: ProductionMemory
+  manual_edit_ready?: boolean
   run_id?: string
   accepting_instructions?: boolean
   instruction?: ProductionInstruction
@@ -1287,6 +1300,14 @@ export interface ProductionEvent {
 }
 
 export const productionApi = {
+  memory: () => request<ProductionMemory>('/production/memory'),
+  memoryHistory: () => request<ProductionMemory[]>('/production/memory/history'),
+  saveMemory: (content: string, revision: number) => request<ProductionMemory>('/production/memory', {
+    method: 'PUT', body: JSON.stringify({ content, revision })
+  }),
+  pause: (run_id: string, paused: boolean) => request<{ paused: boolean }>(
+    '/production/pause', { method: 'POST', body: JSON.stringify({ run_id, paused }) }
+  ),
   instruct: (run_id: string, instruction_id: string, message: string) => request<ProductionInstruction>(
     '/production/instruction', { method: 'POST', body: JSON.stringify({ run_id, instruction_id, message }) }
   ),

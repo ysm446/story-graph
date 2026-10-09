@@ -184,6 +184,10 @@ async def auto(store: Store, label: str, min_interval_sec: float = 60.0) -> None
     コピーはスレッドで行う(create_async)。await が返るまで操作は始まらないので、
     「操作の前の保存」であることは変わらない。
     """
+    # 制作開始時の保存を使う。手動編集への切替中も余分な自動保存は作らない。
+    import production_agent
+    if production_agent.gate.active:
+        return
     root = store.root
     if not root:
         return

@@ -20,6 +20,19 @@ DEFAULT_DB_PATH = REPO_ROOT / "data" / "story-graph.db"
 SCHEMA_VERSION = 3
 
 _SCHEMA = """
+CREATE TABLE IF NOT EXISTS production_memory(
+    revision INTEGER PRIMARY KEY AUTOINCREMENT,
+    content TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    source TEXT NOT NULL,
+    chat_id TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS production_checkpoint(
+    id INTEGER PRIMARY KEY CHECK(id = 1),
+    data TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS characters(
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,

@@ -2198,6 +2198,8 @@ function StructureModeInner({
   // モジュールレベル(tasks.ts)で持つので、モードを離れて戻っても復元される
   const busyNodeIds = useBusyNodeIds()
   const productionLocked = useTasks().some((t) => t.kind === 'production')
+  const [productionManual, setProductionManual] = useState(false)
+  const productionEditingLocked = productionLocked && !productionManual
   const [chatKind, setChatKind] = useState<'consult' | 'production'>('consult')
   const markNodeBusy = setNodeBusy
   const [inspectorWidth, setInspectorWidth] = useState(() => {
@@ -3654,7 +3656,7 @@ function StructureModeInner({
   // 矢印 = ノード間の移動(← → が親子、↑ ↓ が分岐レーン)
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent): void => {
-      if (productionLocked) return
+      if (productionEditingLocked) return
       const target = event.target as HTMLElement | null
       if (
         target &&
@@ -3722,7 +3724,7 @@ function StructureModeInner({
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [reactFlow, displayNodes, selectedId, selectedEdgeId, detachEdge, deleteNodeById, navigateSelection, productionLocked])
+  }, [reactFlow, displayNodes, selectedId, selectedEdgeId, detachEdge, deleteNodeById, navigateSelection, productionEditingLocked])
 
   // ---- 章の操作 -------------------------------------------------------
   // Electron は window.prompt を使えない(呼ぶと例外)ので、名前の入力は
@@ -4211,7 +4213,7 @@ function StructureModeInner({
       <div ref={rowRef} className="flex min-h-0 flex-1">
         {/* ノードエリア + 相談チャット(インスペクタに被らないよう左カラム内に収める) */}
         <div ref={canvasColumnRef} className="flex min-w-0 flex-1 flex-col">
-        <main ref={canvasRef} inert={productionLocked} className="relative min-h-0 flex-1" style={{ background: 'var(--bg-canvas)' }}>
+        <main ref={canvasRef} inert={productionEditingLocked} className="relative min-h-0 flex-1" style={{ background: 'var(--bg-canvas)' }}>
           <ReactFlow
             nodes={displayNodes}
             edges={displayEdges}
@@ -5001,7 +5003,7 @@ function StructureModeInner({
                       data-tip={productionLocked ? '制作が終わるか停止してから切り替えられます' : value === 'consult' ? '作品を変更せずに相談します' : '会話からシーンを作成・編集する実験機能'}>{label}</button>
                   ))}
                 </div>
-                {productionLocked && <span className="text-[11px]" style={{ color: 'var(--text-dim)' }}>制作中は手動編集を停止しています</span>}
+                {productionLocked && <span className="text-[11px]" style={{ color: 'var(--text-dim)' }}>{productionManual ? '手動編集中・保存後に制作を再開できます' : '手動編集は制作チャットから切り替えられます'}</span>}
                 {chatKind === 'production' && <button disabled={productionLocked} onClick={toggleChat}
                   className="ml-auto rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-50"
                   style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
@@ -5021,9 +5023,10 @@ function StructureModeInner({
               {chatKind === 'production' && <div className="min-h-0 flex-1"><ProductionChat
                 nodes={graphNodes} groups={groups}
                 beforeExecute={() => beatDraftCache.size > 0 ? '未保存のシーンがあります。保存してから制作を実行してください。' : null}
+                onManualEdit={setProductionManual}
                 onFollowTarget={followProductionTarget}
                 onChanged={async (operation) => {
-                  await reload(operation.action === 'insert_scene' ? await placeCreatedNode(operation.node_id) : undefined)
+                  await reload(operation.action === 'insert_scene' || operation.connection?.mode === 'scene' ? await placeCreatedNode(operation.node_id) : undefined)
                   if (operation.action === 'delete_scene') setSelectedId((id) => id === operation.node_id ? null : id)
                 }}
               /></div>}
@@ -5044,7 +5047,7 @@ function StructureModeInner({
           />
         </div>
         <aside
-          inert={productionLocked}
+          inert={productionEditingLocked}
           className="flex shrink-0 flex-col"
           style={{ background: 'var(--bg-sidebar)', width: inspectorWidth }}
         >

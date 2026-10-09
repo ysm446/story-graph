@@ -48,6 +48,9 @@ class ProductionPolicy:
         if self.group_id is not None and any(n.get("group_id") != self.group_id for nid, n in new.items() if nid not in old):
             raise ValueError("指定した章の外には挿入できません")
         locked = self.protected | (set(old) - self.allowed if self.allowed is not None else set())
+        if self.group_id is not None:
+            locked |= {nid for nid, n in old.items() if n.get("group_id") != self.group_id}
+        locked &= old.keys()  # 手動編集で既に消えた保護対象を理由に、無関係な操作を止めない。
         # 座標・派生キャッシュ・更新時刻は編集内容とは別。イベントや章所属は保護する。
         fields = ("title", "beat", "cast", "emotional_core", "location", "story_time", "group_id", "kind", "events")
         for nid in locked:

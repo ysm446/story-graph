@@ -3,6 +3,7 @@ import { chatApi, isAbortError, productionApi, type ChatSummary, type Production
 import { Markdown } from './Markdown'
 import { cancelTask, enqueueTask, notifyGraphChanged, setNodeBusy, useTasks } from './tasks'
 import type { Group, Snapshot, StoryNode } from './types'
+import ProductionMemoryPanel from './ProductionMemoryPanel'
 import ProductionPolicyPanel, { defaultProductionPolicy, policySummary } from './ProductionPolicyPanel'
 
 interface Message {
@@ -16,10 +17,11 @@ interface Message {
   instruction?: ProductionInstruction['instruction']
 }
 
-const operationLabels = { insert_scene: '追加', update_scene: '編集', delete_scene: '削除' }
+const operationLabels = { insert_scene: '追加', update_scene: '編集', delete_scene: '削除', reconnect_scene: 'つなぎ替え' }
 
 /** 段階0の制作専用チャット。相談履歴とは分け、実行ボタンからだけ書き込みを許可する。 */
-export default function ProductionChat({ beforeExecute, onChanged, onFollowTarget, nodes, groups }: {
+export default function ProductionChat({ beforeExecute, onChanged, onFollowTarget, onManualEdit, nodes, groups }: {
+  onManualEdit: (paused: boolean) => void
   nodes: StoryNode[]
   groups: Group[]
   beforeExecute: () => string | null
@@ -29,12 +31,18 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
   const [chatId, setChatId] = useState<string | null>(null)
   const [history, setHistory] = useState<ChatSummary[]>([])
   const [messages, setMessages] = useState<Message[]>([])
+  const [memoryDirty, setMemoryDirty] = useState(false)
+  const [memoryRefresh, setMemoryRefresh] = useState(0)
   const [input, setInput] = useState('')
   const [policy, setPolicy] = useState<ProductionPolicy>(defaultProductionPolicy)
   const [live, setLive] = useState('')
   const [status, setStatus] = useState('')
   const [error, setError] = useState('')
   const [taskId, setTaskId] = useState<string | null>(null)
+  const [manualReady, setManualReady] = useState(false)
+  const [manualEditing, setManualEditing] = useState(false)
+  const [switching, setSwitching] = useState(false)
+  const manualRef = useRef(false)
   const [runId, setRunId] = useState<string | null>(null)
   const runRef = useRef<string | null>(null)
   const [sendingInstruction, setSendingInstruction] = useState(false)
@@ -99,15 +107,39 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
     finally { setSendingInstruction(false) }
   }
 
+  const toggleManual = async (): Promise<void> => {
+    if (!runId || switching) return
+    const paused = !manualEditing
+    const blocked = paused ? null : beforeExecute()
+    if (blocked) { setError(blocked); return }
+    setSwitching(true)
+    setError('')
+    // 再開の要求を送る前に画面をロックし、新しい手動操作を入れない。
+    if (!paused) onManualEdit(false)
+    try {
+      await productionApi.pause(runId, paused)
+      manualRef.current = paused
+      setManualEditing(paused)
+      onManualEdit(paused)
+      if (paused) onFollowTarget(null)
+      setStatus(paused ? '手動編集中です。保存してから制作を再開してください。' : '最新の構成を読み直して再開します…')
+    } catch (e) {
+      onManualEdit(manualRef.current)
+      setError(String(e))
+    } finally { setSwitching(false) }
+  }
+
   const send = (execute: boolean): void => {
     const message = input.trim()
     if (!message || busy) return
+    if (memoryDirty) { setError('作業メモを保存するか、編集をキャンセルしてから送信してください。'); return }
     const blocked = execute ? beforeExecute() : null
     if (blocked) { setError(blocked); return }
     if (execute && policy.allowed_ids?.length === 0) { setError('変更できるシーンを1つ以上選んでください'); return }
     setError('')
     setStatus('')
     setRunId(null)
+    setManualReady(false)
     runRef.current = null
     setInput('')
     let currentChatId = chatId
@@ -132,6 +164,11 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
               runRef.current = event.run_id
               setRunId(event.run_id)
             }
+            if (event.manual_edit_ready) setManualReady(true)
+            if (event.memory) {
+              setMemoryRefresh((value) => value + 1)
+              setMessages((prev) => [...prev, { role: 'assistant', content: `作業メモを更新しました: ${event.memory!.reason}` }])
+            }
             if (event.instruction) recordInstruction(event.instruction)
             if (event.delta) { text += event.delta; setLive(text) }
             if (event.response_end) flush()
@@ -142,7 +179,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
               setNodeBusy(activeNode, true)
               if (activeNode) {
                 followTargetRef.current = activeNode
-                if (followRef.current) onFollowTarget(activeNode)
+                if (followRef.current && !manualRef.current) onFollowTarget(activeNode)
               }
             }
             if (event.snapshot) {
@@ -158,7 +195,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
               await onChanged(operation)
               if (operation.action !== 'delete_scene') {
                 followTargetRef.current = operation.node_id
-                if (followRef.current) onFollowTarget(operation.node_id)
+                if (followRef.current && !manualRef.current) onFollowTarget(operation.node_id)
               } else if (followTargetRef.current === operation.node_id) {
                 followTargetRef.current = null
                 onFollowTarget(null)
@@ -174,6 +211,10 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
           if (isAbortError(e)) setStatus('停止しました。確定済みの変更は残しています。')
           else setError(String(e))
         } finally {
+          manualRef.current = false
+          setManualEditing(false)
+          setManualReady(false)
+          onManualEdit(false)
           runRef.current = null
           setRunId(null)
           flush()
@@ -222,8 +263,15 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
           data-tip="作業対象の章を開き、シーンをキャンバスの中央に表示します">{follow ? '☑' : '☐'} 作業対象を追う</button>
       </div>
       <p className="text-[11px]" style={{ color: 'var(--text-dim)' }}>
-        検証用ライブラリでお試しください。「制作を実行」でシーンの追加・編集・削除を行います。実行中の手動編集は停止します。
+        検証用ライブラリでお試しください。「制作を実行」でシーンの追加・編集・削除・つなぎ替えを行います。手動編集に切り替えて保存した後、制作を再開できます。
       </p>
+      {busy && runId && <button disabled={!manualReady || switching} onClick={() => void toggleManual()}
+        className="rounded-md border px-2 py-0.5 text-[12px] disabled:opacity-50"
+        style={{ background: 'var(--bg-input)', borderColor: 'var(--border-strong)' }}
+        data-tip={!manualReady ? '作業前の保存が終わるまでお待ちください' : manualEditing ? '未保存のシーンを保存してから、最新の構成で制作を再開します' : '未確定の操作を破棄して、シーンと接続を手動で編集します'}>
+        {switching ? '切り替えています…' : manualEditing ? '制作を再開' : '手動編集に切り替える'}
+      </button>}
+      <ProductionMemoryPanel busy={busy} refresh={memoryRefresh} onDirty={setMemoryDirty} />
       <ProductionPolicyPanel value={policy} onChange={setPolicy} nodes={nodes} groups={groups} busy={busy} />
       <div className="min-h-0 flex-1 overflow-y-auto" aria-live="polite">
         {messages.map((m, i) => (
@@ -234,6 +282,9 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
               {m.instruction ? `途中指示・${({ accepted: '受け付けました', reflected: '次の判断に反映しました', unapplied: '未反映のまま終了しました' })[m.instruction.status]}` : m.operation ? `${operationLabels[m.operation.action]}: ${m.operation.title || '(無題)'}` : m.role === 'user' ? 'あなた' : '制作'}
             </div>
             {m.policy && <p className="mb-1 text-[11px]" style={{ color: 'var(--text-dim)' }}>{m.policy_label || policySummary(m.policy, nodes, groups)}</p>}
+            {m.operation?.connection && <p className="mb-1 text-[11px]" style={{ color: 'var(--text-dim)' }}>
+              {m.operation.connection.mode === 'scene' ? '1シーンを移動' : '枝ごと親を変更'}: {m.operation.connection.old_parent_title || '接続なし'} → {m.operation.connection.parent_title || m.operation.connection.parent_id} の後
+            </p>}
             <Markdown text={m.content} />
             {m.snapshot && <p className="mt-1 text-[11px]" style={{ color: 'var(--text-dim)' }}>
               保存名: {m.snapshot.label}。設定のスナップショット一覧から戻せます（ライブラリ全体の復元）。

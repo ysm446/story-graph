@@ -2304,6 +2304,29 @@ class ProductionIn(BaseModel):
     execute: bool = False
 
 
+class ProductionMemoryIn(BaseModel):
+    content: str = Field(max_length=6000)
+    revision: int = Field(ge=0)
+
+
+@app.get("/production/memory")
+async def production_memory_get():
+    return production_agent.production_memory.read(store)
+
+
+@app.get("/production/memory/history")
+async def production_memory_history():
+    return production_agent.production_memory.history(store)
+
+
+@app.put("/production/memory")
+async def production_memory_put(body: ProductionMemoryIn):
+    try:
+        return production_agent.production_memory.write(store, body.content, "作者による修正", "user", expected_revision=body.revision)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+
+
 @app.get("/production/chats")
 async def production_chats() -> list[dict[str, Any]]:
     return [c for c in store.list_chats() if c.get("mode") == "production"]
@@ -2312,6 +2335,25 @@ async def production_chats() -> list[dict[str, Any]]:
 @app.get("/production/status")
 async def production_status() -> dict[str, bool]:
     return {"active": production_agent.gate.active}
+
+
+class ProductionPauseIn(BaseModel):
+    run_id: str = Field(min_length=1, max_length=64)
+    paused: bool
+
+
+@app.post("/production/pause")
+async def production_pause(body: ProductionPauseIn) -> dict[str, bool]:
+    run = production_agent.gate.run
+    if run is None or run.id != body.run_id:
+        raise HTTPException(409, "指定した制作は終了しています")
+    if not body.paused and production_agent.gate.inflight > 1:
+        raise HTTPException(409, "手動操作の保存が完了してから再開してください")
+    try:
+        run.set_paused(body.paused)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+    return {"paused": run.paused}
 
 
 class ProductionInstructionIn(BaseModel):
