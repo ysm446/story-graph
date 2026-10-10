@@ -4775,7 +4775,7 @@ function StructureModeInner({
                         : '手動配置をリセットして全体を自動レイアウトに戻す(複数選択中なら選択分だけ整列)'
                 }
               >
-                ⟲
+                <Icon name="alignNodes" size={17} />
               </button>
             </Panel>
             {/* 相談チャットのトグルは左下(生成 UI と離し、ミニマップの反対側に置く) */}
