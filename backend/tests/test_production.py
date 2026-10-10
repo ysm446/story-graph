@@ -283,6 +283,17 @@ def test_production_stream_reports_context_usage(store, monkeypatch):
     assert next(e["usage"] for e in events if "usage" in e)["token_count"] == 2345
 
 
+def test_production_prompt_does_not_inherit_proposal_only_role(store):
+    policy = production.ProductionPolicy(store)
+    for execute in (False, True):
+        messages = production.build_messages(store, [], "枝を膨らませて", execute, policy, None, [], [])
+        system = messages[0]["content"]
+        assert ("提案用のツールは使わない" in system) == (not execute)
+        assert ("ツールで実際に編集する" in system) == execute
+        if execute:
+            assert "相談・提案・確認だけを求めた場合は編集しない" in system
+
+
 def call(name, args):
     return {"content": "", "tool_calls": [{"function": {"name": name, "arguments": json.dumps(args)}}]}
 

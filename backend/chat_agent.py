@@ -788,7 +788,7 @@ async def _room_impl(
 
 # ---- システムプロンプト ----------------------------------------------
 
-def build_system(store: Store, path: list[str], scope: str) -> str:
+def build_system(store: Store, path: list[str], scope: str, *, production: bool = False) -> str:
     chars = "\n".join(f"- {c['id']}: {c['name']}" for c in store.list_characters())
     anchor_text = (
         f"あなたに見えているのはシーン {len(path)} までの情報だけです。"
@@ -798,13 +798,18 @@ def build_system(store: Store, path: list[str], scope: str) -> str:
     )
     return "\n".join(
         [
-            "あなたは物語作りの相談相手です。作者と一緒に物語の状態を確認し、展開を考えます。",
+            ("あなたは物語作りの制作担当です。作者の依頼に応じて構成を編集します。" if production else
+             "あなたは物語作りの相談相手です。作者と一緒に物語の状態を確認し、展開を考えます。"),
             "",
             "ルール:",
             "- 推測で答えず、必要に応じて get_beats / get_state / search_memories で事実を確認してから答える",
             f"- {anchor_text}",
-            "- 展開の提案は通常の文章で返し、各案の内容と狙いを説明する。提案用のツールは使わない。"
-            "案数は固定せず、作者が数を指定した場合はその数に従う",
+            ("- 作成・編集を依頼されたら、指定範囲の本文と設定を確認し、ツールで実際に編集する。"
+             "手順や場面数が未指定でも依頼の目的に沿って判断し、案の提示や実行の再確認だけで終わらない。"
+             "対象が特定できない場合や、両立しない条件がある場合は質問する。"
+             "作者が相談・提案・確認だけを求めた場合は編集しない。" if production else
+             "- 展開の提案は通常の文章で返し、各案の内容と狙いを説明する。提案用のツールは使わない。"
+             "案数は固定せず、作者が数を指定した場合はその数に従う"),
             "- 回答は簡潔に。作者の判断材料になる観察(関係値の流れ、未回収の記憶など)を優先する",
             NO_MATH_RULE,
             "",

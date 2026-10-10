@@ -377,7 +377,7 @@ def _patch_args(store, args):
 
 
 def build_messages(store, history, message, execute, policy, previous_checkpoint, changes, recent_results, run_id=None):
-    system = chat_agent.build_system(store, store.canon_path(), "all") + "\n" + (
+    system = chat_agent.build_system(store, store.canon_path(), "all", production=execute) + "\n" + (
         "あなたは制作の担当です。今回の依頼の範囲だけを編集してください。"
         "一度にツールは1つ。編集前に対象と前後の本文を読んでください。"
         "追記や一部分の訂正・削除はpatch_sceneを優先し、既存本文を全文書き直さないでください。"

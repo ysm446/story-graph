@@ -120,6 +120,7 @@ async def main():
     mode.add_argument("--addition-only", action="store_true", help="追記で既存の公開方針と矛盾する秘密設定を足さないか確認する")
     mode.add_argument("--manual-only", action="store_true", help="実モデルの編集確定前に一時停止し、手動変更を保存して再開する")
     mode.add_argument("--patch-only", action="store_true", help="既存本文を保持した追記・部分置換・部分削除を確認する")
+    mode.add_argument("--expand-only", action="store_true", help="枝を膨らませる依頼と、最初の変更後の方針転換を検証する")
     args = parser.parse_args()
     root = ROOT / "data" / ("production-scenario-" + uuid.uuid4().hex[:8])
     root.mkdir(parents=True)
@@ -131,10 +132,11 @@ async def main():
     summary = []
     result = {"passed": False, "model": args.model, "chapters": 6, "scenes": 48}
     print(f"RESULT: {root}", flush=True)
-    async def turn(label, prompt, execute=True, policy=None, instruction=None, manual_node=None):
+    async def turn(label, prompt, execute=True, policy=None, instruction=None, manual_node=None, instruction_after_change=False):
         events = []
         started = time.monotonic()
         pending = None
+        instruction_sent = False
         async def interrupt():
             await asyncio.sleep(0.5)
             production.gate.run.submit("scenario-direction", instruction)
@@ -152,8 +154,13 @@ async def main():
                 async for raw in production.stream(store, args.base_url, None, prompt, execute, lambda: None, policy=policy):
                     e = json.loads(raw.removeprefix("data: "))
                     events.append(e)
-                    if instruction and pending is None and e.get("stage"):
+                    if instruction and not instruction_after_change and pending is None and e.get("stage"):
                         pending = asyncio.create_task(interrupt())
+                    if instruction and instruction_after_change and not instruction_sent and e.get("changed"):
+                        (root / f"{label}-before-instruction.json").write_text(
+                            json.dumps(store.graph(), ensure_ascii=False, indent=2), encoding="utf-8")
+                        production.gate.run.submit("scenario-direction", instruction)
+                        instruction_sent = True
                     if manual_node and pending is None and e.get("active_node") == manual_node and e.get("stage") in (
                             production.TOOL_LABELS["update_scene"], production.TOOL_LABELS["patch_scene"]):
                         production.gate.run.set_paused(True)
@@ -192,6 +199,56 @@ async def main():
         if await llm.health(args.base_url):
             raise RuntimeError("専用ポートが使用中です")
         await manager.start({"llm_base_url": args.base_url, "llm_model_path": args.model, "llm_ctx_size": "16384"})
+        if args.expand_only:
+            for nid, title, beat in [
+                ("b1_1", "水路沿いの聞き取り", "アヤは正史とは別に、水路沿いで暮らす住民の話を聞く。畑を失う不安から、住民は予備水路の清掃に同意していない。アヤは無断で作業を始めず、理由を聞く。"),
+                ("b1_2", "図面を囲む相談", "アヤは住民と古い水門図を広げ、畑を避ける清掃経路を一緒に考える。住民の許可が出るまで着工しない。"),
+                ("b1_3", "合意を待つ夕方", "アヤは検討した経路を住民へ渡し、家族で話し合ってもらう。返答を急がせず、まだ工事には着手しない。この枝はここで終わり、正史へ合流しない。"),
+            ]:
+                node_operations.update(store, nid, {"title": title, "beat": beat})
+            initial = store.graph()
+            library = (store.list_characters(), store.list_places())
+            canon, ending = store.canon_path(), store.active_ending()
+            branch = {"b1_1", "b1_2", "b1_3"}
+            policy = production.ProductionPolicy(store, allowed_ids=sorted(branch))
+            def check_scope():
+                graph = store.graph()
+                now = {n["id"]: n for n in graph["nodes"]}
+                for old in initial["nodes"]:
+                    if old["id"] not in branch:
+                        assert all(now[old["id"]][k] == old[k] for k in ("title", "beat", "cast", "location", "events", "group_id")), "枝以外の変更"
+                assert store.canon_path() == canon and store.active_ending() == ending
+                # 枝を膨らませるための新しい脇役は許可し、既存資料の改変・削除を検出する。
+                for old_items, new_items in zip(library, (store.list_characters(), store.list_places())):
+                    indexed = {item["id"]: item for item in new_items}
+                    assert all(indexed.get(item["id"]) == item for item in old_items), "既存設定の変更"
+                descendants = set(store.subtree_order("b1_1"))
+                assert branch.issubset(descendants)
+                assert all(n["id"] in descendants for n in graph["nodes"] if n["id"] not in {v["id"] for v in initial["nodes"]})
+                node_operations._check_connections(graph)
+            events = await turn("expand-branch", "『水路沿いの聞き取り』から始まる枝を膨らませてください。住民とアヤの気持ちの距離が少しずつ縮まる流れにしたいです。必要な場面を足し、既存の出来事と人物像は守ってください。正史や他の枝は変えません。", policy=policy)
+            assert any(e.get("changed") for e in events), "構成の変更なし"
+            check_scope()
+            events = await turn("expand-direction", "この枝の続きをもう少し作ってください。住民が図面を検討して返事をするまでの間に、アヤが待ちながらできることを考える流れにしたいです。", policy=policy,
+                instruction="方針を変えます。ここまで確定した場面は残してください。これ以上シーンは増やさず、今ある枝の末尾に、アヤが『返事は明日でいい』と住民へ伝える場面を加えて、返答を待つところで今回の制作を終えてください。住民が同意したことにしたり、工事を始めたりはしません。",
+                instruction_after_change=True)
+            assert any(e.get("instruction", {}).get("instruction", {}).get("status") == "reflected" for e in events), "確定後の途中指示が未反映"
+            at_instruction = json.loads((root / "expand-direction-before-instruction.json").read_text(encoding="utf-8"))
+            assert {n["id"] for n in store.graph()["nodes"]} == {n["id"] for n in at_instruction["nodes"]}, "方針変更後にシーン数が変わった"
+            assert store.graph()["edges"] == at_instruction["edges"], "方針変更後に接続が変わった"
+            leaves = [nid for nid in store.subtree_order("b1_1") if not any(e["from_node"] == nid for e in store.graph()["edges"])]
+            for old in at_instruction["nodes"]:
+                if old["id"] not in leaves:
+                    assert all(store.get_node(old["id"])[k] == old[k] for k in ("title", "beat", "cast", "location", "events", "group_id")), "確定済みの別場面を変更した"
+            assert any("返事は明日でいい" in store.get_node(nid)["beat"] for nid in leaves), "枝末尾に方針を反映しなかった"
+            check_scope()
+            before_advice = (store.graph(), store.list_characters(), store.list_places())
+            await turn("expand-advice-only", "この枝の次の展開案を相談したいです。今回は案だけを文章で教えてください。ノードや資料は編集しないでください。", policy=policy)
+            assert (store.graph(), store.list_characters(), store.list_places()) == before_advice, "案だけの依頼で編集した"
+            result["passed"] = True
+            result["quality_review_required"] = "人物像・合意を急がせない姿勢・未着工・枝のつながりは生成本文を別途読んで評価する"
+            print("EXPANSION OPERATION CHECK PASSED", flush=True)
+            return
         if args.patch_only:
             before = bodies(store)
             edges_before = store.graph()["edges"]
