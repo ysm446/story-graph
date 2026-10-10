@@ -395,6 +395,7 @@ def build_messages(store, history, message, execute, policy, previous_checkpoint
         "枝の続きは作成した枝の末尾IDをafter_idにしてinsert_sceneで延長し、元の分岐元へ繰り返し挿入しないでください。"
         "追記・補強では既存の出来事や約束を維持してください。依頼にない証拠・秘密・人物設定を新たに確定したり、既存の約束と矛盾する制限を加えたりしないでください。"
         "質問・意見を求められただけなら編集しないで回答してください。"
+        "『この案で進めて』などの実行依頼では、直前の会話で提示した変更案を参照し、その範囲だけを実施してください。案が特定できなければ確認してください。"
         "変更は短い理由を添え、目的を達成したら通常の文章で報告して終了してください。"
         "通常の文章だけを返すと今回の制作は終了します。終了報告では実行記録にある確定済みの変更と未実施の作業を区別してください。"
         "未実施の作業を『次は編集します』『このまま続けます』と進行中のように告げて終了しないでください。必要な作業が残るならツールで続け、進められない場合は残件と理由を報告してください。"
@@ -407,12 +408,20 @@ def build_messages(store, history, message, execute, policy, previous_checkpoint
         "派閥・画像・音声の編集には未対応です。マーカーは変更しません。"
         "ツール結果と最新の接続図を使い、同じ変更を繰り返さないでください。"
         "作者の途中指示は当初の依頼より優先し、変更済みの内容も踏まえて計画を調整してください。"
-        + ("\n今回は編集が許可されています。" if execute else "\n今回は相談のみ。編集は許可されていません。")
+        "\n今回は編集が許可されています。"
+    ) if execute else chat_agent.build_system(store, store.canon_path(), "all") + (
+        "\n今回は相談のみです。ノード・資料・作業メモは変更しませんが、変更案は具体的に提案してください。"
+        "変更を依頼されたら、必要な本文・接続・資料を読み、変更対象と追加・修正・削除する内容を作者が確認できる文章で示してください。"
+        "追記なら追記文、登録なら登録する設定、構成変更ならどこからどこへつなぐかを示し、依頼にない設定を勝手に確定しないでください。"
+        "変更案は未実施と明示し、『この案でよければ、送信モードを「制作を実行」に切り替えて「この案で進めて」と送ってください』と案内して応答を終了してください。"
+        "不足情報があれば質問して待ってください。切替案内だけで変更案を省略したり、同じ情報取得を繰り返したり、作業を開始すると宣言したりしないでください。"
+        "相談モードのまま賛成や実行の返事が届いても編集せず、案と切替案内を返してください。"
+        "質問や構成の相談には必要な情報を読んで答え、回答後は次の入力を待ってください。"
     )
     if any(m.get("instruction", {}).get("run_id") == run_id and m.get("instruction", {}).get("status") == "reflected" for m in history):
         system += ("実行記録にある変更はすでに確定しています。方針変更だけを理由に取り消してはいけません。"
                    "『ここまでの場面は残す』と指示されたら、追加済みの場面も含めて削除・統合・置き換えで失わせず、指定された残りの作業だけを進めてください。")
-    system += production_memory.prompt(store, previous_checkpoint)
+    system += production_memory.prompt(store, previous_checkpoint, allow_write=execute)
     system += "\n作者が画面で指定した変更条件（最優先）: " + policy.describe()
     # 各ステップで最新図を作り、本文を含むツール結果は直近だけ保持する。
     conversation = [{"role": m["role"], "content": m["content"]} for m in history
@@ -454,6 +463,7 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
     recent_results = []
     changes = []
     applied = set()
+    consulted = set()
     snapshot = None
     completed = False
     previous_checkpoint = production_memory.read(store)["checkpoint"]
@@ -518,6 +528,15 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
                 run.accepting = False
                 completed = True
                 break
+            # 相談中の編集試行は再判断ループへ返さず、案内を保存して入力待ちへ戻す。
+            if not execute and any(c.get("function", {}).get("name") in WRITE_TOOLS | {"update_work_memory"} for c in calls):
+                notice = "現在は相談モードのため、変更は行っていません。実行する場合は「制作を実行」に切り替えて、変更依頼をもう一度送ってください。"
+                history.append({"role": "assistant", "content": notice})
+                store.save_chat_messages(chat_id, history)
+                yield chat_agent._sse({"delta": notice})
+                yield chat_agent._sse({"response_end": True, "active_node": None})
+                completed = True
+                break
             # 複数呼び出しを返しても1つずつ処理し、確定ごとに画面へ知らせる。
             for call in calls:
                 if run.pending:
@@ -528,6 +547,17 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
                     args = json.loads(call["function"].get("arguments") or "{}")
                     if not isinstance(args, dict):
                         raise ValueError("引数はオブジェクトで指定してください")
+                    if not execute:
+                        signature = (name, json.dumps(args, sort_keys=True, ensure_ascii=False))
+                        if signature in consulted:
+                            notice = "同じ情報の確認が続いたため、いったん停止しました。追加で確認したい点を教えてください。変更を実行する場合は「制作を実行」に切り替えて依頼を送ってください。"
+                            history.append({"role": "assistant", "content": notice})
+                            store.save_chat_messages(chat_id, history)
+                            yield chat_agent._sse({"delta": notice})
+                            yield chat_agent._sse({"response_end": True, "active_node": None})
+                            completed = True
+                            break
+                        consulted.add(signature)
                     yield chat_agent._sse({"stage": TOOL_LABELS.get(name, "操作を確認しています…"), "active_node": args.get("node_id") or args.get("after_id")})
                     if name == "update_work_memory":
                         if not execute:
@@ -576,6 +606,8 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
                 recent_results.append({"tool": name, "result": payload})
                 recent_results = recent_results[-3:]
                 yield chat_agent._sse({"active_node": None})
+            if completed:
+                break
         if not completed:
             history.append({"role": "assistant", "content": "作業の上限に達したため停止しました。確定済みの変更を確認し、必要なら続きを依頼してください。"})
         outcome = "completed" if completed else "limit"

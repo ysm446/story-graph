@@ -311,9 +311,85 @@ def test_readonly_rejects_write_even_when_model_calls_it(store, monkeypatch):
     before = store.graph()
     fake_llm(monkeypatch, [call("delete_scene", {"node_id": "first", "reason": "削除"}), {"content": "案だけ返します"}])
     events = run(collect(store, False))
-    assert any(e.get("tool_error") for e in events)
+    assert any("制作を実行" in e.get("delta", "") for e in events)
+    assert not any(e.get("tool_error") for e in events)
     assert store.graph() == before
     assert snapshots.list_snapshots(store) == []
+
+
+@pytest.mark.parametrize("tool", ["insert_scene", "patch_scene", "delete_character", "update_work_memory"])
+def test_consult_write_attempt_ends_once_and_saves_guidance(store, monkeypatch, tool):
+    before = store.graph()
+    calls = []
+    async def model(messages, **kwargs):
+        calls.append(messages)
+        assert len(calls) == 1
+        # 引数が壊れていても書き込み試行を再試行させない。
+        yield "done", {"tool_calls": [{"function": {"name": tool, "arguments": "invalid"}}]}
+    monkeypatch.setattr(llm, "chat_stream_tools", model)
+    events = run(collect(store, False))
+    assert len(calls) == 1 and events[-1].get("done")
+    system = calls[0][0]["content"]
+    assert "update_work_memory" not in system and "patch_scene" not in system
+    assert "次の入力を待って" in system
+    assert not any(e.get("active_node") or e.get("changed") or e.get("tool_error") for e in events)
+    history = store.get_chat(events[0]["chat_id"])["messages"]
+    assert "現在は相談モード" in history[-1]["content"]
+    assert "上限" not in history[-1]["content"]
+    assert store.graph() == before and production.gate.run is None
+
+
+def test_consult_repeated_read_stops_without_exhausting_steps(store, monkeypatch):
+    fake_llm(monkeypatch, [call("get_beats", {"node_ids": ["first"]})] * 2)
+    events = run(collect(store, False))
+    assert events[-1].get("done")
+    assert sum(e.get("stage") == production.TOOL_LABELS["get_beats"] for e in events) == 1
+    assert any("いったん停止" in e.get("delta", "") for e in events)
+    assert "いったん停止" in store.get_chat(events[0]["chat_id"])["messages"][-1]["content"]
+
+
+def test_consult_distinct_reads_can_answer_normally(store, monkeypatch):
+    fake_llm(monkeypatch, [call("get_beats", {"node_ids": ["first"]}),
+        call("get_beats", {"node_ids": ["last"]}), {"content": "出発から帰還につながっています。"}])
+    events = run(collect(store, False))
+    assert events[-1].get("done")
+    assert any(e.get("delta") == "出発から帰還につながっています。" for e in events)
+    assert not any("いったん停止" in e.get("delta", "") for e in events)
+
+
+def test_consult_proposal_survives_until_explicit_execution(store, monkeypatch):
+    fake_extraction(monkeypatch)
+    before = store.graph()
+    proposal = '出発(first)の末尾に「。約束を守る」を追記する案です。未実施です。この案でよければ「制作を実行」に切り替えて「この案で進めて」と送ってください。'
+    fake_llm(monkeypatch, [call("get_beats", {"node_ids": ["first"]}), {"content": proposal}])
+    events = run(collect(store, False))
+    chat_id = events[0]["chat_id"]
+    assert store.graph() == before and snapshots.list_snapshots(store) == []
+    assert store.get_chat(chat_id)["messages"][-1]["content"] == proposal
+
+    async def send(execute):
+        return [json.loads(s.removeprefix("data: ")) async for s in production.stream(
+            store, "fake", chat_id, "この案で進めて", execute, lambda: None)]
+
+    # 相談のまま了承しても、モデルの書き込みは通さない。
+    patch = call("patch_scene", {"node_id": "first", "mode": "append", "text": "。約束を守る", "reason": "合意した案を反映"})
+    fake_llm(monkeypatch, [patch])
+    events = run(send(False))
+    assert store.graph() == before and not any(e.get("changed") for e in events)
+    assert snapshots.list_snapshots(store) == []
+
+    replies = iter([patch, {"content": "追記しました。"}])
+    async def model(messages, **kwargs):
+        assert {"role": "assistant", "content": proposal} in messages
+        assert "直前の会話で提示した変更案" in messages[0]["content"]
+        yield "done", next(replies)
+    monkeypatch.setattr(llm, "chat_stream_tools", model)
+    events = run(send(True))
+    assert sum(bool(e.get("changed")) for e in events) == 1
+    assert store.get_node("first")["beat"] == "村を出る。約束を守る"
+    assert store.get_node("last")["beat"] == "村に戻る"
+    assert store.graph()["edges"] == before["edges"]
+    assert len(snapshots.list_snapshots(store)) == 1
 
 
 def test_snapshot_once_duplicate_guard_and_persisted_operations(store, monkeypatch):
@@ -698,7 +774,7 @@ def test_reconnect_rejects_markers_and_ending_destination(store):
 def test_reconnect_stream_records_change_and_is_not_available_in_consultation(store, monkeypatch):
     fake_llm(monkeypatch, [call("reconnect_scene", reconnect_args()), {"content": "順序を変更しました"}])
     before = store.graph()
-    assert any(e.get("tool_error") for e in run(collect(store, False)))
+    assert any("相談モード" in e.get("delta", "") for e in run(collect(store, False)))
     assert store.graph() == before
     fake_llm(monkeypatch, [call("reconnect_scene", reconnect_args()), {"content": "順序を変更しました"}])
     events = run(collect(store, True))
@@ -955,7 +1031,7 @@ def test_readonly_cannot_update_work_memory(store, monkeypatch):
     import production_memory
     fake_llm(monkeypatch, [call("update_work_memory", {"content": "書けない", "reason": "相談"}), {"content": "案のみ"}])
     events = run(collect(store, False))
-    assert any("tool_error" in e for e in events)
+    assert any("相談モード" in e.get("delta", "") for e in events)
     assert production_memory.read(store)["revision"] == 0
     assert "update_work_memory" not in [t["function"]["name"] for t in production.tools(False)]
 

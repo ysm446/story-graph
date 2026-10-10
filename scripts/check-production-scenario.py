@@ -123,6 +123,7 @@ async def main():
     mode.add_argument("--expand-only", action="store_true", help="枝を膨らませる依頼と、最初の変更後の方針転換を検証する")
     mode.add_argument("--continuity-only", action="store_true", help="前後照合の順序逆転・重複検出と正常例を実モデルで確認する")
     mode.add_argument("--direction-only", action="store_true", help="枝の拡張後の方針変更を単独で確認する")
+    mode.add_argument("--consult-only", action="store_true", help="相談で変更案を提示して待ち、モード切替後に同じ会話の案を実行することを確認する")
     args = parser.parse_args()
     root = ROOT / "data" / ("production-scenario-" + uuid.uuid4().hex[:8])
     root.mkdir(parents=True)
@@ -134,7 +135,7 @@ async def main():
     summary = []
     result = {"passed": False, "model": args.model, "chapters": 6, "scenes": 48}
     print(f"RESULT: {root}", flush=True)
-    async def turn(label, prompt, execute=True, policy=None, instruction=None, manual_node=None, instruction_after_change=False):
+    async def turn(label, prompt, execute=True, policy=None, instruction=None, manual_node=None, instruction_after_change=False, chat_id=None):
         events = []
         started = time.monotonic()
         pending = None
@@ -153,7 +154,7 @@ async def main():
             production.gate.run.set_paused(False)
         try:
             async with asyncio.timeout(360):
-                async for raw in production.stream(store, args.base_url, None, prompt, execute, lambda: None, policy=policy):
+                async for raw in production.stream(store, args.base_url, chat_id, prompt, execute, lambda: None, policy=policy):
                     e = json.loads(raw.removeprefix("data: "))
                     events.append(e)
                     if instruction and not instruction_after_change and pending is None and e.get("stage"):
@@ -201,6 +202,39 @@ async def main():
         if await llm.health(args.base_url):
             raise RuntimeError("専用ポートが使用中です")
         await manager.start({"llm_base_url": args.base_url, "llm_model_path": args.model, "llm_ctx_size": "16384"})
+        if args.consult_only:
+            before = (store.graph(), store.list_characters(), store.list_places(), production_memory.read(store))
+            chats = {}
+            for label, prompt, expected in [
+                ("consult-scene", "記録係の決意(n15)の末尾に『ケンは青い封筒を保管すると決める。』をそのまま追記してください。他の文章は変えません。", ["n15", "ケンは青い封筒を保管すると決める。"]),
+                ("consult-library", "資料庫に新しいキャラクター『リオ』を登録してください。森の案内人です。", ["リオ", "森の案内人"]),
+                ("consult-memory", "『争いを暴力で解決しない』という方針を作業メモに保存して、次回の制作へ引き継いでください。", ["争いを暴力で解決しない"]),
+            ]:
+                events = await turn(label, prompt, execute=False)
+                answer = "".join(e.get("delta", "") for e in events)
+                assert "制作を実行" in answer, "モードの切替案内なし"
+                assert all(text in answer for text in expected), "具体的な変更案なし"
+                chats[label] = events[0]["chat_id"]
+                assert not any(e.get("changed") or e.get("tool_error") for e in events)
+                assert summary[-1]["steps"] < production.MAX_STEPS, "相談の変更依頼で上限まで確認を繰り返した"
+                assert (store.graph(), store.list_characters(), store.list_places(), production_memory.read(store)) == before
+            events = await turn("consult-question", "記録係の決意(n15)では、ケンは住民への情報公開をどう考えていますか？", execute=False)
+            assert "住民" in "".join(e.get("delta", "") for e in events)
+            assert (store.graph(), store.list_characters(), store.list_places(), production_memory.read(store)) == before
+            events = await turn("consult-approval", "この案で進めて", execute=False, chat_id=chats["consult-scene"])
+            assert "制作を実行" in "".join(e.get("delta", "") for e in events)
+            assert (store.graph(), store.list_characters(), store.list_places(), production_memory.read(store)) == before
+            original = store.get_node("n15")["beat"]
+            events = await turn("consult-execute", "この案で進めて", chat_id=chats["consult-scene"])
+            assert sum(bool(e.get("changed")) for e in events) == 1
+            assert not any(e.get("tool_error") for e in events)
+            assert store.get_node("n15")["beat"] == original + "ケンは青い封筒を保管すると決める。"
+            assert all(store.get_node(n["id"]) == n for n in before[0]["nodes"] if n["id"] != "n15")
+            assert store.graph()["edges"] == before[0]["edges"]
+            assert (store.list_characters(), store.list_places()) == before[1:3]
+            result["passed"] = True
+            print("CONSULT WAIT CHECK PASSED", flush=True)
+            return
         if args.continuity_only:
             cases = [
                 ("reverse", "アヤは住民と図面を検討する。", "住民は図面を持ち帰った。アヤは住民の返答を待つ。", "アヤは検討した図面を住民へ渡し、家族で話し合ってもらう。", True),

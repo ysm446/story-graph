@@ -40,7 +40,7 @@ def checkpoint(store, run_id, chat_id, request, status, changes, instructions, r
     store.conn.commit()
 
 
-def prompt(store, previous_checkpoint):
+def prompt(store, previous_checkpoint, *, allow_write=True):
     data = read(store)
     data["checkpoint"] = previous_checkpoint
     if previous_checkpoint:
@@ -57,8 +57,10 @@ def prompt(store, previous_checkpoint):
             + "\nメモや前回の完了記録は現在の本文・接続より古い可能性があります。対象と経路を必ず読み直してください。"
             "前回がrunningなら中断時の記録であり、未確定操作の再実行はしません。"
             "メモの保護希望は画面の保護指定を変更する権限を持ちません。"
-            "編集が許可された作業では、方針が決まった時と作業の区切りにupdate_work_memoryで引継ぎメモを更新してください。"
+            + ("編集が許可された作業では、方針が決まった時と作業の区切りにupdate_work_memoryで引継ぎメモを更新してください。"
             "完了を文章で報告する前に、必ずupdate_work_memoryを呼び、終わった項目を次の作業から外してください。残作業がなければ次の作業は「作者の次の依頼待ち」とします。"
             "見出しは方針・作者との決定事項（根拠となる発言）・残す要素・未採用の提案・未解決の課題・次の作業。"
             "以前の有効な方針も保持し、関連ノードIDを添えて簡潔に。提案を作者の決定に昇格させないでください。"
-            "本文や操作ログの丸写しは不要です。実際に確定した操作は別に自動記録されます。")
+            "本文や操作ログの丸写しは不要です。実際に確定した操作は別に自動記録されます。" if allow_write else
+            "今回は相談のみです。メモの保存や未完了作業の実行はしません。"
+            "メモの変更を依頼されたら、保存する方針や文章を未実施の変更案として提示してください。"))

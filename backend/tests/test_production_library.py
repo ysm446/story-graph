@@ -190,4 +190,5 @@ def test_stream_permissions_history_and_snapshot(store, monkeypatch, execute):
         snapshots.restore(store, snap["id"])
         assert len(store.list_characters()) == 1 and len(store.list_places()) == 1
     else:
-        assert len([event for event in events if "tool_error" in event]) == 2
+        assert not any("tool_error" in event for event in events)
+        assert sum("相談モード" in event.get("delta", "") for event in events) == 1
