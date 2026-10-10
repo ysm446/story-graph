@@ -28,6 +28,10 @@ CREATE TABLE IF NOT EXISTS production_memory(
     chat_id TEXT,
     created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS production_memory_review(
+    id INTEGER PRIMARY KEY CHECK(id = 1),
+    data TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS production_checkpoint(
     id INTEGER PRIMARY KEY CHECK(id = 1),
     data TEXT NOT NULL

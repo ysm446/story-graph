@@ -1300,6 +1300,9 @@ export interface ProductionInstruction {
 }
 
 export interface ProductionMemory {
+  reviewed_at?: string | null
+  review_error?: string | null
+  needs_review?: boolean
   revision: number
   content: string
   reason: string

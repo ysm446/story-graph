@@ -11,6 +11,7 @@ import embed
 import generation
 import llm
 import node_operations
+import production_memory
 import production_agent as production
 import snapshots
 from store import Store
@@ -20,6 +21,10 @@ from store import Store
 def store(tmp_path, monkeypatch):
     monkeypatch.setattr(embed, "available", lambda: False)
     monkeypatch.setattr(embed, "is_ready", lambda: False)
+    async def memory_review(store, *args):
+        note = production_memory.read(store)
+        return {"content": note["content"], "reason": "照合済み"}, note["revision"], production_memory.basis(store)
+    monkeypatch.setattr(production_memory, "review", memory_review)
     async def continuity_ok(*args):
         pass
     monkeypatch.setattr(production.production_continuity, "check", continuity_ok)
@@ -1224,3 +1229,84 @@ def test_preview_streams_beat_before_target_id(store):
     protected = production.ProductionPolicy(store, protected_ids=["first"])
     assert scene_preview(store, {"name": "update_scene", "arguments": '{"beat":"村を出る'}, protected) == first
     assert scene_preview(store, {"name": "update_scene", "arguments": '{"beat":"村を出る。","node_id":"first"}'}, protected) is None
+
+
+def test_final_memory_review_runs_without_tool_and_preserves_manual_changes(store, monkeypatch):
+    production_memory.write(store, "## 次の作業\nfirstの動機を補強", "旧メモ", "user")
+    previous = production_memory.basis(store)
+    production_memory.save_review(store, {"basis": previous, "revision": 1})
+    node_operations.update(store, "first", {"beat": "作者が直した動機"})
+    assert production_memory.read(store)["needs_review"]
+    prompt = production_memory.prompt(store, None)
+    assert "作者が直した動機" in prompt and "村を出る" in prompt
+    seen = []
+    async def review(store, base_url, request, instructions, changes, report):
+        seen.append(report)
+        return {"content": "## 次の作業\n作者の次の依頼待ち", "reason": "手動修正で完了"}, 1, production_memory.basis(store)
+    monkeypatch.setattr(production_memory, "review", review)
+    fake_llm(monkeypatch, [{"content": "手動修正を確認しました"}])
+    events = run(collect(store, True))
+    note = production_memory.read(store)
+    assert seen == ["手動修正を確認しました"]
+    assert note["revision"] == 2 and not note["needs_review"] and note["reviewed_at"]
+    assert note["checkpoint"]["report"] == "手動修正を確認しました"
+    assert store.get_node("first")["beat"] == "作者が直した動機"
+    assert any("作業メモを見直しました" in e.get("delta", "") for e in events)
+
+
+def test_memory_review_failure_keeps_memo_and_completed_changes(store, monkeypatch):
+    production_memory.write(store, "既存の方針", "初期", "user")
+    async def review(*args):
+        raise ValueError("不正な応答")
+    monkeypatch.setattr(production_memory, "review", review)
+    fake_extraction(monkeypatch)
+    fake_llm(monkeypatch, [call("update_scene", {"node_id": "first", "beat": "修正済み", "reason": "動機"}), {"content": "修正しました"}])
+    events = run(collect(store, True))
+    note = production_memory.read(store)
+    assert note["content"] == "既存の方針" and note["revision"] == 1
+    assert "不正な応答" in note["review_error"]
+    assert note["checkpoint"]["status"] == "completed"
+    assert store.get_node("first")["beat"] == "修正済み"
+    assert any(e.get("done") for e in events)
+
+
+def test_pending_instruction_discards_memory_review(store, monkeypatch):
+    attempts = []
+    async def review(store, *args):
+        attempts.append(True)
+        if len(attempts) == 1:
+            production.gate.run.submit("late", "新しい方針を優先")
+        return {"content": "旧案" if len(attempts) == 1 else "新しい方針", "reason": "照合"}, 0, production_memory.basis(store)
+    monkeypatch.setattr(production_memory, "review", review)
+    fake_llm(monkeypatch, [{"content": "初回"}, {"content": "再確認"}])
+    run(collect(store, True))
+    assert len(attempts) == 2
+    assert production_memory.read(store)["content"] == "新しい方針"
+    assert len(production_memory.history(store)) == 1
+
+
+def test_memory_revision_conflict_keeps_newer_author_note(store, monkeypatch):
+    production_memory.write(store, "元のメモ", "初期", "user")
+    async def review(store, *args):
+        production_memory.write(store, "作者の新しいメモ", "作者の訂正", "user")
+        return {"content": "古い照合案", "reason": "照合"}, 1, production_memory.basis(store)
+    monkeypatch.setattr(production_memory, "review", review)
+    fake_llm(monkeypatch, [{"content": "完了"}])
+    run(collect(store, True))
+    note = production_memory.read(store)
+    assert note["content"] == "作者の新しいメモ" and note["revision"] == 2
+    assert "再読込" in note["review_error"]
+
+
+def test_cancel_during_memory_review_keeps_unreviewed_memo(store, monkeypatch):
+    production_memory.write(store, "残す方針", "初期", "user")
+    async def review(*args):
+        raise asyncio.CancelledError()
+    monkeypatch.setattr(production_memory, "review", review)
+    fake_llm(monkeypatch, [{"content": "完了"}])
+    with pytest.raises(asyncio.CancelledError):
+        run(collect(store, True))
+    note = production_memory.read(store)
+    assert note["content"] == "残す方針" and note["revision"] == 1
+    assert note["checkpoint"]["status"] == "interrupted"
+    assert not note["reviewed_at"]

@@ -558,6 +558,36 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
                 continue
             calls = result.get("tool_calls") or []
             if not calls:
+                if execute:
+                    yield chat_agent._sse({"stage": "手動修正と作業結果を照合し、作業メモを見直しています…", "active_node": None})
+                    try:
+                        run.check_epoch(epoch)
+                        value, revision, basis = await production_memory.review(
+                            store, base_url, message,
+                            [m["content"] for m in history if m.get("instruction", {}).get("run_id") == run.id
+                             and m["instruction"]["status"] == "reflected"], changes, content)
+                        run.check_epoch(epoch)
+                        if production_memory.basis(store) != basis:
+                            raise ValueError("照合中に制作資料が変更されました。次の制作で再確認します")
+                        payload = production_memory.write(store, value.get("content"), value.get("reason"),
+                                                          "llm", chat_id, expected_revision=revision)
+                        production_memory.mark_reviewed(store, basis, payload["revision"])
+                        notice = "作業メモを見直しました: " + value["reason"]
+                        history.append({"role": "assistant", "content": notice, "memory_review": True})
+                    except (ManualEditPending, InstructionsPending):
+                        continue
+                    except Exception as e:
+                        if run.pending or run.paused or run.epoch != epoch:
+                            continue
+                        notice = f"作業メモの見直しに失敗しました。保存済みのメモと確定済みの変更は残しています: {e}"
+                        state = production_memory.review_state(store)
+                        production_memory.save_review(store, {**state, "error": notice})
+                        history.append({"role": "assistant", "content": notice, "memory_review": True})
+                    store.save_chat_messages(chat_id, history)
+                    # 通知のyield中に新しい指示を受け付けないよう、終了を確定する。
+                    run.close()
+                    yield chat_agent._sse({"delta": notice})
+                    yield chat_agent._sse({"response_end": True})
                 completed = True
                 break
             # 相談中の編集試行は再判断ループへ返さず、案内を保存して入力待ちへ戻す。
@@ -670,7 +700,7 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
     finally:
         run.close()  # 未反映の指示を「未反映のまま終了」にしてから記録する。
         if checkpoint_started:
-            report = next((m["content"] for m in reversed(history) if m.get("role") == "assistant" and not m.get("operation") and not m.get("snapshot") and not m.get("memory_revision")), "")
+            report = next((m["content"] for m in reversed(history) if m.get("role") == "assistant" and not m.get("operation") and not m.get("snapshot") and not m.get("memory_revision") and not m.get("memory_review")), "")
             save_checkpoint(outcome, report)
         request_message["policy_after"] = policy.spec()
         if gate.run is run:
