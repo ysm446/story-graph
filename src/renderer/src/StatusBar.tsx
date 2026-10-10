@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from './api'
 import { cancelTask, useTasks } from './tasks'
+import { useStatusNotice } from './statusNotice'
 
 interface SystemResources {
   cpu_usage: number
@@ -49,6 +50,7 @@ export default function StatusBar({
 }): React.JSX.Element {
   const [res, setRes] = useState<SystemResources | null>(null)
   const tasks = useTasks()
+  const notice = useStatusNotice()
   const [now, setNow] = useState(() => Date.now())
   const [queueOpen, setQueueOpen] = useState(false)
   const running = tasks.find((t) => t.status === 'running') ?? null
@@ -164,6 +166,11 @@ export default function StatusBar({
         )}
       </div>
       {/* 範囲選択の状態。1 件はインスペクタが映しているので 2 件以上のときだけ出す */}
+      {notice && (
+        <span role="status" className="min-w-0 truncate text-[11px]" style={{ color: 'var(--text-dim)' }} data-tip={notice}>
+          {notice}
+        </span>
+      )}
       {selectedCount >= 2 && (
         <span className="flex shrink-0 items-center gap-1.5 text-[11px]">
           <span style={{ color: 'var(--accent)' }}>{selectedCount} シーンを選択中</span>

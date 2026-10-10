@@ -18,6 +18,7 @@ import {
 import '@xyflow/react/dist/style.css'
 import {
   api,
+  type NodeClipboard,
   assetUrl,
   generateBeatStream,
   isAbortError,
@@ -28,6 +29,7 @@ import {
   uploadAsset
 } from '../api'
 import AutoTextarea from '../AutoTextarea'
+import { showStatusNotice } from '../statusNotice'
 import CharAvatar from '../CharAvatar'
 import ChatDrawer from '../ChatDrawer'
 import ProductionChat from '../ProductionChat'
@@ -2171,6 +2173,9 @@ function StructureModeInner({
   const [instruction, setInstruction] = useState('')
   const [generating, setGenerating] = useState(false)
   const [genStatus, setGenStatus] = useState<string | null>(null)
+  const [nodeClipboard, setNodeClipboard] = useState<NodeClipboard | null>(null)
+  const pastingNodes = useRef(false)
+  const pasteCount = useRef(0)
   const genElapsed = useElapsedSeconds(generating)
   const genTaskIdRef = useRef<string | null>(null) // 実行中の生成タスクの ID(中止ボタン用)
   const [flowNodes, setFlowNodes] = useState<BeatFlowNode[]>([])
@@ -3578,8 +3583,11 @@ function StructureModeInner({
     if (!target) return finish() // 鑑賞モードにいる間に消えたシーン
     if (!displayNodes.some((n) => n.id === pendingFocusId)) {
       // 章ビューでは章カードに畳まれている / 別の章の中を見ている
-      if (target.group_id && chapterView !== target.group_id) return setChapterView(target.group_id)
-      if (!target.group_id && chapterView !== 'flat') return setChapterView('flat')
+      // 所属未設定でも章カードに畳まれる枝があるため、表示に使う対応表で判定する。
+      const groupId = target.group_id ?? chapterSeq.groupByNode.get(target.id)
+      if (groupId && chapterView !== groupId && chapterView !== 'flat') return setChapterView(groupId)
+      // 章外のシーンは章一覧でも見える。描画待ちを理由に全章を展開しない。
+      if (!groupId && chapterView !== 'chapters' && chapterView !== 'flat') return setChapterView('chapters')
       // reload直後はgraphNodesだけが先に更新される。新規ノードの描画を待つ。
       return
     }
@@ -3589,7 +3597,7 @@ function StructureModeInner({
       finish()
     }, 80)
     return () => clearTimeout(timer)
-  }, [pendingFocusId, displayNodes, graphNodes, chapterView, focusNodeOnCanvas])
+  }, [pendingFocusId, displayNodes, graphNodes, chapterView, chapterSeq, focusNodeOnCanvas])
 
   // ---- キーボード操作 -------------------------------------------------
 
@@ -3674,18 +3682,85 @@ function StructureModeInner({
     [displayNodes, selectedId, navGraph, focusNodeOnCanvas]
   )
 
+  const copyNodes = useCallback(async (ids: string[]): Promise<void> => {
+    const targets = graphNodes.filter((n) => ids.includes(n.id) && !n.kind)
+    if (!targets.length) {
+      showStatusNotice('コピーするシーンを選択してください')
+      return
+    }
+    // コピー時点の本文・イベント・配置を保持する。章の移動や元の編集には追随しない。
+    const nodes = structuredClone(targets)
+    const positions = nodes.map((n, i) => {
+      const shown = displayNodes.find((v) => v.id === n.id)
+      return { x: shown?.position.x ?? n.pos_x ?? i * 360, y: shown?.position.y ?? n.pos_y ?? 0 }
+    })
+    const minX = Math.min(...positions.map((p) => p.x))
+    const minY = Math.min(...positions.map((p) => p.y))
+    nodes.forEach((n, i) => { n.pos_x = positions[i].x - minX; n.pos_y = positions[i].y - minY })
+    const selected = new Set(nodes.map((n) => n.id))
+    const edges = structuredClone(graphEdges.filter((e) => selected.has(e.from_node) && selected.has(e.to_node)))
+    try {
+      const library = await api.getLibrary()
+      setNodeClipboard({ library_root: library.root, nodes, edges })
+      pasteCount.current = 0
+      showStatusNotice(`${nodes.length} シーンをコピーしました`)
+    } catch (e) {
+      showStatusNotice(`コピーできませんでした: ${String(e)}`)
+    }
+  }, [graphNodes, graphEdges, displayNodes])
+
+  const pasteNodes = useCallback(async (at?: { x: number; y: number }, groupId?: string): Promise<void> => {
+    if (!nodeClipboard || pastingNodes.current || productionEditingLocked) return
+    pastingNodes.current = true
+    const destination = groupId ?? focusedGroup?.id ?? selectedChapterId ?? null
+    const rect = canvasRef.current?.getBoundingClientRect()
+    const center = at ?? (rect ? reactFlow.screenToFlowPosition({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }) : { x: 0, y: 0 })
+    const offset = at ? 0 : pasteCount.current * 40
+    try {
+      const result = await api.pasteNodes(nodeClipboard, destination, Math.round(center.x - 144 + offset), Math.round(center.y - 80 + offset))
+      pasteCount.current++
+      if (destination) setChapterView(destination)
+      setSelectedChapterId(null)
+      setSelectedEdgeId(null)
+      setSelectedId(result.node_ids[0])
+      await reload()
+      focusWhenReady(result.node_ids[0])
+      setInspectorTab('beat')
+      showStatusNotice(`${result.node_ids.length} シーンを貼り付けました`)
+    } catch (e) {
+      showStatusNotice(`貼り付けできませんでした: ${String(e)}`)
+    } finally {
+      pastingNodes.current = false
+    }
+  }, [nodeClipboard, productionEditingLocked, focusedGroup, selectedChapterId, reactFlow, reload, focusWhenReady])
+
   // キーボードショートカット(lm-graph と同じ): A = 全体表示 / F = 選択にフォーカス
   // Delete = 選択ノードを削除(エッジ選択中は切断)
   // 矢印 = ノード間の移動(← → が親子、↑ ↓ が分岐レーン)
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent): void => {
       if (productionEditingLocked) return
+      if (event.isComposing || event.defaultPrevented) return
       const target = event.target as HTMLElement | null
       if (
         target &&
         (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)
       ) {
         return
+      }
+      if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey) {
+        const key = event.key.toLowerCase()
+        if (key === 'c') {
+          if (window.getSelection()?.type === 'Range') return
+          event.preventDefault()
+          if (!event.repeat) void copyNodes(displayNodes.filter((n) => n.selected).map((n) => n.id))
+          return
+        }
+        if (key === 'v' && nodeClipboard) {
+          event.preventDefault()
+          if (!event.repeat) void pasteNodes()
+          return
+        }
       }
       if (event.key === 'Delete') {
         if (event.repeat || deletingNodes.current) return
@@ -3758,7 +3833,7 @@ function StructureModeInner({
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [reactFlow, displayNodes, selectedId, selectedEdgeId, detachEdge, deleteNodeById, deleteNodes, navigateSelection, productionEditingLocked])
+  }, [reactFlow, displayNodes, selectedId, selectedEdgeId, detachEdge, deleteNodeById, deleteNodes, navigateSelection, productionEditingLocked, copyNodes, pasteNodes, nodeClipboard])
 
   // ---- 章の操作 -------------------------------------------------------
   // Electron は window.prompt を使えない(呼ぶと例外)ので、名前の入力は
@@ -4682,8 +4757,19 @@ function StructureModeInner({
                       ? '結末'
                       : `${menu.targets.length} シーンを選択中`}
               </div>
-              {(
-                menu.pane
+              {([
+                ...(!menu.pane && !menu.chapter && !menu.ending ? [{
+                  label: 'コピー',
+                  hint: 'Ctrl+C — 選択したシーンと内部の接続をコピー',
+                  run: () => void copyNodes(menu.targets)
+                }] : []),
+                {
+                  label: menu.chapter ? 'この章に貼り付け' : '貼り付け',
+                  hint: nodeClipboard ? 'Ctrl+V — 独立した枝として貼り付け' : '先にシーンをコピーしてください',
+                  disabled: !nodeClipboard || productionEditingLocked,
+                  run: () => void pasteNodes(menu.pane, menu.chapter)
+                },
+                ...(menu.pane
                   ? [
                       {
                         label: '＋ シーンを追加',
@@ -4943,7 +5029,8 @@ function StructureModeInner({
                     hint: '後続シーンは前のシーンに繋がる',
                     run: () => void deleteNodes(menu.targets)
                   }
-                ] as Array<{ label: string; hint: string; disabled?: boolean; run: () => void }>)
+                ] as Array<{ label: string; hint: string; disabled?: boolean; run: () => void }>))
+                ] as Array<{ label: string; hint: string; disabled?: boolean; run: () => void }>
               ).map((item) => (
                 <button
                   key={item.label}

@@ -4,6 +4,7 @@ import type {
   BackupResult,
   Character,
   EventInput,
+  GraphEdge,
   Group,
   MediaItem,
   Place,
@@ -18,6 +19,12 @@ import type {
 } from './types'
 
 let baseUrl: string | null = null
+
+export interface NodeClipboard {
+  library_root: string | null
+  nodes: StoryNode[]
+  edges: GraphEdge[]
+}
 
 export async function initApi(): Promise<{ baseUrl: string | null; error: string | null }> {
   const result = await window.storyGraph.bootstrap()
@@ -60,6 +67,11 @@ export const api = {
   timeline: () => request<StoryNode[]>('/timeline'),
   getGraph: () => request<StoryGraph>('/graph'),
   getNode: (id: string) => request<StoryNode>(`/nodes/${id}`),
+  pasteNodes: (clipboard: NodeClipboard, groupId: string | null, x: number, y: number) =>
+    request<{ node_ids: string[] }>('/nodes/paste', {
+      method: 'POST',
+      body: JSON.stringify({ ...clipboard, group_id: groupId, x, y })
+    }),
   makeCanon: (nodeId: string) =>
     request<{ canon_path: string[] }>(`/nodes/${nodeId}/make_canon`, { method: 'POST' }),
   // このシーンの先に新しい結末を作る(既定でアクティブ化 = 正史がここまでになる)

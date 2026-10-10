@@ -19,6 +19,7 @@ from typing import Any, AsyncIterator
 
 import llm
 import retrieval
+from generated_text import normalize_scene_text
 from store import Store
 from validation import validate_node
 
@@ -509,7 +510,7 @@ async def _generate_beat_impl(
     assert result is not None
     data = {
         "title": result.get("title"),
-        "beat": result["beat"],
+        "beat": normalize_scene_text(result["beat"]),
         "emotional_core": result.get("emotional_core"),
         "cast": result.get("cast", []),
         "location": result.get("location"),

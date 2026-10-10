@@ -64,6 +64,18 @@ def test_generate_beat_appends_node(store, monkeypatch):
     assert done["node"]["events"][0]["source"] == "llm"
 
 
+def test_generate_beat_decodes_overescaped_breaks(store, monkeypatch):
+    async def fake_chat_json(messages, **kwargs):
+        result = _valid_result()
+        result["beat"] = r"アヤとケンが出会う。\n\n二人は話す。"
+        return result
+    monkeypatch.setattr(llm_mod, "chat_json", fake_chat_json)
+    done = collect_sse(generation.generate_beat_stream(store, "http://fake", None))[-1]
+    expected = "アヤとケンが出会う。\n\n二人は話す。"
+    assert done["node"]["beat"] == expected
+    assert store.get_node(done["node"]["id"])["beat"] == expected
+
+
 def test_generate_beat_after_id_inserts_inside_the_chapter(store, monkeypatch):
     """章の中での「次のシーンを生成」は、その章の出口の手前に入る(§9)。
 

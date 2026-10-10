@@ -18,6 +18,7 @@ import production_memory
 import production_library
 import production_continuity
 from store import Store
+from generated_text import normalize_scene_text
 from production_policy import ProductionPolicy
 
 MAX_STEPS = 16
@@ -274,6 +275,10 @@ async def apply_edit(store: Store, base_url: str, name: str, args: dict, before_
     versions.check(store, args)
     if name in production_library.WRITE_TOOLS:
         return production_library.apply(store, name, args, policy=policy, before_commit=before_commit)
+    # 部分編集は新しい断片だけを補正する。保存済みの本文を巻き込まない。
+    field = "text" if name == "patch_scene" else "beat"
+    if isinstance(args.get(field), str):
+        args = {**args, field: normalize_scene_text(args[field])}
     if name == "patch_scene":
         args = _patch_args(store, args)
         # 確定・履歴・画面通知は既存の編集と共通。全文はサーバー側で組み立てる。
@@ -374,6 +379,9 @@ def _patch_args(store, args):
         if not isinstance(old, str) or not old:
             raise ValueError("置換には空でないold_textが必要です")
         start = beat.find(old)
+        if start < 0:
+            old = normalize_scene_text(old)
+            start = beat.find(old)
         if start < 0 or beat.find(old, start + 1) >= 0:
             raise ValueError("置換元が本文の1か所に一致しません。get_beatsで最新の本文を読み、前後を含めて一意に指定してください")
         updated = beat[:start] + text + beat[start + len(old):]

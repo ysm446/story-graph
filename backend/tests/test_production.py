@@ -63,6 +63,34 @@ def test_insert_update_delete_and_memory_consistency(store, monkeypatch):
     assert store.get_state("last")["chars"]["aya"]["memories"] == []
 
 
+@pytest.mark.parametrize("action", ["insert_scene", "branch_scene", "update_scene", "patch_scene"])
+def test_generated_scene_breaks_are_fixed_before_extraction(store, monkeypatch, action):
+    fake_extraction(monkeypatch)
+    args = {"node_id": "first", "after_id": "first", "title": "改行", "cast": ["aya"],
+            "beat": r"第一段落。\n\n第二段落。", "reason": "改行を含む文章"}
+    expected = "第一段落。\n\n第二段落。"
+    if action == "patch_scene":
+        original = r"元の表記\nは保持する。"
+        node_operations.update(store, "first", {"beat": original})
+        args = {"node_id": "first", "mode": "append", "text": r"\n\n新しい段落。", "reason": "追記"}
+        expected = original + "\n\n新しい段落。"
+    change = run(production.apply_edit(store, "fake", action, args))
+    assert change["scene"]["beat"] == expected
+    assert store.get_node(change["node_id"])["beat"] == expected
+    assert store.list_events(change["node_id"])[0]["payload"]["content"] == expected
+
+
+def test_patch_matches_literal_original_before_decoding_search(store, monkeypatch):
+    fake_extraction(monkeypatch)
+    node_operations.update(store, "first", {"beat": "実際の\n改行と、文字列の\\n改行。"})
+    run(production.apply_edit(store, "fake", "patch_scene", {
+        "node_id": "first", "mode": "replace", "old_text": r"\n改行", "text": "表記", "reason": "文字列を訂正"}))
+    assert store.get_node("first")["beat"] == "実際の\n改行と、文字列の表記。"
+    run(production.apply_edit(store, "fake", "patch_scene", {
+        "node_id": "first", "mode": "replace", "old_text": r"実際の\n改行", "text": "段落", "reason": "実改行を含む箇所"}))
+    assert store.get_node("first")["beat"] == "段落と、文字列の表記。"
+
+
 @pytest.mark.parametrize("patch,expected", [
     ({"mode": "append", "text": "\n約束を守る。"}, "村を出る\n約束を守る。"),
     ({"mode": "replace", "old_text": "村", "text": "町"}, "町を出る"),

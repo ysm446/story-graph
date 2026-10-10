@@ -27,6 +27,7 @@ import db
 import generation
 import llm
 import node_operations
+import node_clipboard
 import production_agent
 import rendering
 import snapshots
@@ -715,6 +716,17 @@ async def delete_node(node_id: str) -> dict[str, str]:
 class DeleteSelectionIn(BaseModel):
     node_ids: list[str] = []
     group_ids: list[str] = []
+
+
+@app.post("/nodes/paste")
+async def paste_nodes(body: node_clipboard.PasteIn) -> dict[str, Any]:
+    await snapshots.auto(store, "シーン貼り付けの前", 30)
+    try:
+        return node_clipboard.paste(store, body)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except KeyError as e:
+        raise HTTPException(404, str(e))
 
 
 @app.post("/nodes/delete-selection")
