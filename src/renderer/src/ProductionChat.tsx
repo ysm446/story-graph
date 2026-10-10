@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { chatApi, isAbortError, productionApi, type ChatSummary, type ProductionInstruction, type ProductionPolicy, type ProductionOperation } from './api'
 import { Markdown } from './Markdown'
+import { showStatusNotice } from './statusNotice'
 import { cancelTask, enqueueTask, notifyGraphChanged, setNodeBusy, useTasks } from './tasks'
 import type { Group, Snapshot, StoryNode } from './types'
 import ProductionMemoryPanel from './ProductionMemoryPanel'
@@ -62,7 +63,8 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
   const followTargetRef = useRef<string | null>(null)
   const tasks = useTasks()
   const task = tasks.find((t) => t.id === taskId)
-  const busy = !!task
+  const [historyBusy, setHistoryBusy] = useState(false)
+  const busy = !!task || historyBusy
   const endRef = useRef<HTMLDivElement>(null)
   const taskRef = useRef<string | null>(null)
 
@@ -85,6 +87,8 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
   useEffect(() => { endRef.current?.scrollIntoView({ block: 'nearest' }) }, [messages, live, status])
 
   const load = async (id: string): Promise<void> => {
+    if (busy) return
+    setHistoryBusy(true)
     setUsage(null)
     try {
       const chat = await chatApi.get(id)
@@ -99,6 +103,30 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
       setError('')
       setStatus('')
     } catch (e) { setError(String(e)) }
+    finally { setHistoryBusy(false) }
+  }
+
+  const deleteConversation = async (): Promise<void> => {
+    if (!chatId || busy) return
+    const targetId = chatId
+    const title = history.find((item) => item.id === targetId)?.title || '現在の制作の会話'
+    if (!window.confirm(`「${title}」の会話履歴を削除しますか?\n会話履歴は元に戻せません。作品・資料庫・作業メモ・スナップショットは残ります。`)) return
+    setHistoryBusy(true)
+    setError('')
+    try {
+      await chatApi.delete(targetId)
+      setHistory((previous) => previous.filter((item) => item.id !== targetId))
+      setChatId(null)
+      setMessages([])
+      setUsage(null)
+      setLive('')
+      setStatus('')
+      followTargetRef.current = null
+      onFollowTarget(null)
+      // 現在のAI保護・変更範囲と、入力中の依頼はそのまま次の会話へ引き継ぐ。
+      showStatusNotice('制作の会話履歴を削除しました')
+    } catch (e) { setError(`会話履歴を削除できませんでした: ${String(e)}`) }
+    finally { setHistoryBusy(false) }
   }
 
   const recordInstruction = (item: ProductionInstruction): void => {
@@ -289,6 +317,13 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
           {chatId && !history.some((h) => h.id === chatId) && <option value={chatId}>現在の制作</option>}
           {history.map((h) => <option key={h.id} value={h.id}>{h.title || h.snippet || '制作'}</option>)}
         </select>
+        <button onClick={() => void deleteConversation()} disabled={busy || !chatId}
+          className="shrink-0 rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-50"
+          style={{ borderColor: 'var(--border-strong)', color: 'var(--danger)' }}
+          aria-label="この制作の会話履歴を削除"
+          data-tip={busy ? '処理が終わるか制作を停止してから削除できます' : !chatId ? '削除する会話を選んでください' : 'この会話の履歴だけを削除します。作品・資料庫・作業メモ・スナップショットは残ります'}>
+          会話を削除
+        </button>
         <button onClick={() => { followRef.current = !follow; setFollow(!follow); onFollowTarget(!follow ? followTargetRef.current : null) }}
           className="shrink-0 rounded-md border px-2 py-0.5 text-[11px]"
           style={follow ? { borderColor: 'var(--border-strong)', background: 'var(--accent-soft)', color: 'var(--text)' } : { borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }}
