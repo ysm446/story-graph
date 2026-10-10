@@ -209,10 +209,7 @@ def delete(store: Store, snap_id: str) -> bool:
     entries = _load_index(root)
     if not any(e["id"] == snap_id for e in entries):
         return False
-    try:
-        _snapshot_path(root, snap_id).unlink(missing_ok=True)
-    except OSError:
-        pass
+    _snapshot_path(root, snap_id).unlink(missing_ok=True)
     _save_index(root, [e for e in entries if e["id"] != snap_id])
     return True
 

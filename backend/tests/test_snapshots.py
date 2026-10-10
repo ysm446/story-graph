@@ -123,3 +123,34 @@ def test_gc_assets_protects_snapshot_references(store, tmp_path):
     assert removed == 1  # orphan.png だけが消える
     assert (tmp_path / "lib" / "assets" / "images" / "kept.png").exists()
     assert not (tmp_path / "lib" / "assets" / "images" / "orphan.png").exists()
+
+
+def test_delete_failure_keeps_snapshot_listed(store, monkeypatch):
+    snap = snapshots.create(store, "削除不可")
+    path = snapshots._snapshot_path(store.root, snap["id"])
+    original = type(path).unlink
+
+    def fail_target(self, *args, **kwargs):
+        if self == path:
+            raise PermissionError("使用中")
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(type(path), "unlink", fail_target)
+    with pytest.raises(PermissionError):
+        snapshots.delete(store, snap["id"])
+    assert path.exists()
+    assert [entry["id"] for entry in snapshots.list_snapshots(store)] == [snap["id"]]
+
+
+def test_delete_all_kinds_preserves_current_work(store):
+    store.create_character({"name": "アヤ", "id": "aya"})
+    snapshots.create(store, "自動", kind="auto")
+    snapshots.create(store, "手動", kind="manual")
+    snapshots.create(store, "制作: 作業前", kind="manual")
+    targets = snapshots.list_snapshots(store)
+    later = snapshots.create(store, "確認後の保存", kind="manual")
+    for snap in targets:
+        assert snapshots.delete(store, snap["id"])
+    assert store.known_char_ids() == {"aya"}
+    assert [entry["id"] for entry in snapshots.list_snapshots(store)] == [later["id"]]
+    assert sorted(p.name for p in snapshots._snapshot_dir(store.root).glob("*.db")) == [f"{later['id']}.db"]

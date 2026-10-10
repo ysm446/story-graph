@@ -2536,8 +2536,11 @@ async def restore_snapshot(snap_id: str) -> dict[str, Any]:
 
 @app.delete("/snapshots/{snap_id}")
 async def delete_snapshot(snap_id: str) -> dict[str, str]:
-    if not snapshots.delete(store, snap_id):
-        raise HTTPException(404, "snapshot not found")
+    try:
+        if not snapshots.delete(store, snap_id):
+            raise HTTPException(404, "snapshot not found")
+    except OSError as e:
+        raise HTTPException(500, f"スナップショットを削除できませんでした: {snap_id}: {e}")
     return {"status": "deleted"}
 
 

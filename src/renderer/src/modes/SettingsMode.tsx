@@ -14,6 +14,7 @@ import {
   type LlamaServerStatus
 } from '../api'
 import AutoTextarea from '../AutoTextarea'
+import { showStatusNotice } from '../statusNotice'
 import { DEFAULT_VIDEO_CROSSFADE_SECONDS } from '../CrossfadeLoopVideo'
 import { PresetEditorModal, type PresetDraft } from '../RenderStyle'
 import type { BackupConfig, Snapshot, StylePreset } from '../types'
@@ -808,6 +809,37 @@ function SnapshotsSection(): React.JSX.Element {
     }
   }
 
+  const handleClear = async (): Promise<void> => {
+    if (busy || items.length === 0) return
+    const targets = [...items]
+    if (!window.confirm(
+      `一覧のスナップショット ${targets.length} 件をすべて削除しますか?\n` +
+      '自動・手動・制作チャットの作業前保存が対象です。削除すると、これらの時点には戻せません。\n' +
+      '現在の作品・資料庫・会話は削除されません。'
+    )) return
+    setBusy(true)
+    setError(null)
+    let deleted = 0
+    let failure: string | null = null
+    try {
+      // 確認時に表示していた分だけ削除し、後から作られた保存は残す。
+      for (const snap of targets) {
+        try {
+          await api.deleteSnapshot(snap.id)
+          deleted += 1
+        } catch (e) {
+          failure = `${deleted} / ${targets.length} 件を削除しました。「${snap.label}」の削除で停止しました: ${String(e)}`
+          break
+        }
+      }
+      await reload()
+      if (failure) setError(failure)
+      else showStatusNotice(`スナップショット ${deleted} 件を削除しました`)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const handleDelete = async (snap: Snapshot): Promise<void> => {
     if (busy) return
     if (!window.confirm(`スナップショット「${snap.label}」を削除しますか?`)) return
@@ -841,6 +873,15 @@ function SnapshotsSection(): React.JSX.Element {
             style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
           >
             今の状態を保存
+          </button>
+          <button
+            onClick={() => void handleClear()}
+            disabled={busy || items.length === 0}
+            className="rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-50"
+            style={{ borderColor: 'var(--border-strong)', color: 'var(--danger)' }}
+            data-tip={busy ? 'スナップショットの処理中です' : items.length === 0 ? '削除するスナップショットがありません' : '一覧のスナップショットをすべて削除します。現在の作品は残ります'}
+          >
+            一括クリア
           </button>
         </div>
       </div>
