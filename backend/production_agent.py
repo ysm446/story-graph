@@ -6,6 +6,8 @@ import asyncio
 import json
 import re
 import uuid
+import time
+from production_preview import scene_preview
 from typing import Any
 
 import chat_agent
@@ -523,12 +525,21 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
             yield chat_agent._sse({"usage": await context_usage(store, base_url, messages, execute)})
             yield chat_agent._sse({"stage": f"確認しています… ({step + 1}/{MAX_STEPS})"})
             result: dict[str, Any] = {}
+            last_preview_at = 0.0
             async for kind, value in llm.chat_stream_tools(
                 messages, base_url=base_url, tools=tools(execute), temperature=0.5,
-                max_tokens=3072, label=f"制作チャット({step + 1})",
+                max_tokens=3072, label=f"制作チャット({step + 1})", emit_tool_progress=execute,
             ):
                 if kind == "content":
                     yield chat_agent._sse({"delta": value})
+                elif kind == "tool_progress" and execute:
+                    if not run.paused and run.epoch == epoch and not run.pending and time.monotonic() - last_preview_at >= 0.1:
+                        preview = scene_preview(store, value["function"], policy)
+                        if preview is not None:
+                            last_preview_at = time.monotonic()
+                            yield chat_agent._sse({"preview": preview, "active_node": preview["node_id"], "stage": "本文の編集案を作成しています…"})
+                        elif value["function"].get("name") == "update_scene":
+                            yield chat_agent._sse({"preview": None})
                 elif kind == "done":
                     result = value
             if run.paused or run.epoch != epoch:
@@ -586,6 +597,10 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
                             break
                         consulted.add(signature)
                     yield chat_agent._sse({"stage": TOOL_LABELS.get(name, "操作を確認しています…"), "active_node": args.get("node_id") or args.get("after_id")})
+                    if execute:
+                        preview = scene_preview(store, call.get("function", {}), policy)
+                        if preview is not None:
+                            yield chat_agent._sse({"preview": preview, "stage": "編集案を検証しています…"})
                     if name == "update_work_memory":
                         if not execute:
                             raise ValueError("相談中は作業メモを変更できません")

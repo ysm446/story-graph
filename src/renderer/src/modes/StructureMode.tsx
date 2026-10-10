@@ -34,6 +34,8 @@ import CharAvatar from '../CharAvatar'
 import ChatDrawer from '../ChatDrawer'
 import ContextMenu, { type ContextMenuItem } from '../ContextMenu'
 import ProductionChat from '../ProductionChat'
+import ProductionPreviewPanel from '../ProductionPreviewPanel'
+import { useProductionPreview } from '../productionPreview'
 import { defaultProductionPolicy } from '../ProductionPolicyPanel'
 import type { ProductionPolicy } from '../api'
 import EventsEditor from '../EventsEditor'
@@ -242,6 +244,7 @@ type BeatFlowNode = Node<BeatNodeData, 'beatNode'>
 
 function BeatNodeCard({ data, selected }: NodeProps<BeatFlowNode>): React.JSX.Element {
   const { storyNode, characters, place, busy, connected } = data
+  const preview = useProductionPreview(storyNode.id)
   const unsaved = useSyncExternalStore(subscribeBeatDrafts, () => beatDraftCache.has(storyNode.id))
   const isDraft = storyNode.status === 'draft'
   // 章の入口 / 出口(ノードグループの Input / Output。docs/design/chapters.md §9)
@@ -333,6 +336,7 @@ function BeatNodeCard({ data, selected }: NodeProps<BeatFlowNode>): React.JSX.El
         <span className="min-w-0 flex-1 truncate text-[13px] font-semibold" style={{ color: 'var(--text)' }}>
           {storyNode.title || '(無題のシーン)'}
         </span>
+        {preview && <span className="shrink-0 rounded-md px-1.5 py-0.5 text-[10px]" style={{ background: 'var(--accent-soft)', color: 'var(--text)' }}>AI編集中</span>}
         {unsaved && (
           <span
             className="shrink-0 rounded-md px-1.5 py-0.5 text-[10px]"
@@ -3628,6 +3632,7 @@ function StructureModeInner({
 
   // 制作では章に隠れたシーンも開く。通常の追加操作のfocusWhenReadyとは分ける。
   const followProductionTarget = useCallback((nodeId: string | null): void => {
+    if (nodeId) setInspectorTab('beat')
     focusDoneRef.current = nodeId === null
     setPendingFocusId(nodeId)
   }, [])
@@ -5286,6 +5291,7 @@ function StructureModeInner({
               </button>
             ))}
           </div>
+          <ProductionPreviewPanel />
           <div className={inspectorTab === 'beat' && selectedNode && !selectedNode.kind && !activeGroup
             ? 'flex min-h-0 flex-1 flex-col overflow-hidden'
             : 'inspector-scrollbar min-h-0 flex-1 overflow-y-auto p-3'}>

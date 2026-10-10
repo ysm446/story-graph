@@ -1309,6 +1309,7 @@ export interface ProductionMemory {
 }
 
 export interface ProductionEvent {
+  preview?: { node_id: string | null; beat: string } | null
   usage?: { token_count: number; ctx_size: number; estimated: boolean }
   memory?: ProductionMemory
   manual_edit_ready?: boolean

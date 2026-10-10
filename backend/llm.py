@@ -255,11 +255,13 @@ async def chat_stream_tools(
     timeout: float = 600.0,
     tools: list[dict[str, Any]] | None = None,
     label: str = "stream",
+    emit_tool_progress: bool = False,
 ):
     """tools 対応のストリーミング chat completion(news-picker の方式を移植)。
 
     yield するイベント:
       ("content", str) — 本文のデルタ
+      ("tool_progress", dict) — opt-in時、組み立て中のツール引数(表示専用)
       ("done", dict)   — 最後に1回。chat() と同じ形の集約結果
     tool_calls はデルタを index ごとに組み立てて done に含める。
     """
@@ -326,6 +328,8 @@ async def chat_stream_tools(
                                 slot["function"]["name"] += function["name"]
                             if function.get("arguments"):
                                 slot["function"]["arguments"] += function["arguments"]
+                            if emit_tool_progress:
+                                yield ("tool_progress", {"index": index, "function": dict(slot["function"])})
     except Exception as e:
         entry["error"] = str(e)
         raise

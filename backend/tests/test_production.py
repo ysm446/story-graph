@@ -1161,3 +1161,66 @@ def test_patch_replace_tolerates_surrounding_whitespace(store, monkeypatch, old)
         "node_id": "first", "mode": "replace", "old_text": old, "text": "", "reason": "後半を切り出す"}))
     assert change["scene"]["beat"].rstrip("\n") == "前半の出来事。"
     assert change["previous_beat"] == "前半の出来事。\n\n後半の出来事。"
+
+
+@pytest.mark.parametrize("outcome", ["success", "reject", "stop", "consult"])
+def test_streaming_preview_is_not_a_committed_edit(store, monkeypatch, outcome):
+    fake_extraction(monkeypatch)
+    original = store.get_node("first")["beat"]
+    args = {"node_id": "first", "beat": "村を出る。空を見上げる。", "reason": "描写を追加"}
+    function = {"name": "update_scene", "arguments": json.dumps(args, ensure_ascii=False)}
+    calls = 0
+    async def model(messages, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls > 1:
+            yield "done", {"content": "完了"}
+            return
+        assert kwargs["emit_tool_progress"] == (outcome != "consult")
+        # モデルが引数を出し切る前のプレビュー。
+        yield "tool_progress", {"index": 0, "function": {"name": "update_scene", "arguments": '{"node_id":"first","beat":"村を出る'}}
+        yield "done", {"tool_calls": [{"id": "call", "function": function}]}
+    monkeypatch.setattr(llm, "chat_stream_tools", model)
+    if outcome == "reject":
+        async def rejected(*args, **kwargs):
+            raise ValueError("検証失敗")
+        monkeypatch.setattr(production, "apply_edit", rejected)
+    async def collect():
+        previews = []
+        stream = production.stream(store, "fake", None, "本文を更新", outcome != "consult", lambda: None)
+        try:
+            async for raw in stream:
+                event = json.loads(raw.removeprefix("data: ").strip())
+                if event.get("preview"):
+                    assert store.get_node("first")["beat"] == original
+                    previews.append(event["preview"])
+                    if outcome == "stop":
+                        break
+        finally:
+            await stream.aclose()
+        return previews
+    previews = run(collect())
+    assert bool(previews) == (outcome != "consult")
+    if previews:
+        assert previews[0] == {"node_id": "first", "beat": "村を出る"}
+    assert store.get_node("first")["beat"] == (args["beat"] if outcome == "success" else original)
+    assert not production.gate.active
+
+
+def test_preview_skips_protected_missing_and_other_tools(store):
+    from production_preview import scene_preview
+    policy = production.ProductionPolicy(store, protected_ids=["first"])
+    for name, node_id in [("update_scene", "first"), ("update_scene", "missing"), ("patch_scene", "last")]:
+        assert scene_preview(store, {"name": name, "arguments": json.dumps({"node_id": node_id, "beat": "未確定"})}, policy) is None
+
+
+def test_preview_streams_beat_before_target_id(store):
+    from production_preview import scene_preview
+    policy = production.ProductionPolicy(store)
+    first = scene_preview(store, {"name": "update_scene", "arguments": '{"beat":"村を出る'}, policy)
+    assert first == {"node_id": None, "beat": "村を出る"}
+    final = scene_preview(store, {"name": "update_scene", "arguments": '{"beat":"村を出る。","node_id":"first"}'}, policy)
+    assert final == {"node_id": "first", "beat": "村を出る。"}
+    protected = production.ProductionPolicy(store, protected_ids=["first"])
+    assert scene_preview(store, {"name": "update_scene", "arguments": '{"beat":"村を出る'}, protected) == first
+    assert scene_preview(store, {"name": "update_scene", "arguments": '{"beat":"村を出る。","node_id":"first"}'}, protected) is None

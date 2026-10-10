@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { chatApi, isAbortError, productionApi, type ChatSummary, type ProductionInstruction, type ProductionPolicy, type ProductionOperation } from './api'
 import { Markdown } from './Markdown'
 import { showStatusNotice } from './statusNotice'
+import { setProductionPreview } from './productionPreview'
 import { cancelTask, enqueueTask, notifyGraphChanged, setNodeBusy, useTasks } from './tasks'
 import type { Group, Snapshot, StoryNode } from './types'
 import ProductionMemoryPanel from './ProductionMemoryPanel'
@@ -82,7 +83,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
   const refreshHistory = async (): Promise<void> => setHistory(await productionApi.list())
   useEffect(() => {
     void refreshHistory().catch((e) => setError(String(e)))
-    return () => { if (taskRef.current) cancelTask(taskRef.current) }
+    return () => { setProductionPreview(null); if (taskRef.current) cancelTask(taskRef.current) }
   }, [])
   useEffect(() => { endRef.current?.scrollIntoView({ block: 'nearest' }) }, [messages, live, status])
 
@@ -172,7 +173,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
       manualRef.current = paused
       setManualEditing(paused)
       onManualEdit(paused)
-      if (paused) onFollowTarget(null)
+      if (paused) { setProductionPreview(null); onFollowTarget(null) }
       setStatus(paused ? '手動編集中です。保存してから制作を再開してください。' : '最新の構成を読み直して再開します…')
     } catch (e) {
       onManualEdit(manualRef.current)
@@ -193,6 +194,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
     setManualReady(false)
     runRef.current = null
     setInput('')
+    setProductionPreview(null)
     let currentChatId = chatId
     let activeNode: string | null = null
     const id = enqueueTask({
@@ -223,9 +225,10 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
             }
             if (event.instruction) recordInstruction(event.instruction)
             if (event.delta) { text += event.delta; setLive(text) }
-            if (event.response_end) flush()
+            if (event.response_end) { setProductionPreview(null); flush() }
             if (event.stage) { setStatus(event.stage); update({ detail: event.stage }) }
-            if ('active_node' in event) {
+            if ('active_node' in event && event.active_node !== activeNode) {
+              setProductionPreview(null)
               setNodeBusy(activeNode, false)
               activeNode = event.active_node ?? null
               setNodeBusy(activeNode, true)
@@ -234,6 +237,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
                 if (followRef.current && !manualRef.current) onFollowTarget(activeNode)
               }
             }
+            if ('preview' in event && !manualRef.current) setProductionPreview(event.preview ?? null)
             if (event.snapshot) {
               const snapshot = event.snapshot
               setMessages((prev) => [...prev, { role: 'assistant', content: '作業前の状態を保存しました。', snapshot }])
@@ -245,6 +249,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
                   : operation.action === 'delete_scene' ? previous.allowed_ids.filter((id) => id !== operation.node_id) : previous.allowed_ids })
               setMessages((prev) => [...prev, { role: 'assistant', content: operation.reason, operation }])
               await onChanged(operation)
+              setProductionPreview(null)
               if (operation.node_id && operation.action !== 'delete_scene') {
                 followTargetRef.current = operation.node_id
                 if (followRef.current && !manualRef.current) onFollowTarget(operation.node_id)
@@ -253,7 +258,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
                 onFollowTarget(null)
               }
             }
-            if (event.tool_error) setStatus(`変更を見直しています: ${event.tool_error}`)
+            if (event.tool_error) { setProductionPreview(null); setStatus(`変更を見直しています: ${event.tool_error}`) }
             if (event.error) throw new Error(event.error)
             if (event.done) finished = true
           }, signal)
@@ -263,6 +268,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
           if (isAbortError(e)) setStatus('停止しました。確定済みの変更は残しています。')
           else setError(String(e))
         } finally {
+          setProductionPreview(null)
           manualRef.current = false
           setManualEditing(false)
           setManualReady(false)

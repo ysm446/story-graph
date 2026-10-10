@@ -1,7 +1,7 @@
 # UI スタイルガイド(色・タイポ・余白・部品)
 
 作成日時: 2026-08-09 16:00
-更新日時: 2026-10-10 23:34
+更新日時: 2026-10-11 02:17
 
 新しい画面や部品を足すときに **見た目を揃えるための具体値** をまとめる。
 [overview.md](overview.md) がアーキテクチャの入口なら、本書は UI の入口。
@@ -481,3 +481,11 @@ Tailwind の既定スケール(`1 = 4px`)をそのまま使う。**使う段は�
 コピー・貼り付けなどの短い操作結果は `statusNotice.ts` の `showStatusNotice` を使い、`StatusBar` に5秒表示する。
 新しい通知で文言とタイマーを置き換える。`text-[11px]`、文字色 `--text-dim`、`min-w-0 truncate`。
 全文は `data-tip`、読み上げは `role="status"`。既存のタスクキュー・選択件数と並べ、独自のポップアップは増やさない。
+
+
+## 制作の本文プレビュー
+
+右ペインのタブ直下に固定。`px-3 py-2`、下辺は `--accent-border`、背景は `--accent-soft`。
+説明は `text-[11px]` / `--text-dim`、本文は `text-[12px] leading-relaxed whitespace-pre-wrap break-words`。
+本文枠は `max-h-48 overflow-y-auto inspector-scrollbar`。生成中の末尾を常に自動追従する。編集中のため手動スクロールは提供せず、全文確認は反映後に行う。
+ノードの「AI編集中」バッジは `rounded-md px-1.5 py-0.5 text-[10px] shrink-0`、背景 `--accent-soft`、文字 `--text`。
