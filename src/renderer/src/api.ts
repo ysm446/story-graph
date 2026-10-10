@@ -1337,6 +1337,7 @@ export const productionApi = {
       method: 'POST', body: JSON.stringify(body)
     }),
   memory: () => request<ProductionMemory>('/production/memory'),
+  resetMemory: (revision: number) => request<ProductionMemory>(`/production/memory?revision=${revision}`, { method: 'DELETE' }),
   memoryHistory: () => request<ProductionMemory[]>('/production/memory/history'),
   saveMemory: (content: string, revision: number) => request<ProductionMemory>('/production/memory', {
     method: 'PUT', body: JSON.stringify({ content, revision })

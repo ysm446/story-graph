@@ -348,7 +348,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
         {switching ? '切り替えています…' : manualEditing ? '制作を再開' : '手動編集に切り替える'}
       </button>}
       <ChatRulesPanel busy={busy} onDirty={setRulesDirty} onSaved={() => setRulesRefresh((v) => v + 1)} />
-      <ProductionMemoryPanel busy={busy} refresh={memoryRefresh} onDirty={setMemoryDirty} />
+      <ProductionMemoryPanel busy={busy} refresh={memoryRefresh} onDirty={setMemoryDirty} onChanged={() => setMemoryRefresh((value) => value + 1)} />
       <ProductionPolicyPanel value={policy} onChange={setPolicy} nodes={nodes} groups={groups} busy={busy} />
       <div className="inspector-scrollbar min-h-0 flex-1 overflow-y-auto" aria-live="polite">
         {messages.map((m, i) => (

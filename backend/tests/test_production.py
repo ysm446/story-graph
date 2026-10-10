@@ -1310,3 +1310,35 @@ def test_cancel_during_memory_review_keeps_unreviewed_memo(store, monkeypatch):
     assert note["content"] == "残す方針" and note["revision"] == 1
     assert note["checkpoint"]["status"] == "interrupted"
     assert not note["reviewed_at"]
+
+
+def test_reset_memory_only_and_restart_revision(store, monkeypatch):
+    import app as api
+    monkeypatch.setattr(api, "store", store)
+    monkeypatch.setattr(production, "gate", production.ProductionGate())
+    production_memory.write(store, "初期方針", "初期", "user")
+    production_memory.write(store, "更新後の方針", "更新", "user")
+    production_memory.checkpoint(store, "run", "chat", "依頼", "completed", [], [])
+    production_memory.mark_reviewed(store, production_memory.basis(store), 2)
+    store.set_settings({"author_chat_rules": "600文字程度"})
+    before_graph, before_chars, before_chats = store.graph(), store.list_characters(), store.list_chats()
+    async def check():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=api.app), base_url="http://test") as client:
+            assert (await client.delete("/production/memory?revision=1")).status_code == 409
+            assert len(production_memory.history(store)) == 2
+            production.gate.active = True
+            assert (await client.delete("/production/memory?revision=2")).status_code == 409
+            production.gate.active = False
+            result = await client.delete("/production/memory?revision=2")
+            assert result.status_code == 200
+            note = result.json()
+            assert note["revision"] == 0 and note["content"] == ""
+            assert note["checkpoint"] is None and note["reviewed_at"] is None
+            assert production_memory.history(store) == []
+            assert production_memory.review_state(store) == {}
+            assert (await client.delete("/production/memory?revision=0")).status_code == 200
+    run(check())
+    assert store.graph() == before_graph and store.list_characters() == before_chars
+    assert store.list_chats() == before_chats
+    assert store.get_settings()["author_chat_rules"] == "600文字程度"
+    assert production_memory.write(store, "新しい方針", "再開", "user")["revision"] == 1

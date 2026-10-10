@@ -1,21 +1,23 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { productionApi, type ProductionMemory } from './api'
 import { Markdown } from './Markdown'
 
 const memoryDate = (value: string): string => new Date(value).toLocaleString('ja-JP', { hour12: false })
 
 /** ライブラリ共通の方針と、最後に確定した作業の記録。 */
-export default function ProductionMemoryPanel({ busy, refresh, onDirty }: {
-  busy: boolean; refresh: number; onDirty: (dirty: boolean) => void
+export default function ProductionMemoryPanel({ busy, refresh, onDirty, onChanged }: {
+  busy: boolean; refresh: number; onDirty: (dirty: boolean) => void; onChanged: () => void
 }): React.JSX.Element {
   const [memory, setMemory] = useState<ProductionMemory | null>(null)
   const [draft, setDraft] = useState('')
   const [editing, setEditing] = useState(false)
   const [saving, setSaving] = useState(false)
+  const historyEpoch = useRef(0)
+  const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
   const [versions, setVersions] = useState<ProductionMemory[]>([])
   const dirty = editing && draft !== memory?.content
-  useEffect(() => { onDirty(dirty) }, [dirty, onDirty])
+  useEffect(() => { onDirty(dirty || saving) }, [dirty, saving, onDirty])
   useEffect(() => {
     let active = true
     productionApi.memory().then((value) => { if (active) setMemory(value) }).catch((e) => { if (active) setError(String(e)) })
@@ -25,10 +27,26 @@ export default function ProductionMemoryPanel({ busy, refresh, onDirty }: {
     if (!memory) return
     setSaving(true)
     setError('')
+    setNotice('')
+    historyEpoch.current += 1
     try {
       setMemory(await productionApi.saveMemory(draft, memory.revision))
       setEditing(false)
       setVersions([])
+      onChanged()
+    } catch (e) { setError(String(e)) }
+    finally { setSaving(false) }
+  }
+  const reset = async (): Promise<void> => {
+    if (busy || saving || !memory) return
+    if (!window.confirm('作業メモをリセットしますか？\nメモ本文・更新履歴・前回の作業記録・照合情報と、編集中のメモを消去し、版番号を初期化します。\nシーン・資料庫・会話履歴・AIへのルール・スナップショットは残ります。')) return
+    setSaving(true); setError(''); setNotice('')
+    historyEpoch.current += 1
+    try {
+      setMemory(await productionApi.resetMemory(memory.revision))
+      setDraft(''); setEditing(false); setVersions([])
+      setNotice('作業メモをリセットしました。')
+      onChanged()
     } catch (e) { setError(String(e)) }
     finally { setSaving(false) }
   }
@@ -48,7 +66,7 @@ export default function ProductionMemoryPanel({ busy, refresh, onDirty }: {
       {editing ? <textarea aria-label="制作の作業メモ" value={draft} disabled={busy || saving} maxLength={6000} rows={9}
         onChange={(e) => setDraft(e.target.value)} className="inspector-scrollbar w-full rounded-md border px-2 py-0.5 text-[12px] outline-none"
         style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }} /> : <Markdown text={memory?.content || 'まだ作業メモはありません。制作中に方針や次の作業を記録します。'} />}
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         {editing ? <>
           <button className={button} style={style} disabled={busy || saving} onClick={() => void save()} data-tip="作業メモを保存します">メモを保存</button>
           <button className={button} style={style} disabled={saving} onClick={() => {
@@ -56,14 +74,20 @@ export default function ProductionMemoryPanel({ busy, refresh, onDirty }: {
             setError('')
             void productionApi.memory().then(setMemory).catch((e) => setError(String(e)))
           }} data-tip="入力を取り消し、保存済みのメモを読み直します">キャンセル</button>
-        </> : <button className={button} style={style} disabled={busy || !memory} onClick={() => { setDraft(memory?.content ?? ''); setEditing(true) }} data-tip={busy ? '制作が終わるか停止してから修正できます' : '方針や決定事項を修正します'}>メモを編集</button>}
-        <button className={button} style={style} onClick={() => void productionApi.memoryHistory().then(setVersions).catch((e) => setError(String(e)))} data-tip="直近20版のメモと更新理由を表示します">更新履歴</button>
+        </> : <button className={button} style={style} disabled={busy || saving || !memory} onClick={() => { setDraft(memory?.content ?? ''); setEditing(true) }} data-tip={busy ? '制作が終わるか停止してから修正できます' : '方針や決定事項を修正します'}>メモを編集</button>}
+        <button className={button} style={style} disabled={saving} onClick={() => {
+          const epoch = historyEpoch.current
+          void productionApi.memoryHistory().then((value) => { if (epoch === historyEpoch.current) setVersions(value) }).catch((e) => { if (epoch === historyEpoch.current) setError(String(e)) })
+        }} data-tip="直近20版のメモと更新理由を表示します">更新履歴</button>
         <button className={button} style={style} disabled={!memory?.content} onClick={() => {
           const url = URL.createObjectURL(new Blob([memory?.content ?? ''], { type: 'text/markdown;charset=utf-8' }))
           const a = document.createElement('a'); a.href = url; a.download = 'production-memory.md'; a.click()
           setTimeout(() => URL.revokeObjectURL(url), 1000)
         }} data-tip="現在のメモをMarkdownとして書き出します">書き出す</button>
+        <button className={`delete-action ${button}`} disabled={busy || saving || !memory} onClick={() => void reset()}
+          data-tip={busy ? '制作が終わるか停止してからリセットできます' : 'メモ本文・更新履歴・作業記録・照合情報を消去し、版番号を初期化します'}>作業メモをリセット</button>
       </div>
+      {notice && <p role="status" className="text-[11px]" style={{ color: 'var(--text-dim)' }}>{notice}</p>}
       {error && <p role="alert" style={{ color: 'var(--danger)' }}>{error}</p>}
       {memory?.checkpoint && <details>
         <summary className="cursor-pointer">前回の作業記録 · {({ completed: '完了', interrupted: '中断', running: '作業中に保存', limit: '上限で停止', error: 'エラーで停止' } as Record<string, string>)[memory.checkpoint.status]}</summary>

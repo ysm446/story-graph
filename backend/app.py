@@ -2384,6 +2384,14 @@ async def production_memory_put(body: ProductionMemoryIn):
         raise HTTPException(409, str(e))
 
 
+@app.delete("/production/memory")
+async def production_memory_reset(revision: int):
+    try:
+        return production_agent.production_memory.reset(store, revision)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+
+
 @app.get("/production/chats")
 async def production_chats() -> list[dict[str, Any]]:
     return [c for c in store.list_chats() if c.get("mode") == "production"]

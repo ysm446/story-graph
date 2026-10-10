@@ -23,6 +23,18 @@ def history(store):
     return [dict(row) for row in store.conn.execute("SELECT * FROM production_memory ORDER BY revision DESC LIMIT 20")]
 
 
+def reset(store, expected_revision):
+    if read(store)["revision"] != expected_revision:
+        raise ValueError("作業メモが更新されています。再読込してからリセットしてください")
+    # 版番号も初期化する。作品・会話・作者のルールには触れない。
+    with store.conn:
+        store.conn.execute("DELETE FROM production_memory")
+        store.conn.execute("DELETE FROM production_checkpoint")
+        store.conn.execute("DELETE FROM production_memory_review")
+        store.conn.execute("DELETE FROM sqlite_sequence WHERE name='production_memory'")
+    return read(store)
+
+
 def write(store, content, reason, source, chat_id=None, expected_revision=None):
     if not isinstance(content, str) or len(content) > MAX_CHARS:
         raise ValueError(f"作業メモは{MAX_CHARS}文字以内で指定してください")
