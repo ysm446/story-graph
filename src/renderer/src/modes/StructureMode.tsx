@@ -704,403 +704,410 @@ function BeatTab({
   }, [draft, dirty, node.id, draftNodeId])
 
   return (
-    <div className="flex flex-col gap-3">
-      {/* 「★ このブランチを正史にする」は置かない(2026-08-02 ユーザー判断)。
-          正史は**アクティブな結末から遡った道**なので、決めることは「どの結末を
-          アクティブにするか」だけ。道を直接選ぶ操作があると概念が二重になるうえ、
-          中身の make_canon は枝の先に結末が無いと黙って結末を作っていた。
-          切替は結末ノードの右クリック「🏁 この結末にする」で行う。
-          「ここから先のイベントを作り直す」も右クリックと同じ操作なので置かない */}
-      {validation.length > 0 && (
-        <div
-          className="rounded-lg border px-3 py-2 text-[12px] leading-relaxed"
-          style={{ borderColor: 'rgba(239,68,68,0.4)', background: 'rgba(239,68,68,0.08)', color: '#f2a3a3' }}
-        >
-          {validation.map((v, i) => (
-            <div key={i}>⚠ {v}</div>
-          ))}
-        </div>
-      )}
-      <label className="block">
-        <span className="mb-1 flex items-center justify-between">
-          <span className={labelClass.replace('mb-1 block ', '')} style={{ color: 'var(--text-faint)' }}>
-            Title
-          </span>
-          <button
-            onClick={(e) => {
-              e.preventDefault()
-              suggestField('title')
-            }}
-            disabled={suggesting !== null || !(draft.beat ?? '').trim()}
-            // 色は index.css の .accent-action(校正ボタンなど LLM を走らせるボタン共通)
-            className="accent-action inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium disabled:opacity-40"
-            data-tip="シーン本文からタイトルを自動生成"
-          >
-            {suggesting === 'title' ? (
-              `生成中… (${suggestElapsed}s)`
-            ) : (
-              <>
-                <Icon name="sparkle" size={11} />
-                自動生成
-              </>
-            )}
-          </button>
-        </span>
-        <input
-          value={draft.title ?? ''}
-          onChange={(e) => setDraft((d) => ({ ...d, title: e.target.value }))}
-          className="w-full rounded-lg border px-3 py-1.5 text-[13px] outline-none"
-          style={inputStyle}
-        />
-      </label>
-      <label className="block">
-        <span className={labelClass} style={{ color: 'var(--text-faint)' }}>
-          シーン(出来事の仕様書)
-        </span>
-        {/* 高さの自動調整と校正ボタンは共通コンポーネント側で行う(ボタンは本文の下に常に出る)。
-            長いシーン本文の一部を直すことがあるので、前後を文脈として渡す */}
-        <ProofreadTextarea
-          rows={4}
-          value={draft.beat ?? ''}
-          onChange={(next) => setDraft((d) => ({ ...d, beat: next }))}
-          style={inputStyle}
-          withContext
-        />
-      </label>
-      <label className="block">
-        <span className="mb-1 flex items-center justify-between">
-          <span className={labelClass.replace('mb-1 block ', '')} style={{ color: 'var(--text-faint)' }}>
-            Emotional core
-          </span>
-          <button
-            onClick={(e) => {
-              e.preventDefault()
-              suggestField('emotional_core')
-            }}
-            disabled={suggesting !== null || !(draft.beat ?? '').trim()}
-            // 色は index.css の .accent-action(校正ボタンなど LLM を走らせるボタン共通)
-            className="accent-action inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium disabled:opacity-40"
-            data-tip="シーン本文から感情の核を自動生成"
-          >
-            {suggesting === 'emotional_core' ? (
-              `生成中… (${suggestElapsed}s)`
-            ) : (
-              <>
-                <Icon name="sparkle" size={11} />
-                自動生成
-              </>
-            )}
-          </button>
-        </span>
-        {/* 長い一文になることがあるので、input ではなく自動で高さが伸びる textarea */}
-        <textarea
-          ref={coreTextareaRef}
-          rows={1}
-          value={draft.emotional_core ?? ''}
-          onChange={(e) => setDraft((d) => ({ ...d, emotional_core: e.target.value }))}
-          className="w-full resize-none overflow-hidden rounded-lg border px-3 py-1.5 text-[13px] leading-relaxed outline-none"
-          style={inputStyle}
-        />
-      </label>
-      <div>
-        <span className={labelClass} style={{ color: 'var(--text-faint)' }}>
-          Cast
-        </span>
-        <div className="flex flex-wrap gap-1.5">
-          {characters.map((c) => {
-            const active = (draft.cast ?? []).includes(c.id)
-            const retired = retiredHere.includes(c.id)
-            return (
-              <span
-                key={c.id}
-                // ⊗ が出る(cast 入り)ときだけ右の余白を詰める。出ないときは左右対称に
-                className={`inline-flex items-center gap-1.5 rounded-full border py-1 pl-2.5 text-[12px] ${
-                  active ? 'pr-1' : 'pr-2.5'
-                }`}
-                style={
-                  active
-                    ? { background: 'var(--accent-soft)', borderColor: 'var(--accent-border)', color: 'var(--text)' }
-                    : { background: 'transparent', borderColor: 'var(--border)', color: 'var(--text-faint)' }
-                }
-              >
-                <button onClick={() => toggleCast(c.id)} className="inline-flex items-center gap-1.5">
-                  <span className="inline-block h-2 w-2 rounded-full" style={{ background: c.color ?? '#8a8fa8' }} />
-                  <span className={retired ? 'line-through' : undefined}>{c.name}</span>
-                </button>
-                {/* 退場は作者が決める(LLM には出させない)。このシーンで退場させる */}
-                {active && (
-                  <button
-                    onClick={() => {
-                      if (retired) void cancelRetire(c.id)
-                      else {
-                        setRetireReason('death')
-                        setRetireTarget(c.id)
-                      }
-                    }}
-                    className="rounded-full px-1 text-[11px]"
-                    style={{ color: retired ? 'var(--accent)' : 'var(--text-faint)' }}
-                    data-tip={
-                      retired
-                        ? 'このシーンでの退場を取り消す'
-                        : 'このシーンで退場させる(以降 cast に入れると警告)'
-                    }
-                  >
-                    {retired ? '⏎' : '⊗'}
-                  </button>
-                )}
-              </span>
-            )
-          })}
-        </div>
-        {/* 退場の理由を入力(Electron では prompt が使えないためインラインで) */}
-        {retireTarget && (
-          <div className="mt-1.5 flex items-center gap-1.5 text-[11px]">
-            <span style={{ color: 'var(--text-dim)' }}>
-              {characters.find((c) => c.id === retireTarget)?.name} を退場させる理由:
-            </span>
-            <input
-              autoFocus
-              value={retireReason}
-              onChange={(e) => setRetireReason(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
-                  e.preventDefault()
-                  void saveRetire(retireTarget, retireReason)
-                }
-                if (e.key === 'Escape') setRetireTarget(null)
-              }}
-              placeholder="death / departure など"
-              className="w-40 rounded-md border px-1.5 py-0.5 outline-none"
-              style={{ background: 'var(--bg-input)', borderColor: 'var(--accent-border)' }}
-            />
-            <button
-              onClick={() => void saveRetire(retireTarget, retireReason)}
-              className="rounded-md px-2 py-0.5 font-medium text-white"
-              style={{ background: 'var(--accent)' }}
-            >
-              退場させる
-            </button>
-            <button onClick={() => setRetireTarget(null)} style={{ color: 'var(--text-faint)' }}>
-              取消
-            </button>
-          </div>
-        )}
-        {retiredHere.length > 0 && (
-          <p className="mt-1 text-[11px]" style={{ color: 'var(--text-faint)' }}>
-            このシーンで退場: {retiredHere.map((id) => characters.find((c) => c.id === id)?.name ?? id).join(', ')}
-          </p>
-        )}
-      </div>
-      <div className="grid grid-cols-2 gap-2">
-        <label className="block">
-          <span className={labelClass} style={{ color: 'var(--text-faint)' }}>
-            Location
-          </span>
-          {/* 場所は登録制。未指定なら親から引き継ぐ(docs/design/places.md) */}
-          <select
-            value={draft.location ?? ''}
-            onChange={(e) => setDraft((d) => ({ ...d, location: e.target.value || null }))}
-            className="w-full rounded-lg border px-3 py-1.5 text-[13px] outline-none"
-            style={{
-              ...inputStyle,
-              color: draft.location ? 'var(--text)' : 'var(--text-faint)'
-            }}
-          >
-            <option value="">
-              {inheritedPlaceName ? `引き継ぎ(${inheritedPlaceName})` : '指定しない'}
-            </option>
-            {places.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
-          {places.length === 0 && (
-            <span className="mt-1 block text-[10px]" style={{ color: 'var(--text-faint)' }}>
-              資料庫の「場所」タブで登録できます
-            </span>
-          )}
-        </label>
-        <label className="block">
-          <span className={labelClass} style={{ color: 'var(--text-faint)' }}>
-            Story time
-          </span>
-          <input
-            value={draft.story_time ?? ''}
-            onChange={(e) => setDraft((d) => ({ ...d, story_time: e.target.value }))}
-            className="w-full rounded-lg border px-3 py-1.5 text-[13px] outline-none"
-            style={inputStyle}
-          />
-        </label>
-      </div>
-      {/* 挿絵(画像/動画。装飾専用。LLM には渡さない) */}
-      {lightboxOpen && node.image_path && assetUrl(node.image_path) && (
-        <Lightbox src={assetUrl(node.image_path)!} path={node.image_path} onClose={() => setLightboxOpen(false)} />
-      )}
-      {sceneImageOpen && (
-        <SceneImageModal
-          node={node}
-          characters={characters}
-          onGenerated={onSaved}
-          onClose={() => setSceneImageOpen(false)}
-        />
-      )}
-      {stockOpen && (
-        <MediaPicker
-          ownerType="node"
-          ownerId={node.id}
-          aspect="1216 / 832"
-          accept="image/png,image/jpeg,image/gif,image/webp,video/mp4,video/webm"
-          onChanged={onSaved}
-          onClose={() => setStockOpen(false)}
-        />
-      )}
-      <div>
-        <div className="mb-1 flex items-center justify-between">
-          <span className="text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
-            挿絵
-          </span>
-          <div className="flex gap-1.5">
-            <button
-              onClick={() => setSceneImageOpen(true)}
-              className="accent-action inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium"
-              data-tip="ビート・場所・登場人物(参照画像)から ComfyUI でこの場面の画像を生成します"
-            >
-              <Icon name="sparkle" size={11} /> 生成
-            </button>
-            <button
-              onClick={() => setStockOpen(true)}
-              className="rounded-md border px-2 py-0.5 text-[11px]"
-              style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-              data-tip="生成した候補と手持ちの画像・動画の一覧。ここから 1 枚を選び直したり、いらない候補を削除したりできます"
-            >
-              ストック
-            </button>
-            <button
-              onClick={() => imageInputRef.current?.click()}
-              className="rounded-md border px-2 py-0.5 text-[11px]"
-              style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-            >
-              {node.image_path ? '変更' : '+ 画像/動画を添付'}
-            </button>
-            {node.image_path && (
-              <button
-                onClick={() => void api.setNodeImage(node.id, null).then(onSaved)}
-                className="rounded-md border px-2 py-0.5 text-[11px]"
-                style={{ borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }}
-                data-tip="挿絵を外します(ストックには残るので、あとから選び直せます)"
-              >
-                外す
-              </button>
-            )}
-          </div>
-        </div>
-        <input
-          ref={imageInputRef}
-          type="file"
-          accept="image/png,image/jpeg,image/gif,image/webp,video/mp4,video/webm"
-          className="hidden"
-          onChange={(e) => {
-            const file = e.target.files?.[0]
-            e.target.value = ''
-            if (file) handleImageFile(file)
-          }}
-        />
-        <div
-          onDragEnter={(e) => {
-            e.preventDefault()
-            imageDragDepth.current += 1
-            setImageDragOver(true)
-          }}
-          onDragOver={(e) => e.preventDefault()}
-          onDragLeave={() => {
-            imageDragDepth.current -= 1
-            if (imageDragDepth.current <= 0) {
-              imageDragDepth.current = 0
-              setImageDragOver(false)
-            }
-          }}
-          onDrop={(e) => {
-            e.preventDefault()
-            imageDragDepth.current = 0
-            setImageDragOver(false)
-            const file = e.dataTransfer.files?.[0]
-            if (file) handleImageFile(file)
-          }}
-          onClick={() => {
-            // 挿絵が無ければファイル選択、あれば拡大表示
-            if (!node.image_path) imageInputRef.current?.click()
-            else setLightboxOpen(true)
-          }}
-          className="relative cursor-zoom-in rounded-xl transition-colors"
-          data-tip={node.image_path ? 'クリックで拡大 / ドロップで差し替え' : undefined}
-          style={imageDragOver ? { outline: '2px dashed var(--accent)', outlineOffset: 2 } : undefined}
-        >
-          {assetUrl(node.image_path) ? (
-            <>
-              {isVideoAsset(node.image_path) ? (
-                <video
-                  src={assetUrl(node.image_path)!}
-                  autoPlay
-                  muted
-                  loop
-                  playsInline
-                  className="pointer-events-none mx-auto max-h-60 max-w-full rounded-xl"
-                />
-              ) : (
-                <img
-                  src={assetUrl(node.image_path)!}
-                  draggable={false}
-                  className="pointer-events-none mx-auto max-h-60 max-w-full rounded-xl"
-                />
-              )}
-              {imageDragOver && (
-                <span
-                  className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-xl text-[12px] font-medium"
-                  style={{ background: 'rgba(13,15,20,0.7)', color: 'var(--accent)' }}
-                >
-                  ドロップで差し替え
-                </span>
-              )}
-            </>
-          ) : (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="inspector-scrollbar min-h-0 flex-1 overflow-y-auto p-3">
+        <div className="flex flex-col gap-3">
+          {/* 「★ このブランチを正史にする」は置かない(2026-08-02 ユーザー判断)。
+              正史は**アクティブな結末から遡った道**なので、決めることは「どの結末を
+              アクティブにするか」だけ。道を直接選ぶ操作があると概念が二重になるうえ、
+              中身の make_canon は枝の先に結末が無いと黙って結末を作っていた。
+              切替は結末ノードの右クリック「🏁 この結末にする」で行う。
+              「ここから先のイベントを作り直す」も右クリックと同じ操作なので置かない */}
+          {validation.length > 0 && (
             <div
-              className="cursor-pointer rounded-xl border border-dashed px-4 py-6 text-center text-[12px]"
-              style={{
-                borderColor: imageDragOver ? 'var(--accent)' : 'var(--border-strong)',
-                color: imageDragOver ? 'var(--accent)' : 'var(--text-faint)'
-              }}
+              className="rounded-lg border px-3 py-2 text-[12px] leading-relaxed"
+              style={{ borderColor: 'rgba(239,68,68,0.4)', background: 'rgba(239,68,68,0.08)', color: '#f2a3a3' }}
             >
-              ここに画像/動画をドロップ(またはクリックで選択)
+              {validation.map((v, i) => (
+                <div key={i}>⚠ {v}</div>
+              ))}
             </div>
           )}
+          <label className="block">
+            <span className="mb-1 flex items-center justify-between">
+              <span className={labelClass.replace('mb-1 block ', '')} style={{ color: 'var(--text-faint)' }}>
+                Title
+              </span>
+              <button
+                onClick={(e) => {
+                  e.preventDefault()
+                  suggestField('title')
+                }}
+                disabled={suggesting !== null || !(draft.beat ?? '').trim()}
+                // 色は index.css の .accent-action(校正ボタンなど LLM を走らせるボタン共通)
+                className="accent-action inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium disabled:opacity-40"
+                data-tip="シーン本文からタイトルを自動生成"
+              >
+                {suggesting === 'title' ? (
+                  `生成中… (${suggestElapsed}s)`
+                ) : (
+                  <>
+                    <Icon name="sparkle" size={11} />
+                    自動生成
+                  </>
+                )}
+              </button>
+            </span>
+            <input
+              value={draft.title ?? ''}
+              onChange={(e) => setDraft((d) => ({ ...d, title: e.target.value }))}
+              className="w-full rounded-lg border px-3 py-1.5 text-[13px] outline-none"
+              style={inputStyle}
+            />
+          </label>
+          <label className="block">
+            <span className={labelClass} style={{ color: 'var(--text-faint)' }}>
+              シーン(出来事の仕様書)
+            </span>
+            {/* 高さの自動調整と校正ボタンは共通コンポーネント側で行う(ボタンは本文の下に常に出る)。
+                長いシーン本文の一部を直すことがあるので、前後を文脈として渡す */}
+            <ProofreadTextarea
+              rows={4}
+              value={draft.beat ?? ''}
+              onChange={(next) => setDraft((d) => ({ ...d, beat: next }))}
+              style={inputStyle}
+              withContext
+            />
+          </label>
+          <label className="block">
+            <span className="mb-1 flex items-center justify-between">
+              <span className={labelClass.replace('mb-1 block ', '')} style={{ color: 'var(--text-faint)' }}>
+                Emotional core
+              </span>
+              <button
+                onClick={(e) => {
+                  e.preventDefault()
+                  suggestField('emotional_core')
+                }}
+                disabled={suggesting !== null || !(draft.beat ?? '').trim()}
+                // 色は index.css の .accent-action(校正ボタンなど LLM を走らせるボタン共通)
+                className="accent-action inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium disabled:opacity-40"
+                data-tip="シーン本文から感情の核を自動生成"
+              >
+                {suggesting === 'emotional_core' ? (
+                  `生成中… (${suggestElapsed}s)`
+                ) : (
+                  <>
+                    <Icon name="sparkle" size={11} />
+                    自動生成
+                  </>
+                )}
+              </button>
+            </span>
+            {/* 長い一文になることがあるので、input ではなく自動で高さが伸びる textarea */}
+            <textarea
+              ref={coreTextareaRef}
+              rows={1}
+              value={draft.emotional_core ?? ''}
+              onChange={(e) => setDraft((d) => ({ ...d, emotional_core: e.target.value }))}
+              className="w-full resize-none overflow-hidden rounded-lg border px-3 py-1.5 text-[13px] leading-relaxed outline-none"
+              style={inputStyle}
+            />
+          </label>
+          <div>
+            <span className={labelClass} style={{ color: 'var(--text-faint)' }}>
+              Cast
+            </span>
+            <div className="flex flex-wrap gap-1.5">
+              {characters.map((c) => {
+                const active = (draft.cast ?? []).includes(c.id)
+                const retired = retiredHere.includes(c.id)
+                return (
+                  <span
+                    key={c.id}
+                    // ⊗ が出る(cast 入り)ときだけ右の余白を詰める。出ないときは左右対称に
+                    className={`inline-flex items-center gap-1.5 rounded-full border py-1 pl-2.5 text-[12px] ${
+                      active ? 'pr-1' : 'pr-2.5'
+                    }`}
+                    style={
+                      active
+                        ? { background: 'var(--accent-soft)', borderColor: 'var(--accent-border)', color: 'var(--text)' }
+                        : { background: 'transparent', borderColor: 'var(--border)', color: 'var(--text-faint)' }
+                    }
+                  >
+                    <button onClick={() => toggleCast(c.id)} className="inline-flex items-center gap-1.5">
+                      <span className="inline-block h-2 w-2 rounded-full" style={{ background: c.color ?? '#8a8fa8' }} />
+                      <span className={retired ? 'line-through' : undefined}>{c.name}</span>
+                    </button>
+                    {/* 退場は作者が決める(LLM には出させない)。このシーンで退場させる */}
+                    {active && (
+                      <button
+                        onClick={() => {
+                          if (retired) void cancelRetire(c.id)
+                          else {
+                            setRetireReason('death')
+                            setRetireTarget(c.id)
+                          }
+                        }}
+                        className="rounded-full px-1 text-[11px]"
+                        style={{ color: retired ? 'var(--accent)' : 'var(--text-faint)' }}
+                        data-tip={
+                          retired
+                            ? 'このシーンでの退場を取り消す'
+                            : 'このシーンで退場させる(以降 cast に入れると警告)'
+                        }
+                      >
+                        {retired ? '⏎' : '⊗'}
+                      </button>
+                    )}
+                  </span>
+                )
+              })}
+            </div>
+            {/* 退場の理由を入力(Electron では prompt が使えないためインラインで) */}
+            {retireTarget && (
+              <div className="mt-1.5 flex items-center gap-1.5 text-[11px]">
+                <span style={{ color: 'var(--text-dim)' }}>
+                  {characters.find((c) => c.id === retireTarget)?.name} を退場させる理由:
+                </span>
+                <input
+                  autoFocus
+                  value={retireReason}
+                  onChange={(e) => setRetireReason(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+                      e.preventDefault()
+                      void saveRetire(retireTarget, retireReason)
+                    }
+                    if (e.key === 'Escape') setRetireTarget(null)
+                  }}
+                  placeholder="death / departure など"
+                  className="w-40 rounded-md border px-1.5 py-0.5 outline-none"
+                  style={{ background: 'var(--bg-input)', borderColor: 'var(--accent-border)' }}
+                />
+                <button
+                  onClick={() => void saveRetire(retireTarget, retireReason)}
+                  className="rounded-md px-2 py-0.5 font-medium text-white"
+                  style={{ background: 'var(--accent)' }}
+                >
+                  退場させる
+                </button>
+                <button onClick={() => setRetireTarget(null)} style={{ color: 'var(--text-faint)' }}>
+                  取消
+                </button>
+              </div>
+            )}
+            {retiredHere.length > 0 && (
+              <p className="mt-1 text-[11px]" style={{ color: 'var(--text-faint)' }}>
+                このシーンで退場: {retiredHere.map((id) => characters.find((c) => c.id === id)?.name ?? id).join(', ')}
+              </p>
+            )}
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <label className="block">
+              <span className={labelClass} style={{ color: 'var(--text-faint)' }}>
+                Location
+              </span>
+              {/* 場所は登録制。未指定なら親から引き継ぐ(docs/design/places.md) */}
+              <select
+                value={draft.location ?? ''}
+                onChange={(e) => setDraft((d) => ({ ...d, location: e.target.value || null }))}
+                className="w-full rounded-lg border px-3 py-1.5 text-[13px] outline-none"
+                style={{
+                  ...inputStyle,
+                  color: draft.location ? 'var(--text)' : 'var(--text-faint)'
+                }}
+              >
+                <option value="">
+                  {inheritedPlaceName ? `引き継ぎ(${inheritedPlaceName})` : '指定しない'}
+                </option>
+                {places.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+              {places.length === 0 && (
+                <span className="mt-1 block text-[10px]" style={{ color: 'var(--text-faint)' }}>
+                  資料庫の「場所」タブで登録できます
+                </span>
+              )}
+            </label>
+            <label className="block">
+              <span className={labelClass} style={{ color: 'var(--text-faint)' }}>
+                Story time
+              </span>
+              <input
+                value={draft.story_time ?? ''}
+                onChange={(e) => setDraft((d) => ({ ...d, story_time: e.target.value }))}
+                className="w-full rounded-lg border px-3 py-1.5 text-[13px] outline-none"
+                style={inputStyle}
+              />
+            </label>
+          </div>
+          {/* 挿絵(画像/動画。装飾専用。LLM には渡さない) */}
+          {lightboxOpen && node.image_path && assetUrl(node.image_path) && (
+            <Lightbox src={assetUrl(node.image_path)!} path={node.image_path} onClose={() => setLightboxOpen(false)} />
+          )}
+          {sceneImageOpen && (
+            <SceneImageModal
+              node={node}
+              characters={characters}
+              onGenerated={onSaved}
+              onClose={() => setSceneImageOpen(false)}
+            />
+          )}
+          {stockOpen && (
+            <MediaPicker
+              ownerType="node"
+              ownerId={node.id}
+              aspect="1216 / 832"
+              accept="image/png,image/jpeg,image/gif,image/webp,video/mp4,video/webm"
+              onChanged={onSaved}
+              onClose={() => setStockOpen(false)}
+            />
+          )}
+          <div>
+            <div className="mb-1 flex items-center justify-between">
+              <span className="text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
+                挿絵
+              </span>
+              <div className="flex gap-1.5">
+                <button
+                  onClick={() => setSceneImageOpen(true)}
+                  className="accent-action inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium"
+                  data-tip="ビート・場所・登場人物(参照画像)から ComfyUI でこの場面の画像を生成します"
+                >
+                  <Icon name="sparkle" size={11} /> 生成
+                </button>
+                <button
+                  onClick={() => setStockOpen(true)}
+                  className="rounded-md border px-2 py-0.5 text-[11px]"
+                  style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+                  data-tip="生成した候補と手持ちの画像・動画の一覧。ここから 1 枚を選び直したり、いらない候補を削除したりできます"
+                >
+                  ストック
+                </button>
+                <button
+                  onClick={() => imageInputRef.current?.click()}
+                  className="rounded-md border px-2 py-0.5 text-[11px]"
+                  style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+                >
+                  {node.image_path ? '変更' : '+ 画像/動画を添付'}
+                </button>
+                {node.image_path && (
+                  <button
+                    onClick={() => void api.setNodeImage(node.id, null).then(onSaved)}
+                    className="rounded-md border px-2 py-0.5 text-[11px]"
+                    style={{ borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }}
+                    data-tip="挿絵を外します(ストックには残るので、あとから選び直せます)"
+                  >
+                    外す
+                  </button>
+                )}
+              </div>
+            </div>
+            <input
+              ref={imageInputRef}
+              type="file"
+              accept="image/png,image/jpeg,image/gif,image/webp,video/mp4,video/webm"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0]
+                e.target.value = ''
+                if (file) handleImageFile(file)
+              }}
+            />
+            <div
+              onDragEnter={(e) => {
+                e.preventDefault()
+                imageDragDepth.current += 1
+                setImageDragOver(true)
+              }}
+              onDragOver={(e) => e.preventDefault()}
+              onDragLeave={() => {
+                imageDragDepth.current -= 1
+                if (imageDragDepth.current <= 0) {
+                  imageDragDepth.current = 0
+                  setImageDragOver(false)
+                }
+              }}
+              onDrop={(e) => {
+                e.preventDefault()
+                imageDragDepth.current = 0
+                setImageDragOver(false)
+                const file = e.dataTransfer.files?.[0]
+                if (file) handleImageFile(file)
+              }}
+              onClick={() => {
+                // 挿絵が無ければファイル選択、あれば拡大表示
+                if (!node.image_path) imageInputRef.current?.click()
+                else setLightboxOpen(true)
+              }}
+              className="relative cursor-zoom-in rounded-xl transition-colors"
+              data-tip={node.image_path ? 'クリックで拡大 / ドロップで差し替え' : undefined}
+              style={imageDragOver ? { outline: '2px dashed var(--accent)', outlineOffset: 2 } : undefined}
+            >
+              {assetUrl(node.image_path) ? (
+                <>
+                  {isVideoAsset(node.image_path) ? (
+                    <video
+                      src={assetUrl(node.image_path)!}
+                      autoPlay
+                      muted
+                      loop
+                      playsInline
+                      className="pointer-events-none mx-auto max-h-60 max-w-full rounded-xl"
+                    />
+                  ) : (
+                    <img
+                      src={assetUrl(node.image_path)!}
+                      draggable={false}
+                      className="pointer-events-none mx-auto max-h-60 max-w-full rounded-xl"
+                    />
+                  )}
+                  {imageDragOver && (
+                    <span
+                      className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-xl text-[12px] font-medium"
+                      style={{ background: 'rgba(13,15,20,0.7)', color: 'var(--accent)' }}
+                    >
+                      ドロップで差し替え
+                    </span>
+                  )}
+                </>
+              ) : (
+                <div
+                  className="cursor-pointer rounded-xl border border-dashed px-4 py-6 text-center text-[12px]"
+                  style={{
+                    borderColor: imageDragOver ? 'var(--accent)' : 'var(--border-strong)',
+                    color: imageDragOver ? 'var(--accent)' : 'var(--text-faint)'
+                  }}
+                >
+                  ここに画像/動画をドロップ(またはクリックで選択)
+                </div>
+              )}
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={() => void handleDelete()} className="ml-auto text-[12px]" style={{ color: 'var(--danger)' }}>
+              削除
+            </button>
+          </div>
+          <EventsEditor
+            node={node}
+            characters={characters}
+            onChanged={onSaved}
+            onBusyChange={(busy: boolean) => onNodeBusyChange(node.id, busy)}
+          />
         </div>
       </div>
-      <div className="flex items-center gap-2">
-        <button
-          onClick={() => void handleSave()}
-          disabled={!dirty}
-          className="rounded-lg px-4 py-1.5 text-[13px] font-medium text-white disabled:opacity-40"
-          style={{ background: 'var(--accent)' }}
-          data-tip={dirty ? undefined : '変更はありません'}
-        >
-          保存
-        </button>
-        <button onClick={() => void handleDelete()} className="ml-auto text-[12px]" style={{ color: 'var(--danger)' }}>
-          削除
-        </button>
-      </div>
-      {error && (
-        <div className="text-[12px]" style={{ color: 'var(--danger)' }}>
-          {error}
+      <div className="shrink-0 border-t px-3 py-2" style={{ borderColor: 'var(--border)', background: 'var(--bg-sidebar)' }}>
+        {error && <div role="alert" className="mb-1 text-[12px]" style={{ color: 'var(--danger)' }}>{error}</div>}
+        <div className="flex items-center justify-between gap-2">
+          <span role="status" className="text-[11px]" style={{ color: 'var(--text-dim)' }}>
+            {dirty ? '未保存の変更があります' : '変更はありません'}
+          </span>
+          <button
+            onClick={() => void handleSave()}
+            disabled={!dirty}
+            className="shrink-0 rounded-md px-3 py-1 text-[12px] font-medium disabled:opacity-50"
+            style={{ background: 'var(--accent)', color: 'var(--text)' }}
+            data-tip={dirty ? 'シーンの変更を保存します' : '変更はありません'}
+          >
+            保存
+          </button>
         </div>
-      )}
-      <EventsEditor
-        node={node}
-        characters={characters}
-        onChanged={onSaved}
-        onBusyChange={(busy: boolean) => onNodeBusyChange(node.id, busy)}
-      />
+      </div>
     </div>
   )
 }
@@ -5204,7 +5211,9 @@ function StructureModeInner({
               </button>
             ))}
           </div>
-          <div className="inspector-scrollbar min-h-0 flex-1 overflow-y-auto p-3">
+          <div className={inspectorTab === 'beat' && selectedNode && !selectedNode.kind && !activeGroup
+            ? 'flex min-h-0 flex-1 flex-col overflow-hidden'
+            : 'inspector-scrollbar min-h-0 flex-1 overflow-y-auto p-3'}>
             {inspectorTab === 'graph' ? (
               <RelationGraph
                 characters={characters}
