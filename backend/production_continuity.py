@@ -63,4 +63,5 @@ async def check(store, base_url, node_id):
             raise ValueError("整合性確認の引用が本文と一致しません。追加は未確定です")
         problems.append(f'{issue["before_id"]}「{issue["before_quote"]}」→{issue["after_id"]}「{issue["after_quote"]}」: {issue["reason"]}')
     if problems:
-        raise ValueError("追加を確定しません。前後の成立順・重複を見直してください。" + " / ".join(problems))
+        raise ValueError("追加を確定しません。前後の成立順・重複を見直してください。"
+                         "既存シーンの分割なら、先に元のシーンから該当部分を削ってから追加してください。" + " / ".join(problems))

@@ -355,6 +355,10 @@ async def apply_edit(store: Store, base_url: str, name: str, args: dict, before_
         if name != "delete_scene":
             node = store.get_node(node_id)
             result["scene"] = {k: node[k] for k in ("id", "title", "beat", "cast", "location")}
+        if name == "update_scene":
+            # 分割(前半に縮めてから残りを新しいシーンにする)で、縮めた本文を次の判断で
+            # 使えるように返す。確定後は古い取得結果を捨てるため、ここでしか残らない。
+            result["previous_beat"] = original.get("beat") or ""
         return result
     finally:
         candidate_conn.close()
@@ -380,10 +384,15 @@ def _patch_args(store, args):
         old = args.get("old_text")
         if not isinstance(old, str) or not old:
             raise ValueError("置換には空でないold_textが必要です")
-        start = beat.find(old)
-        if start < 0:
-            old = normalize_scene_text(old)
+        # 原文→改行表記の補正→前後の空白を除いた形の順に、本文中で一意に見つかる最初の形を使う。
+        # 段落の末尾を削る分割では、置換元の末尾改行の有無だけで一致を外しやすい。
+        candidates = [old, normalize_scene_text(old)]
+        candidates += [c.strip() for c in candidates]
+        start = -1
+        for old in dict.fromkeys(c for c in candidates if c):
             start = beat.find(old)
+            if start >= 0:
+                break
         if start < 0 or beat.find(old, start + 1) >= 0:
             raise ValueError("置換元が本文の1か所に一致しません。get_beatsで最新の本文を読み、前後を含めて一意に指定してください")
         updated = beat[:start] + text + beat[start + len(old):]
@@ -404,6 +413,9 @@ def build_messages(store, history, message, execute, policy, previous_checkpoint
         "insert_sceneを正史の分岐元に使うと正史の間へ割り込むため、分岐作成の代用にはできません。"
         "枝の続きは作成した枝の末尾IDをafter_idにしてinsert_sceneで延長し、元の分岐元へ繰り返し挿入しないでください。"
         "追記・補強では既存の出来事や約束を維持してください。依頼にない証拠・秘密・人物設定を新たに確定したり、既存の約束と矛盾する制限を加えたりしないでください。"
+        "既存シーンを複数に分割するときは、先にpatch_sceneまたはupdate_sceneで元のシーンを前半だけに縮め、"
+        "その結果のprevious_beatに残る続きの本文を、縮めたシーンの後ろへinsert_sceneで1場面ずつ追加してください。"
+        "元のシーンに同じ本文が残ったまま後半を追加すると、前後照合で重複として拒否されます。"
         "質問・意見を求められただけなら編集しないで回答してください。"
         "『この案で進めて』などの実行依頼では、直前の会話で提示した変更案を参照し、その範囲だけを実施してください。案が特定できなければ確認してください。"
         "変更は短い理由を添え、目的を達成したら通常の文章で報告して終了してください。"
@@ -510,7 +522,7 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
                                       changes, recent_results, run.id)
             yield chat_agent._sse({"usage": await context_usage(store, base_url, messages, execute)})
             yield chat_agent._sse({"stage": f"確認しています… ({step + 1}/{MAX_STEPS})"})
-            result = {}
+            result: dict[str, Any] = {}
             async for kind, value in llm.chat_stream_tools(
                 messages, base_url=base_url, tools=tools(execute), temperature=0.5,
                 max_tokens=3072, label=f"制作チャット({step + 1})",
@@ -547,13 +559,19 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
                 completed = True
                 break
             # 複数呼び出しを返しても1つずつ処理し、確定ごとに画面へ知らせる。
+            truncated = (result.get("stats") or {}).get("finish_reason") == "length"
             for call in calls:
                 if run.pending:
                     break
                 name = call.get("function", {}).get("name", "")
                 try:
                     run.check_epoch(epoch)
-                    args = json.loads(call["function"].get("arguments") or "{}")
+                    try:
+                        args = json.loads(call["function"].get("arguments") or "{}")
+                    except json.JSONDecodeError as e:
+                        # 長い本文を複数の呼び出しで一度に出すと上限で途切れる。原因を日本語で返し、同じ応答の繰り返しを防ぐ。
+                        raise ValueError("ツール呼び出しの引数が応答の長さ上限で途切れました。1回の応答で呼ぶツールは1つにし、長い本文は場面ごとに分けて送ってください"
+                                         if truncated else f"引数のJSONが不正です: {e}")
                     if not isinstance(args, dict):
                         raise ValueError("引数はオブジェクトで指定してください")
                     if not execute:
@@ -587,15 +605,17 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
                         payload = await apply_edit(store, base_url, name, args, before_commit=lambda: run.check_epoch(epoch), policy=policy, versions=versions)
                         versions = NodeVersions(store)
                         applied.add(signature)
-                        changes.append({k: v for k, v in payload.items() if k != "scene"})
+                        # 縮める前の本文(previous_beat)は次の判断のツール結果にだけ渡し、履歴・画面・引継ぎには残さない。
+                        operation = {k: v for k, v in payload.items() if k != "previous_beat"}
+                        changes.append({k: v for k, v in operation.items() if k != "scene"})
                         # 変更前の本文が次の判断を引き戻さないよう、古い取得結果を捨てる。
                         recent_results.clear()
-                        history.append({"role": "assistant", "content": args["reason"], "operation": payload})
+                        history.append({"role": "assistant", "content": args["reason"], "operation": operation})
                         store.save_chat_messages(chat_id, history)
                         if name == "delete_scene" or name in production_library.WRITE_TOOLS:
                             on_delete()
                         save_checkpoint("running")
-                        yield chat_agent._sse({"changed": payload})
+                        yield chat_agent._sse({"changed": operation})
                     elif name == "read_library":
                         payload = production_library.read(store, args)
                     else:

@@ -1105,3 +1105,59 @@ def test_memory_api_revision_and_production_lock(store, monkeypatch):
             assert (await client.put("/production/memory", json={"content": "制作中", "revision": 1})).status_code == 409
             assert len((await client.get("/production/memory/history")).json()) == 1
     run(check())
+
+
+def test_split_scene_keeps_trimmed_text_available_for_next_insert(store, monkeypatch):
+    """分割: 前半に縮めた後も、縮める前の本文を次の判断のツール結果で参照できる。"""
+    fake_extraction(monkeypatch)
+    node_operations.update(store, "first", {"beat": "前半の出来事。\n\n後半の出来事。"})
+    prompts = []
+    async def model(messages, **kwargs):
+        prompts.append(messages)
+        if len(prompts) == 1:
+            yield "done", call("update_scene", {"node_id": "first", "beat": "前半の出来事。", "reason": "前半に縮める"})
+        elif len(prompts) == 2:
+            latest = messages[-1]["content"]
+            assert "後半の出来事。" in latest  # previous_beat が直近の取得結果に残る
+            yield "done", call("insert_scene", {"after_id": "first", "title": "後半", "beat": "後半の出来事。",
+                                                "cast": ["aya"], "reason": "残りを新しい場面にする"})
+        else:
+            yield "done", {"content": "分割しました"}
+    monkeypatch.setattr(llm, "chat_stream_tools", model)
+    events = run(collect(store, True))
+    changed = [e["changed"] for e in events if "changed" in e]
+    assert [c["action"] for c in changed] == ["update_scene", "insert_scene"]
+    assert all("previous_beat" not in c for c in changed)
+    history = store.get_chat(events[0]["chat_id"])["messages"]
+    assert all("previous_beat" not in m.get("operation", {}) for m in history)
+    canon = store.canon_path()
+    assert [store.get_node(n)["beat"] for n in canon] == ["前半の出来事。", "後半の出来事。", "村に戻る"]
+    assert "分割するときは" in prompts[0][0]["content"]
+
+
+def test_truncated_tool_arguments_are_reported_in_japanese(store, monkeypatch):
+    before = store.graph()
+    prompts = []
+    async def model(messages, **kwargs):
+        prompts.append(messages)
+        if len(prompts) == 1:
+            yield "done", {"content": "", "stats": {"finish_reason": "length"}, "tool_calls": [
+                {"function": {"name": "update_scene", "arguments": '{"node_id": "first", "beat": "途中で切れ'}}]}
+        else:
+            yield "done", {"content": "終了"}
+    monkeypatch.setattr(llm, "chat_stream_tools", model)
+    events = run(collect(store, True))
+    error = next(e["tool_error"] for e in events if "tool_error" in e)
+    assert "長さ上限で途切れました" in error
+    assert "途切れました" in prompts[1][-1]["content"]
+    assert store.graph() == before
+
+
+@pytest.mark.parametrize("old", ["後半の出来事。\n", "\n後半の出来事。", r"\n後半の出来事。\n"])
+def test_patch_replace_tolerates_surrounding_whitespace(store, monkeypatch, old):
+    fake_extraction(monkeypatch)
+    node_operations.update(store, "first", {"beat": "前半の出来事。\n\n後半の出来事。"})
+    change = run(production.apply_edit(store, "fake", "patch_scene", {
+        "node_id": "first", "mode": "replace", "old_text": old, "text": "", "reason": "後半を切り出す"}))
+    assert change["scene"]["beat"].rstrip("\n") == "前半の出来事。"
+    assert change["previous_beat"] == "前半の出来事。\n\n後半の出来事。"
