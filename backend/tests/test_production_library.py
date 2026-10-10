@@ -116,6 +116,9 @@ def test_digest_and_event_only_references_block_deletion(store):
 
 
 def test_new_records_can_be_used_in_scene_and_existing_settings_preserved(store, monkeypatch):
+    async def continuity_ok(*args):
+        pass
+    monkeypatch.setattr(production.production_continuity, "check", continuity_ok)
     async def extract(candidate, base_url, node_id):
         candidate.replace_events(node_id, [])
     monkeypatch.setattr(generation, "extract_events", extract)

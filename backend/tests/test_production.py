@@ -20,6 +20,9 @@ from store import Store
 def store(tmp_path, monkeypatch):
     monkeypatch.setattr(embed, "available", lambda: False)
     monkeypatch.setattr(embed, "is_ready", lambda: False)
+    async def continuity_ok(*args):
+        pass
+    monkeypatch.setattr(production.production_continuity, "check", continuity_ok)
     root = tmp_path / "library"
     root.mkdir()
     s = Store(db.connect(root / "story-graph.db"), root=str(root))

@@ -121,6 +121,8 @@ async def main():
     mode.add_argument("--manual-only", action="store_true", help="実モデルの編集確定前に一時停止し、手動変更を保存して再開する")
     mode.add_argument("--patch-only", action="store_true", help="既存本文を保持した追記・部分置換・部分削除を確認する")
     mode.add_argument("--expand-only", action="store_true", help="枝を膨らませる依頼と、最初の変更後の方針転換を検証する")
+    mode.add_argument("--continuity-only", action="store_true", help="前後照合の順序逆転・重複検出と正常例を実モデルで確認する")
+    mode.add_argument("--direction-only", action="store_true", help="枝の拡張後の方針変更を単独で確認する")
     args = parser.parse_args()
     root = ROOT / "data" / ("production-scenario-" + uuid.uuid4().hex[:8])
     root.mkdir(parents=True)
@@ -199,7 +201,36 @@ async def main():
         if await llm.health(args.base_url):
             raise RuntimeError("専用ポートが使用中です")
         await manager.start({"llm_base_url": args.base_url, "llm_model_path": args.model, "llm_ctx_size": "16384"})
-        if args.expand_only:
+        if args.continuity_only:
+            cases = [
+                ("reverse", "アヤは住民と図面を検討する。", "住民は図面を持ち帰った。アヤは住民の返答を待つ。", "アヤは検討した図面を住民へ渡し、家族で話し合ってもらう。", True),
+                ("duplicate", "アヤは住民と相談する。", "アヤは唯一の図面を住民へ渡す。住民は図面を持ち帰る。", "アヤは手元にある唯一の図面を住民へ渡す。住民は図面を持ち帰る。", True),
+                ("valid", "アヤは住民と相談する。", "アヤは住民の不安を静かに聞き、持っていた図面の折り目を整える。", "アヤは図面を住民へ渡し、家族で話し合ってもらう。", False),
+                ("flashback", "アヤは昨日、図面を住民へ渡した。", "アヤは昨日図面を渡した場面を思い出し、住民の不安を理解しようとする。", "今日、住民が図面を持って返答に来る。", False),
+            ]
+            for label, before_beat, candidate_beat, after_beat, reject in cases:
+                candidate = Store(db.connect(":memory:"))
+                started = time.monotonic()
+                try:
+                    candidate.append_node({"id": "before", "beat": before_beat})
+                    candidate.append_node({"id": "after", "beat": after_beat})
+                    node_operations.insert(candidate, "before", {"id": "candidate", "beat": candidate_beat})
+                    error = None
+                    try:
+                        await production.production_continuity.check(candidate, args.base_url, "candidate")
+                    except ValueError as e:
+                        error = str(e)
+                    actual = bool(error and error.startswith("追加を確定しません"))
+                    summary.append({"stage": label, "seconds": round(time.monotonic()-started, 1), "rejected": actual, "error": error})
+                    print(json.dumps(summary[-1], ensure_ascii=False), flush=True)
+                    assert actual == reject and (reject or error is None), f"{label}: 判定が期待と異なる"
+                finally:
+                    candidate.conn.close()
+                    (root / "continuity-prompts.json").write_text(json.dumps(list(llm.PROMPT_LOG), ensure_ascii=False, indent=2), encoding="utf-8")
+            result["passed"] = True
+            print("CONTINUITY CHECK PASSED", flush=True)
+            return
+        if args.expand_only or args.direction_only:
             for nid, title, beat in [
                 ("b1_1", "水路沿いの聞き取り", "アヤは正史とは別に、水路沿いで暮らす住民の話を聞く。畑を失う不安から、住民は予備水路の清掃に同意していない。アヤは無断で作業を始めず、理由を聞く。"),
                 ("b1_2", "図面を囲む相談", "アヤは住民と古い水門図を広げ、畑を避ける清掃経路を一緒に考える。住民の許可が出るまで着工しない。"),
@@ -226,8 +257,9 @@ async def main():
                 assert branch.issubset(descendants)
                 assert all(n["id"] in descendants for n in graph["nodes"] if n["id"] not in {v["id"] for v in initial["nodes"]})
                 node_operations._check_connections(graph)
-            events = await turn("expand-branch", "『水路沿いの聞き取り』から始まる枝を膨らませてください。住民とアヤの気持ちの距離が少しずつ縮まる流れにしたいです。必要な場面を足し、既存の出来事と人物像は守ってください。正史や他の枝は変えません。", policy=policy)
-            assert any(e.get("changed") for e in events), "構成の変更なし"
+            if not args.direction_only:
+                events = await turn("expand-branch", "『水路沿いの聞き取り』から始まる枝を膨らませてください。住民とアヤの気持ちの距離が少しずつ縮まる流れにしたいです。必要な場面を足し、既存の出来事と人物像は守ってください。正史や他の枝は変えません。", policy=policy)
+                assert any(e.get("changed") for e in events), "構成の変更なし"
             check_scope()
             events = await turn("expand-direction", "この枝の続きをもう少し作ってください。住民が図面を検討して返事をするまでの間に、アヤが待ちながらできることを考える流れにしたいです。", policy=policy,
                 instruction="方針を変えます。ここまで確定した場面は残してください。これ以上シーンは増やさず、今ある枝の末尾に、アヤが『返事は明日でいい』と住民へ伝える場面を加えて、返答を待つところで今回の制作を終えてください。住民が同意したことにしたり、工事を始めたりはしません。",

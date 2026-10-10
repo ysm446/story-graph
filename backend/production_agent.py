@@ -16,6 +16,7 @@ import node_operations
 import snapshots
 import production_memory
 import production_library
+import production_continuity
 from store import Store
 from production_policy import ProductionPolicy
 
@@ -304,6 +305,11 @@ async def apply_edit(store: Store, base_url: str, name: str, args: dict, before_
             raise ValueError(f"unknown tool: {name}")
         if policy is not None:
             policy.check_candidate(before, candidate.graph())
+        if name in CREATE_SCENE_TOOLS:
+            await production_continuity.check(candidate, base_url, node_id)
+            if before_commit is not None:
+                before_commit()
+            versions.check(store, args)
         if name == "reconnect_scene":
             # 接続変更は本文から再抽出しない。保存済みイベントを新しい経路で点検する。
             affected = set()
@@ -380,6 +386,7 @@ def build_messages(store, history, message, execute, policy, previous_checkpoint
     system = chat_agent.build_system(store, store.canon_path(), "all", production=execute) + "\n" + (
         "あなたは制作の担当です。今回の依頼の範囲だけを編集してください。"
         "一度にツールは1つ。編集前に対象と前後の本文を読んでください。"
+        "場面の追加では前後の出来事の成立順を確認し、後で初めて起きる出来事を前提にした場面を先に入れないでください。"
         "追記や一部分の訂正・削除はpatch_sceneを優先し、既存本文を全文書き直さないでください。"
         "作者が追加・置換する文章を明示した場合は、その文章をそのまま使い、理由や新設定を補わないでください。"
         "編集ツールが返すscene.beatは保存後の本文です。依頼が反映されていれば完了を報告し、同じ追記・置換・削除を再実行しないでください。"
@@ -389,6 +396,8 @@ def build_messages(store, history, message, execute, policy, previous_checkpoint
         "追記・補強では既存の出来事や約束を維持してください。依頼にない証拠・秘密・人物設定を新たに確定したり、既存の約束と矛盾する制限を加えたりしないでください。"
         "質問・意見を求められただけなら編集しないで回答してください。"
         "変更は短い理由を添え、目的を達成したら通常の文章で報告して終了してください。"
+        "通常の文章だけを返すと今回の制作は終了します。終了報告では実行記録にある確定済みの変更と未実施の作業を区別してください。"
+        "未実施の作業を『次は編集します』『このまま続けます』と進行中のように告げて終了しないでください。必要な作業が残るならツールで続け、進められない場合は残件と理由を報告してください。"
         "資料庫のキャラクター・場所はread_libraryで一覧と詳細を確認し、新規登録・編集・削除できます。"
         "既存設定は省略で維持し、作者が頼んでいない項目は変更しません。物語中の変化や記憶は固定プロフィールに混ぜません。"
         "資料の登録・編集では、作者が明記した各項目を対応する引数へ漏れなく入れてください。場所の説明の引数はplace_description（保存結果ではdescription）、雰囲気はatmosphereです。"
@@ -400,6 +409,9 @@ def build_messages(store, history, message, execute, policy, previous_checkpoint
         "作者の途中指示は当初の依頼より優先し、変更済みの内容も踏まえて計画を調整してください。"
         + ("\n今回は編集が許可されています。" if execute else "\n今回は相談のみ。編集は許可されていません。")
     )
+    if any(m.get("instruction", {}).get("run_id") == run_id and m.get("instruction", {}).get("status") == "reflected" for m in history):
+        system += ("実行記録にある変更はすでに確定しています。方針変更だけを理由に取り消してはいけません。"
+                   "『ここまでの場面は残す』と指示されたら、追加済みの場面も含めて削除・統合・置き換えで失わせず、指定された残りの作業だけを進めてください。")
     system += production_memory.prompt(store, previous_checkpoint)
     system += "\n作者が画面で指定した変更条件（最優先）: " + policy.describe()
     # 各ステップで最新図を作り、本文を含むツール結果は直近だけ保持する。
