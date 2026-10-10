@@ -494,10 +494,16 @@ def test_stop_stream_persists_completed_changes_only(store, monkeypatch):
             if event.get("changed"):
                 await stream.aclose()
                 break
-        assert len([m for m in store.get_chat(chat_id)["messages"] if m.get("operation")]) == 1
+        messages = store.get_chat(chat_id)["messages"]
+        assert len([m for m in messages if m.get("operation")]) == 1
+        # yieldで止まった生成器の後始末(GeneratorExit)でも、停止の記録と終了処理を残す。
+        assert messages[-1]["content"].startswith("作業を停止しました")
+        assert messages[0].get("policy_after") == {"allowed_ids": None, "group_id": None, "protected_ids": []}
+        assert production.gate.run is None
     run(check())
     assert store.get_node("first")["beat"] == "村を守るために出発する"
     assert store.get_node("last")["beat"] == "村に戻る"
+    assert production.production_memory.read(store)["checkpoint"]["status"] == "interrupted"
 
 
 def test_api_separates_histories_and_blocks_manual_writes(store, monkeypatch):
@@ -603,7 +609,8 @@ def test_pending_instruction_is_saved_as_unapplied_on_disconnect(store, monkeypa
         await stream.aclose()
         assert production.gate.run is None
         history = store.get_chat(first["chat_id"])["messages"]
-        assert history[-1]["instruction"]["status"] == "unapplied"
+        assert next(m for m in history if m.get("instruction"))["instruction"]["status"] == "unapplied"
+        assert history[-1]["content"].startswith("作業を停止しました")
     run(check())
 
 

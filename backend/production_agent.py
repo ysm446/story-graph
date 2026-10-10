@@ -19,7 +19,7 @@ import production_library
 import production_continuity
 from store import Store
 from generated_text import normalize_scene_text
-from production_policy import ProductionPolicy
+from production_policy import CONTENT_FIELDS, ProductionPolicy
 
 MAX_STEPS = 16
 CREATE_SCENE_TOOLS = {"insert_scene", "branch_scene"}
@@ -68,8 +68,7 @@ class NodeVersions:
     """内容・イベント・隣接接続を比較する。配置や派生キャッシュは版に含めない。"""
     def __init__(self, store):
         graph = store.graph()
-        fields = ("title", "beat", "cast", "emotional_core", "location", "story_time", "kind", "group_id", "events")
-        self.nodes = {n["id"]: {k: n.get(k) for k in fields} for n in graph["nodes"]}
+        self.nodes = {n["id"]: {k: n.get(k) for k in CONTENT_FIELDS} for n in graph["nodes"]}
         self.edges = {(e["from_node"], e["to_node"], e["is_canon"]) for e in graph["edges"]}
         self.library = (store.list_characters(), store.list_places())
 
@@ -79,17 +78,19 @@ class NodeVersions:
             raise ManualEditPending("資料庫が更新されたため、設定を読み直します")
         targets = {args.get(k) for k in ("node_id", "after_id", "parent_id")} - {None}
         # 操作対象の祖先(抽出の前提)、子孫(削除・接続変更の影響先)を別々にたどる。
+        # 判断開始時と現在の両方の接続を隣接表にまとめ、辺の全走査を繰り返さない。
+        children, parents = {}, {}
+        for parent, child, _ in self.edges | current.edges:
+            children.setdefault(parent, set()).add(child)
+            parents.setdefault(child, set()).add(parent)
         related = set(targets)
-        for reverse in (False, True):
+        for adjacency in (children, parents):
             pending = list(targets)
             seen = set(targets)
             while pending:
-                nid = pending.pop()
-                for parent, child, _ in self.edges | current.edges:
-                    a, b = (child, parent) if reverse else (parent, child)
-                    if a == nid and b not in seen:
-                        seen.add(b)
-                        pending.append(b)
+                for nid in adjacency.get(pending.pop(), set()) - seen:
+                    seen.add(nid)
+                    pending.append(nid)
             related.update(seen)
         changed = {nid for nid in related if self.nodes.get(nid) != current.nodes.get(nid)}
         changed.update(nid for edge in self.edges ^ current.edges for nid in edge[:2] if nid in related)
@@ -255,7 +256,7 @@ def _validate_args(store, name, args):
         if not isinstance(args.get("beat"), str) or not args["beat"].strip():
             raise ValueError("シーン本文が必要です")
         if "cast" in args:
-            if not isinstance(args["cast"], list) or any(c not in store.known_char_ids() for c in args["cast"]):
+            if not isinstance(args["cast"], list) or not set(args["cast"]) <= store.known_char_ids():
                 raise ValueError("castには既存のキャラクターIDを指定してください")
         if "title" in args and not isinstance(args["title"], str):
             raise ValueError("タイトルは文字列で指定してください")
@@ -284,9 +285,10 @@ async def apply_edit(store: Store, base_url: str, name: str, args: dict, before_
         # 確定・履歴・画面通知は既存の編集と共通。全文はサーバー側で組み立てる。
         name = "update_scene"
     original = _validate_args(store, name, args)
+    before = None
     if policy is not None:
         policy.check_target(original["id"])
-    before = store.graph() if policy is not None or name == "reconnect_scene" else None
+        before = store.graph()
     if name == "update_scene" and all(args[k] == original.get(k) for k in ("title", "beat", "cast", "location") if k in args):
         raise ValueError("その本文はすでに反映済みです。次の作業へ進んでください")
     candidate_conn = db.connect(":memory:")
@@ -533,7 +535,6 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
                 continue
             calls = result.get("tool_calls") or []
             if not calls:
-                run.accepting = False
                 completed = True
                 break
             # 相談中の編集試行は再判断ループへ返さず、案内を保存して入力待ちへ戻す。
@@ -619,9 +620,12 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
         if not completed:
             history.append({"role": "assistant", "content": "作業の上限に達したため停止しました。確定済みの変更を確認し、必要なら続きを依頼してください。"})
         outcome = "completed" if completed else "limit"
+        # doneを送った後に届く途中指示を受け付けないよう、通知の前に閉じる。
         run.close()
         yield chat_agent._sse({"done": True, "chat_id": chat_id})
-    except asyncio.CancelledError:
+    except (asyncio.CancelledError, GeneratorExit):
+        # 停止ボタンや接続断は、LLM待ちの途中ならCancelledError、yieldで止まっていれば
+        # 生成器の後始末(GeneratorExit)として届く。どちらでも停止の記録を残す。
         history.append({"role": "assistant", "content": "作業を停止しました。確定済みの変更は残しています。"})
         raise
     except Exception as e:
@@ -629,12 +633,11 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
         history.append({"role": "assistant", "content": f"作業を停止しました: {e}"})
         yield chat_agent._sse({"error": str(e)})
     finally:
+        run.close()  # 未反映の指示を「未反映のまま終了」にしてから記録する。
         if checkpoint_started:
-            run.close()
             report = next((m["content"] for m in reversed(history) if m.get("role") == "assistant" and not m.get("operation") and not m.get("snapshot") and not m.get("memory_revision")), "")
             save_checkpoint(outcome, report)
         request_message["policy_after"] = policy.spec()
-        run.close()
         if gate.run is run:
             gate.run = None
         store.save_chat_messages(chat_id, history)

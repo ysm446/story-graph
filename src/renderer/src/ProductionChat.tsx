@@ -91,8 +91,9 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
       setChatId(id)
       const loaded = chat.messages as unknown as Message[]
       setMessages(loaded)
-      const lastPolicy = [...loaded].reverse().find((m) => m.policy)?.policy_after ?? [...loaded].reverse().find((m) => m.policy)?.policy
-      setPolicy(lastPolicy ?? defaultProductionPolicy())
+      // 最後の依頼の終了時の条件(policy_after)を優先し、中断などで無ければ開始時の条件に戻す。
+      const lastRequest = [...loaded].reverse().find((m) => m.policy)
+      setPolicy(lastRequest?.policy_after ?? lastRequest?.policy ?? defaultProductionPolicy())
       setLive('')
       setError('')
       setStatus('')

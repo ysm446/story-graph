@@ -1,5 +1,9 @@
 """制作の変更範囲と保護条件。LLMの自由文からは権限を変更しない。"""
 
+# 編集内容として比較する項目。座標・派生キャッシュ・更新時刻は含めず、イベントと章所属は含める。
+# 保護判定(check_candidate)と競合検出(production_agent.NodeVersions)で共用する。
+CONTENT_FIELDS = ("title", "beat", "cast", "emotional_core", "location", "story_time", "group_id", "kind", "events")
+
 
 class ProductionPolicy:
     def __init__(self, store, allowed_ids=None, protected_ids=None, group_id=None):
@@ -52,10 +56,8 @@ class ProductionPolicy:
         if self.group_id is not None:
             locked |= {nid for nid, n in old.items() if n.get("group_id") != self.group_id}
         locked &= old.keys()  # 手動編集で既に消えた保護対象を理由に、無関係な操作を止めない。
-        # 座標・派生キャッシュ・更新時刻は編集内容とは別。イベントや章所属は保護する。
-        fields = ("title", "beat", "cast", "emotional_core", "location", "story_time", "group_id", "kind", "events")
         for nid in locked:
-            if nid not in new or any(old[nid].get(k) != new[nid].get(k) for k in fields):
+            if nid not in new or any(old[nid].get(k) != new[nid].get(k) for k in CONTENT_FIELDS):
                 raise ValueError(f"保護または変更範囲外のシーンに影響します: {nid}")
         def edges(graph):
             return {(e["from_node"], e["to_node"], e["is_canon"]) for e in graph["edges"]}
