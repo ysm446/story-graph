@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import {
   applyNodeChanges,
   Background,
@@ -33,6 +33,8 @@ import { showStatusNotice } from '../statusNotice'
 import CharAvatar from '../CharAvatar'
 import ChatDrawer from '../ChatDrawer'
 import ProductionChat from '../ProductionChat'
+import { defaultProductionPolicy } from '../ProductionPolicyPanel'
+import type { ProductionPolicy } from '../api'
 import EventsEditor from '../EventsEditor'
 import FactTimeline from '../FactTimeline'
 import { MsgActionButton, StatsLine, SystemPromptModal } from '../GenMeta'
@@ -228,6 +230,7 @@ function NodeThumb({
 
 type BeatNodeData = {
   storyNode: StoryNode
+  connected: boolean // 表示範囲によらず、実グラフに入出力の接続があるか
   characters: Record<string, Character>
   // 実効ロケーション。inherited = このシーンでは指定せず、親から引き継いだもの
   place?: { name: string; inherited: boolean }
@@ -237,7 +240,8 @@ type BeatNodeData = {
 type BeatFlowNode = Node<BeatNodeData, 'beatNode'>
 
 function BeatNodeCard({ data, selected }: NodeProps<BeatFlowNode>): React.JSX.Element {
-  const { storyNode, characters, place, busy } = data
+  const { storyNode, characters, place, busy, connected } = data
+  const unsaved = useSyncExternalStore(subscribeBeatDrafts, () => beatDraftCache.has(storyNode.id))
   const isDraft = storyNode.status === 'draft'
   // 章の入口 / 出口(ノードグループの Input / Output。docs/design/chapters.md §9)
   if (storyNode.kind === 'chapter_in' || storyNode.kind === 'chapter_out') {
@@ -328,12 +332,22 @@ function BeatNodeCard({ data, selected }: NodeProps<BeatFlowNode>): React.JSX.El
         <span className="min-w-0 flex-1 truncate text-[13px] font-semibold" style={{ color: 'var(--text)' }}>
           {storyNode.title || '(無題のシーン)'}
         </span>
+        {unsaved && (
+          <span
+            className="shrink-0 rounded-md px-1.5 py-0.5 text-[10px]"
+            style={{ background: 'var(--accent-soft)', color: 'var(--text)' }}
+            data-tip="このシーンには未保存の変更があります"
+          >
+            未保存
+          </span>
+        )}
         {isDraft && (
           <span
-            className="shrink-0 rounded px-1.5 py-px text-[10px] uppercase"
+            className="shrink-0 rounded px-1.5 py-px text-[10px]"
             style={{ background: 'var(--bg-elevated)', color: 'var(--text-faint)' }}
+            data-tip={connected ? '正史ルート以外につながっているシーンです' : '他のノードと接続されていないシーンです'}
           >
-            draft
+            {connected ? '分岐' : '未接続'}
           </span>
         )}
       </div>
@@ -482,6 +496,23 @@ const nodeTypes = { beatNode: BeatNodeCard, chapterNode: ChapterNodeCard }
 // ノード非選択で BeatTab がアンマウントされても編集内容が消えないようにする。
 // 保存やキャンセルではなく「一時退避」なので、保存成功時に該当エントリを消す。
 const beatDraftCache = new Map<string, Partial<StoryNode>>()
+const beatDraftListeners = new Set<() => void>()
+const subscribeBeatDrafts = (listener: () => void): (() => void) => {
+  beatDraftListeners.add(listener)
+  return () => { beatDraftListeners.delete(listener) }
+}
+
+function setBeatDraft(nodeId: string, draft: Partial<StoryNode>): void {
+  const alreadyDirty = beatDraftCache.has(nodeId)
+  beatDraftCache.set(nodeId, draft)
+  // バッジの有無が変わるときだけ通知し、入力ごとの全カード更新は避ける。
+  if (!alreadyDirty) beatDraftListeners.forEach((listener) => listener())
+}
+
+function deleteBeatDraft(nodeId: string): void {
+  if (beatDraftCache.delete(nodeId)) beatDraftListeners.forEach((listener) => listener())
+}
+
 
 // putEvents は全件置換なので、手元の node.events を土台にすると、直前の保存が
 // reload 前だった場合にそのイベントが消える。保存前にサーバーの最新を取り直す
@@ -504,8 +535,14 @@ function BeatTab({
   validation,
   onSaved,
   onDeleted,
-  onNodeBusyChange
+  onNodeBusyChange,
+  aiProtected,
+  protectionLocked,
+  onToggleProtection
 }: {
+  aiProtected: boolean
+  protectionLocked: boolean
+  onToggleProtection: () => void
   node: StoryNode
   characters: Character[]
   places: Place[]
@@ -660,7 +697,7 @@ function BeatTab({
   const handleSave = async (): Promise<void> => {
     try {
       await api.updateNode(node.id, draft)
-      beatDraftCache.delete(node.id) // 保存できたら退避を破棄
+      deleteBeatDraft(node.id) // 保存できたら退避を破棄
       onSaved()
     } catch (e) {
       setError(String(e))
@@ -671,7 +708,7 @@ function BeatTab({
     if (!window.confirm('このシーンを削除しますか?(後続シーンは前のシーンに繋がります)')) return
     try {
       await api.deleteNode(node.id)
-      beatDraftCache.delete(node.id)
+      deleteBeatDraft(node.id)
       onDeleted()
     } catch (e) {
       setError(`削除できません: ${String(e)}`)
@@ -699,8 +736,8 @@ function BeatTab({
   useEffect(() => {
     if (draftNodeId !== node.id) return // 初期化前(draft はまだ前のシーンのもの)
     if (draft.beat === undefined) return
-    if (dirty) beatDraftCache.set(node.id, draft)
-    else beatDraftCache.delete(node.id)
+    if (dirty) setBeatDraft(node.id, draft)
+    else deleteBeatDraft(node.id)
   }, [draft, dirty, node.id, draftNodeId])
 
   return (
@@ -1094,9 +1131,23 @@ function BeatTab({
       <div className="shrink-0 border-t px-3 py-2" style={{ borderColor: 'var(--border)', background: 'var(--bg-sidebar)' }}>
         {error && <div role="alert" className="mb-1 text-[12px]" style={{ color: 'var(--danger)' }}>{error}</div>}
         <div className="flex items-center justify-between gap-2">
-          <span role="status" className="text-[11px]" style={{ color: 'var(--text-dim)' }}>
-            {dirty ? '未保存の変更があります' : '変更はありません'}
-          </span>
+          {dirty && <span role="status" className="min-w-0 text-[11px]" style={{ color: 'var(--text-dim)' }}>
+            未保存の変更があります
+          </span>}
+          <div className="ml-auto flex shrink-0 items-center gap-2">
+            <button
+              onClick={onToggleProtection}
+              aria-label="AI編集から保護"
+              aria-pressed={aiProtected}
+              disabled={protectionLocked}
+              className="rounded-md border px-2 py-0.5 disabled:opacity-50"
+              style={{ borderColor: 'var(--border-strong)', ...(aiProtected
+                ? { background: 'var(--accent-soft)', color: 'var(--accent)' }
+                : { color: 'var(--text-faint)' }) }}
+              data-tip={protectionLocked ? 'AI編集から保護：制作を停止してから変更できます' : `${aiProtected ? 'AI編集から保護中（クリックで解除）' : 'クリックでAI編集から保護'}。制作LLMによる変更・削除・直接の接続変更を防ぎます。手動編集はできます。保存操作なしで反映されます`}
+            >
+              <Icon name={aiProtected ? 'robotLock' : 'robotUnlock'} size={20} strokeWidth={1.6} />
+            </button>
           <button
             onClick={() => void handleSave()}
             disabled={!dirty}
@@ -1106,6 +1157,7 @@ function BeatTab({
           >
             保存
           </button>
+          </div>
         </div>
       </div>
     </div>
@@ -2210,6 +2262,7 @@ function StructureModeInner({
   // モジュールレベル(tasks.ts)で持つので、モードを離れて戻っても復元される
   const busyNodeIds = useBusyNodeIds()
   const productionLocked = useTasks().some((t) => t.kind === 'production')
+  const [productionPolicy, setProductionPolicy] = useState<ProductionPolicy>(defaultProductionPolicy)
   const [productionManual, setProductionManual] = useState(false)
   const productionEditingLocked = productionLocked && !productionManual
   const [chatKind, setChatKind] = useState<'consult' | 'production'>('consult')
@@ -2495,6 +2548,7 @@ function StructureModeInner({
       for (const n of prev) {
         if (n.measured?.height) heights[n.id] = n.measured.height
       }
+      const connectedIds = new Set(graphEdges.flatMap((edge) => [edge.from_node, edge.to_node]))
       const computed = layoutDag(graphNodes, graphEdges, heights)
       return graphNodes.map((n) => {
         const existing = prevById.get(n.id)
@@ -2517,6 +2571,7 @@ function StructureModeInner({
           measured: existing?.measured,
           data: {
             storyNode: n,
+            connected: connectedIds.has(n.id),
             characters: charMap,
             place: (() => {
               const eff = effectiveLocations[n.id]
@@ -2611,7 +2666,7 @@ function StructureModeInner({
       deletingNodes.current = true
       try {
         await api.deleteNode(nodeId)
-        beatDraftCache.delete(nodeId)
+        deleteBeatDraft(nodeId)
         setSelectedId((current) => (current === nodeId ? null : current))
         await reload()
       } catch (e) {
@@ -2996,7 +3051,7 @@ function StructureModeInner({
       try {
         const result = await api.deleteSelection(targets, chapters)
         const deleted = new Set(result.node_ids)
-        for (const id of deleted) beatDraftCache.delete(id)
+        for (const id of deleted) deleteBeatDraft(id)
         setSelectedId((current) => (current && deleted.has(current) ? null : current))
         setSelectedChapterId((current) => (current && chapters.includes(current) ? null : current))
         setChapterView((current) => (chapters.includes(current) ? 'chapters' : current))
@@ -5157,6 +5212,7 @@ function StructureModeInner({
               />
               </div>
               {chatKind === 'production' && <div className="min-h-0 flex-1"><ProductionChat
+                policy={productionPolicy} setPolicy={setProductionPolicy}
                 nodes={graphNodes} groups={groups}
                 beforeExecute={() => beatDraftCache.size > 0 ? '未保存のシーンがあります。保存してから制作を実行してください。' : null}
                 onManualEdit={setProductionManual}
@@ -5294,6 +5350,16 @@ function StructureModeInner({
                 />
               ) : inspectorTab === 'beat' ? (
                 <BeatTab
+                  aiProtected={productionPolicy.protected_ids.includes(selectedNode.id)}
+                  protectionLocked={productionLocked}
+                  onToggleProtection={() => {
+                    if (productionLocked) return
+                    const id = selectedNode.id
+                    setProductionPolicy((current) => ({ ...current,
+                      protected_ids: current.protected_ids.includes(id)
+                        ? current.protected_ids.filter((value) => value !== id)
+                        : [...current.protected_ids, id] }))
+                  }}
                   node={selectedNode}
                   characters={characters}
                   places={places}

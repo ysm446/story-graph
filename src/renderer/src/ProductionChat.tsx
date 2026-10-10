@@ -27,7 +27,9 @@ const libraryFieldLabels: Record<string, string> = {
 }
 
 /** 制作専用チャット。相談履歴とは分け、選択した送信モードで書き込みの可否を決める。 */
-export default function ProductionChat({ beforeExecute, onChanged, onFollowTarget, onManualEdit, nodes, groups }: {
+export default function ProductionChat({ beforeExecute, onChanged, onFollowTarget, onManualEdit, nodes, groups, policy, setPolicy }: {
+  policy: ProductionPolicy
+  setPolicy: React.Dispatch<React.SetStateAction<ProductionPolicy>>
   onManualEdit: (paused: boolean) => void
   nodes: StoryNode[]
   groups: Group[]
@@ -43,7 +45,6 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
   const [input, setInput] = useState('')
   const [sendMode, setSendMode] = useState<'consult' | 'execute'>('consult')
   const [usage, setUsage] = useState<ContextUsage | null>(null)
-  const [policy, setPolicy] = useState<ProductionPolicy>(defaultProductionPolicy)
   const [live, setLive] = useState('')
   const [status, setStatus] = useState('')
   const [error, setError] = useState('')

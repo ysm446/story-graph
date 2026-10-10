@@ -2,6 +2,8 @@
  *  チャット周りの絵文字を置き換えるために用意した最小セット。 */
 
 export type IconName =
+  | 'robotLock' // AI編集から保護(閉じた鍵)
+  | 'robotUnlock' // AI編集を許可(開いた鍵)
   | 'chat' // 吹き出し(相談チャット)
   | 'mask' // 芝居の仮面(キャラクターと話す)
   | 'search' // ツール実行(調査)
@@ -21,6 +23,20 @@ export type IconName =
   | 'users' // 人が二人(キャラ同士の会話室)
 
 const PATHS: Record<IconName, React.JSX.Element> = {
+  robotLock: (
+    <>
+      <path d="M10 5V2H8M2 9v4M18 9V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h5M7 9v1M13 9v1M8 14h3" />
+      <rect x="13" y="15" width="9" height="7" rx="1.5" />
+      <path d="M15 15v-2.5a2.5 2.5 0 0 1 5 0V15M17.5 18v1" />
+    </>
+  ),
+  robotUnlock: (
+    <>
+      <path d="M10 5V2H8M2 9v4M18 9V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h5M7 9v1M13 9v1M8 14h3" />
+      <rect x="13" y="15" width="9" height="7" rx="1.5" />
+      <path d="M15 15v-2.5a2.5 2.5 0 0 1 5 0M17.5 18v1" />
+    </>
+  ),
   // lucide の users
   users: (
     <>

@@ -8,7 +8,7 @@ export function policySummary(policy: ProductionPolicy, nodes: StoryNode[], grou
   const scope = policy.group_id ? `章「${groups.find((g) => g.id === policy.group_id)?.title ?? policy.group_id}」`
     : policy.allowed_ids === null ? '全体' : `個別指定 ${policy.allowed_ids.length} 件`
   const protectedNames = policy.protected_ids.map((id) => nodes.find((n) => n.id === id)?.title || id)
-  return `変更範囲: ${scope} / 保護: ${protectedNames.length ? protectedNames.join('、') : 'なし'}`
+  return `変更範囲: ${scope} / AI編集から保護: ${protectedNames.length ? protectedNames.join('、') : 'なし'}`
 }
 
 export default function ProductionPolicyPanel({ value, onChange, nodes, groups, busy }: {
@@ -43,7 +43,7 @@ export default function ProductionPolicyPanel({ value, onChange, nodes, groups, 
         {groups.map((g) => <option key={g.id} value={`chapter:${g.id}`}>章: {g.title}</option>)}
         {value.group_id && !groups.some((g) => g.id === value.group_id) && <option value={mode}>対象の章が見つかりません</option>}
       </select>
-      <p className="text-[11px]" style={{ color: 'var(--text-dim)' }}>保護は本文・削除・直接の接続変更を禁止します。保護・範囲外のシーンが参照するキャラクターや場所の設定も変更できません。前のシーンの編集による状態・記憶の再計算は行います。条件は今回の実行中は固定です。</p>
+      <p className="text-[11px]" style={{ color: 'var(--text-dim)' }}>AI編集から保護すると、制作LLMによる本文・削除・直接の接続変更を禁止します。手動編集はできます。保護・範囲外のシーンが参照するキャラクターや場所の設定も変更できません。前のシーンの編集による状態・記憶の再計算は行います。条件は今回の実行中は固定です。</p>
       {mode === 'selected' && <p className="text-[11px]" style={{ color: 'var(--text-dim)' }}>挿入・削除では接続が変わる前後も選んでください。はじまり・章の境界・結末は接続の対象として選べます。</p>}
       {!!missing.length && <p role="alert" className="text-[11px]" style={{ color: 'var(--danger)' }}>存在しない指定があります: {missing.join('、')}。範囲を選び直すか保護を解除してください。
         <button disabled={busy} onClick={() => onChange({ ...value, allowed_ids: value.allowed_ids?.filter((id) => !missing.includes(id)) ?? null,
@@ -58,9 +58,9 @@ export default function ProductionPolicyPanel({ value, onChange, nodes, groups, 
           {mode === 'selected' && <button aria-label={`対象: ${node.title || node.id}`} aria-pressed={value.allowed_ids?.includes(node.id)} disabled={busy}
             onClick={() => toggle('allowed_ids', node.id)} className="shrink-0 rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-50"
             style={buttonStyle(!!value.allowed_ids?.includes(node.id))} data-tip={busy ? '制作を停止してから変更できます' : 'このシーンと直接の接続を変更範囲に含めます'}>{value.allowed_ids?.includes(node.id) ? '☑' : '☐'} 対象</button>}
-          <button aria-label={`保護: ${node.title || node.id}`} aria-pressed={value.protected_ids.includes(node.id)} disabled={busy}
+          <button aria-label={`AI編集から保護: ${node.title || node.id}`} aria-pressed={value.protected_ids.includes(node.id)} disabled={busy}
             onClick={() => toggle('protected_ids', node.id)} className="shrink-0 rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-50"
-            style={buttonStyle(value.protected_ids.includes(node.id))} data-tip={busy ? '制作を停止してから変更できます' : 'このシーンの本文・削除・直接の接続変更を禁止します'}>{value.protected_ids.includes(node.id) ? '☑' : '☐'} 保護</button>
+            style={buttonStyle(value.protected_ids.includes(node.id))} data-tip={busy ? '制作を停止してから変更できます' : '制作LLMによる変更・削除・直接の接続変更を防ぎます。手動編集はできます'}>{value.protected_ids.includes(node.id) ? '☑' : '☐'} AI編集から保護</button>
         </div>)}
       </div>
     </div>
