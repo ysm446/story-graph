@@ -9,6 +9,8 @@ news-picker の chat_agent.py の tool calling ループを踏襲。
 
 from __future__ import annotations
 
+import chat_rules
+
 import json
 from datetime import datetime, timezone
 from typing import Any, AsyncIterator
@@ -812,6 +814,7 @@ def build_system(store: Store, path: list[str], scope: str, *, production: bool 
              "案数は固定せず、作者が数を指定した場合はその数に従う"),
             "- 回答は簡潔に。作者の判断材料になる観察(関係値の流れ、未回収の記憶など)を優先する",
             NO_MATH_RULE,
+            chat_rules.prompt(store),
             "",
             "## キャラクター ID 一覧",
             chars,

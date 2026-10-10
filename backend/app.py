@@ -23,6 +23,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 import backup
 import chat_agent
+import chat_rules
 import db
 import generation
 import llm
@@ -2696,6 +2697,8 @@ async def get_settings() -> dict[str, str]:
 
 @app.put("/settings")
 async def put_settings(body: SettingsPut) -> dict[str, str]:
+    if len(body.values.get(chat_rules.KEY, "")) > chat_rules.MAX_CHARS:
+        raise HTTPException(422, "AIへのルールは6000文字以内で指定してください")
     store.set_settings(body.values)
     if any(k.startswith("tts_") for k in body.values):
         _schedule_audio_gc()  # 声やエンジンを変えると、前の設定で作った音声は使われなくなる

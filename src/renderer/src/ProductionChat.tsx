@@ -1,3 +1,4 @@
+import ChatRulesPanel from './ChatRulesPanel'
 import { useEffect, useRef, useState } from 'react'
 import { chatApi, isAbortError, productionApi, type ChatSummary, type ProductionInstruction, type ProductionPolicy, type ProductionOperation } from './api'
 import { Markdown } from './Markdown'
@@ -42,6 +43,8 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
   const [chatId, setChatId] = useState<string | null>(null)
   const [history, setHistory] = useState<ChatSummary[]>([])
   const [messages, setMessages] = useState<Message[]>([])
+  const [rulesDirty, setRulesDirty] = useState(false)
+  const [rulesRefresh, setRulesRefresh] = useState(0)
   const [memoryDirty, setMemoryDirty] = useState(false)
   const [memoryRefresh, setMemoryRefresh] = useState(0)
   const [input, setInput] = useState('')
@@ -78,7 +81,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
         .catch(() => { if (!stale) setUsage(null) })
     }, 400)
     return () => { stale = true; window.clearTimeout(timer) }
-  }, [busy, chatId, input, sendMode, policy, memoryRefresh, memoryDirty, messages, nodes, groups])
+  }, [busy, chatId, input, sendMode, policy, rulesRefresh, memoryRefresh, memoryDirty, messages, nodes, groups])
 
   const refreshHistory = async (): Promise<void> => setHistory(await productionApi.list())
   useEffect(() => {
@@ -184,6 +187,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
   const send = (execute: boolean): void => {
     const message = input.trim()
     if (!message || busy) return
+    if (rulesDirty) { setError('AIへのルールを保存するか、元に戻してから送信してください。'); return }
     if (memoryDirty) { setError('作業メモを保存するか、編集をキャンセルしてから送信してください。'); return }
     const blocked = execute ? beforeExecute() : null
     if (blocked) { setError(blocked); return }
@@ -306,7 +310,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-2 px-4 py-2 text-[12px]" style={{ background: 'var(--bg-chat)', color: 'var(--text)' }}>
+    <div className="inspector-scrollbar flex h-full min-h-0 flex-col gap-2 overflow-y-auto px-4 py-2 text-[12px]" style={{ background: 'var(--bg-chat)', color: 'var(--text)' }}>
       <div className="flex items-center gap-2">
         <span className="shrink-0 text-[11px]" style={{ color: 'var(--text-faint)' }}>制作（実験）</span>
         <select
@@ -343,6 +347,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
         data-tip={!manualReady ? '作業前の保存が終わるまでお待ちください' : manualEditing ? '未保存のシーンを保存してから、最新の構成で制作を再開します' : '未確定の操作を破棄して、シーンと接続を手動で編集します'}>
         {switching ? '切り替えています…' : manualEditing ? '制作を再開' : '手動編集に切り替える'}
       </button>}
+      <ChatRulesPanel busy={busy} onDirty={setRulesDirty} onSaved={() => setRulesRefresh((v) => v + 1)} />
       <ProductionMemoryPanel busy={busy} refresh={memoryRefresh} onDirty={setMemoryDirty} />
       <ProductionPolicyPanel value={policy} onChange={setPolicy} nodes={nodes} groups={groups} busy={busy} />
       <div className="inspector-scrollbar min-h-0 flex-1 overflow-y-auto" aria-live="polite">
@@ -387,7 +392,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
           if (!e.repeat) submit()
         }}
         rows={2} placeholder={runId ? "途中指示を入力（未確定の変更を見直してから続けます）" : "方針の相談、または作業の依頼を入力"}
-        className="w-full rounded-md border px-2 py-0.5 text-[12px] outline-none disabled:opacity-50"
+        className="w-full shrink-0 rounded-md border px-2 py-0.5 text-[12px] outline-none disabled:opacity-50"
         style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }} />
       <div className="flex flex-wrap items-center justify-end gap-2">
         <span className="mr-auto text-[11px]" style={{ color: 'var(--text-faint)' }}>Enterで送信・Shift＋Enterで改行</span>

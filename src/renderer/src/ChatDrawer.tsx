@@ -1,3 +1,4 @@
+import ChatRulesPanel from './ChatRulesPanel'
 import ContextUsageRing from './ContextUsageRing'
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import {
@@ -247,6 +248,7 @@ export default function ChatDrawer({
   // 再生成中はこの項目の直後に書きかけの吹き出しを出す(null = 一番下)
   const [liveAfter, setLiveAfter] = useState<number | null>(null)
   const [input, setInput] = useState('')
+  const [rulesDirty, setRulesDirty] = useState(false)
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
   const [history, setHistory] = useState<ChatSummary[]>([])
@@ -681,6 +683,7 @@ export default function ChatDrawer({
     if (room) return sendRoom(override)
     const message = (override ?? input).trim()
     if (!message || busy) return
+    if (!charId && rulesDirty) { setStatus('AIへのルールを保存するか、元に戻してから送信してください。'); return }
     let insertPos: number | null = null
     if (replaceTurn !== undefined) {
       const kept = items.filter((it) => !(it.turn === replaceTurn && it.kind !== 'user'))
@@ -1103,7 +1106,8 @@ export default function ChatDrawer({
         />
       </div>
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <div ref={panelRef} className="flex min-h-0 flex-1 flex-col px-4 pb-3 pt-2">
+        <div ref={panelRef} className="inspector-scrollbar flex min-h-0 flex-1 flex-col overflow-y-auto px-4 pb-3 pt-2">
+          {!charId && !room && <div className="mb-2"><ChatRulesPanel busy={busy} onDirty={setRulesDirty} onSaved={() => { void refreshUsage(chatId, liveAnchor) }} /></div>}
           {/* ヘッダー: 相手 / アンカー / スコープ */}
           <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px]" style={{ color: 'var(--text-faint)' }}>
             {/* 話す相手: 相談(編集者) or キャラ本人。切替は新規チャット扱い */}

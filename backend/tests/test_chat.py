@@ -815,3 +815,47 @@ def test_graph_summary_uses_same_fallback_as_canon_when_ending_is_unrooted(store
     assert graph["counts"]["canon_chapters"] == 1
     assert graph["counts"]["canon_scenes"] == 3
     assert ending in graph["detached_roots"]
+
+
+def test_author_rules_apply_to_consultation_and_production_not_characters(store):
+    import production_agent
+    import chat_rules
+    rule = "シーン本文は600文字程度。小説ではなく指示書形式で書く。"
+    baseline = chat_agent.build_system(store, store.canon_path(), "all")
+    store.set_settings({chat_rules.KEY: rule})
+    for scope in ("upto", "all"):
+        assert rule in chat_agent.build_system(store, store.canon_path(), scope)
+    for execute in (False, True):
+        messages = production_agent.build_messages(store, [], "場面を考える", execute,
+            production_agent.ProductionPolicy(store), None, [], [])
+        assert rule in messages[0]["content"]
+        assert "相談中の編集禁止、参照範囲、保護条件" in messages[0]["content"]
+    assert rule not in chat_agent.build_character_system(store, store.canon_path(), "aya", "interview")
+    assert rule not in chat_agent.build_room_system(store, store.canon_path(), "aya", ["aya", "ken"])
+    store.set_settings({chat_rules.KEY: ""})
+    assert chat_agent.build_system(store, store.canon_path(), "all") == baseline
+
+
+def test_author_rules_settings_validate_and_preserve_other_settings(store, monkeypatch):
+    import app as api
+    import httpx
+    import production_agent
+    monkeypatch.setattr(api, "store", store)
+    monkeypatch.setattr(production_agent, "gate", production_agent.ProductionGate())
+    store.set_settings({"unrelated": "保持する"})
+    async def check():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=api.app), base_url="http://test") as client:
+            value = "シーン本文は600文字程度"
+            response = await client.put("/settings", json={"values": {"author_chat_rules": value}})
+            assert response.status_code == 200
+            assert response.json()["unrelated"] == "保持する"
+            assert (await client.get("/settings")).json()["author_chat_rules"] == value
+            response = await client.put("/settings", json={"values": {"author_chat_rules": "あ" * 6001}})
+            assert response.status_code == 422
+            assert store.get_settings()["author_chat_rules"] == value
+            production_agent.gate.active = True
+            response = await client.put("/settings", json={"values": {"author_chat_rules": "制作中の変更"}})
+            assert response.status_code == 409
+            production_agent.gate.active = False
+            assert (await client.put("/settings", json={"values": {"author_chat_rules": ""}})).status_code == 200
+    asyncio.run(check())

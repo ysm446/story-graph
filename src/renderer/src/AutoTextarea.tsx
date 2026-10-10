@@ -12,6 +12,9 @@ export default function AutoTextarea({
   onBlur,
   placeholder,
   minRows = 1,
+  disabled,
+  maxLength,
+  ariaLabel,
   className,
   style
 }: {
@@ -19,6 +22,9 @@ export default function AutoTextarea({
   onChange: (value: string) => void
   onBlur?: () => void
   placeholder?: string
+  disabled?: boolean
+  maxLength?: number
+  ariaLabel?: string
   minRows?: number
   className?: string
   style?: React.CSSProperties
@@ -53,6 +59,9 @@ export default function AutoTextarea({
   return (
     <textarea
       ref={ref}
+      disabled={disabled}
+      maxLength={maxLength}
+      aria-label={ariaLabel}
       rows={minRows}
       value={value}
       placeholder={placeholder}
