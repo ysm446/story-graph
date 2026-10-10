@@ -24,7 +24,9 @@ const GAP = 8 // アンカーとの隙間
 const MARGIN = 8 // 画面端との余白
 const MAX_WIDTH = 340
 
-type Anchor = { text: string; rect: DOMRect }
+/** `side` は祖先の `data-tip-side="right"` で指定。右クリックメニューのように縦に
+ *  並ぶ行では、下に出すと次の行に被るので右へ出す */
+type Anchor = { text: string; rect: DOMRect; side: 'bottom' | 'right' }
 
 export default function TooltipHost(): React.JSX.Element | null {
   const [anchor, setAnchor] = useState<Anchor | null>(null)
@@ -72,7 +74,8 @@ export default function TooltipHost(): React.JSX.Element | null {
           }
           shownRef.current = true
           setPos(null)
-          setAnchor({ text, rect: el.getBoundingClientRect() })
+          const side = el.closest<HTMLElement>('[data-tip-side]')?.dataset.tipSide === 'right' ? 'right' : 'bottom'
+          setAnchor({ text, rect: el.getBoundingClientRect(), side })
         },
         shownRef.current ? REOPEN_DELAY : OPEN_DELAY
       )
@@ -121,11 +124,22 @@ export default function TooltipHost(): React.JSX.Element | null {
     }
   }, [])
 
-  // 実寸を測ってから位置を決める(下に入らなければ上へ回し、左右は画面内に寄せる)
+  // 実寸を測ってから位置を決める(下に入らなければ上へ回し、左右は画面内に寄せる)。
+  // side=right は右に入らなければ左へ回し、上下は画面内に寄せる
   useLayoutEffect(() => {
     if (!anchor || !boxRef.current) return
     const box = boxRef.current.getBoundingClientRect()
     const r = anchor.rect
+    if (anchor.side === 'right') {
+      let left = r.right + GAP
+      if (left + box.width > window.innerWidth - MARGIN) {
+        const toLeft = r.left - GAP - box.width
+        left = toLeft >= MARGIN ? toLeft : Math.max(MARGIN, window.innerWidth - MARGIN - box.width)
+      }
+      const top = Math.max(MARGIN, Math.min(r.top, window.innerHeight - MARGIN - box.height))
+      setPos({ left, top })
+      return
+    }
     let top = r.bottom + GAP
     if (top + box.height > window.innerHeight - MARGIN) {
       const above = r.top - GAP - box.height

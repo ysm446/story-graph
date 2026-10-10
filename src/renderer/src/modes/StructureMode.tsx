@@ -32,6 +32,7 @@ import AutoTextarea from '../AutoTextarea'
 import { showStatusNotice } from '../statusNotice'
 import CharAvatar from '../CharAvatar'
 import ChatDrawer from '../ChatDrawer'
+import ContextMenu, { type ContextMenuItem } from '../ContextMenu'
 import ProductionChat from '../ProductionChat'
 import { defaultProductionPolicy } from '../ProductionPolicyPanel'
 import type { ProductionPolicy } from '../api'
@@ -4800,19 +4801,14 @@ function StructureModeInner({
               </Panel>
             )}
           </ReactFlow>
-          {/* 右クリックメニュー: 選択したシーンへの一括操作 */}
+          {/* 右クリックメニュー: 選択したシーンへの一括操作。説明はホバーのツールチップ、
+              区切り線は group の切れ目(ContextMenu.tsx) */}
           {menu && (
-            <div
-              className="fixed z-50 w-60 overflow-hidden rounded-xl border py-1 text-[12px] shadow-xl shadow-black/50"
-              style={{
-                left: menu.x,
-                top: menu.y,
-                background: 'var(--bg-card)',
-                borderColor: 'var(--border-strong)'
-              }}
-            >
-              <div className="px-3 py-1 text-[10px]" style={{ color: 'var(--text-faint)' }}>
-                {menu.pane
+            <ContextMenu
+              x={menu.x}
+              y={menu.y}
+              heading={
+                menu.pane
                   ? 'ここに追加'
                   : menu.chapter
                     ? (groups.find((g) => g.id === menu.chapter)?.on_canon
@@ -4820,17 +4816,22 @@ function StructureModeInner({
                         : '別ルートの章')
                     : menu.ending
                       ? '結末'
-                      : `${menu.targets.length} シーンを選択中`}
-              </div>
-              {([
+                      : `${menu.targets.length} シーンを選択中`
+              }
+              onPick={() => setMenu(null)}
+              items={[
                 ...(!menu.pane && !menu.chapter && !menu.ending ? [{
                   label: 'コピー',
-                  hint: 'Ctrl+C — 選択したシーンと内部の接続をコピー',
+                  hint: '選択したシーンと内部の接続をコピー',
+                  shortcut: 'Ctrl+C',
+                  group: 'edit',
                   run: () => void copyNodes(menu.targets)
                 }] : []),
                 {
                   label: menu.chapter ? 'この章に貼り付け' : '貼り付け',
-                  hint: nodeClipboard ? 'Ctrl+V — 独立した枝として貼り付け' : '先にシーンをコピーしてください',
+                  hint: nodeClipboard ? '独立した枝として貼り付け' : '先にシーンをコピーしてください',
+                  shortcut: 'Ctrl+V',
+                  group: 'edit',
                   disabled: !nodeClipboard || productionEditingLocked,
                   run: () => void pasteNodes(menu.pane, menu.chapter)
                 },
@@ -4843,6 +4844,7 @@ function StructureModeInner({
                           : activeGroup
                             ? `「${activeGroup.title}」の末尾(出口の手前)に追加`
                             : '正史の末尾(結末の手前)に追加',
+                        group: 'add',
                         run: () => void handleAddBeat()
                       },
                       {
@@ -4850,22 +4852,25 @@ function StructureModeInner({
                         hint: focusedGroup
                           ? 'どこにも繋がらないシーン。この章のシーンになります'
                           : 'どこにも繋がらないシーン。あとでドラッグして繋げます',
+                        group: 'add',
                         // 章の中で作った島はその章のものにする
                         run: () => void handleAddDetached(menu.pane, focusedGroup?.id)
                       },
                       {
                         label: '🏁 結末をここに置く',
                         hint: 'シーンの右のハンドルからドラッグしてつなげます',
+                        group: 'add',
                         run: () => void createFloatingEndingAt(menu.pane!)
                       },
                       {
                         label: '📖 空の章をここに作る',
                         hint: '器を先に置いて、中身は後から書く(章の中で作れます)',
+                        group: 'add',
                         run: () => createEmptyChapter(menu.pane)
                       }
                     ]
                   : menu.chapter
-                  ? ((): Array<{ label: string; hint: string; disabled?: boolean; run: () => void }> => {
+                  ? ((): ContextMenuItem[] => {
                       const group = groups.find((g) => g.id === menu.chapter)
                       if (!group) return []
                       // 並べ替えは正史ルート上の章同士でだけ意味を持つ
@@ -4875,13 +4880,15 @@ function StructureModeInner({
                         {
                           label: '章の中を開く',
                           hint: 'ダブルクリックと同じ',
+                          group: 'nav',
                           run: () => setChapterView(group.id)
                         },
                         ...(group.on_canon
                           ? [
                               {
                                 label: '← 前へ移動',
-                                hint: '一つ前の章と入れ替える(カードの位置も入れ替わります)',
+                                hint: ci <= 0 ? '先頭の章です' : '一つ前の章と入れ替える(カードの位置も入れ替わります)',
+                                group: 'nav',
                                 disabled: ci <= 0,
                                 run: () =>
                                   void moveChapter(
@@ -4892,7 +4899,11 @@ function StructureModeInner({
                               },
                               {
                                 label: '→ 後ろへ移動',
-                                hint: '一つ後ろの章と入れ替える(カードの位置も入れ替わります)',
+                                hint:
+                                  ci >= canonGroups.length - 1
+                                    ? '末尾の章です'
+                                    : '一つ後ろの章と入れ替える(カードの位置も入れ替わります)',
+                                group: 'nav',
                                 disabled: ci >= canonGroups.length - 1,
                                 run: () =>
                                   void moveChapter(
@@ -4906,16 +4917,19 @@ function StructureModeInner({
                         {
                           label: '名前を変更',
                           hint: '章のタイトル',
+                          group: 'chapter',
                           run: () => renameChapter(group)
                         },
                         {
                           label: '章を解除',
                           hint: 'まとまりをやめる(シーンは残る)',
+                          group: 'chapter',
                           run: () => void dissolveChapter(group)
                         },
                         {
                           label: '章と中のシーンを削除',
                           hint: '枝・未接続シーンも含めて削除',
+                          group: 'danger',
                           run: () => void deleteNodes([], [group.id])
                         }
                       ]
@@ -4925,16 +4939,19 @@ function StructureModeInner({
                       {
                         label: '🏁 この結末にする',
                         hint: 'ここまでの道を正史にする',
+                        group: 'route',
                         run: () => void makeRouteCanon(menu.targets[0])
                       },
                       {
                         label: '名前を変更',
                         hint: '「トゥルーエンド」など',
+                        group: 'chapter',
                         run: () => renameEnding(menu.targets[0])
                       },
                       {
                         label: '削除',
                         hint: '結末の候補を消す(最後の 1 つは消せない)',
+                        group: 'danger',
                         run: () => void deleteEnding(menu.targets[0])
                       }
                     ]
@@ -4945,6 +4962,7 @@ function StructureModeInner({
                         {
                           label: '📖 章にまとめる',
                           hint: '一続きにつながったシーンを章にする(島・分岐でも可)',
+                          group: 'add',
                           run: () => void createChapter(menu.targets)
                         }
                       ]
@@ -4955,13 +4973,14 @@ function StructureModeInner({
                         {
                           label: '🏁 ここに結末を作る',
                           hint: 'このシーンの先に新しい結末(正史がここまでになる)',
+                          group: 'add',
                           run: () => void createEndingAt(menu.targets[0])
                         }
                       ]
                     : []),
                   // 間のシーンを生成: 後続シーンのある単一シーンで(補間。
                   // docs/design/interpolation.md)。前後の内容から間の出来事を推測する
-                  ...((): Array<{ label: string; hint: string; run: () => void }> => {
+                  ...((): ContextMenuItem[] => {
                     if (menu.targets.length !== 1) return []
                     const node = graphNodes.find((n) => n.id === menu.targets[0])
                     if (!node || node.kind) return []
@@ -4971,6 +4990,7 @@ function StructureModeInner({
                       {
                         label: '▶ 間のシーンを生成',
                         hint: `「${next.title || '(無題)'}」との間に起こったことを推測して挟む`,
+                        group: 'add',
                         run: () => handleGenerate(null, node.id)
                       }
                     ]
@@ -4981,7 +5001,7 @@ function StructureModeInner({
                   // 章の外の「★ この道を正史にする」は削除した(2026-08-02 ユーザー判断)。
                   // 正史はアクティブな結末から遡った道なので、決めるのは「どの結末か」だけ。
                   // 切替は結末ノードの右クリックに一本化する
-                  ...((): Array<{ label: string; hint: string; run: () => void }> => {
+                  ...((): ContextMenuItem[] => {
                     if (menu.targets.length !== 1 || !focusedGroup) return []
                     const node = graphNodes.find((n) => n.id === menu.targets[0])
                     if (!node || node.kind || node.status !== 'draft') return []
@@ -4989,13 +5009,14 @@ function StructureModeInner({
                       {
                         label: '★ この枝を章の道にする',
                         hint: '章の出口をこの枝に繋ぎ替えます(鑑賞モードとまとめもこの道になります)',
+                        group: 'chapter',
                         run: () => void setChapterRoute(focusedGroup.id, node.id)
                       }
                     ]
                   })(),
                   // 章に入れる: 未分類のシーンが章の端に隣接しているときだけ出す
                   // (章の中で書いたのに未分類のまま残ったシーンを拾い直す)
-                  ...((): Array<{ label: string; hint: string; run: () => void }> => {
+                  ...((): ContextMenuItem[] => {
                     if (menu.targets.length !== 1) return []
                     const node = graphNodes.find((n) => n.id === menu.targets[0])
                     if (!node || node.group_id || node.kind) return []
@@ -5009,12 +5030,13 @@ function StructureModeInner({
                       {
                         label: '📖 この章に入れる',
                         hint: `「${target.title}」のシーンにする(後ろに続くシーンも一緒に)`,
+                        group: 'chapter',
                         run: () => void addToChapter(node.id, target.id)
                       }
                     ]
                   })(),
                   // 章の表紙: 挿絵のある章内のシーンを右クリックしたときだけ出す
-                  ...((): Array<{ label: string; hint: string; run: () => void }> => {
+                  ...((): ContextMenuItem[] => {
                     if (menu.targets.length !== 1) return []
                     const node = graphNodes.find((n) => n.id === menu.targets[0])
                     if (!node?.group_id || !node.image_path) return []
@@ -5025,6 +5047,7 @@ function StructureModeInner({
                           {
                             label: '🖼 表紙をやめる',
                             hint: '章の表紙を自動(先頭の挿絵)に戻す',
+                            group: 'chapter',
                             run: () => void setChapterCover(group.id, null)
                           }
                         ]
@@ -5032,6 +5055,7 @@ function StructureModeInner({
                           {
                             label: '🖼 この挿絵を章の表紙にする',
                             hint: `「${group.title}」の章カードのサムネイルにする`,
+                            group: 'chapter',
                             run: () => void setChapterCover(group.id, node.id)
                           }
                         ]
@@ -5041,6 +5065,7 @@ function StructureModeInner({
                         {
                           label: '章から外す',
                           hint: '章の端(先頭・末尾)のシーンだけ外せます',
+                          group: 'chapter',
                           run: () => void removeFromChapter(menu.targets[0])
                         }
                       ]
@@ -5048,73 +5073,68 @@ function StructureModeInner({
                   {
                     label: 'イベントを作り直す',
                     hint: `選択した ${menu.targets.length} シーンだけ(親から順に。この先は変えない)`,
+                    group: 'llm',
                     run: () => void runReextractNodes(menu.targets, false)
                   },
                   // この先も作り直す: 選択の先に何も無ければ上の項目と同じになるので出さない
-                  ...((): Array<{ label: string; hint: string; run: () => void }> => {
+                  ...((): ContextMenuItem[] => {
                     const ahead = withDownstream(menu.targets).length - menu.targets.length
                     if (ahead === 0) return []
                     return [
                       {
                         label: 'イベントを作り直す(この先すべて)',
                         hint: `選択 ${menu.targets.length} + この先 ${ahead} シーン。分岐も章もまたいで結末まで`,
+                        group: 'llm',
                         run: () => void runReextractNodes(menu.targets, true)
                       }
                     ]
                   })(),
                   {
                     label: '清書し直す(上書き)',
-                    hint: `${renderStyle.preset?.name ?? '未設定'}${
-                      renderStyle.povChar ? ` / POV: ${nameOfChar(renderStyle.povChar)}` : ''
-                    } — 清書済みのシーンも作り直す`,
+                    hint: renderStyle.presetId
+                      ? `${renderStyle.preset?.name ?? '未設定'}${
+                          renderStyle.povChar ? ` / POV: ${nameOfChar(renderStyle.povChar)}` : ''
+                        } — 清書済みのシーンも作り直す`
+                      : '清書タブでスタイルプリセットを選んでください',
+                    group: 'llm',
                     disabled: !renderStyle.presetId,
                     run: () => void runRenderNodes(menu.targets)
                   },
                   {
                     label: '話者と感情を付ける',
-                    hint: `読み上げの台本に LLM で。${renderStyle.preset?.name ?? '未設定'}${
-                      renderStyle.povChar ? ` / POV: ${nameOfChar(renderStyle.povChar)}` : ''
-                    } の清書 — 付け済みのシーンは飛ばす(シーンごとにキューへ)`,
+                    hint: renderStyle.presetId
+                      ? `読み上げの台本に LLM で。${renderStyle.preset?.name ?? '未設定'}${
+                          renderStyle.povChar ? ` / POV: ${nameOfChar(renderStyle.povChar)}` : ''
+                        } の清書 — 付け済みのシーンは飛ばす(シーンごとにキューへ)`
+                      : '清書タブでスタイルプリセットを選んでください',
+                    group: 'llm',
                     disabled: !renderStyle.presetId,
                     run: () => void runAnnotateNodes(menu.targets, false)
                   },
                   {
                     label: '話者と感情を付け直す',
-                    hint: '付け済みのシーンも付け直す(台本で手直しした行はそのまま)',
+                    hint: renderStyle.presetId
+                      ? '付け済みのシーンも付け直す(台本で手直しした行はそのまま)'
+                      : '清書タブでスタイルプリセットを選んでください',
+                    group: 'llm',
                     disabled: !renderStyle.presetId,
                     run: () => void runAnnotateNodes(menu.targets, true)
                   },
                   {
                     label: 'まとめて切り離す',
                     hint: '親エッジを切って島にする',
+                    group: 'danger',
                     run: () => void detachNodes(menu.targets)
                   },
                   {
                     label: 'まとめて削除',
                     hint: '後続シーンは前のシーンに繋がる',
+                    group: 'danger',
                     run: () => void deleteNodes(menu.targets)
                   }
-                ] as Array<{ label: string; hint: string; disabled?: boolean; run: () => void }>))
-                ] as Array<{ label: string; hint: string; disabled?: boolean; run: () => void }>
-              ).map((item) => (
-                <button
-                  key={item.label}
-                  onClick={() => {
-                    setMenu(null)
-                    item.run()
-                  }}
-                  disabled={item.disabled ?? false}
-                  className="block w-full px-3 py-1.5 text-left hover:bg-[var(--accent-soft)] disabled:opacity-40"
-                  style={{ color: 'var(--text-dim)' }}
-                >
-                  <span style={{ color: 'var(--text)' }}>{item.label}</span>
-                  <br />
-                  <span className="text-[10px]" style={{ color: 'var(--text-faint)' }}>
-                    {item.hint}
-                  </span>
-                </button>
-              ))}
-            </div>
+                ] as ContextMenuItem[]))
+              ] as ContextMenuItem[]}
+            />
           )}
           {/* 名前の入力モーダル(章の作成・名前変更。Electron では window.prompt が使えない) */}
           {namePrompt && (
