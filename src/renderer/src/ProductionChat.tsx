@@ -318,8 +318,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
           {history.map((h) => <option key={h.id} value={h.id}>{h.title || h.snippet || '制作'}</option>)}
         </select>
         <button onClick={() => void deleteConversation()} disabled={busy || !chatId}
-          className="shrink-0 rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-50"
-          style={{ borderColor: 'var(--border-strong)', color: 'var(--danger)' }}
+          className="delete-action shrink-0 rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-50"
           aria-label="この制作の会話履歴を削除"
           data-tip={busy ? '処理が終わるか制作を停止してから削除できます' : !chatId ? '削除する会話を選んでください' : 'この会話の履歴だけを削除します。作品・資料庫・作業メモ・スナップショットは残ります'}>
           会話を削除
@@ -340,7 +339,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
       </button>}
       <ProductionMemoryPanel busy={busy} refresh={memoryRefresh} onDirty={setMemoryDirty} />
       <ProductionPolicyPanel value={policy} onChange={setPolicy} nodes={nodes} groups={groups} busy={busy} />
-      <div className="min-h-0 flex-1 overflow-y-auto" aria-live="polite">
+      <div className="inspector-scrollbar min-h-0 flex-1 overflow-y-auto" aria-live="polite">
         {messages.map((m, i) => (
           <div key={i} className="mb-2 rounded-lg border px-3 py-1.5" style={{
             background: m.role === 'user' ? 'var(--accent-soft)' : 'var(--bg-elevated)', borderColor: 'var(--border)'

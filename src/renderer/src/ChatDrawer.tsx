@@ -1079,8 +1079,7 @@ export default function ChatDrawer({
                     </button>
                     <button
                       onClick={() => void deleteChat(h.id)}
-                      className="block w-full px-3 py-1.5 text-left text-[12px] hover:bg-[var(--accent-soft)]"
-                      style={{ color: 'var(--text-dim)' }}
+                      className="delete-action block w-full px-3 py-1.5 text-left text-[12px]"
                     >
                       削除
                     </button>

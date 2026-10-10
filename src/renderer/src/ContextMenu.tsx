@@ -81,8 +81,8 @@ export default function ContextMenu({
             }}
             disabled={item.disabled ?? false}
             data-tip={item.hint}
-            className="flex w-full items-center gap-3 px-3 py-1.5 text-left hover:bg-[var(--accent-soft)] disabled:opacity-40"
-            style={{ color: 'var(--text)' }}
+            className={`flex w-full items-center gap-3 px-3 py-1.5 text-left disabled:opacity-40 ${item.group === 'danger' ? 'delete-action' : 'hover:bg-[var(--accent-soft)]'}`}
+            style={item.group === 'danger' ? undefined : { color: 'var(--text)' }}
           >
             <span className="min-w-0 flex-1 truncate">{item.label}</span>
             {item.shortcut && (

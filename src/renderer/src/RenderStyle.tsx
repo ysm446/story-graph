@@ -363,7 +363,7 @@ export function PresetEditorModal({
         )}
         <div className="flex items-center gap-2">
           {form.id && (
-            <button onClick={() => void handleDelete()} disabled={busy} className="text-[12px]" style={{ color: 'var(--danger)' }}>
+            <button onClick={() => void handleDelete()} disabled={busy} className="delete-action text-[12px]">
               削除
             </button>
           )}

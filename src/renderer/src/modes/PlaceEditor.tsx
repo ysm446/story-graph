@@ -216,8 +216,7 @@ export default function PlaceEditor({
         </button>
         <button
           onClick={() => void handleDelete()}
-          className="ml-auto rounded-lg px-3 py-1.5 text-[13px]"
-          style={{ color: 'var(--danger)' }}
+          className="delete-action ml-auto rounded-lg px-3 py-1.5 text-[13px]"
         >
           削除
         </button>

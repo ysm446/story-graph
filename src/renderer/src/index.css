@@ -24,6 +24,8 @@
   /* 状態を強く示したいときの枠(モデル読み込み済みのバー等) */
   --accent-border-bright: rgba(140, 110, 255, 0.75);
   --danger: #ef4444;
+  --delete-hover: #cf9393;
+  --delete-border: rgba(207, 147, 147, 0.4);
   --context-warning: #f59e0b;
   font-family: "Inter", "Segoe UI", "Noto Sans JP", system-ui, sans-serif;
 }
@@ -576,4 +578,15 @@ input[type='range']:focus-visible {
 @keyframes tip-in {
   from { opacity: 0; transform: translateY(-2px); }
   to { opacity: 1; transform: none; }
+}
+
+/* 削除操作は普段は控えめにし、操作する時だけ穏やかな赤で示す。 */
+.delete-action {
+  color: var(--text-dim);
+  border-color: var(--border-strong);
+  transition: color 0.15s, border-color 0.15s;
+}
+.delete-action:not(:disabled):is(:hover, :focus-visible) {
+  color: var(--delete-hover);
+  border-color: var(--delete-border);
 }

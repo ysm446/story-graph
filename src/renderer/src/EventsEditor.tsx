@@ -664,8 +664,7 @@ export default function EventsEditor({
                 <button
                   onClick={() => handleDelete(index)}
                   disabled={saving || extracting}
-                  className="text-[11px]"
-                  style={{ color: 'var(--text-faint)' }}
+                  className="delete-action text-[11px]"
                   aria-label="このイベントを削除"
                   data-tip="このイベントを削除"
                 >

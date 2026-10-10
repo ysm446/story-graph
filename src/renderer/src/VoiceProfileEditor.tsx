@@ -446,8 +446,7 @@ export default function VoiceProfileEditor({
         <div>
           <button
             onClick={() => void handleDelete()}
-            className="rounded-md border px-2 py-0.5 text-[11px]"
-            style={{ borderColor: 'rgba(239,68,68,0.5)', color: 'var(--danger)' }}
+            className="delete-action rounded-md border px-2 py-0.5 text-[11px]"
           >
             この声を削除
           </button>

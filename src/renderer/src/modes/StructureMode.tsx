@@ -1117,7 +1117,7 @@ function BeatTab({
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={() => void handleDelete()} className="ml-auto text-[12px]" style={{ color: 'var(--danger)' }}>
+            <button onClick={() => void handleDelete()} className="delete-action ml-auto text-[12px]">
               削除
             </button>
           </div>
@@ -1805,8 +1805,7 @@ function ChapterTab({
             <button
               onClick={() => void removeDigest()}
               disabled={busy}
-              className="rounded-lg border px-2 py-1 text-[12px] disabled:opacity-50"
-              style={{ borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }}
+              className="delete-action rounded-lg border px-2 py-1 text-[12px] disabled:opacity-50"
             >
               削除
             </button>

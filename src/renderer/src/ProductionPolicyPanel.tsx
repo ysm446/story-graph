@@ -30,7 +30,7 @@ export default function ProductionPolicyPanel({ value, onChange, nodes, groups, 
   const visible = nodes.filter((n) => `${n.title ?? ''} ${n.id}`.toLowerCase().includes(search.toLowerCase()))
   const buttonStyle = (on: boolean): React.CSSProperties => ({ borderColor: 'var(--border-strong)',
     ...(on ? { background: 'var(--accent-soft)', color: 'var(--text)' } : { color: 'var(--text-faint)' }) })
-  return <details ref={detailsRef} className="max-h-[50%] shrink-0 overflow-y-auto rounded-lg border px-3 py-1.5 text-[12px]" style={{ borderColor: 'var(--border)', background: 'var(--bg-elevated)' }}>
+  return <details ref={detailsRef} className="inspector-scrollbar max-h-[50%] shrink-0 overflow-y-auto rounded-lg border px-3 py-1.5 text-[12px]" style={{ borderColor: 'var(--border)', background: 'var(--bg-elevated)' }}>
     <summary className="cursor-pointer text-[11px]" data-tip="この制作で変更できる範囲と保護するシーンを指定します">{policySummary(value, nodes, groups)}</summary>
     <div className="mt-2 flex flex-col gap-2">
       <select aria-label="制作の変更範囲" value={mode} disabled={busy}
@@ -52,7 +52,7 @@ export default function ProductionPolicyPanel({ value, onChange, nodes, groups, 
       </p>}
       <input aria-label="条件のシーン検索" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="シーンを検索"
         className="rounded-md border px-2 py-0.5 text-[12px] outline-none" style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }} />
-      <div className="max-h-40 overflow-y-auto">
+      <div className="inspector-scrollbar max-h-40 overflow-y-auto">
         {visible.map((node) => <div key={node.id} className="flex items-center gap-2 py-0.5">
           <span className="min-w-0 flex-1 truncate" data-tip={`${node.title || '(無題)'} (${node.id})`}>{node.title || '(無題)'}</span>
           {mode === 'selected' && <button aria-label={`対象: ${node.title || node.id}`} aria-pressed={value.allowed_ids?.includes(node.id)} disabled={busy}

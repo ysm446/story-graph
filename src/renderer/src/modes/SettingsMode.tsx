@@ -877,8 +877,7 @@ function SnapshotsSection(): React.JSX.Element {
           <button
             onClick={() => void handleClear()}
             disabled={busy || items.length === 0}
-            className="rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-50"
-            style={{ borderColor: 'var(--border-strong)', color: 'var(--danger)' }}
+            className="delete-action rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-50"
             data-tip={busy ? 'スナップショットの処理中です' : items.length === 0 ? '削除するスナップショットがありません' : '一覧のスナップショットをすべて削除します。現在の作品は残ります'}
           >
             一括クリア
@@ -926,8 +925,7 @@ function SnapshotsSection(): React.JSX.Element {
           <button
             onClick={() => void handleDelete(snap)}
             disabled={busy}
-            className="shrink-0 rounded-md px-1 text-[11px] disabled:opacity-50"
-            style={{ color: 'var(--danger)' }}
+            className="delete-action shrink-0 rounded-md px-1 text-[11px] disabled:opacity-50"
             aria-label="このスナップショットを削除"
             data-tip="このスナップショットを削除"
           >
@@ -1225,8 +1223,7 @@ function LlamaInstaller(): React.JSX.Element {
                 <button
                   onClick={() => void handleUninstall(ins)}
                   disabled={!ins.removable || installing || removingDir !== null}
-                  className="shrink-0 rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-40"
-                  style={{ borderColor: 'rgba(239,68,68,0.5)', color: 'var(--danger)' }}
+                  className="delete-action shrink-0 rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-40"
                   data-tip={
                     ins.removable
                       ? 'このフォルダを丸ごと消して容量を空けます'
@@ -1727,8 +1724,7 @@ function ImageGenSection({
               <button
                 onClick={() => void handleUninstall()}
                 disabled={installing || removing || status.spawned}
-                className="shrink-0 rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-40"
-                style={{ borderColor: 'rgba(239,68,68,0.5)', color: 'var(--danger)' }}
+                className="delete-action shrink-0 rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-40"
                 data-tip={status.spawned ? '起動中は削除できません(先に停止してください)' : 'このフォルダを丸ごと消して容量を空けます'}
               >
                 {removing ? '削除中…' : '削除'}

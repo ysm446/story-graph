@@ -370,8 +370,7 @@ export default function VoiceSettingsSection({
               <button
                 onClick={() => void handleUninstall()}
                 disabled={installing || removing || status.spawned}
-                className="shrink-0 rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-40"
-                style={{ borderColor: 'rgba(239,68,68,0.5)', color: 'var(--danger)' }}
+                className="delete-action shrink-0 rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-40"
                 data-tip={status.spawned ? '起動中は削除できません(先に停止してください)' : 'このフォルダを丸ごと消して容量を空けます'}
               >
                 {removing ? '削除しています…' : '削除'}

@@ -34,10 +34,10 @@ export default function ProductionMemoryPanel({ busy, refresh, onDirty }: {
   const style = { borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }
   return <details className="rounded-lg border px-3 py-1.5 text-[12px]" style={{ borderColor: 'var(--border)', background: 'var(--bg-elevated)' }}>
     <summary className="cursor-pointer" data-tip="新しい制作の会話でも引き継ぐ方針と、前回の作業記録です">作業メモ{memory?.revision ? ` · 第${memory.revision}版` : ''}</summary>
-    <div className="mt-2 flex max-h-72 flex-col gap-2 overflow-y-auto">
+    <div className="inspector-scrollbar mt-2 flex max-h-72 flex-col gap-2 overflow-y-auto">
       <p className="text-[11px]" style={{ color: 'var(--text-dim)' }}>この作品の制作だけで共有します。現在のシーンと接続を優先し、キャラクターの記憶には含めません。</p>
       {editing ? <textarea aria-label="制作の作業メモ" value={draft} disabled={busy || saving} maxLength={6000} rows={9}
-        onChange={(e) => setDraft(e.target.value)} className="w-full rounded-md border px-2 py-0.5 text-[12px] outline-none"
+        onChange={(e) => setDraft(e.target.value)} className="inspector-scrollbar w-full rounded-md border px-2 py-0.5 text-[12px] outline-none"
         style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }} /> : <Markdown text={memory?.content || 'まだ作業メモはありません。制作中に方針や次の作業を記録します。'} />}
       <div className="flex gap-2">
         {editing ? <>

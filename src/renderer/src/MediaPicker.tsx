@@ -120,8 +120,7 @@ export default function MediaPicker({
             <button
               onClick={removeUnselected}
               disabled={busy || unselectedCount === 0}
-              className="rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-40"
-              style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+              className="delete-action rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-40"
               data-tip="選択中の 1 枚だけ残して、ほかの候補をすべて削除します"
             >
               選んでいない候補を削除{unselectedCount > 0 ? `(${unselectedCount})` : ''}
@@ -214,8 +213,7 @@ export default function MediaPicker({
                     <button
                       onClick={() => remove(m)}
                       disabled={busy || isSelected}
-                      className="rounded-md border px-1.5 py-0.5 text-[11px] disabled:opacity-40"
-                      style={{ borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }}
+                      className="delete-action rounded-md border px-1.5 py-0.5 text-[11px] disabled:opacity-40"
                       data-tip={isSelected ? '選択中の画像は削除できません。先に別の候補を選んでください' : 'ストックから削除します(元に戻せません)'}
                     >
                       削除
