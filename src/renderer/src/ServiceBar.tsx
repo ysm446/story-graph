@@ -33,6 +33,7 @@ export interface ServiceStatus {
  *  生成・読み上げの自動起動で始まった起動もポーリングで拾う。 */
 export default function ServiceBar({
   name,
+  tooltipName = name,
   icon,
   fetchStatus,
   start,
@@ -40,8 +41,10 @@ export default function ServiceBar({
   startTip,
   notInstalledTip
 }: {
-  /** 表示名(ComfyUI / エンジンの label) */
+  /** 表示名(ComfyUI / TTS) */
   name: string
+  /** ツールチップ用の詳細名。省略時は表示名と同じ */
+  tooltipName?: string
   icon: IconName
   fetchStatus: () => Promise<ServiceStatus>
   start: () => Promise<unknown>
@@ -129,11 +132,11 @@ export default function ServiceBar({
           hasError
             ? error!
             : loading
-              ? `${name} を起動しています`
+              ? `${tooltipName} を起動しています`
               : healthy
-                ? `${name} 稼働中(${status?.base_url ?? ''})${status?.external ? '。外部で起動したものなので、ここからは止めません' : ''}`
+                ? `${tooltipName} 稼働中(${status?.base_url ?? ''})${status?.external ? '。外部で起動したものなので、ここからは止めません' : ''}`
                 : installed
-                  ? `クリックで ${name} を起動(${startTip})`
+                  ? `クリックで ${tooltipName} を起動(${startTip})`
                   : notInstalledTip
         }
       >
@@ -150,7 +153,7 @@ export default function ServiceBar({
           className="rounded-lg border p-1.5 transition-colors"
           style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
           aria-label={`${name} を停止`}
-          data-tip={`${name} を停止(VRAM を解放)`}
+          data-tip={`${tooltipName} を停止(VRAM を解放)`}
         >
           <EjectIcon />
         </button>
