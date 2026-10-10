@@ -10,6 +10,7 @@ export default function AutoTextarea({
   value,
   onChange,
   onBlur,
+  onKeyDown,
   placeholder,
   minRows = 1,
   disabled,
@@ -21,6 +22,7 @@ export default function AutoTextarea({
   value: string
   onChange: (value: string) => void
   onBlur?: () => void
+  onKeyDown?: React.KeyboardEventHandler<HTMLTextAreaElement>
   placeholder?: string
   disabled?: boolean
   maxLength?: number
@@ -67,6 +69,7 @@ export default function AutoTextarea({
       placeholder={placeholder}
       onChange={(e) => onChange(e.target.value)}
       onBlur={onBlur}
+      onKeyDown={onKeyDown}
       className={className}
       style={{ ...style, overflow: 'hidden', resize: 'none' }}
     />

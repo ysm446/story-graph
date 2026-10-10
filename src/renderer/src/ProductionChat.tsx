@@ -1,4 +1,5 @@
 import ChatRulesPanel from './ChatRulesPanel'
+import AutoTextarea from './AutoTextarea'
 import { useEffect, useRef, useState } from 'react'
 import { chatApi, isAbortError, productionApi, type ChatSummary, type ProductionInstruction, type ProductionPolicy, type ProductionOperation } from './api'
 import { Markdown } from './Markdown'
@@ -385,13 +386,13 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
       <p className="text-[11px]" style={{ color: 'var(--text-faint)' }}>
         {task?.status === 'pending' ? '待機しています…' : status || '全体の接続関係と資料庫のキャラクター・場所を参照できます。相談するだけでは作品を変更しません。'}
       </p>
-      <textarea aria-label="制作への依頼" value={input} onChange={(e) => setInput(e.target.value)} disabled={sendingInstruction || (busy && !runId)}
+      <AutoTextarea ariaLabel="制作への依頼" value={input} onChange={setInput} disabled={sendingInstruction || (busy && !runId)}
         onKeyDown={(e) => {
           if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return
           e.preventDefault()
           if (!e.repeat) submit()
         }}
-        rows={2} placeholder={runId ? "途中指示を入力（未確定の変更を見直してから続けます）" : "方針の相談、または作業の依頼を入力"}
+        minRows={2} placeholder={runId ? "途中指示を入力（未確定の変更を見直してから続けます）" : "方針の相談、または作業の依頼を入力"}
         className="w-full shrink-0 rounded-md border px-2 py-0.5 text-[12px] outline-none disabled:opacity-50"
         style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }} />
       <div className="flex flex-wrap items-center justify-end gap-2">
