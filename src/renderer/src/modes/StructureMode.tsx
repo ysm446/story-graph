@@ -4565,24 +4565,6 @@ function StructureModeInner({
                     </button>
                   )}
                   <button
-                    onClick={() => void realignLayout()}
-                    className="rounded-lg border px-2.5 py-1.5 text-[13px] shadow-lg shadow-black/30"
-                    style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-                    data-tip={
-                      effectiveView === 'chapters'
-                        ? '章カードと未分類のノードだけを整列する(章の中は変えません)'
-                        : effectiveView === 'focused'
-                          ? selectedCount >= 2
-                            ? `選択中の ${selectedCount} シーンだけを整列する`
-                            : 'この章に見えているシーンだけを整列する(章の外は変えません)'
-                          : selectedCount >= 2
-                            ? `選択中の ${selectedCount} シーンだけを整列する`
-                            : '手動配置をリセットして全体を自動レイアウトに戻す(複数選択中なら選択分だけ整列)'
-                    }
-                  >
-                    ⟲
-                  </button>
-                  <button
                     onClick={() => setGenPanelOpen((v) => !v)}
                     className={`rounded-lg border px-2.5 py-1.5 text-[13px] font-medium shadow-lg shadow-black/30 ${
                       generating ? 'node-generating-border' : ''
@@ -4707,6 +4689,27 @@ function StructureModeInner({
                   </div>
                 )}
               </div>
+            </Panel>
+            <Panel position="top-right">
+              <button
+                onClick={() => void realignLayout()}
+                aria-label="ノードを整列"
+                className="rounded-lg border px-2.5 py-1.5 text-[13px] shadow-lg shadow-black/30"
+                style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+                data-tip={
+                  effectiveView === 'chapters'
+                    ? '章カードと未分類のノードだけを整列する(章の中は変えません)'
+                    : effectiveView === 'focused'
+                      ? selectedCount >= 2
+                        ? `選択中の ${selectedCount} シーンだけを整列する`
+                        : 'この章に見えているシーンだけを整列する(章の外は変えません)'
+                      : selectedCount >= 2
+                        ? `選択中の ${selectedCount} シーンだけを整列する`
+                        : '手動配置をリセットして全体を自動レイアウトに戻す(複数選択中なら選択分だけ整列)'
+                }
+              >
+                ⟲
+              </button>
             </Panel>
             {/* 相談チャットのトグルは左下(生成 UI と離し、ミニマップの反対側に置く) */}
             <Panel position="bottom-left">

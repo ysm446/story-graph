@@ -350,14 +350,18 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
       <div className="flex flex-wrap items-center justify-end gap-2">
         <span className="mr-auto text-[11px]" style={{ color: 'var(--text-faint)' }}>Enterで送信・Shift＋Enterで改行</span>
         {usage && <ContextUsageRing usage={usage} />}
-        <select aria-label="制作チャットの送信モード" value={sendMode} disabled={busy}
-          onChange={(e) => setSendMode(e.target.value as 'consult' | 'execute')}
-          className="rounded-md border px-2 py-0.5 text-[12px] outline-none disabled:opacity-50"
-          style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
-          data-tip="相談は読み取りのみ、制作は依頼に応じて作品を編集します">
-          <option value="consult">相談する</option>
-          <option value="execute">制作を実行</option>
-        </select>
+        <div role="group" aria-label="制作チャットの送信モード"
+          className="flex overflow-hidden rounded-md border" style={{ borderColor: 'var(--border-strong)' }}>
+          {([['consult', '相談する'], ['execute', '制作を実行']] as const).map(([value, label]) => (
+            <button key={value} type="button" aria-pressed={sendMode === value} disabled={busy}
+              onClick={() => setSendMode(value)}
+              className="whitespace-nowrap px-2.5 py-0.5 text-[12px] disabled:opacity-50"
+              style={sendMode === value ? { background: 'var(--accent-soft)', color: 'var(--text)' } : { color: 'var(--text-faint)' }}
+              data-tip={busy ? '処理が終わるか停止してから切り替えられます' : value === 'consult' ? '作品を変更せずに相談します' : '送信すると、依頼に応じて作品を編集します'}>
+              {label}
+            </button>
+          ))}
+        </div>
         {busy && runId && <button onClick={submit} disabled={!input.trim() || sendingInstruction}
           className="rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-50"
           style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
