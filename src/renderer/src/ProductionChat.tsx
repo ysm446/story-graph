@@ -1,4 +1,5 @@
 import ChatRulesPanel from './ChatRulesPanel'
+import ProductionPreviewPanel from './ProductionPreviewPanel'
 import AutoTextarea from './AutoTextarea'
 import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import { chatApi, isAbortError, productionApi, type ChatSummary, type ProductionInstruction, type ProductionPolicy, type ProductionOperation, type ProductionSelectedNode } from './api'
@@ -437,6 +438,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
         {live && <Markdown text={live} />}
         <div ref={endRef} />
       </div>
+      <ProductionPreviewPanel />
       {error && <p role="alert" className="text-[12px]" style={{ color: 'var(--danger)' }}>{error}</p>}
       <p className="text-[11px]" style={{ color: 'var(--text-faint)' }}>
         {status && messageTime(statusAt) && <time dateTime={statusAt} className="mr-2 tabular-nums">{messageTime(statusAt)}</time>}

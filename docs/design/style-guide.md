@@ -1,7 +1,7 @@
 # UI スタイルガイド(色・タイポ・余白・部品)
 
 作成日時: 2026-08-09 16:00
-更新日時: 2026-10-11 23:25
+更新日時: 2026-10-11 23:28
 
 新しい画面や部品を足すときに **見た目を揃えるための具体値** をまとめる。
 [overview.md](overview.md) がアーキテクチャの入口なら、本書は UI の入口。
@@ -501,7 +501,7 @@ AIの返答・変更報告は左側の全幅、背景 `--bg-elevated` を維持�
 時刻不明な旧履歴には表示しない。進行状況の時刻は説明の前に `mr-2 tabular-nums` で置く。
 メモ照合の件数は「資料を確認しています… (2/5)」のように工程内の件数として表示し、全体の進捗率とはしない。
 
-構造の下段詳細欄のタブ直下に固定。`px-3 py-2`、下辺は `--accent-border`、背景は `--accent-soft`。
+制作チャットの会話本文と進捗表示の間に置く。構造・資料庫で共通表示し、下段詳細欄には置かない。`shrink-0 rounded-lg border px-3 py-2`、枠は `--accent-border`、背景は `--accent-soft`。
 説明は `text-[11px]` / `--text-dim`、本文は `text-[12px] leading-relaxed whitespace-pre-wrap break-words`。
 本文枠は `max-h-48 overflow-y-auto inspector-scrollbar`。生成中の末尾を常に自動追従する。編集中のため手動スクロールは提供せず、全文確認は反映後に行う。
 ノードの「AI編集中」バッジは `rounded-md px-1.5 py-0.5 text-[10px] shrink-0`、背景 `--accent-soft`、文字 `--text`。

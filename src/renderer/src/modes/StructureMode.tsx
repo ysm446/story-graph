@@ -37,7 +37,6 @@ import CharAvatar from '../CharAvatar'
 import ChatDrawer from '../ChatDrawer'
 import ContextMenu, { type ContextMenuItem } from '../ContextMenu'
 import ProductionChat from '../ProductionChat'
-import ProductionPreviewPanel from '../ProductionPreviewPanel'
 import { useProductionPreview } from '../productionPreview'
 import { defaultProductionPolicy } from '../ProductionPolicyPanel'
 import type { ProductionPolicy } from '../api'
@@ -5284,7 +5283,6 @@ function StructureModeInner({
             <button onClick={toggleInspector} className="ml-auto rounded-md border px-2 py-0.5 text-[11px]"
               style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }} data-tip="詳細欄を折りたたむ">閉じる</button>
           </div>
-          <ProductionPreviewPanel />
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             {inspectorTab === 'graph' ? (
               <RelationGraph detailLayout autoFit
