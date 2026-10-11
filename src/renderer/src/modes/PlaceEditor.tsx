@@ -4,6 +4,8 @@ import ProofreadTextarea from '../ProofreadTextarea'
 import type { Place } from '../types'
 import UnsavedBadge from '../UnsavedBadge'
 
+const EDITABLE_FIELDS = ['name', 'color', 'description', 'atmosphere', 'reading'] as const
+
 const FIELD_DEFS: Array<{ key: 'description' | 'atmosphere'; label: string; rows: number }> = [
   { key: 'description', label: '説明(地形・規模・成り立ち)', rows: 5 },
   { key: 'atmosphere', label: '雰囲気・空気感', rows: 3 }
@@ -25,6 +27,7 @@ export default function PlaceEditor({
   onDeleted: () => void
 }): React.JSX.Element {
   const [draft, setDraft] = useState<Partial<Place>>(place)
+  const [draftReset, setDraftReset] = useState(0)
   const [saving, setSaving] = useState(false)
   const [uploading, setUploading] = useState(false)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
@@ -37,9 +40,16 @@ export default function PlaceEditor({
     setDraft(place)
   }, [place.id])
 
-  const dirty = (['name', 'color', 'description', 'atmosphere', 'reading'] as const).some(
+  const dirty = EDITABLE_FIELDS.some(
     (key) => (draft[key] ?? '') !== (place[key] ?? '')
   )
+
+  const resetDraft = (): void => {
+    if (!dirty || saving || uploading) return
+    const saved = Object.fromEntries(EDITABLE_FIELDS.map((key) => [key, place[key] ?? '']))
+    setDraft((current) => ({ ...current, ...saved }))
+    setDraftReset((value) => value + 1)
+  }
 
   useEffect(() => {
     onDirty?.(dirty || saving || uploading)
@@ -209,6 +219,7 @@ export default function PlaceEditor({
             {f.label}
           </span>
           <ProofreadTextarea
+            key={`${place.id}:${f.key}:${draftReset}`}
             rows={f.rows}
             value={(draft[f.key] as string | null) ?? ''}
             onChange={(next) => setDraft((d) => ({ ...d, [f.key]: next }))}
@@ -219,7 +230,7 @@ export default function PlaceEditor({
       <p className="mb-4 text-[11px] leading-relaxed" style={{ color: 'var(--text-faint)' }}>
         説明と雰囲気は、この場所を舞台にするシーンの清書に毎回渡されます。
       </p>
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <button
           onClick={() => void handleSave()}
           disabled={saving || !dirty}
@@ -228,6 +239,12 @@ export default function PlaceEditor({
           data-tip={dirty ? undefined : '変更はありません'}
         >
           {saving ? '保存中…' : '保存'}
+        </button>
+        <button onClick={resetDraft} disabled={!dirty || saving || uploading}
+          className="rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-50"
+          style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+          data-tip={saving || uploading ? '保存・画像のアップロードが終わるまでお待ちください' : dirty ? 'この場所の未保存の変更を取り消します' : '変更はありません'}>
+          元に戻す
         </button>
         {dirty && <UnsavedBadge />}
         <button

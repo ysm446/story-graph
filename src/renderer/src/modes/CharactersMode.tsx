@@ -10,6 +10,8 @@ import type { Character, Place, StoryGraph, StoryNode } from '../types'
 import { useWorkspace } from '../Workspace'
 import UnsavedBadge from '../UnsavedBadge'
 
+const EDITABLE_FIELDS = ['name', 'color', 'profile', 'appearance', 'voice', 'reading'] as const
+
 const FIELD_DEFS: Array<{ key: 'profile' | 'appearance' | 'voice'; label: string; rows: number }> = [
   { key: 'profile', label: 'プロフィール(性格の基調・背景)', rows: 5 },
   { key: 'appearance', label: '外見', rows: 3 },
@@ -40,6 +42,7 @@ export default function CharactersMode(): React.JSX.Element {
   const selectedIdRef = useRef(selectedId)
   selectedIdRef.current = selectedId
   const [draft, setDraft] = useState<Partial<Character>>({})
+  const [draftReset, setDraftReset] = useState(0)
   const [saving, setSaving] = useState(false)
   const [cropTarget, setCropTarget] = useState<{
     source: File | string
@@ -199,7 +202,7 @@ export default function CharactersMode(): React.JSX.Element {
       // 編集欄の項目だけ送る。draft は選択時点の丸ごとコピーなので、そのまま PATCH すると
       // 選択後にその場で保存された項目(参照画像・関係図の座標など)を古い値で巻き戻す
       const patch = Object.fromEntries(
-        (['name', 'color', 'profile', 'appearance', 'voice', 'reading'] as const).map((k) => [k, draft[k] ?? ''])
+        EDITABLE_FIELDS.map((k) => [k, draft[k] ?? ''])
       )
       await api.updateCharacter(selectedId, patch)
       await reload()
@@ -212,9 +215,16 @@ export default function CharactersMode(): React.JSX.Element {
   // 切り抜き確定時にその場で保存されるので、ここでは判定に含めない
   const dirty =
     selected !== null &&
-    (['name', 'color', 'profile', 'appearance', 'voice', 'reading'] as const).some(
+    EDITABLE_FIELDS.some(
       (key) => (draft[key] ?? '') !== (selected[key] ?? '')
     )
+
+  const resetDraft = (): void => {
+    if (!selected || saving || cropTarget !== null || !dirty) return
+    const saved = Object.fromEntries(EDITABLE_FIELDS.map((key) => [key, selected[key] ?? '']))
+    setDraft((current) => ({ ...current, ...saved }))
+    setDraftReset((value) => value + 1)
+  }
 
   useEffect(() => {
     workspace.libraryDirty.current = dirty || placeDirty || saving || cropTarget !== null
@@ -579,6 +589,7 @@ export default function CharactersMode(): React.JSX.Element {
                 </span>
                 {/* 高さの自動調整と校正ボタン(本文の下に常に出る)は共通コンポーネントに任せる */}
                 <ProofreadTextarea
+                  key={`${selected.id}:${f.key}:${draftReset}`}
                   rows={f.rows}
                   value={(draft[f.key] as string | null) ?? ''}
                   onChange={(next) => setDraft((d) => ({ ...d, [f.key]: next }))}
@@ -588,7 +599,7 @@ export default function CharactersMode(): React.JSX.Element {
             ))}
             {/* 読み上げの声(docs/design/voice.md §5)。選んだその場で保存する */}
             <CharacterVoicePanel character={selected} onChanged={reload} />
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <button
                 onClick={() => void handleSave()}
                 disabled={saving || !dirty}
@@ -597,6 +608,12 @@ export default function CharactersMode(): React.JSX.Element {
                 data-tip={dirty ? undefined : '変更はありません'}
               >
                 {saving ? '保存中…' : '保存'}
+              </button>
+              <button onClick={resetDraft} disabled={!dirty || saving || cropTarget !== null}
+                className="rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-50"
+                style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+                data-tip={saving || cropTarget !== null ? '保存・画像の調整が終わるまでお待ちください' : dirty ? 'このキャラクターの未保存の変更を取り消します' : '変更はありません'}>
+                元に戻す
               </button>
               {dirty && <UnsavedBadge />}
               <button
