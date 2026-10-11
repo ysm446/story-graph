@@ -1,9 +1,11 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-07-24 22:38
-更新日時: 2026-10-11 23:46
+更新日時: 2026-10-12 00:18
 
 ## 現在の状態
+
+- 2026-10-12 00:18 採用済みリングアイコンを内蔵imagegenで編集し、紫（#7c5af7）から青（#5088ff）の配色、線幅約35%増を指定。原画は `assets/story-graph-interwoven-ring-purple-blue.png`。`scripts/build-app-icon.ps1` で `resources/icon.png`（512px）とICO（16/24/32/48/64/128/256px）を出力。PNG目視、ICOヘッダーとWindowsの画像読み込みを確認。画像資産のみの適用につきbuildは未実施、再起動後の実アプリ表示は未確認。
 
 - 2026-10-11 23:46 制作チャットの外枠に `min-w-0 w-full flex-1` を追加。長い会話名で一覧を開いた際の横はみ出しを隔離Electronで再現し、修正後は `--width` で440px・320pxの一覧開閉時に収まることを確認。build成功。
 
