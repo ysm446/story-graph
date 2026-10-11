@@ -168,3 +168,50 @@ def test_many_summaries_are_reduced_before_final_review(store, monkeypatch):
     value, _, _ = asyncio.run(memory.review(store, "fake", "長い資料" * 150000, [], [], "完了"))
     assert value["content"] == "確認済み"
     assert any(isinstance(data, list) and isinstance(data[0], str) for data in calls)
+
+
+def test_review_operations_omit_only_unchanged_fields():
+    changes = [{"action": "update_character", "before": {"profile": "長い設定", "name": "旧名"},
+                "after": {"profile": "長い設定", "name": "新名"}, "reason": "改名"},
+               {"action": "delete_character", "before": {"profile": "削除される設定"}, "after": None}]
+    original = json.loads(json.dumps(changes))
+    compact = memory._review_operations(changes)
+    assert compact[0]["before"] == {"name": "旧名"}
+    assert compact[0]["after"] == {"name": "新名"}
+    assert compact[1] == changes[1] and changes == original
+
+
+def test_review_stream_reports_progress_before_llm_finishes_and_cancels(store, monkeypatch):
+    async def check():
+        started, cancelled = asyncio.Event(), asyncio.Event()
+        async def chat(*args, **kwargs):
+            started.set()
+            try:
+                await asyncio.Future()
+            finally:
+                cancelled.set()
+        monkeypatch.setattr(llm, "chat", chat)
+        stream = memory.review_stream(store, "fake", "依頼" * 30000, [], [], "完了")
+        kind, stage = await asyncio.wait_for(anext(stream), 2)
+        assert kind == "stage" and "(1/" in stage
+        await asyncio.wait_for(started.wait(), 2)
+        await stream.aclose()
+        assert cancelled.is_set()
+        assert memory.review_state(store) == {}
+    asyncio.run(check())
+
+
+def test_review_stream_reports_all_batches_and_final_result(store, monkeypatch):
+    async def chat(messages, **kwargs):
+        if kwargs["label"] == "制作の作業メモ分割照合":
+            return {"content": '{"summary":"確認した内容"}'}
+        return {"content": '{"content":"確認済み", "reason":"統合"}'}
+    monkeypatch.setattr(llm, "chat", chat)
+    async def check():
+        return [event async for event in memory.review_stream(store, "fake", "依頼" * 30000, [], [], "完了")]
+    events = asyncio.run(check())
+    stages = [value for kind, value in events if kind == "stage"]
+    total = len(stages) - 1
+    assert all(f"({i + 1}/{total})" in stage for i, stage in enumerate(stages[:-1]))
+    assert stages[-1] == "作業メモを最終確認しています…"
+    assert events[-1][0] == "result" and events[-1][1][0]["content"] == "確認済み"

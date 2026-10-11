@@ -1,6 +1,7 @@
 """制作専用の方針メモと中断位置。ノードやキャラクターの記憶とは分離する。"""
 import json
 import difflib
+import asyncio
 
 import llm
 from production_policy import CONTENT_FIELDS
@@ -30,6 +31,42 @@ def _review_batches(items):
         yield batch
 
 
+def _review_operations(changes):
+    """資料庫操作の変更していない項目の二重送信だけを省く。原記録は変更しない。"""
+    result = []
+    for operation in changes:
+        item = dict(operation)
+        before, after = item.get("before"), item.get("after")
+        if isinstance(before, dict) and isinstance(after, dict):
+            fields = {k for k in before.keys() | after.keys() if before.get(k) != after.get(k)}
+            item["before"] = {k: v for k, v in before.items() if k in fields}
+            item["after"] = {k: v for k, v in after.items() if k in fields}
+        result.append(item)
+    return result
+
+
+async def review_stream(*args, **kwargs):
+    """LLM待ちの間も進捗を配信し、配信中断時は照合タスクも停止する。"""
+    queue = asyncio.Queue()
+    async def worker():
+        try:
+            return await review(*args, **kwargs, on_progress=queue.put_nowait)
+        finally:
+            queue.put_nowait(None)
+    task = asyncio.create_task(worker())
+    try:
+        while True:
+            stage = await queue.get()
+            if stage is None:
+                break
+            yield "stage", stage
+        yield "result", await task
+    finally:
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
 def _review_fragments(evidence):
     """対象名と断片順を付け、本文・操作記録を切り捨てずに分割する。"""
     for field, value in evidence.items():
@@ -42,7 +79,8 @@ def _review_fragments(evidence):
         for target, entry in entries:
             # 元のJSONを復元できる連続断片。境界で文や差分行が切れることをモデルへ明示する。
             text = _encoded(entry)
-            chunks = [text[i:i + 8000] for i in range(0, len(text), 8000)]
+            # 通常の本文なら3断片を1束に収め、8,000文字分割時の余白を減らす。
+            chunks = [text[i:i + 7000] for i in range(0, len(text), 7000)]
             for i, chunk in enumerate(chunks):
                 yield {"分類": field, "対象": target, "断片": i + 1, "断片数": len(chunks), "資料": chunk}
 
@@ -197,24 +235,32 @@ def differences(before, after):
     return {"初回照合": before is None, "変更": result}
 
 
-async def review(store, base_url, request, instructions, changes, report, *, check_current=None):
+async def review(store, base_url, request, instructions, changes, report, *, check_current=None, on_progress=None):
     """副作用のないメモ案の生成。保存直前の世代確認は呼び出し側が行う。"""
     current = read(store)
     current_basis = basis(store)
     evidence = {"作業メモ": current["content"], "依頼": request, "途中指示": instructions,
-                "今回の確定操作": changes, "終了報告": report,
+                "今回の確定操作": _review_operations(changes), "終了報告": report,
                 "前回の照合後の変更（手動修正を含む）": differences(review_state(store).get("basis"), current_basis)}
     encoded = _encoded(evidence)
     if len(encoded) > REVIEW_INPUT_CHARS:
         summaries = []
-        for batch in _review_batches(_review_fragments(evidence)):
+        batches = list(_review_batches(_review_fragments(evidence)))
+        for i, batch in enumerate(batches):
+            if on_progress:
+                on_progress(f"作業メモの資料を確認しています… ({i + 1}/{len(batches)})")
             summaries.append(await _summarize_review(base_url, batch, check_current))
         # 元のメモは最後にも全文を渡す。大量資料では要約をさらに束ねて統合する。
         def combined():
             return _encoded({"作業メモ": current["content"], "分割照合の要約": summaries})
+        round_number = 0
         while len(combined()) > REVIEW_INPUT_CHARS:
+            round_number += 1
             reduced = []
-            for batch in _review_batches(summaries):
+            batches = list(_review_batches(summaries))
+            for i, batch in enumerate(batches):
+                if on_progress:
+                    on_progress(f"作業メモの要約を統合しています… ({round_number}回目・{i + 1}/{len(batches)})")
                 reduced.append(await _summarize_review(base_url, batch, check_current))
             if len(_encoded(reduced)) >= len(_encoded(summaries)):
                 raise ValueError("作業メモの照合要約を十分に圧縮できませんでした")
@@ -222,6 +268,8 @@ async def review(store, base_url, request, instructions, changes, report, *, che
         encoded = combined()
     if check_current:
         check_current()
+    if on_progress:
+        on_progress("作業メモを最終確認しています…")
     response = await llm.chat([
         {"role": "system", "content":
          "制作終了時の引継ぎメモだけを見直してください。編集ツールは使えません。"

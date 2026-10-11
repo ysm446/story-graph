@@ -12,6 +12,7 @@ import ProductionPolicyPanel, { defaultProductionPolicy, policySummary } from '.
 import ContextUsageRing, { type ContextUsage } from './ContextUsageRing'
 
 interface Message {
+  created_at?: string
   policy?: ProductionPolicy
   policy_after?: ProductionPolicy
   policy_label?: string
@@ -28,6 +29,12 @@ const operationLabels = { insert_scene: '追加', branch_scene: '分岐を追加
 const libraryFieldLabels: Record<string, string> = {
   name: '名前', profile: 'プロフィール', appearance: '外見', voice: '口調', reading: '読み', color: '色',
   description: '説明', atmosphere: '雰囲気'
+}
+
+function messageTime(value?: string): string {
+  if (!value) return ''
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString('ja-JP', { hour12: false })
 }
 
 /** 制作専用チャット。相談履歴とは分け、選択した送信モードで書き込みの可否を決める。 */
@@ -53,6 +60,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
   const [usage, setUsage] = useState<ContextUsage | null>(null)
   const [live, setLive] = useState('')
   const [status, setStatus] = useState('')
+  const [statusAt, setStatusAt] = useState<string>()
   const [error, setError] = useState('')
   const [taskId, setTaskId] = useState<string | null>(null)
   const [manualReady, setManualReady] = useState(false)
@@ -179,6 +187,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
       onManualEdit(paused)
       if (paused) { setProductionPreview(null); onFollowTarget(null) }
       setStatus(paused ? '手動編集中です。保存してから制作を再開してください。' : '最新の構成を読み直して再開します…')
+      setStatusAt(new Date().toISOString())
     } catch (e) {
       onManualEdit(manualRef.current)
       setError(String(e))
@@ -206,17 +215,24 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
       label: execute ? '制作' : '制作の相談', kind: 'production',
       runner: async ({ signal, update }) => {
         setStatus('開始の準備をしています…')
-        setMessages((prev) => [...prev, { role: 'user', content: message, policy, policy_label: policySummary(policy, nodes, groups) }])
+        setStatusAt(new Date().toISOString())
+        setMessages((prev) => [...prev, { role: 'user', content: message, created_at: new Date().toISOString(), policy, policy_label: policySummary(policy, nodes, groups) }])
         let text = ''
+        let receivedAt: string | undefined
         let finished = false
         const flush = (): void => {
           const content = text
-          if (content) setMessages((prev) => [...prev, { role: 'assistant', content }])
+          if (content) {
+            const created_at = receivedAt ?? new Date().toISOString()
+            setMessages((prev) => [...prev, { role: 'assistant', content, created_at }])
+          }
           text = ''
           setLive('')
         }
         try {
           await productionApi.send({ chat_id: currentChatId, message, execute, policy }, async (event) => {
+            receivedAt = event.timestamp ?? new Date().toISOString()
+            const created_at = receivedAt
             if (event.usage) setUsage(event.usage)
             if (event.chat_id) { currentChatId = event.chat_id; setChatId(event.chat_id) }
             if (event.run_id && event.accepting_instructions) {
@@ -226,12 +242,12 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
             if (event.manual_edit_ready) setManualReady(true)
             if (event.memory) {
               setMemoryRefresh((value) => value + 1)
-              setMessages((prev) => [...prev, { role: 'assistant', content: `作業メモを更新しました: ${event.memory!.reason}` }])
+              setMessages((prev) => [...prev, { role: 'assistant', content: `作業メモを更新しました: ${event.memory!.reason}`, created_at }])
             }
             if (event.instruction) recordInstruction(event.instruction)
             if (event.delta) { text += event.delta; setLive(text) }
             if (event.response_end) { setProductionPreview(null); flush() }
-            if (event.stage) { setStatus(event.stage); update({ detail: event.stage }) }
+            if (event.stage) { setStatus(event.stage); setStatusAt(created_at); update({ detail: event.stage }) }
             if ('active_node' in event && event.active_node !== activeNode) {
               setProductionPreview(null)
               setNodeBusy(activeNode, false)
@@ -245,14 +261,14 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
             if ('preview' in event && !manualRef.current) setProductionPreview(event.preview ?? null)
             if (event.snapshot) {
               const snapshot = event.snapshot
-              setMessages((prev) => [...prev, { role: 'assistant', content: '作業前の状態を保存しました。', snapshot }])
+              setMessages((prev) => [...prev, { role: 'assistant', content: '作業前の状態を保存しました。', snapshot, created_at }])
             }
             if (event.changed) {
               const operation = event.changed
               setPolicy((previous) => previous.allowed_ids === null ? previous : { ...previous,
                 allowed_ids: operation.action === 'insert_scene' || operation.action === 'branch_scene' ? [...previous.allowed_ids, operation.node_id]
                   : operation.action === 'delete_scene' ? previous.allowed_ids.filter((id) => id !== operation.node_id) : previous.allowed_ids })
-              setMessages((prev) => [...prev, { role: 'assistant', content: operation.reason, operation }])
+              setMessages((prev) => [...prev, { role: 'assistant', content: operation.reason, operation, created_at }])
               await onChanged(operation)
               setProductionPreview(null)
               if (operation.node_id && operation.action !== 'delete_scene') {
@@ -263,7 +279,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
                 onFollowTarget(null)
               }
             }
-            if (event.tool_error) { setProductionPreview(null); setStatus(`変更を見直しています: ${event.tool_error}`) }
+            if (event.tool_error) { setProductionPreview(null); setStatus(`変更を見直しています: ${event.tool_error}`); setStatusAt(created_at) }
             if (event.error) throw new Error(event.error)
             if (event.done) finished = true
           }, signal)
@@ -273,6 +289,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
           if (isAbortError(e)) setStatus('停止しました。確定済みの変更は残しています。')
           else setError(String(e))
         } finally {
+          setStatusAt(new Date().toISOString())
           setProductionPreview(null)
           manualRef.current = false
           setManualEditing(false)
@@ -358,6 +375,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
           }}>
             <div className="mb-1 text-[11px]" style={{ color: 'var(--text-faint)' }}>
               {m.instruction ? `途中指示・${({ accepted: '受け付けました', reflected: '次の判断に反映しました', unapplied: '未反映のまま終了しました' })[m.instruction.status]}` : m.operation ? `${operationLabels[m.operation.action]}: ${m.operation.title || '(無題)'}` : m.role === 'user' ? 'あなた' : '制作'}
+              {messageTime(m.created_at) && <time dateTime={m.created_at} className="ml-2 tabular-nums" data-tip={new Date(m.created_at!).toLocaleString('ja-JP')}>{messageTime(m.created_at)}</time>}
             </div>
             {m.policy && <p className="mb-1 text-[11px]" style={{ color: 'var(--text-dim)' }}>{m.policy_label || policySummary(m.policy, nodes, groups)}</p>}
             {m.operation && 'entity_id' in m.operation && <details className="mb-1 text-[11px]" style={{ color: 'var(--text-dim)' }}>
@@ -384,6 +402,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
       </div>
       {error && <p role="alert" className="text-[12px]" style={{ color: 'var(--danger)' }}>{error}</p>}
       <p className="text-[11px]" style={{ color: 'var(--text-faint)' }}>
+        {status && messageTime(statusAt) && <time dateTime={statusAt} className="mr-2 tabular-nums">{messageTime(statusAt)}</time>}
         {task?.status === 'pending' ? '待機しています…' : status || '全体の接続関係と資料庫のキャラクター・場所を参照できます。相談するだけでは作品を変更しません。'}
       </p>
       <AutoTextarea ariaLabel="制作への依頼" value={input} onChange={setInput} disabled={sendingInstruction || (busy && !runId)}

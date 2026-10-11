@@ -7,6 +7,8 @@ import json
 import re
 import uuid
 import time
+from datetime import datetime, timezone
+from contextlib import aclosing
 from production_preview import scene_preview
 from typing import Any
 
@@ -37,6 +39,21 @@ TOOL_LABELS = {
     "read_library": "資料庫を読んでいます…",
     **{name: "資料庫を更新しています…" for name in production_library.WRITE_TOOLS},
 }
+
+
+def _now():
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _sse(data):
+    return chat_agent._sse({"timestamp": _now(), **data})
+
+
+class ProductionHistory(list):
+    """新しい発言の記録時刻だけを保存する。過去の時刻不明な履歴は補完しない。"""
+    def append(self, item):
+        item.setdefault("created_at", _now())
+        super().append(item)
 
 
 class ProductionGate:
@@ -475,10 +492,10 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
     policy = policy or ProductionPolicy(store)
     chat = store.get_chat(chat_id) if chat_id else store.create_chat(None, "all", mode="production")
     if chat is None or chat.get("mode") != "production":
-        yield chat_agent._sse({"error": "制作チャットが見つかりません"})
+        yield _sse({"error": "制作チャットが見つかりません"})
         return
     chat_id = chat["id"]
-    history = list(chat["messages"])
+    history = ProductionHistory(chat["messages"])
     request_message = {"role": "user", "content": message, "execute": execute, "policy": policy.initial, "policy_label": policy.label}
     history.append(request_message)
     store.save_chat_messages(chat_id, history)
@@ -498,17 +515,17 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
             [{"content": m["content"], "status": m["instruction"]["status"]} for m in history
              if m.get("instruction", {}).get("run_id") == run.id], report)
     try:
-        yield chat_agent._sse({"chat_id": chat_id, "run_id": run.id, "accepting_instructions": execute})
+        yield _sse({"chat_id": chat_id, "run_id": run.id, "accepting_instructions": execute})
         if execute:
             snapshot = await snapshots.create_async(store, "制作: " + message[:60], kind="manual")
             history.append({"role": "assistant", "content": "作業前の状態を保存しました。", "snapshot": snapshot})
             store.save_chat_messages(chat_id, history)
-            yield chat_agent._sse({"snapshot": snapshot})
+            yield _sse({"snapshot": snapshot})
         if execute:
             save_checkpoint("running")
             checkpoint_started = True
         run.ready = True
-        yield chat_agent._sse({"manual_edit_ready": execute})
+        yield _sse({"manual_edit_ready": execute})
         previous_epoch = run.epoch
         for step in range(MAX_STEPS):
             if run.paused or run.epoch != previous_epoch:
@@ -519,11 +536,11 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
             previous_epoch = epoch
             versions = NodeVersions(store)
             for item in run.take():
-                yield chat_agent._sse({"instruction": item})
+                yield _sse({"instruction": item})
             messages = build_messages(store, history, message, execute, policy, previous_checkpoint,
                                       changes, recent_results, run.id)
-            yield chat_agent._sse({"usage": await context_usage(store, base_url, messages, execute)})
-            yield chat_agent._sse({"stage": f"確認しています… ({step + 1}/{MAX_STEPS})"})
+            yield _sse({"usage": await context_usage(store, base_url, messages, execute)})
+            yield _sse({"stage": f"確認しています… ({step + 1}/{MAX_STEPS})"})
             result: dict[str, Any] = {}
             last_preview_at = 0.0
             async for kind, value in llm.chat_stream_tools(
@@ -531,42 +548,47 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
                 max_tokens=3072, label=f"制作チャット({step + 1})", emit_tool_progress=execute,
             ):
                 if kind == "content":
-                    yield chat_agent._sse({"delta": value})
+                    yield _sse({"delta": value})
                 elif kind == "tool_progress" and execute:
                     if not run.paused and run.epoch == epoch and not run.pending and time.monotonic() - last_preview_at >= 0.1:
                         preview = scene_preview(store, value["function"], policy)
                         if preview is not None:
                             last_preview_at = time.monotonic()
-                            yield chat_agent._sse({"preview": preview, "active_node": preview["node_id"], "stage": "本文の編集案を作成しています…"})
+                            yield _sse({"preview": preview, "active_node": preview["node_id"], "stage": "本文の編集案を作成しています…"})
                         elif value["function"].get("name") == "update_scene":
-                            yield chat_agent._sse({"preview": None})
+                            yield _sse({"preview": None})
                 elif kind == "done":
                     result = value
             if run.paused or run.epoch != epoch:
                 recent_results.clear()
-                yield chat_agent._sse({"response_end": True, "stage": "手動編集の終了を待ち、最新の構成を読み直します…", "active_node": None})
+                yield _sse({"response_end": True, "stage": "手動編集の終了を待ち、最新の構成を読み直します…", "active_node": None})
                 continue
             if run.pending:
-                yield chat_agent._sse({"response_end": True, "stage": "途中指示を取り込み、考え直しています…"})
+                yield _sse({"response_end": True, "stage": "途中指示を取り込み、考え直しています…"})
                 continue
             content = result.get("content") or ""
             if content:
                 history.append({"role": "assistant", "content": content})
                 store.save_chat_messages(chat_id, history)
-            yield chat_agent._sse({"response_end": True})
+            yield _sse({"response_end": True})
             if run.pending or run.paused or run.epoch != epoch:
                 continue
             calls = result.get("tool_calls") or []
             if not calls:
                 if execute:
-                    yield chat_agent._sse({"stage": "手動修正と作業結果を照合し、作業メモを見直しています…", "active_node": None})
+                    yield _sse({"stage": "手動修正と作業結果を照合し、作業メモを見直しています…", "active_node": None})
                     try:
                         run.check_epoch(epoch)
-                        value, revision, basis = await production_memory.review(
+                        async with aclosing(production_memory.review_stream(
                             store, base_url, message,
                             [m["content"] for m in history if m.get("instruction", {}).get("run_id") == run.id
                              and m["instruction"]["status"] == "reflected"], changes, content,
-                            check_current=lambda: run.check_epoch(epoch))
+                            check_current=lambda: run.check_epoch(epoch))) as reviews:
+                            async for kind, reviewed in reviews:
+                                if kind == "stage":
+                                    yield _sse({"stage": reviewed})
+                                else:
+                                    value, revision, basis = reviewed
                         run.check_epoch(epoch)
                         if production_memory.basis(store) != basis:
                             raise ValueError("照合中に制作資料が変更されました。次の制作で再確認します")
@@ -587,8 +609,8 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
                     store.save_chat_messages(chat_id, history)
                     # 通知のyield中に新しい指示を受け付けないよう、終了を確定する。
                     run.close()
-                    yield chat_agent._sse({"delta": notice})
-                    yield chat_agent._sse({"response_end": True})
+                    yield _sse({"delta": notice})
+                    yield _sse({"response_end": True})
                 completed = True
                 break
             # 相談中の編集試行は再判断ループへ返さず、案内を保存して入力待ちへ戻す。
@@ -596,8 +618,8 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
                 notice = "現在は相談モードのため、変更は行っていません。実行する場合は「制作を実行」に切り替えて、変更依頼をもう一度送ってください。"
                 history.append({"role": "assistant", "content": notice})
                 store.save_chat_messages(chat_id, history)
-                yield chat_agent._sse({"delta": notice})
-                yield chat_agent._sse({"response_end": True, "active_node": None})
+                yield _sse({"delta": notice})
+                yield _sse({"response_end": True, "active_node": None})
                 completed = True
                 break
             # 複数呼び出しを返しても1つずつ処理し、確定ごとに画面へ知らせる。
@@ -622,16 +644,16 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
                             notice = "同じ情報の確認が続いたため、いったん停止しました。追加で確認したい点を教えてください。変更を実行する場合は「制作を実行」に切り替えて依頼を送ってください。"
                             history.append({"role": "assistant", "content": notice})
                             store.save_chat_messages(chat_id, history)
-                            yield chat_agent._sse({"delta": notice})
-                            yield chat_agent._sse({"response_end": True, "active_node": None})
+                            yield _sse({"delta": notice})
+                            yield _sse({"response_end": True, "active_node": None})
                             completed = True
                             break
                         consulted.add(signature)
-                    yield chat_agent._sse({"stage": TOOL_LABELS.get(name, "操作を確認しています…"), "active_node": args.get("node_id") or args.get("after_id")})
+                    yield _sse({"stage": TOOL_LABELS.get(name, "操作を確認しています…"), "active_node": args.get("node_id") or args.get("after_id")})
                     if execute:
                         preview = scene_preview(store, call.get("function", {}), policy)
                         if preview is not None:
-                            yield chat_agent._sse({"preview": preview, "stage": "編集案を検証しています…"})
+                            yield _sse({"preview": preview, "stage": "編集案を検証しています…"})
                     if name == "update_work_memory":
                         if not execute:
                             raise ValueError("相談中は作業メモを変更できません")
@@ -640,7 +662,7 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
                         history.append({"role": "assistant", "content": "作業メモを更新しました: " + args["reason"],
                                         "memory_revision": payload["revision"]})
                         store.save_chat_messages(chat_id, history)
-                        yield chat_agent._sse({"memory": payload})
+                        yield _sse({"memory": payload})
                         payload = {"revision": payload["revision"], "saved": True}
                     elif name in WRITE_TOOLS:
                         if not execute:
@@ -661,7 +683,7 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
                         if name == "delete_scene" or name in production_library.WRITE_TOOLS:
                             on_delete()
                         save_checkpoint("running")
-                        yield chat_agent._sse({"changed": operation})
+                        yield _sse({"changed": operation})
                     elif name == "read_library":
                         payload = production_library.read(store, args)
                     else:
@@ -670,17 +692,17 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
                     recent_results.clear()
                     history.append({"role": "assistant", "content": str(e)})
                     store.save_chat_messages(chat_id, history)
-                    yield chat_agent._sse({"tool_error": str(e), "active_node": None})
+                    yield _sse({"tool_error": str(e), "active_node": None})
                     break
                 except InstructionsPending as e:
-                    yield chat_agent._sse({"stage": str(e), "active_node": None})
+                    yield _sse({"stage": str(e), "active_node": None})
                     break
                 except (ValueError, KeyError, RuntimeError, TypeError) as e:
                     payload = {"error": str(e)}
-                    yield chat_agent._sse({"tool_error": str(e)})
+                    yield _sse({"tool_error": str(e)})
                 recent_results.append({"tool": name, "result": payload})
                 recent_results = recent_results[-3:]
-                yield chat_agent._sse({"active_node": None})
+                yield _sse({"active_node": None})
             if completed:
                 break
         if not completed:
@@ -688,7 +710,7 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
         outcome = "completed" if completed else "limit"
         # doneを送った後に届く途中指示を受け付けないよう、通知の前に閉じる。
         run.close()
-        yield chat_agent._sse({"done": True, "chat_id": chat_id})
+        yield _sse({"done": True, "chat_id": chat_id})
     except (asyncio.CancelledError, GeneratorExit):
         # 停止ボタンや接続断は、LLM待ちの途中ならCancelledError、yieldで止まっていれば
         # 生成器の後始末(GeneratorExit)として届く。どちらでも停止の記録を残す。
@@ -697,7 +719,7 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
     except Exception as e:
         outcome = "error"
         history.append({"role": "assistant", "content": f"作業を停止しました: {e}"})
-        yield chat_agent._sse({"error": str(e)})
+        yield _sse({"error": str(e)})
     finally:
         run.close()  # 未反映の指示を「未反映のまま終了」にしてから記録する。
         if checkpoint_started:

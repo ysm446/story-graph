@@ -1294,6 +1294,7 @@ export type ProductionOperation = ProductionOperationBase & ({
 })
 
 export interface ProductionInstruction {
+  created_at?: string
   role: string
   content: string
   instruction: { id: string; status: 'accepted' | 'reflected' | 'unapplied'; run_id: string }
@@ -1312,6 +1313,7 @@ export interface ProductionMemory {
 }
 
 export interface ProductionEvent {
+  timestamp?: string
   preview?: { node_id: string | null; beat: string } | null
   usage?: { token_count: number; ctx_size: number; estimated: boolean }
   memory?: ProductionMemory

@@ -340,6 +340,36 @@ async def collect(store, execute):
     )]
 
 
+def test_production_timestamps_persist_and_old_history_is_not_dated(store, monkeypatch):
+    from datetime import datetime
+    fake_llm(monkeypatch, [{"content": "確認しました"}])
+    chat = store.create_chat(None, "all", mode="production")
+    old = {"role": "user", "content": "時刻不明の古い発言"}
+    store.save_chat_messages(chat["id"], [old])
+    async def check():
+        return [json.loads(s.removeprefix("data: ")) async for s in production.stream(
+            store, "fake", chat["id"], "相談", False, lambda: None)]
+    events = run(check())
+    assert all(datetime.fromisoformat(e["timestamp"]).tzinfo for e in events)
+    history = store.get_chat(chat["id"])["messages"]
+    assert history[0] == old
+    assert all(datetime.fromisoformat(m["created_at"]).tzinfo for m in history[1:])
+
+
+def test_memory_review_progress_is_sent_during_production(store, monkeypatch):
+    async def review(store, *args, on_progress, **kwargs):
+        on_progress("作業メモの資料を確認しています… (1/2)")
+        await asyncio.sleep(0)
+        on_progress("作業メモを最終確認しています…")
+        return {"content": "確認済み", "reason": "照合"}, 0, production_memory.basis(store)
+    monkeypatch.setattr(production_memory, "review", review)
+    fake_llm(monkeypatch, [{"content": "完了"}])
+    events = run(collect(store, True))
+    stages = [e["stage"] for e in events if "stage" in e]
+    assert stages[-2:] == ["作業メモの資料を確認しています… (1/2)", "作業メモを最終確認しています…"]
+    assert production_memory.read(store)["content"] == "確認済み"
+
+
 def test_readonly_rejects_write_even_when_model_calls_it(store, monkeypatch):
     before = store.graph()
     fake_llm(monkeypatch, [call("delete_scene", {"node_id": "first", "reason": "削除"}), {"content": "案だけ返します"}])
