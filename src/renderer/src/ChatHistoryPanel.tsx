@@ -23,6 +23,8 @@ export default function ChatHistoryPanel({ history, chatId, busy, characters = [
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null)
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameText, setRenameText] = useState('')
+  const activeChat = history.find((chat) => chat.id === chatId)
+  const activeChatLabel = activeChat ? chatLabel(activeChat) : chatId ? '会話を読み込み中…' : '新しい会話'
   const finishRename = async (id: string): Promise<void> => {
     if (busy || renamingId !== id) return
     setRenamingId(null)
@@ -45,11 +47,13 @@ export default function ChatHistoryPanel({ history, chatId, busy, characters = [
     }
   }, [menuOpenId])
   return <>
-      <div className="shrink-0 border-b px-3 py-1" style={{ borderColor: 'var(--border)' }}>
+      <div className="flex min-w-0 shrink-0 items-center gap-2 border-b px-3 py-1" style={{ borderColor: 'var(--border)' }}>
         <button onClick={() => setHistoryOpen(!historyOpen)} aria-expanded={historyOpen}
-          className="rounded-md border px-2 py-0.5 text-[11px]"
+          className="shrink-0 rounded-md border px-2 py-0.5 text-[11px]"
           style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
           data-tip="会話一覧を開閉する">{historyOpen ? '会話一覧を閉じる' : '会話一覧'}</button>
+        <span className="min-w-0 flex-1 truncate text-[12px]" style={{ color: 'var(--text)' }}
+          data-tip={activeChatLabel}>{activeChatLabel}</span>
       </div>
       <aside className="min-h-0 shrink-0 flex-col border-b" style={{ display: historyOpen ? 'flex' : 'none', height: 180, maxHeight: '35%', borderColor: 'var(--border)' }}>
         <button
