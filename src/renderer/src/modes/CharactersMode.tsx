@@ -8,6 +8,7 @@ import ProofreadTextarea from '../ProofreadTextarea'
 import RelationGraph from '../RelationGraph'
 import type { Character, Place, StoryGraph, StoryNode } from '../types'
 import { useWorkspace } from '../Workspace'
+import UnsavedBadge from '../UnsavedBadge'
 
 const FIELD_DEFS: Array<{ key: 'profile' | 'appearance' | 'voice'; label: string; rows: number }> = [
   { key: 'profile', label: 'プロフィール(性格の基調・背景)', rows: 5 },
@@ -23,6 +24,7 @@ type Tab = 'characters' | 'places'
 export default function CharactersMode(): React.JSX.Element {
   const workspace = useWorkspace()
   const [placeDirty, setPlaceDirty] = useState(false)
+  const [placeUnsaved, setPlaceUnsaved] = useState(false)
   const [libraryVersion, setLibraryVersion] = useState(0)
   const reloadSequence = useRef(0)
   const [tab, setTab] = useState<Tab>('characters')
@@ -321,7 +323,8 @@ export default function CharactersMode(): React.JSX.Element {
                   className="h-6 w-1.5 shrink-0 rounded-full"
                   style={{ background: p.color ?? '#8a8fa8' }}
                 />
-                <span className="truncate">{p.name}</span>
+                <span className="min-w-0 flex-1 truncate">{p.name}</span>
+                {p.id === selectedPlaceId && placeUnsaved && <UnsavedBadge />}
               </button>
             ))}
           {tab === 'places' && places.length === 0 && (
@@ -367,7 +370,8 @@ export default function CharactersMode(): React.JSX.Element {
                   {c.name.slice(0, 1)}
                 </span>
               )}
-              <span className="truncate">{c.name}</span>
+              <span className="min-w-0 flex-1 truncate">{c.name}</span>
+              {c.id === selectedId && dirty && <UnsavedBadge />}
             </button>
           ))}
           {tab === 'characters' && characters.length === 0 && (
@@ -413,6 +417,7 @@ export default function CharactersMode(): React.JSX.Element {
               place={selectedPlace}
               onChanged={reload}
               onDirty={setPlaceDirty}
+              onUnsavedChange={setPlaceUnsaved}
               onDeleted={() => setSelectedPlaceId(null)}
             />
           ) : (
@@ -593,6 +598,7 @@ export default function CharactersMode(): React.JSX.Element {
               >
                 {saving ? '保存中…' : '保存'}
               </button>
+              {dirty && <UnsavedBadge />}
               <button
                 onClick={() => void handleDelete()}
                 className="delete-action ml-auto rounded-lg px-3 py-1.5 text-[13px]"

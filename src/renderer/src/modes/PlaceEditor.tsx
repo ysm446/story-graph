@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { api, assetUrl, uploadAsset } from '../api'
 import ProofreadTextarea from '../ProofreadTextarea'
 import type { Place } from '../types'
+import UnsavedBadge from '../UnsavedBadge'
 
 const FIELD_DEFS: Array<{ key: 'description' | 'atmosphere'; label: string; rows: number }> = [
   { key: 'description', label: '説明(地形・規模・成り立ち)', rows: 5 },
@@ -14,11 +15,13 @@ export default function PlaceEditor({
   place,
   onChanged,
   onDirty,
+  onUnsavedChange,
   onDeleted
 }: {
   place: Place
   onChanged: () => Promise<void>
   onDirty?: (dirty: boolean) => void
+  onUnsavedChange?: (dirty: boolean) => void
   onDeleted: () => void
 }): React.JSX.Element {
   const [draft, setDraft] = useState<Partial<Place>>(place)
@@ -42,6 +45,11 @@ export default function PlaceEditor({
     onDirty?.(dirty || saving || uploading)
     return () => onDirty?.(false)
   }, [dirty, saving, uploading, onDirty])
+
+  useEffect(() => {
+    onUnsavedChange?.(dirty)
+    return () => onUnsavedChange?.(false)
+  }, [dirty, onUnsavedChange])
 
   const handleSave = async (): Promise<void> => {
     setSaving(true)
@@ -221,6 +229,7 @@ export default function PlaceEditor({
         >
           {saving ? '保存中…' : '保存'}
         </button>
+        {dirty && <UnsavedBadge />}
         <button
           onClick={() => void handleDelete()}
           className="delete-action ml-auto rounded-lg px-3 py-1.5 text-[13px]"
