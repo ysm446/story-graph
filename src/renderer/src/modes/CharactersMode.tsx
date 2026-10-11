@@ -328,7 +328,14 @@ function CharactersMode(): React.JSX.Element {
                     className="mb-0.5 flex w-full min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12px]"
                     style={{ background: tab === 'places' && place.id === selectedPlaceId ? 'var(--accent-soft)' : undefined, color: tab === 'places' && place.id === selectedPlaceId ? 'var(--text)' : 'var(--text-dim)' }}
                     data-tip={place.name}>
-                    <span className="h-6 w-1.5 shrink-0 rounded-full" style={{ background: place.color ?? 'var(--text-dim)' }} />
+                    <span className="flex h-6 w-6 shrink-0 items-center justify-center">
+                      {assetUrl(place.image_path) ? (
+                        <img src={assetUrl(place.image_path)!} alt="" loading="lazy" decoding="async"
+                          className="h-6 w-6 rounded-md border object-cover" style={{ borderColor: 'var(--border-strong)' }} />
+                      ) : (
+                        <span className="h-6 w-1.5 rounded-full" style={{ background: place.color ?? 'var(--text-dim)' }} />
+                      )}
+                    </span>
                     <span className="min-w-0 flex-1 truncate">{place.name}</span>
                     {place.id === selectedPlaceId && placeUnsaved && <UnsavedBadge />}
                   </button>
