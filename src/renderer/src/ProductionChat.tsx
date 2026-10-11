@@ -1,6 +1,6 @@
 import ChatRulesPanel from './ChatRulesPanel'
 import AutoTextarea from './AutoTextarea'
-import { useEffect, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import { chatApi, isAbortError, productionApi, type ChatSummary, type ProductionInstruction, type ProductionPolicy, type ProductionOperation } from './api'
 import { Markdown } from './Markdown'
 import { showStatusNotice } from './statusNotice'
@@ -36,6 +36,54 @@ function messageTime(value?: string): string {
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString('ja-JP', { hour12: false })
 }
+
+/** 完了時に添える経過時間(「45秒」「3分05秒」「1時間02分05秒」)。 */
+function elapsedText(ms: number): string {
+  const total = Math.max(0, Math.round(ms / 1000))
+  const hours = Math.floor(total / 3600)
+  const minutes = Math.floor((total % 3600) / 60)
+  const seconds = String(total % 60).padStart(total >= 60 ? 2 : 1, '0')
+  if (hours) return `${hours}時間${String(minutes).padStart(2, '0')}分${seconds}秒`
+  return minutes ? `${minutes}分${seconds}秒` : `${seconds}秒`
+}
+
+/** 発言の一覧。入力や進捗表示のたびに全発言を描き直さないよう、発言が変わったときだけ更新する。 */
+const MessageList = memo(function MessageList({ messages, nodes, groups }: {
+  messages: Message[]; nodes: StoryNode[]; groups: Group[]
+}): React.JSX.Element {
+  return (
+    <>
+      {messages.map((m, i) => (
+        <div key={i} className="mb-2 rounded-lg border px-3 py-1.5" style={{
+          background: m.role === 'user' ? 'var(--accent-soft)' : 'var(--bg-elevated)', borderColor: 'var(--border)'
+        }}>
+          <div className="mb-1 text-[11px]" style={{ color: 'var(--text-faint)' }}>
+            {m.instruction ? `途中指示・${({ accepted: '受け付けました', reflected: '次の判断に反映しました', unapplied: '未反映のまま終了しました' })[m.instruction.status]}` : m.operation ? `${operationLabels[m.operation.action]}: ${m.operation.title || '(無題)'}` : m.role === 'user' ? 'あなた' : '制作'}
+            {messageTime(m.created_at) && <time dateTime={m.created_at} className="ml-2 tabular-nums" data-tip={new Date(m.created_at!).toLocaleString('ja-JP')}>{messageTime(m.created_at)}</time>}
+          </div>
+          {m.policy && <p className="mb-1 text-[11px]" style={{ color: 'var(--text-dim)' }}>{m.policy_label || policySummary(m.policy, nodes, groups)}</p>}
+          {m.operation && 'entity_id' in m.operation && <details className="mb-1 text-[11px]" style={{ color: 'var(--text-dim)' }}>
+            <summary className="cursor-pointer">資料庫の変更内容</summary>
+            {Object.keys(m.operation.after ?? m.operation.before ?? {}).filter((field) =>
+              m.operation && 'entity_id' in m.operation && m.operation.before?.[field] !== m.operation.after?.[field]
+            ).map((field) => {
+              const operation = m.operation
+              if (!operation || !('entity_id' in operation)) return null
+              return <p key={field} className="whitespace-pre-wrap break-words">{libraryFieldLabels[field] ?? field}: {operation.before?.[field] || '（未設定）'} → {operation.after?.[field] || '（未設定）'}</p>
+            })}
+          </details>}
+          {m.operation?.connection && <p className="mb-1 text-[11px]" style={{ color: 'var(--text-dim)' }}>
+            {m.operation.connection.mode === 'scene' ? '1シーンを移動' : '枝ごと親を変更'}: {m.operation.connection.old_parent_title || '接続なし'} → {m.operation.connection.parent_title || m.operation.connection.parent_id} の後
+          </p>}
+          <Markdown text={m.content} />
+          {m.snapshot && <p className="mt-1 text-[11px]" style={{ color: 'var(--text-dim)' }}>
+            保存名: {m.snapshot.label}。設定のスナップショット一覧から戻せます（ライブラリ全体の復元）。
+          </p>}
+        </div>
+      ))}
+    </>
+  )
+})
 
 /** 制作専用チャット。相談履歴とは分け、選択した送信モードで書き込みの可否を決める。 */
 export default function ProductionChat({ beforeExecute, onChanged, onFollowTarget, onManualEdit, nodes, groups, policy, setPolicy }: {
@@ -92,6 +140,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
     return () => { stale = true; window.clearTimeout(timer) }
   }, [busy, chatId, input, sendMode, policy, rulesRefresh, memoryRefresh, memoryDirty, messages, nodes, groups])
 
+  const bumpMemoryRefresh = useCallback((): void => setMemoryRefresh((value) => value + 1), [])
   const refreshHistory = async (): Promise<void> => setHistory(await productionApi.list())
   useEffect(() => {
     void refreshHistory().catch((e) => setError(String(e)))
@@ -214,6 +263,8 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
     const id = enqueueTask({
       label: execute ? '制作' : '制作の相談', kind: 'production',
       runner: async ({ signal, update }) => {
+        // 待機列で待った時間は含めず、実際に動き出してからを測る。
+        const startedAt = Date.now()
         setStatus('開始の準備をしています…')
         setStatusAt(new Date().toISOString())
         setMessages((prev) => [...prev, { role: 'user', content: message, created_at: new Date().toISOString(), policy, policy_label: policySummary(policy, nodes, groups) }])
@@ -284,7 +335,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
             if (event.done) finished = true
           }, signal)
           if (!finished) throw new Error('接続が終了しました。確定済みの変更と履歴を確認してください。')
-          setStatus('完了しました')
+          setStatus(`完了しました（経過時間 ${elapsedText(Date.now() - startedAt)}）`)
         } catch (e) {
           if (isAbortError(e)) setStatus('停止しました。確定済みの変更は残しています。')
           else setError(String(e))
@@ -366,37 +417,10 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
         {switching ? '切り替えています…' : manualEditing ? '制作を再開' : '手動編集に切り替える'}
       </button>}
       <ChatRulesPanel busy={busy} onDirty={setRulesDirty} onSaved={() => setRulesRefresh((v) => v + 1)} />
-      <ProductionMemoryPanel busy={busy} refresh={memoryRefresh} onDirty={setMemoryDirty} onChanged={() => setMemoryRefresh((value) => value + 1)} />
+      <ProductionMemoryPanel busy={busy} refresh={memoryRefresh} onDirty={setMemoryDirty} onChanged={bumpMemoryRefresh} />
       <ProductionPolicyPanel value={policy} onChange={setPolicy} nodes={nodes} groups={groups} busy={busy} />
       <div className="inspector-scrollbar min-h-0 flex-1 overflow-y-auto" aria-live="polite">
-        {messages.map((m, i) => (
-          <div key={i} className="mb-2 rounded-lg border px-3 py-1.5" style={{
-            background: m.role === 'user' ? 'var(--accent-soft)' : 'var(--bg-elevated)', borderColor: 'var(--border)'
-          }}>
-            <div className="mb-1 text-[11px]" style={{ color: 'var(--text-faint)' }}>
-              {m.instruction ? `途中指示・${({ accepted: '受け付けました', reflected: '次の判断に反映しました', unapplied: '未反映のまま終了しました' })[m.instruction.status]}` : m.operation ? `${operationLabels[m.operation.action]}: ${m.operation.title || '(無題)'}` : m.role === 'user' ? 'あなた' : '制作'}
-              {messageTime(m.created_at) && <time dateTime={m.created_at} className="ml-2 tabular-nums" data-tip={new Date(m.created_at!).toLocaleString('ja-JP')}>{messageTime(m.created_at)}</time>}
-            </div>
-            {m.policy && <p className="mb-1 text-[11px]" style={{ color: 'var(--text-dim)' }}>{m.policy_label || policySummary(m.policy, nodes, groups)}</p>}
-            {m.operation && 'entity_id' in m.operation && <details className="mb-1 text-[11px]" style={{ color: 'var(--text-dim)' }}>
-              <summary className="cursor-pointer">資料庫の変更内容</summary>
-              {Object.keys(m.operation.after ?? m.operation.before ?? {}).filter((field) =>
-                m.operation && 'entity_id' in m.operation && m.operation.before?.[field] !== m.operation.after?.[field]
-              ).map((field) => {
-                const operation = m.operation
-                if (!operation || !('entity_id' in operation)) return null
-                return <p key={field} className="whitespace-pre-wrap break-words">{libraryFieldLabels[field] ?? field}: {operation.before?.[field] || '（未設定）'} → {operation.after?.[field] || '（未設定）'}</p>
-              })}
-            </details>}
-            {m.operation?.connection && <p className="mb-1 text-[11px]" style={{ color: 'var(--text-dim)' }}>
-              {m.operation.connection.mode === 'scene' ? '1シーンを移動' : '枝ごと親を変更'}: {m.operation.connection.old_parent_title || '接続なし'} → {m.operation.connection.parent_title || m.operation.connection.parent_id} の後
-            </p>}
-            <Markdown text={m.content} />
-            {m.snapshot && <p className="mt-1 text-[11px]" style={{ color: 'var(--text-dim)' }}>
-              保存名: {m.snapshot.label}。設定のスナップショット一覧から戻せます（ライブラリ全体の復元）。
-            </p>}
-          </div>
-        ))}
+        <MessageList messages={messages} nodes={nodes} groups={groups} />
         {live && <Markdown text={live} />}
         <div ref={endRef} />
       </div>

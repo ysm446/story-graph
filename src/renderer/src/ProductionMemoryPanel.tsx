@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import { productionApi, type ProductionMemory } from './api'
 import { Markdown } from './Markdown'
 
 const memoryDate = (value: string): string => new Date(value).toLocaleString('ja-JP', { hour12: false })
 
 /** ライブラリ共通の方針と、最後に確定した作業の記録。 */
-export default function ProductionMemoryPanel({ busy, refresh, onDirty, onChanged }: {
+function ProductionMemoryPanel({ busy, refresh, onDirty, onChanged }: {
   busy: boolean; refresh: number; onDirty: (dirty: boolean) => void; onChanged: () => void
 }): React.JSX.Element {
   const [memory, setMemory] = useState<ProductionMemory | null>(null)
@@ -103,3 +103,6 @@ export default function ProductionMemoryPanel({ busy, refresh, onDirty, onChange
     </div>
   </details>
 }
+
+// 親の入力や進捗表示では描き直さない(閉じていても中身は描画されるため)
+export default memo(ProductionMemoryPanel)

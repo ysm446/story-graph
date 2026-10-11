@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import DOMPurify from 'dompurify'
 import { marked } from 'marked'
 
@@ -34,8 +35,9 @@ export function normalizeMath(text: string): string {
   return replaced.replace(/\$([^$\n]{1,60})\$/g, unwrap).replace(/\\\(([^\n]{1,60}?)\\\)/g, unwrap)
 }
 
-/** LLM 出力の Markdown を安全に描画する(news-picker から移植)。リンクは OS ブラウザで開く。 */
-export function Markdown({ text }: { text: string }): React.JSX.Element {
+/** LLM 出力の Markdown を安全に描画する(news-picker から移植)。リンクは OS ブラウザで開く。
+ *  変換とサニタイズは発言ごとに重いので、本文が変わらない限り描き直さない。 */
+export const Markdown = memo(function Markdown({ text }: { text: string }): React.JSX.Element {
   // breaks: チャットの単一改行を <br> にする(pre-wrap 表示だった頃の見た目に合わせる)
   const html = DOMPurify.sanitize(
     marked.parse(normalizeMath(text), { async: false, gfm: true, breaks: true }) as string
@@ -53,4 +55,4 @@ export function Markdown({ text }: { text: string }): React.JSX.Element {
       dangerouslySetInnerHTML={{ __html: html }}
     />
   )
-}
+})

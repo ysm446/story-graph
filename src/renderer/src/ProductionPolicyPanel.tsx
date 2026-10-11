@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import type { ProductionPolicy } from './api'
 import type { Group, StoryNode } from './types'
 
@@ -11,7 +11,7 @@ export function policySummary(policy: ProductionPolicy, nodes: StoryNode[], grou
   return `変更範囲: ${scope} / AI編集から保護: ${protectedNames.length ? protectedNames.join('、') : 'なし'}`
 }
 
-export default function ProductionPolicyPanel({ value, onChange, nodes, groups, busy }: {
+function ProductionPolicyPanel({ value, onChange, nodes, groups, busy }: {
   value: ProductionPolicy
   onChange: (value: ProductionPolicy) => void
   nodes: StoryNode[]
@@ -66,3 +66,6 @@ export default function ProductionPolicyPanel({ value, onChange, nodes, groups, 
     </div>
   </details>
 }
+
+// 親の入力や進捗表示では描き直さない(閉じていても中身は描画されるため)
+export default memo(ProductionPolicyPanel)
