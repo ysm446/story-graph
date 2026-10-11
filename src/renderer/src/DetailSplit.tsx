@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 
 /** シーン・章で共用する、幅を保存できる下段詳細の2列。 */
-export default function DetailSplit({ storageKey, main, secondary }: {
+export default function DetailSplit({ storageKey, main, secondary, mainScrollRef, fillMain = false }: {
   storageKey: string
   main: ReactNode
   secondary: ReactNode
+  mainScrollRef?: React.RefObject<HTMLDivElement | null>
+  fillMain?: boolean
 }): React.JSX.Element {
   const detailLayoutRef = useRef<HTMLDivElement>(null)
   const detailResizeCleanup = useRef<(() => void) | null>(null)
@@ -21,7 +23,7 @@ export default function DetailSplit({ storageKey, main, secondary }: {
   return (
     <div ref={detailLayoutRef} className="scene-detail-layout min-h-0 flex-1"
       style={{ '--detail-meta-width': `${metaWidth}%` } as React.CSSProperties}>
-      <div className="scene-detail-main inspector-scrollbar min-w-0 p-3">
+      <div ref={mainScrollRef} className={`scene-detail-main inspector-scrollbar min-w-0 p-3${fillMain ? ' detail-fill' : ''}`}>
         <div className="flex flex-col gap-3">{main}</div>
       </div>
         <div className="scene-detail-divider relative cursor-col-resize"

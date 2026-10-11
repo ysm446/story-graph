@@ -20,6 +20,7 @@ interface Band {
 }
 
 const COLUMN_WIDTH = 96
+const KEY_WIDTH = 140
 
 function valueLabel(value: unknown): string {
   return typeof value === 'string' ? value : JSON.stringify(value)
@@ -83,8 +84,8 @@ export default function FactTimeline({
   const gridWidth = Math.max(path.length, 1) * COLUMN_WIDTH
 
   return (
-    <div className="flex flex-col gap-2">
-      <div className="flex items-center gap-2">
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b px-3 py-2" style={{ borderColor: 'var(--border)' }}>
         <select
           value={effectiveTarget ?? '__world__'}
           onChange={(e) => setTarget(e.target.value === '__world__' ? null : e.target.value)}
@@ -110,18 +111,19 @@ export default function FactTimeline({
           シーンのイベントに fact_set(location / goal など)が入ると帯が並びます。
         </div>
       ) : (
-        <div className="inspector-scrollbar overflow-x-auto pb-1">
-          <div style={{ width: gridWidth }}>
+        <div className="inspector-scrollbar min-h-0 flex-1 overflow-auto p-3">
+          <div style={{ width: gridWidth + KEY_WIDTH }}>
             {/* シーンの見出し(選択中のシーンを強調) */}
             <div
-              className="mb-1 grid gap-1"
-              style={{ gridTemplateColumns: `repeat(${Math.max(path.length, 1)}, ${COLUMN_WIDTH}px)` }}
+              className="sticky top-0 z-20 mb-1 grid"
+              style={{ gridTemplateColumns: `${KEY_WIDTH}px repeat(${Math.max(path.length, 1)}, ${COLUMN_WIDTH}px)`, background: 'var(--bg-sidebar)' }}
             >
+              <div className="sticky left-0 z-10 px-2 py-1 text-[11px]" style={{ background: 'var(--bg-sidebar)', color: 'var(--text-faint)' }}>項目</div>
               {path.map((node, index) => (
                 <button
                   key={node.id}
                   onClick={() => onSelectNode(node.id)}
-                  className="truncate rounded px-1 py-0.5 text-left text-[10px]"
+                  className="m-0.5 truncate rounded px-1 py-0.5 text-left text-[10px]"
                   style={{
                     background: node.id === selectedNodeId ? 'var(--accent-soft)' : 'transparent',
                     color: node.id === selectedNodeId ? 'var(--text)' : 'var(--text-faint)'
@@ -134,12 +136,12 @@ export default function FactTimeline({
             </div>
             {/* キーごとのレーン */}
             {keys.map((key) => (
-              <div key={key} className="mb-1">
-                <div className="mb-0.5 text-[10px]" style={{ color: 'var(--text-dim)' }}>
+              <div key={key} className="mb-1 grid" style={{ gridTemplateColumns: `${KEY_WIDTH}px ${gridWidth}px` }}>
+                <div className="sticky left-0 z-10 px-2 py-1 text-[11px] break-words" style={{ background: 'var(--bg-sidebar)', color: 'var(--text-dim)' }}>
                   {key}
                 </div>
                 <div
-                  className="grid gap-1"
+                  className="grid"
                   style={{ gridTemplateColumns: `repeat(${Math.max(path.length, 1)}, ${COLUMN_WIDTH}px)` }}
                 >
                   {bands
@@ -148,7 +150,7 @@ export default function FactTimeline({
                       <button
                         key={`${band.key}-${band.start}`}
                         onClick={() => onSelectNode(band.nodeId)}
-                        className="truncate rounded-md border px-1.5 py-1 text-left text-[11px]"
+                        className="m-0.5 min-w-0 truncate rounded-md border px-1.5 py-1 text-left text-[11px]"
                         style={{
                           gridColumn: `${band.start + 1} / span ${Math.max(band.end - band.start, 1)}`,
                           background: 'var(--accent-soft)',

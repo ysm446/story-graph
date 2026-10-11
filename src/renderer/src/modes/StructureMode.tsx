@@ -1266,8 +1266,8 @@ function CharTab({
   const inputStyle = { background: 'var(--bg-input)', borderColor: 'var(--border)' }
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap gap-1.5">
+    <div className="scene-detail flex min-h-0 flex-1 flex-col">
+      <div className="flex shrink-0 flex-wrap gap-1.5 border-b px-3 py-2" style={{ borderColor: 'var(--border)' }}>
         {node.cast.map((id) => (
           <button
             key={id}
@@ -1294,13 +1294,106 @@ function CharTab({
         </div>
       )}
       {charId && charState && (
-        <>
+        <DetailSplit storageKey="characterDetailMetaWidth" main={<>
+          <section>
+            <div className="mb-1 flex items-center justify-between">
+              <h4 className="text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
+                Memories({charState.memories.length})
+              </h4>
+              {charState.memories.length > 1 && (
+                <button
+                  onClick={() => {
+                    setMemNewestFirst((prev) => {
+                      localStorage.setItem('memoriesOldestFirst', prev ? '1' : '0')
+                      return !prev
+                    })
+                  }}
+                  className="text-[10px] hover:underline"
+                  style={{ color: 'var(--text-faint)' }}
+                  data-tip="並び順を切り替える"
+                >
+                  {memNewestFirst ? '新 → 古' : '古 → 新'}
+                </button>
+              )}
+            </div>
+            {/* fold の積み順が古い順なので、新しい順は反転して出す */}
+            {(memNewestFirst ? [...charState.memories].reverse() : charState.memories).map((eventId) => {
+              const memory = memoryContents[eventId]
+              return (
+                <div
+                  key={eventId}
+                  className="mb-1 rounded-lg border px-3 py-1.5 text-[12px] leading-relaxed"
+                  style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-dim)' }}
+                >
+                  {/* 本文が引けないときも ID は出さない(読めない文字列が並ぶだけなので) */}
+                  {memory?.content || (
+                    <span style={{ color: 'var(--text-faint)' }} data-tip={eventId}>
+                      (本文が見つかりません)
+                    </span>
+                  )}
+                  {/* どこで得た記憶か。シーンなら押すとそのシーンへ、章のまとめなら章の最後のシーンへ */}
+                  {memory &&
+                    (memory.nodeId ? (
+                      <button
+                        onClick={() => onSelectNode(memory.nodeId!)}
+                        className="mt-0.5 block max-w-full truncate text-left text-[10px] hover:underline"
+                        style={{ color: memory.nodeId === node.id ? 'var(--accent)' : 'var(--text-faint)' }}
+                        data-tip={
+                          memory.kind === 'digest'
+                            ? `章「${memory.title}」のまとめ(クリックでその章の最後のシーンへ)`
+                            : `「${memory.title}」で得た記憶(クリックでそのシーンへ)`
+                        }
+                      >
+                        ← {memory.kind === 'digest' ? `${memory.title}(章のまとめ)` : memory.title}
+                        {memory.nodeId === node.id ? '(このシーン)' : ''}
+                      </button>
+                    ) : (
+                      <span
+                        className="mt-0.5 block max-w-full truncate text-[10px]"
+                        style={{ color: 'var(--text-faint)' }}
+                        data-tip={`章「${memory.title}」のまとめ`}
+                      >
+                        ← {memory.title}(章のまとめ)
+                      </span>
+                    ))}
+                </div>
+              )
+            })}
+            <div className="mt-1 flex gap-1">
+              <input
+                placeholder="記憶を追加(このキャラ視点で)"
+                value={memContent}
+                onChange={(e) => setMemContent(e.target.value)}
+                className="min-w-0 flex-1 rounded-md border px-2 py-1 text-[12px]"
+                style={inputStyle}
+              />
+              <button
+                onClick={() => {
+                  if (!memContent.trim()) return
+                  void appendEvent(
+                    { char: charId, content: memContent.trim(), emotion: 0, importance: 0.5, refs: [] },
+                    'memory_add'
+                  )
+                  setMemContent('')
+                }}
+                className="rounded-md px-2 text-[12px] text-white"
+                style={{ background: 'var(--accent)' }}
+                aria-label="memory_add イベントとして記録"
+                data-tip="memory_add イベントとして記録"
+              >
+                +
+              </button>
+            </div>
+          </section>
+
+        </>} secondary={<>
+
           <section>
             <h4 className="mb-1 text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
               Facts
             </h4>
             {Object.entries(charState.facts).map(([k, v]) => (
-              <div key={k} className="flex justify-between gap-2 py-0.5 text-[12px]">
+              <div key={k} className="flex justify-between gap-2 py-0.5 text-[12px] [overflow-wrap:anywhere]">
                 <span style={{ color: 'var(--text-dim)' }}>{k}</span>
                 <span style={{ color: 'var(--text)' }}>{JSON.stringify(v)}</span>
               </div>
@@ -1438,97 +1531,8 @@ function CharTab({
               </button>
             </div>
           </section>
-          <section>
-            <div className="mb-1 flex items-center justify-between">
-              <h4 className="text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
-                Memories({charState.memories.length})
-              </h4>
-              {charState.memories.length > 1 && (
-                <button
-                  onClick={() => {
-                    setMemNewestFirst((prev) => {
-                      localStorage.setItem('memoriesOldestFirst', prev ? '1' : '0')
-                      return !prev
-                    })
-                  }}
-                  className="text-[10px] hover:underline"
-                  style={{ color: 'var(--text-faint)' }}
-                  data-tip="並び順を切り替える"
-                >
-                  {memNewestFirst ? '新 → 古' : '古 → 新'}
-                </button>
-              )}
-            </div>
-            {/* fold の積み順が古い順なので、新しい順は反転して出す */}
-            {(memNewestFirst ? [...charState.memories].reverse() : charState.memories).map((eventId) => {
-              const memory = memoryContents[eventId]
-              return (
-                <div
-                  key={eventId}
-                  className="mb-1 rounded-lg border px-3 py-1.5 text-[12px] leading-relaxed"
-                  style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-dim)' }}
-                >
-                  {/* 本文が引けないときも ID は出さない(読めない文字列が並ぶだけなので) */}
-                  {memory?.content || (
-                    <span style={{ color: 'var(--text-faint)' }} data-tip={eventId}>
-                      (本文が見つかりません)
-                    </span>
-                  )}
-                  {/* どこで得た記憶か。シーンなら押すとそのシーンへ、章のまとめなら章の最後のシーンへ */}
-                  {memory &&
-                    (memory.nodeId ? (
-                      <button
-                        onClick={() => onSelectNode(memory.nodeId!)}
-                        className="mt-0.5 block max-w-full truncate text-left text-[10px] hover:underline"
-                        style={{ color: memory.nodeId === node.id ? 'var(--accent)' : 'var(--text-faint)' }}
-                        data-tip={
-                          memory.kind === 'digest'
-                            ? `章「${memory.title}」のまとめ(クリックでその章の最後のシーンへ)`
-                            : `「${memory.title}」で得た記憶(クリックでそのシーンへ)`
-                        }
-                      >
-                        ← {memory.kind === 'digest' ? `${memory.title}(章のまとめ)` : memory.title}
-                        {memory.nodeId === node.id ? '(このシーン)' : ''}
-                      </button>
-                    ) : (
-                      <span
-                        className="mt-0.5 block max-w-full truncate text-[10px]"
-                        style={{ color: 'var(--text-faint)' }}
-                        data-tip={`章「${memory.title}」のまとめ`}
-                      >
-                        ← {memory.title}(章のまとめ)
-                      </span>
-                    ))}
-                </div>
-              )
-            })}
-            <div className="mt-1 flex gap-1">
-              <input
-                placeholder="記憶を追加(このキャラ視点で)"
-                value={memContent}
-                onChange={(e) => setMemContent(e.target.value)}
-                className="min-w-0 flex-1 rounded-md border px-2 py-1 text-[12px]"
-                style={inputStyle}
-              />
-              <button
-                onClick={() => {
-                  if (!memContent.trim()) return
-                  void appendEvent(
-                    { char: charId, content: memContent.trim(), emotion: 0, importance: 0.5, refs: [] },
-                    'memory_add'
-                  )
-                  setMemContent('')
-                }}
-                className="rounded-md px-2 text-[12px] text-white"
-                style={{ background: 'var(--accent)' }}
-                aria-label="memory_add イベントとして記録"
-                data-tip="memory_add イベントとして記録"
-              >
-                +
-              </button>
-            </div>
-          </section>
-        </>
+
+        </>} />
       )}
       {charId && !charState && state && (
         <div className="text-[12px]" style={{ color: 'var(--text-faint)' }}>
@@ -2024,7 +2028,11 @@ function RenderTab({
   useEffect(() => {
     if (liveText === null) return
     const el = bodyRef.current
-    if (el) el.scrollTop = el.scrollHeight
+    if (el) {
+      const layout = el.parentElement
+      if (layout && getComputedStyle(layout).display === 'block') layout.scrollTop = el.offsetTop + el.scrollHeight - layout.clientHeight
+      else el.scrollTop = el.scrollHeight
+    }
   }, [liveText])
 
   const runRender = (): void => {
@@ -2089,7 +2097,35 @@ function RenderTab({
   const stale = render?.stale === 1
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-2">
+    <div className="scene-detail flex min-h-0 flex-1 flex-col">
+      <DetailSplit storageKey="renderDetailMetaWidth" mainScrollRef={bodyRef} main={<>
+        {liveText !== null ? (
+          <div className={proseClass} style={{ color: 'var(--text)' }}>
+            {liveText}
+            <span
+              className="node-generating-border ml-0.5 inline-block h-4 w-1.5 align-middle"
+              style={{ background: 'var(--accent)' }}
+            />
+          </div>
+        ) : render ? (
+          <div className={proseClass} style={{ color: 'var(--text)', opacity: stale ? 0.6 : 1 }}>
+            {render.prose}
+          </div>
+        ) : loading ? (
+          <div className="pt-6 text-center text-[12px]" style={{ color: 'var(--text-faint)' }}>
+            読み込み中…
+          </div>
+        ) : (
+          <div
+            className="rounded-xl border border-dashed px-4 py-6 text-center text-[12px]"
+            style={{ borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }}
+          >
+            {presetId ? 'このシーンはまだ清書されていません' : 'スタイルプリセットがありません'}
+            <div className="mt-1 text-[11px]">{node.beat}</div>
+          </div>
+        )}
+
+      </>} secondary={<>
       {/* 条件。プリセットと POV は鑑賞モードと共通、分量はこのシーンだけの指定 */}
       <div className="flex flex-wrap items-center gap-1.5">
         <RenderStyleControls style={style} variant="compact" showLength={false} />
@@ -2158,33 +2194,6 @@ function RenderTab({
           {error}
         </p>
       )}
-      <div ref={bodyRef} className="inspector-scrollbar min-h-0 flex-1 overflow-y-auto">
-        {liveText !== null ? (
-          <div className={proseClass} style={{ color: 'var(--text)' }}>
-            {liveText}
-            <span
-              className="node-generating-border ml-0.5 inline-block h-4 w-1.5 align-middle"
-              style={{ background: 'var(--accent)' }}
-            />
-          </div>
-        ) : render ? (
-          <div className={proseClass} style={{ color: 'var(--text)', opacity: stale ? 0.6 : 1 }}>
-            {render.prose}
-          </div>
-        ) : loading ? (
-          <div className="pt-6 text-center text-[12px]" style={{ color: 'var(--text-faint)' }}>
-            読み込み中…
-          </div>
-        ) : (
-          <div
-            className="rounded-xl border border-dashed px-4 py-6 text-center text-[12px]"
-            style={{ borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }}
-          >
-            {presetId ? 'このシーンはまだ清書されていません' : 'スタイルプリセットがありません'}
-            <div className="mt-1 text-[11px]">{node.beat}</div>
-          </div>
-        )}
-      </div>
       {/* 生成統計と、生成に送った内容(プロンプト)の確認。チャットの返事と同じ部品。
           列追加(2026-07-31)以前の清書には残っていないので、その場合は出さない */}
       {render && !liveText && (render.meta || render.prompt_messages) && (
@@ -2199,7 +2208,9 @@ function RenderTab({
           )}
         </div>
       )}
-      {promptView !== null && <SystemPromptModal messages={promptView} onClose={() => setPromptView(null)} />}
+
+      </>} />
+      {promptView !== null && createPortal(<SystemPromptModal messages={promptView} onClose={() => setPromptView(null)} />, document.body)}
     </div>
   )
 }
@@ -5274,11 +5285,9 @@ function StructureModeInner({
               style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }} data-tip="詳細欄を折りたたむ">閉じる</button>
           </div>
           <ProductionPreviewPanel />
-          <div className={(activeGroup && inspectorTab !== 'graph' && inspectorTab !== 'facts') || (inspectorTab === 'beat' && selectedNode && !selectedNode.kind && !activeGroup)
-            ? 'flex min-h-0 flex-1 flex-col overflow-hidden'
-            : `inspector-scrollbar min-h-0 flex-1 overflow-y-auto p-3 ${inspectorTab === 'graph' || inspectorTab === 'facts' ? '' : 'w-full max-w-[1100px] mx-auto'}`}>
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             {inspectorTab === 'graph' ? (
-              <RelationGraph
+              <RelationGraph detailLayout autoFit
                 characters={characters}
                 path={pathToSelected ?? canonPath}
                 allNodes={graphNodes}

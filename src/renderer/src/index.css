@@ -611,7 +611,15 @@ input[type='range']:focus-visible {
   margin-inline: auto;
 }
 
+.scene-detail-main.detail-fill > div {
+  height: 100%;
+  max-width: none;
+}
+
 @container (max-width: 719px) {
+  .scene-detail-main.detail-fill {
+    height: 280px;
+  }
   .scene-detail-divider {
     display: none;
   }

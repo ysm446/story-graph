@@ -33,6 +33,28 @@ async function main() {
     if (!response.ok) throw new Error(await response.text())
   }
   ipcMain.handle('bootstrap', () => ({ apiBaseUrl: base, error: null }))
+  const tabsCheck = process.argv.includes('--tabs')
+  if (tabsCheck) {
+    const chars = await (await fetch(base + '/characters')).json()
+    const graph = await (await fetch(base + '/graph')).json()
+    const node = graph.nodes.find(n => !n.kind)
+    const char = chars[0]
+    const otherResponse = await fetch(base + '/characters', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:'相手キャラ'})})
+    if (!otherResponse.ok) throw new Error(await otherResponse.text())
+    const other = await otherResponse.json()
+    const update = async (path, value) => {
+      const r = await fetch(base + path, {method:path.endsWith('/events') ? 'PUT' : 'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(value)})
+      if (!r.ok) throw new Error(await r.text())
+    }
+    await update('/nodes/' + node.id, {cast:[char.id]})
+    await update('/nodes/' + node.id + '/events', {events:[
+      {type:'char_introduce',payload:{char:char.id}},
+      {type:'char_introduce',payload:{char:other.id}},
+      {type:'relationship_set',payload:{char:char.id,target_type:'char',target:other.id,value:0.6,reason:'検証用の関係',label:'友人'}},
+      ...Array.from({length:14}, (_,i)=>({type:'fact_set',payload:{scope:'char',char:char.id,key:'検証項目'+i,value:'確認する事実の内容'+i}})),
+      {type:'memory_add',payload:{char:char.id,content:'このシーンで得た記憶を確認します。',emotion:0,importance:0.5,refs:[]}}
+    ]})
+  }
   const chapterCheck = process.argv.includes('--chapter')
   if (chapterCheck) {
     const graph = await (await fetch(base + '/graph')).json()
@@ -67,7 +89,7 @@ async function main() {
   }
   await click('チャット')
   await click('制作')
-  if (process.argv.includes('--details') || chapterCheck) {
+  if (process.argv.includes('--details') || chapterCheck || tabsCheck) {
     const targetText = chapterCheck ? '検証章' : '検証シーン'
     for (let i = 0; i < 60; i++) {
       if (await js(`[...document.querySelectorAll('.react-flow__node')].some(e=>e.textContent.includes(${JSON.stringify(targetText)}))`)) break
@@ -75,6 +97,34 @@ async function main() {
     }
     await js(`(() => {const node=[...document.querySelectorAll('.react-flow__node')].find(e=>e.textContent.includes(${JSON.stringify(targetText)})); node.dispatchEvent(new MouseEvent('click',{bubbles:true}));})()`)
     await pause(300)
+    if (tabsCheck) {
+      for (const label of ['清書','キャラ','関係図','事実']) {
+        await click(label)
+        await pause(250)
+        await assert(`(() => {const aside=[...document.querySelectorAll('aside')].find(e=>e.textContent.includes('清書'));return aside.scrollWidth<=aside.clientWidth+1;})()`, label + 'は詳細欄の幅内に収まる')
+        if (label !== '事実') await assert(`!!document.querySelector('.scene-detail-layout')`, label + 'は左右分割')
+        if (label === '関係図') {
+          await assert(`document.querySelector('.scene-detail-main svg').querySelectorAll('g[transform]').length===2`, '関係図に登場人物を表示')
+          await js(`document.querySelector('.scene-detail-main svg polyline[stroke="transparent"]').dispatchEvent(new MouseEvent('click',{bubbles:true}))`)
+          await pause(100)
+          await assert(`document.querySelector('.scene-detail-meta').textContent.includes('検証用の関係')`, '関係線のクリックで右欄に履歴を表示')
+        }
+        if (label === '事実') {
+          await assert(`!!document.querySelector('aside .sticky.top-0')`, '事実のシーン見出しを固定')
+        }
+        writeFileSync(join(target, label + '-wide.png'), (await win.webContents.capturePage()).toPNG())
+        win.setSize(1050,800)
+        await pause(250)
+        if (label !== '事実') await assert(`getComputedStyle(document.querySelector('.scene-detail-layout')).display==='block'`, label + 'は狭幅で1列')
+        writeFileSync(join(target, label + '-narrow.png'), (await win.webContents.capturePage()).toPNG())
+        win.setSize(1440,1000)
+        await pause(250)
+      }
+      if (errors.length) throw new Error(errors.join('\n'))
+      console.log('Screenshots: ' + target)
+      win.destroy()
+      return
+    }
     await assert(`(() => {const a=document.querySelector('.scene-detail-main').getBoundingClientRect();const b=document.querySelector('.scene-detail-meta').getBoundingClientRect(); return b.x>=a.right-1 && Math.abs(a.y-b.y)<1;})()`, '広い詳細欄は本文と補助情報の2列')
     const divider = await js(`(() => {const r=document.querySelector('.scene-detail-divider').getBoundingClientRect(); return {x:Math.round(r.x),y:Math.round(r.y+30),width:document.querySelector('.scene-detail-meta').clientWidth}})()`)
     await js(`(() => {const el=document.querySelector('.scene-detail-divider');const rect=el.getBoundingClientRect();el.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,clientX:rect.x,clientY:rect.y+30}));window.dispatchEvent(new PointerEvent('pointermove',{clientX:rect.x-80,clientY:rect.y+30}));window.dispatchEvent(new PointerEvent('pointerup'));})()`)

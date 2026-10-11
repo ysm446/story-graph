@@ -1,3 +1,4 @@
+import DetailSplit from './DetailSplit'
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import {
   forceCollide,
@@ -350,8 +351,9 @@ export default function RelationGraph({
   path,
   allNodes,
   onCharactersChanged,
-  width = 360,
-  height = 380,
+  width: configuredWidth = 360,
+  height: configuredHeight = 380,
+  detailLayout = false,
   orthogonal = false,
   showAllChars = false,
   autoFit = false,
@@ -363,6 +365,8 @@ export default function RelationGraph({
   path: StoryNode[]
   allNodes: StoryNode[]
   onCharactersChanged: () => void
+  /** 下段詳細では図と操作欄を分割し、表示枠の実寸を使う */
+  detailLayout?: boolean
   /** 論理キャンバスの大きさ(viewBox)。フル版では大きくする */
   width?: number
   height?: number
@@ -378,6 +382,20 @@ export default function RelationGraph({
   egoCharId?: string | null
   onEgoChange?: (id: string | null) => void
 }): React.JSX.Element {
+  const frameRef = useRef<HTMLDivElement>(null)
+  const [frameSize, setFrameSize] = useState({ width: configuredWidth, height: configuredHeight })
+  const width = detailLayout ? frameSize.width : configuredWidth
+  const height = detailLayout ? frameSize.height : configuredHeight
+  useEffect(() => {
+    const frame = frameRef.current
+    if (!detailLayout || !frame) return
+    const observer = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect
+      if (width > 0 && height > 0) setFrameSize({ width, height })
+    })
+    observer.observe(frame)
+    return () => observer.disconnect()
+  }, [detailLayout, path.length > 0])
   const canonPath = path
   const [scrubIndex, setScrubIndex] = useState(canonPath.length - 1)
   const [state, setState] = useState<StateSnapshot | null>(null)
@@ -582,6 +600,11 @@ export default function RelationGraph({
     fitView()
   }, [autoFit, visibleChars, positions])
 
+  // 詳細欄の高さ・列幅を変えたときも図全体を表示枠へ収める。
+  useEffect(() => {
+    if (detailLayout && autoFit) fitView()
+  }, [detailLayout, autoFit, width, height])
+
   // ノードドラッグ(ピン留め座標の更新)。座標変換は現在のズーム・パンを考慮
   const toSvgPoint = (event: React.PointerEvent): { x: number; y: number } => {
     const svg = svgRef.current
@@ -657,52 +680,11 @@ export default function RelationGraph({
     )
   }
 
-  return (
-    <div className="flex flex-col gap-2">
-      {/* 時間スクラブ */}
-      <div>
-        <div className="mb-1 flex items-center justify-between text-[11px]" style={{ color: 'var(--text-faint)' }}>
-          <span className="uppercase tracking-[0.14em]">Time</span>
-          <span className="truncate pl-2" style={{ color: 'var(--text-dim)' }}>
-            {clampedIndex + 1}/{canonPath.length} {scrubNode?.title || '(無題)'}
-          </span>
-        </div>
-        <input
-          type="range"
-          min={0}
-          max={Math.max(canonPath.length - 1, 0)}
-          value={clampedIndex}
-          onChange={(e) => setScrubIndex(Number(e.target.value))}
-          className="settings-slider active w-full"
-        />
-      </div>
-      {/* フィルタ */}
-      <div className="flex items-center gap-2 text-[11px]" style={{ color: 'var(--text-faint)' }}>
-        <span className="uppercase tracking-[0.14em]">|score| ≥ {threshold.toFixed(2)}</span>
-        <input
-          type="range"
-          min={0}
-          max={1}
-          step={0.05}
-          value={threshold}
-          onChange={(e) => setThreshold(Number(e.target.value))}
-          className={`settings-slider min-w-0 flex-1${threshold > 0 ? ' active' : ''}`}
-        />
-        {egoCharId && (
-          <button
-            onClick={() => setEgo(null)}
-            className="rounded-md border px-1.5 py-0.5"
-            style={{ borderColor: 'var(--accent-border)', color: 'var(--accent)' }}
-          >
-            {nameOf(egoCharId)} のみ ✕
-          </button>
-        )}
-      </div>
-      {/* グラフ本体 */}
+  const canvas = <div ref={frameRef} className={detailLayout ? 'h-full min-h-0' : ''}>
       <svg
         ref={svgRef}
         viewBox={`${view.x} ${view.y} ${width / view.zoom} ${height / view.zoom}`}
-        className="w-full rounded-xl border"
+        className={`w-full rounded-xl border${detailLayout ? ' h-full' : ''}`}
         style={{ background: 'var(--bg-canvas)', borderColor: 'var(--border)', touchAction: 'none' }}
         onPointerDown={handleBackgroundPointerDown}
         onPointerMove={handlePointerMove}
@@ -881,7 +863,52 @@ export default function RelationGraph({
           </text>
         )}
       </svg>
+  </div>
+  const filters = <>
+
+      {/* 時間スクラブ */}
+      <div>
+        <div className="mb-1 flex items-center justify-between text-[11px]" style={{ color: 'var(--text-faint)' }}>
+          <span className="uppercase tracking-[0.14em]">Time</span>
+          <span className="truncate pl-2" style={{ color: 'var(--text-dim)' }}>
+            {clampedIndex + 1}/{canonPath.length} {scrubNode?.title || '(無題)'}
+          </span>
+        </div>
+        <input
+          type="range"
+          min={0}
+          max={Math.max(canonPath.length - 1, 0)}
+          value={clampedIndex}
+          onChange={(e) => setScrubIndex(Number(e.target.value))}
+          className="settings-slider active w-full"
+        />
+      </div>
+      {/* フィルタ */}
+      <div className="flex items-center gap-2 text-[11px]" style={{ color: 'var(--text-faint)' }}>
+        <span className="uppercase tracking-[0.14em]">|score| ≥ {threshold.toFixed(2)}</span>
+        <input
+          type="range"
+          min={0}
+          max={1}
+          step={0.05}
+          value={threshold}
+          onChange={(e) => setThreshold(Number(e.target.value))}
+          className={`settings-slider min-w-0 flex-1${threshold > 0 ? ' active' : ''}`}
+        />
+        {egoCharId && (
+          <button
+            onClick={() => setEgo(null)}
+            className="rounded-md border px-1.5 py-0.5"
+            style={{ borderColor: 'var(--accent-border)', color: 'var(--accent)' }}
+          >
+            {nameOf(egoCharId)} のみ ✕
+          </button>
+        )}
+      </div>
       {/* エッジ履歴ドリルダウン */}
+
+  </>
+  const history = <>
       {selectedEdge && (
         <div
           className="rounded-xl border p-3"
@@ -932,6 +959,12 @@ export default function RelationGraph({
         ノードクリック = エゴ切替 / ノードドラッグ = 配置(保存) / エッジクリック = 履歴 /
         ホイール = ズーム / 背景ドラッグ = パン / 背景ダブルクリック = リセット
       </p>
+
+
+  </>
+  return detailLayout ? (
+    <div className="scene-detail flex min-h-0 flex-1 flex-col">
+      <DetailSplit storageKey="relationDetailMetaWidth" fillMain main={canvas} secondary={<>{filters}{history}</>} />
     </div>
-  )
+  ) : <div className="flex flex-col gap-2">{filters}{canvas}{history}</div>
 }
