@@ -9,6 +9,7 @@ import RelationGraph from '../RelationGraph'
 import type { Character, Place, StoryGraph, StoryNode } from '../types'
 import { useWorkspace } from '../Workspace'
 import UnsavedBadge from '../UnsavedBadge'
+import CharAvatar from '../CharAvatar'
 
 const EDITABLE_FIELDS = ['name', 'color', 'profile', 'appearance', 'voice', 'reading'] as const
 
@@ -18,7 +19,7 @@ const FIELD_DEFS: Array<{ key: 'profile' | 'appearance' | 'voice'; label: string
   { key: 'voice', label: '口調・一人称', rows: 3 }
 ]
 
-/** 資料の種類。「関係図」はこれと別の軸(キャラクターの見せ方)なので、タブには入れない */
+/** 資料の種類。「関係図」はキャラクターの表示方法として扱う。 */
 type Tab = 'characters' | 'places'
 
 /** 資料庫。キャラクターと場所を同じシェル(リサイズ可能なサイドバー + 編集ペイン)で扱う。
@@ -33,6 +34,7 @@ function CharactersMode(): React.JSX.Element {
   const [libraryVersion, setLibraryVersion] = useState(0)
   const reloadSequence = useRef(0)
   const [tab, setTab] = useState<Tab>('characters')
+  const [expanded, setExpanded] = useState({ characters: true, places: true })
   // キャラクターの見せ方(一覧+編集 ⇄ 関係図)。場所には無い切り替えなので、タブとは別に持つ
   const [showRelations, setShowRelations] = useState(false)
   const [characters, setCharacters] = useState<Character[]>([])
@@ -63,7 +65,7 @@ function CharactersMode(): React.JSX.Element {
   // 左サイドバーの幅(ドラッグで変更。localStorage に保存)
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     const saved = Number(localStorage.getItem('charactersSidebarWidth'))
-    // 既定はタブ 3 つ + 追加ボタンが余裕をもって並ぶ幅にする
+    // 種類の見出しと資料名が読める既定幅
     return saved >= 180 && saved <= 520 ? saved : 288
   })
 
@@ -194,26 +196,33 @@ function CharactersMode(): React.JSX.Element {
       const character = characters.find((item) => item.id === target.id)
       if (!character) return
       setTab('characters')
+      setExpanded((value) => ({ ...value, characters: true }))
       setShowRelations(false)
       setSelectedId(target.id)
       setDraft(character)
     } else {
       if (!places.some((item) => item.id === target.id)) return
       setTab('places')
+      setExpanded((value) => ({ ...value, places: true }))
       setSelectedPlaceId(target.id)
     }
     followedTarget.current = target
   }, [workspace.productionTarget, characters, places, workspace.libraryDirty])
 
-  const handleCreate = async (): Promise<void> => {
-    if (tab === 'places') {
+  const handleCreate = async (kind: Tab): Promise<void> => {
+    if (kind === 'places') {
       const created = await api.createPlace({ name: '新しい場所', color: '#5a8fa7' })
       await reload()
+      setTab('places')
+      setExpanded((value) => ({ ...value, places: true }))
       setSelectedPlaceId(created.id)
       return
     }
     const created = await api.createCharacter({ name: '新しいキャラクター', color: '#7c5af7' })
     await reload()
+    setTab('characters')
+    setShowRelations(false)
+    setExpanded((value) => ({ ...value, characters: true }))
     setSelectedId(created.id)
   }
 
@@ -280,138 +289,55 @@ function CharactersMode(): React.JSX.Element {
         className="flex shrink-0 flex-col"
         style={{ background: 'var(--bg-sidebar)', width: sidebarWidth }}
       >
-        <div className="flex items-center justify-between gap-1 px-3 py-2">
-          {/* サイドバーは幅を狭められるので、タブは折り返さずに横へ逃がす
-              (スクロールバーは 1 行の高さを崩すので隠す) */}
-          <div className="flex min-w-0 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-            {(
-              [
-                ['characters', 'キャラクター'],
-                ['places', '場所']
-              ] as Array<[Tab, string]>
-            ).map(([id, label]) => (
-              <button
-                key={id}
-                onClick={() => setTab(id)}
-                className="shrink-0 whitespace-nowrap rounded-md px-2 py-0.5 text-[12px] transition-colors"
-                style={
-                  tab === id
-                    ? { background: 'var(--accent-soft)', color: 'var(--text)' }
-                    : { color: 'var(--text-faint)' }
-                }
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          {/* 見せ方の切り替えと追加。タブ(資料の種類)とは別の軸なので右側へ寄せる */}
-          <div className="flex shrink-0 items-center gap-1">
-            {tab === 'characters' && (
-              <button
-                onClick={() => setShowRelations((v) => !v)}
-                className="shrink-0 whitespace-nowrap rounded-md px-2 py-0.5 text-[12px] transition-colors"
-                style={
-                  showRelations
-                    ? { background: 'var(--accent-soft)', color: 'var(--text)' }
-                    : { color: 'var(--text-faint)' }
-                }
-                data-tip={
-                  showRelations
-                    ? 'キャラクターの一覧と編集に戻す'
-                    : 'キャラクターどうしの関係を図で見る(一覧で中心にする人を選べます)'
-                }
-              >
-                関係図
-              </button>
-            )}
-            {!relationsView && (
-              <button
-                onClick={() => void handleCreate()}
-                className="shrink-0 rounded-md px-2 py-0.5 text-[12px]"
-                style={{ background: 'var(--accent-soft)', color: 'var(--text)' }}
-                data-tip={tab === 'places' ? '場所を追加' : 'キャラクターを追加'}
-                aria-label={tab === 'places' ? '場所を追加' : 'キャラクターを追加'}
-              >
-                +
-              </button>
-            )}
-          </div>
-        </div>
-        <div className="inspector-scrollbar min-h-0 flex-1 overflow-y-auto px-2 pb-2">
-          {tab === 'places' &&
-            places.map((p) => (
-              <button
-                key={p.id}
-                onClick={() => setSelectedPlaceId(p.id)}
-                className="mb-1 flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-[15px]"
-                style={
-                  p.id === selectedPlaceId
-                    ? { background: 'rgba(124, 90, 247, 0.18)', color: 'var(--text)' }
-                    : { color: 'var(--text-dim)' }
-                }
-              >
-                {/* 場所は丸ではなく角丸の札で表す(キャラの丸アイコンと見分けるため) */}
-                <span
-                  className="h-6 w-1.5 shrink-0 rounded-full"
-                  style={{ background: p.color ?? '#8a8fa8' }}
-                />
-                <span className="min-w-0 flex-1 truncate">{p.name}</span>
-                {p.id === selectedPlaceId && placeUnsaved && <UnsavedBadge />}
-              </button>
-            ))}
-          {tab === 'places' && places.length === 0 && (
-            <div className="px-2 py-4 text-[12px] leading-relaxed" style={{ color: 'var(--text-faint)' }}>
-              まだ場所がありません。
-              <br />
-              シーンは登録した場所から 1 つ選びます。
-            </div>
-          )}
-          {tab === 'characters' &&
-            characters.map((c) => (
-            <button
-              key={c.id}
-              // 関係図を出している間は、一覧は図の中心(エゴ)を選ぶためのものになる
-              onClick={() =>
-                relationsView
-                  ? setEgoCharId((prev) => (prev === c.id ? null : c.id))
-                  : setSelectedId(c.id)
-              }
-              className="mb-1 flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-[15px]"
-              style={
-                (relationsView ? c.id === egoCharId : c.id === selectedId)
-                  ? { background: 'rgba(124, 90, 247, 0.18)', color: 'var(--text)' }
-                  : { color: 'var(--text-dim)' }
-              }
-            >
-              {assetUrl(c.portrait_path) ? (
-                <img
-                  src={assetUrl(c.portrait_path)!}
-                  className="h-10 w-10 shrink-0 rounded-full object-cover"
-                  style={{ border: `1.5px solid ${c.color ?? '#8a8fa8'}` }}
-                />
-              ) : (
-                // 画像が無いキャラも同じ大きさの丸で並べる(頭文字入り)
-                <span
-                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[15px] font-semibold"
-                  style={{
-                    background: `${c.color ?? '#8a8fa8'}33`,
-                    border: `1.5px solid ${c.color ?? '#8a8fa8'}`,
-                    color: c.color ?? '#8a8fa8'
-                  }}
-                >
-                  {c.name.slice(0, 1)}
-                </span>
-              )}
-              <span className="min-w-0 flex-1 truncate">{c.name}</span>
-              {c.id === selectedId && dirty && <UnsavedBadge />}
-            </button>
+        <div className="px-3 py-2 text-[13px] font-medium" style={{ color: 'var(--text)' }}>資料庫</div>
+        <nav aria-label="資料の種類と一覧" className="inspector-scrollbar min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+          {([['characters', 'キャラクター'], ['places', '場所']] as const).map(([kind, label]) => (
+            <section key={kind} className="mb-2">
+              <div className="flex flex-wrap items-center gap-1">
+                <button onClick={() => setExpanded((value) => ({ ...value, [kind]: !value[kind] }))}
+                  aria-expanded={expanded[kind]} aria-controls={`library-${kind}`}
+                  className="flex min-w-0 flex-1 items-center gap-1 rounded-md px-2 py-1 text-[12px] font-medium hover:bg-[var(--accent-soft)]"
+                  style={{ color: 'var(--text)' }} data-tip={`${label}の一覧を開閉します`}>
+                  <span aria-hidden="true" className="shrink-0">{expanded[kind] ? '▾' : '▸'}</span>
+                  <span className="truncate">{label}</span>
+                </button>
+                {kind === 'characters' && <button
+                  onClick={() => { setTab('characters'); setShowRelations(!relationsView); setExpanded((value) => ({ ...value, characters: true })) }}
+                  aria-pressed={relationsView}
+                  className="shrink-0 rounded-md px-1.5 py-0.5 text-[11px] hover:bg-[var(--accent-soft)]"
+                  style={{ color: relationsView ? 'var(--text)' : 'var(--text-dim)', background: relationsView ? 'var(--accent-soft)' : undefined }}
+                  data-tip={relationsView ? 'キャラクターの編集に戻す' : 'キャラクターどうしの関係図を開く'}>関係図</button>}
+                <button onClick={() => void handleCreate(kind)} aria-label={`${label}を追加`}
+                  className="shrink-0 rounded-md border px-2 py-0.5 text-[11px]"
+                  style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+                  data-tip={`${label}を追加`}>+</button>
+              </div>
+              <div id={`library-${kind}`} hidden={!expanded[kind]} className="ml-3 border-l pl-1" style={{ borderColor: 'var(--border)' }}>
+                {kind === 'characters' ? characters.map((character) => (
+                  <button key={character.id}
+                    onClick={() => { setTab('characters'); setShowRelations(false); setSelectedId(character.id) }}
+                    className="mb-0.5 flex w-full min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12px]"
+                    style={{ background: tab === 'characters' && !relationsView && character.id === selectedId ? 'var(--accent-soft)' : undefined, color: character.id === selectedId && tab === 'characters' ? 'var(--text)' : 'var(--text-dim)' }}
+                    data-tip={character.name}>
+                    <CharAvatar char={character} size={24} />
+                    <span className="min-w-0 flex-1 truncate">{character.name}</span>
+                    {character.id === selectedId && dirty && <UnsavedBadge />}
+                  </button>
+                )) : places.map((place) => (
+                  <button key={place.id} onClick={() => { setTab('places'); setSelectedPlaceId(place.id) }}
+                    className="mb-0.5 flex w-full min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12px]"
+                    style={{ background: tab === 'places' && place.id === selectedPlaceId ? 'var(--accent-soft)' : undefined, color: tab === 'places' && place.id === selectedPlaceId ? 'var(--text)' : 'var(--text-dim)' }}
+                    data-tip={place.name}>
+                    <span className="h-6 w-1.5 shrink-0 rounded-full" style={{ background: place.color ?? 'var(--text-dim)' }} />
+                    <span className="min-w-0 flex-1 truncate">{place.name}</span>
+                    {place.id === selectedPlaceId && placeUnsaved && <UnsavedBadge />}
+                  </button>
+                ))}
+                {(kind === 'characters' ? characters : places).length === 0 && <p className="px-2 py-2 text-[11px]" style={{ color: 'var(--text-faint)' }}>まだ{label}がありません</p>}
+              </div>
+            </section>
           ))}
-          {tab === 'characters' && characters.length === 0 && (
-            <div className="px-2 py-4 text-[12px]" style={{ color: 'var(--text-faint)' }}>
-              まだキャラクターがいません
-            </div>
-          )}
-        </div>
+        </nav>
       </aside>
       {/* サイドバー幅のリサイズハンドル(構造モードのインスペクタと同じ作り) */}
       <div
@@ -426,6 +352,22 @@ function CharactersMode(): React.JSX.Element {
         />
       </div>
       <main className="inspector-scrollbar min-w-0 flex-1 overflow-y-auto p-6">
+        <div hidden={tab !== 'places'}>
+          {selectedPlace ? (
+            <PlaceEditor
+              key={`${selectedPlace.id}:${libraryVersion}`}
+              place={selectedPlace}
+              onChanged={reload}
+              onDirty={setPlaceDirty}
+              onUnsavedChange={setPlaceUnsaved}
+              onDeleted={() => setSelectedPlaceId(null)}
+            />
+          ) : (
+            <div className="flex h-full items-center justify-center text-[13px]" style={{ color: 'var(--text-faint)' }}>
+              左のリストから場所を選択、または追加してください
+            </div>
+          )}
+        </div>
         {relationsView ? (
           <div className="mx-auto max-w-5xl">
             <RelationGraph
@@ -442,22 +384,7 @@ function CharactersMode(): React.JSX.Element {
               onEgoChange={setEgoCharId}
             />
           </div>
-        ) : tab === 'places' ? (
-          selectedPlace ? (
-            <PlaceEditor
-              key={`${selectedPlace.id}:${libraryVersion}`}
-              place={selectedPlace}
-              onChanged={reload}
-              onDirty={setPlaceDirty}
-              onUnsavedChange={setPlaceUnsaved}
-              onDeleted={() => setSelectedPlaceId(null)}
-            />
-          ) : (
-            <div className="flex h-full items-center justify-center text-[13px]" style={{ color: 'var(--text-faint)' }}>
-              左のリストから場所を選択、または追加してください
-            </div>
-          )
-        ) : selected ? (
+        ) : tab === 'places' ? null : selected ? (
           <div className="mx-auto max-w-2xl">
             {/* 画像 → 画像操作 → 名前 の順に縦に積む(色は名前の隣に項目として置く) */}
             <div className="mb-4 flex flex-col items-start gap-1.5">
