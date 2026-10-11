@@ -55,7 +55,7 @@ const MessageList = memo(function MessageList({ messages, nodes, groups }: {
   return (
     <>
       {messages.map((m, i) => (
-        <div key={i} className="mb-2 rounded-lg border px-3 py-1.5" style={{
+        <div key={i} className={`mb-2 rounded-lg border px-3 py-1.5 ${m.role === 'user' ? 'ml-auto w-fit max-w-[85%] [overflow-wrap:anywhere]' : ''}`} style={{
           background: m.role === 'user' ? 'var(--accent-soft)' : 'var(--bg-elevated)', borderColor: 'var(--border)'
         }}>
           <div className="mb-1 text-[11px]" style={{ color: 'var(--text-faint)' }}>
