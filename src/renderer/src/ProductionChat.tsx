@@ -417,15 +417,12 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
         newChatTip="新しい制作の会話を始める" />
     <div className="inspector-scrollbar flex flex-1 min-h-0 min-w-0 w-full flex-col gap-2 overflow-y-auto px-4 py-2 text-[12px]" style={{ background: 'var(--bg-chat)', color: 'var(--text)' }}>
       <div className="flex flex-wrap items-center gap-2">
-        <span className="shrink-0 text-[11px]" style={{ color: 'var(--text-faint)' }}>制作（実験）</span>
+        <span className="shrink-0 text-[11px]" style={{ color: 'var(--text-faint)' }}>制作</span>
         <button onClick={() => { followRef.current = !follow; setFollow(!follow); onFollowTarget(!follow ? followTargetRef.current : null) }}
           className="shrink-0 rounded-md border px-2 py-0.5 text-[11px]"
           style={follow ? { borderColor: 'var(--border-strong)', background: 'var(--accent-soft)', color: 'var(--text)' } : { borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }}
           data-tip="作業対象の章を開き、シーンをキャンバスの中央に表示します">{follow ? '☑' : '☐'} 作業対象を追う</button>
       </div>
-      <p className="text-[11px]" style={{ color: 'var(--text-dim)' }}>
-        検証用ライブラリでお試しください。送信モードで「制作を実行」を選ぶとシーンや資料庫を編集します。手動編集に切り替えて保存した後、制作を再開できます。
-      </p>
       {busy && runId && <button disabled={!manualReady || switching} onClick={() => void toggleManual()}
         className="rounded-md border px-2 py-0.5 text-[12px] disabled:opacity-50"
         style={{ background: 'var(--bg-input)', borderColor: 'var(--border-strong)' }}
