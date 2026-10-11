@@ -686,6 +686,10 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
                             break
                         consulted.add(signature)
                     yield _sse({"stage": TOOL_LABELS.get(name, "操作を確認しています…"), "active_node": args.get("node_id") or args.get("after_id")})
+                    if execute and name in {"update_character", "update_place"} and isinstance(args.get("id"), str):
+                        kind = name.removeprefix("update_")
+                        if getattr(store, f"get_{kind}")(args["id"]) is not None:
+                            yield _sse({"active_library": {"kind": kind, "id": args["id"]}})
                     if execute:
                         preview = scene_preview(store, call.get("function", {}), policy)
                         if preview is not None:

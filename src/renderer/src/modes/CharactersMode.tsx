@@ -186,6 +186,25 @@ function CharactersMode(): React.JSX.Element {
   // 関係図はキャラクターの見せ方なので、場所を見ている間は出さない
   const relationsView = tab === 'characters' && showRelations
 
+  const followedTarget = useRef(workspace.productionTarget)
+  useEffect(() => {
+    const target = workspace.productionTarget
+    if (!target || target.kind === 'scene' || followedTarget.current === target || workspace.libraryDirty.current) return
+    if (target.kind === 'character') {
+      const character = characters.find((item) => item.id === target.id)
+      if (!character) return
+      setTab('characters')
+      setShowRelations(false)
+      setSelectedId(target.id)
+      setDraft(character)
+    } else {
+      if (!places.some((item) => item.id === target.id)) return
+      setTab('places')
+      setSelectedPlaceId(target.id)
+    }
+    followedTarget.current = target
+  }, [workspace.productionTarget, characters, places, workspace.libraryDirty])
+
   const handleCreate = async (): Promise<void> => {
     if (tab === 'places') {
       const created = await api.createPlace({ name: '新しい場所', color: '#5a8fa7' })

@@ -1,4 +1,4 @@
-import { WorkspaceContext } from './Workspace'
+import { WorkspaceContext, type ProductionTarget } from './Workspace'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, initApi } from './api'
 import ComfyBar from './ComfyBar'
@@ -166,6 +166,12 @@ export default function App(): React.JSX.Element {
   const [manual, setManual] = useState(false)
   const [revision, setRevision] = useState(0)
   const libraryDirty = useRef(false)
+  const [productionTarget, setProductionTarget] = useState<ProductionTarget | null>(null)
+  const followTarget = useCallback((target: ProductionTarget | null) => {
+    if (target && libraryDirty.current) return
+    setProductionTarget(target)
+    if (target) setMode(target.kind === 'scene' ? 'structure' : 'characters')
+  }, [])
   const changed = useCallback(() => setRevision((value) => value + 1), [])
   const toggleChat = useCallback(() => setChatOpen((value) => {
     localStorage.setItem('chatDrawerOpen', value ? '0' : '1')
@@ -280,8 +286,8 @@ export default function App(): React.JSX.Element {
   // Context の値は中身が変わったときだけ作り直す。毎レンダー新しいオブジェクトを渡すと、
   // シーンの選択や通知で App が再レンダーされるたびに全モードが再レンダーされる
   const workspaceValue = useMemo(
-    () => ({ mode, chatHost, chatOpen, toggleChat, manual, setManual, revision, changed, libraryDirty }),
-    [mode, chatHost, chatOpen, toggleChat, manual, revision, changed]
+    () => ({ mode, chatHost, chatOpen, toggleChat, manual, setManual, revision, changed, libraryDirty, productionTarget, followTarget }),
+    [mode, chatHost, chatOpen, toggleChat, manual, revision, changed, productionTarget, followTarget]
   )
 
   return (

@@ -1,6 +1,6 @@
 import DetailSplit from '../DetailSplit'
 import { createPortal } from 'react-dom'
-import { useWorkspace } from '../Workspace'
+import { useWorkspace, type ProductionTarget } from '../Workspace'
 import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import {
   applyNodeChanges,
@@ -3655,11 +3655,13 @@ function StructureModeInner({
   }, [workspace.mode, focusNodeId])
 
   // 制作では章に隠れたシーンも開く。通常の追加操作のfocusWhenReadyとは分ける。
-  const followProductionTarget = useCallback((nodeId: string | null): void => {
+  const followProductionTarget = useCallback((target: ProductionTarget | null): void => {
+    workspace.followTarget(target)
+    const nodeId = target?.kind === 'scene' ? target.id : null
     if (nodeId) setInspectorTab('beat')
     focusDoneRef.current = nodeId === null
     setPendingFocusId(nodeId)
-  }, [])
+  }, [workspace.followTarget])
 
   // 鑑賞モードで読んでいたシーン、または制作の対象にフォーカスして開く(戻ったときに迷子にならない)。
   // 章に畳まれて見えないときは、その章の中に入ってから寄せる
@@ -4558,44 +4560,39 @@ function StructureModeInner({
           >
             <Background gap={GRID_SIZE} size={1.4} color="#394154" />
             {minimapVisible && <MiniMap pannable zoomable nodeColor={() => '#2e3140'} />}
-            <Panel position="top-left">
+            <Panel position="top-left" style={{ maxWidth: 'calc(100% - 32px)' }}>
               {/* 幅は中身に合わせる(パネルの領域はキャンバスのクリックを奪うため)。
                   生成パネルとステータスの幅は各要素側で持たせ、ツールバーの並びを潰さない */}
-              <div className="flex w-fit flex-col gap-2">
+              <div className="flex w-fit max-w-full flex-col gap-2">
                 {/* 章内ビューのパンくず(章名 / 名前の変更 / 解除) */}
                 {effectiveView === 'focused' && focusedGroup && (
                   <div
-                    className="flex w-fit items-center gap-1.5 rounded-xl border px-2 py-1.5 text-[12px] shadow-lg shadow-black/30"
+                    className="flex w-fit max-w-full items-center gap-1.5 rounded-xl border px-2 py-1.5 text-[12px] shadow-lg shadow-black/30"
                     style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)' }}
                   >
-                    <button
-                      onClick={() => setChapterView('chapters')}
-                      className="rounded-md px-1.5 py-0.5 hover:bg-[var(--accent-soft)]"
-                      style={{ color: 'var(--text-dim)' }}
-                      data-tip="章ビューへ戻る"
-                    >
-                      ← 章一覧
-                    </button>
-                    <span className="max-w-56 truncate font-medium" style={{ color: 'var(--text)' }}>
-                      {focusedGroup.on_canon ? `第${groups.indexOf(focusedGroup) + 1}章` : '別ルートの章'}{' '}
-                      {focusedGroup.title}
-                    </span>
+                    <nav aria-label="現在の階層" className="flex min-w-0 items-center gap-1.5">
+                      <button
+                        onClick={() => setChapterView('chapters')}
+                        className="shrink-0 rounded-md px-1.5 py-0.5 hover:bg-[var(--accent-soft)]"
+                        style={{ color: 'var(--text-dim)' }}
+                        data-tip="作品全体の章一覧へ戻る"
+                      >
+                        作品全体
+                      </button>
+                      <span aria-hidden="true" className="shrink-0" style={{ color: 'var(--text-faint)' }}>›</span>
+                      <span aria-current="page" className="min-w-0 max-w-56 truncate font-medium" style={{ color: 'var(--text)' }}
+                        data-tip={`${focusedGroup.on_canon ? `第${groups.indexOf(focusedGroup) + 1}章` : '別ルートの章'}「${focusedGroup.title}」`}>
+                        {focusedGroup.on_canon ? `第${groups.indexOf(focusedGroup) + 1}章` : '別ルートの章'}「{focusedGroup.title}」
+                      </span>
+                    </nav>
                     <button
                       onClick={() => void renameChapter(focusedGroup)}
-                      className="rounded-md px-1 py-0.5 hover:bg-[var(--accent-soft)]"
+                      className="shrink-0 rounded-md px-1 py-0.5 hover:bg-[var(--accent-soft)]"
                       style={{ color: 'var(--text-faint)' }}
                       aria-label="章の名前を変更"
                       data-tip="章の名前を変更"
                     >
                       ✎
-                    </button>
-                    <button
-                      onClick={() => void dissolveChapter(focusedGroup)}
-                      className="rounded-md px-1 py-0.5 hover:bg-[var(--accent-soft)]"
-                      style={{ color: 'var(--text-faint)' }}
-                      data-tip="章を解除する(シーンは残る)"
-                    >
-                      解散
                     </button>
                   </div>
                 )}
@@ -4842,7 +4839,7 @@ function StructureModeInner({
               y={menu.y}
               heading={
                 menu.pane
-                  ? 'ここに追加'
+                  ? focusedGroup?.title ?? 'ここに追加'
                   : menu.chapter
                     ? (groups.find((g) => g.id === menu.chapter)?.on_canon
                         ? `第${groups.findIndex((g) => g.id === menu.chapter) + 1}章`
@@ -4900,7 +4897,14 @@ function StructureModeInner({
                         hint: '器を先に置いて、中身は後から書く(章の中で作れます)',
                         group: 'add',
                         run: () => createEmptyChapter(menu.pane)
-                      }
+                      },
+                      ...(focusedGroup ? [{
+                        label: '章を解除',
+                        hint: `「${focusedGroup.title}」のシーンは残して、章のまとまりを解除します`,
+                        group: 'danger',
+                        disabled: productionEditingLocked,
+                        run: () => void dissolveChapter(focusedGroup)
+                      }] : [])
                     ]
                   : menu.chapter
                   ? ((): ContextMenuItem[] => {
@@ -4955,8 +4959,9 @@ function StructureModeInner({
                         },
                         {
                           label: '章を解除',
-                          hint: 'まとまりをやめる(シーンは残る)',
+                          hint: 'シーンは残して、章のまとまりを解除します',
                           group: 'chapter',
+                          disabled: productionEditingLocked,
                           run: () => void dissolveChapter(group)
                         },
                         {

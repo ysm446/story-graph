@@ -1,4 +1,5 @@
 import ChatHistoryPanel from './ChatHistoryPanel'
+import type { ProductionTarget } from './Workspace'
 import ChatRulesPanel from './ChatRulesPanel'
 import ProductionPreviewPanel from './ProductionPreviewPanel'
 import AutoTextarea from './AutoTextarea'
@@ -102,7 +103,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
   groups: Group[]
   beforeExecute: () => string | null
   onChanged: (operation: ProductionOperation) => Promise<void>
-  onFollowTarget: (nodeId: string | null) => void
+  onFollowTarget: (target: ProductionTarget | null) => void
 }): React.JSX.Element {
   const [chatId, setChatId] = useState<string | null>(null)
   const [history, setHistory] = useState<ChatSummary[]>([])
@@ -134,7 +135,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
   })
   const [follow, setFollow] = useState(true)
   const followRef = useRef(true)
-  const followTargetRef = useRef<string | null>(null)
+  const followTargetRef = useRef<ProductionTarget | null>(null)
   const tasks = useTasks()
   const task = tasks.find((t) => t.id === taskId)
   const [historyBusy, setHistoryBusy] = useState(false)
@@ -321,9 +322,13 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
               activeNode = event.active_node ?? null
               setNodeBusy(activeNode, true)
               if (activeNode) {
-                followTargetRef.current = activeNode
-                if (followRef.current && !manualRef.current) onFollowTarget(activeNode)
+                followTargetRef.current = { kind: 'scene', id: activeNode }
+                if (followRef.current && !manualRef.current) onFollowTarget(followTargetRef.current)
               }
+            }
+            if (event.active_library) {
+              followTargetRef.current = { kind: event.active_library.kind, id: event.active_library.id }
+              if (followRef.current && !manualRef.current) onFollowTarget(followTargetRef.current)
             }
             if ('preview' in event && !manualRef.current) setProductionPreview(event.preview ?? null)
             if (event.snapshot) {
@@ -338,10 +343,13 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
               setMessages((prev) => [...prev, { role: 'assistant', content: operation.reason, operation, created_at }])
               await onChanged(operation)
               setProductionPreview(null)
-              if (operation.node_id && operation.action !== 'delete_scene') {
-                followTargetRef.current = operation.node_id
-                if (followRef.current && !manualRef.current) onFollowTarget(operation.node_id)
-              } else if (operation.node_id && followTargetRef.current === operation.node_id) {
+              const target: ProductionTarget = 'entity_id' in operation
+                ? { kind: operation.entity_type, id: operation.entity_id }
+                : { kind: 'scene', id: operation.node_id }
+              if (!operation.action.startsWith('delete_')) {
+                followTargetRef.current = target
+                if (followRef.current && !manualRef.current) onFollowTarget(target)
+              } else if (followTargetRef.current?.kind === target.kind && followTargetRef.current?.id === target.id) {
                 followTargetRef.current = null
                 onFollowTarget(null)
               }
@@ -418,10 +426,10 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
     <div className="inspector-scrollbar flex flex-1 min-h-0 min-w-0 w-full flex-col gap-2 overflow-y-auto px-4 py-2 text-[12px]" style={{ background: 'var(--bg-chat)', color: 'var(--text)' }}>
       <div className="flex flex-wrap items-center gap-2">
         <span className="shrink-0 text-[11px]" style={{ color: 'var(--text-faint)' }}>制作</span>
-        <button onClick={() => { followRef.current = !follow; setFollow(!follow); onFollowTarget(!follow ? followTargetRef.current : null) }}
+        <button onClick={() => { followRef.current = !follow; setFollow(!follow); onFollowTarget(!follow && !manualRef.current ? followTargetRef.current : null) }}
           className="shrink-0 rounded-md border px-2 py-0.5 text-[11px]"
           style={follow ? { borderColor: 'var(--border-strong)', background: 'var(--accent-soft)', color: 'var(--text)' } : { borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }}
-          data-tip="作業対象の章を開き、シーンをキャンバスの中央に表示します">{follow ? '☑' : '☐'} 作業対象を追う</button>
+          data-tip="作業対象のシーンへ移動し、キャラクター・場所の編集時は資料庫の対象を開きます">{follow ? '☑' : '☐'} 作業対象を追う</button>
       </div>
       {busy && runId && <button disabled={!manualReady || switching} onClick={() => void toggleManual()}
         className="rounded-md border px-2 py-0.5 text-[12px] disabled:opacity-50"

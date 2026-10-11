@@ -1327,6 +1327,7 @@ export interface ProductionEvent {
   response_end?: boolean
   stage?: string
   active_node?: string | null
+  active_library?: { kind: 'character' | 'place'; id: string }
   changed?: ProductionOperation
   snapshot?: Snapshot
   error?: string

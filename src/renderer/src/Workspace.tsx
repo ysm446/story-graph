@@ -1,6 +1,7 @@
 import { createContext, useContext } from 'react'
 
 export type WorkspaceMode = 'structure' | 'characters' | 'reader'
+export type ProductionTarget = { kind: 'scene' | 'character' | 'place'; id: string }
 
 /** モードをまたぐチャットの表示先と、編集の競合防止を共有する。 */
 export const WorkspaceContext = createContext<{
@@ -12,6 +13,8 @@ export const WorkspaceContext = createContext<{
   setManual: (value: boolean) => void
   revision: number
   changed: () => void
+  productionTarget: ProductionTarget | null
+  followTarget: (target: ProductionTarget | null) => void
   libraryDirty: React.MutableRefObject<boolean>
 } | null>(null)
 
