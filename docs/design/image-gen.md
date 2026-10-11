@@ -1,7 +1,7 @@
 # 画像生成(ComfyUI 連携)— キャラクターの参照画像と場面の挿絵
 
 作成日時: 2026-08-26 15:15
-更新日時: 2026-10-10 04:03
+更新日時: 2026-10-12 04:08
 
 ローカルの ComfyUI で挿絵を作る仕組みの設計メモ。2026-08-26 のユーザー発案
 ([progress.md](../plan/progress.md) の「場面の画像生成」)。画像は**装飾専用**で、
@@ -157,8 +157,12 @@ API 形式の JSON テンプレート `workflows/ref_t2i.json` を `comfy.build_
    画像をそれぞれの持ち主の最初の候補として登録する(そのときの保存状態を添える)。
 2. **参照保護**: `ASSET_REF_SQLS` に `media.path` / `media.thumb_path` を足したので、`gc_assets` も
    スナップショットの参照保護もストック内のファイルを守る。持ち主(シーン / キャラ)を消すと
-   その行も消える。動画のサムネイルは `set_node_thumb` が `media.thumb_path` にも写し、
-   選び直したときに作り直さない。
+   その行も消える。サムネイル(`nodes.thumb_path`)は `set_node_thumb` が `media.thumb_path` にも写し、
+   選び直したときに作り直さない。サムネイルはレンダラの `thumbs.ts` が構造モードを開いたときに
+   未生成のものだけ 1 件ずつ作る: 動画は先頭フレームの JPEG、静止画は長辺 576px の WebP
+   (2026-10-12 まで静止画は原寸のままカードに出していた。長辺が 576px 以下の画像は原画を
+   そのまま thumb_path に登録する)。カードはサムネイルだけを表示し、原寸は鑑賞モードと
+   詳細欄で使う。
 3. **API**: `GET /media/{owner_type}/{owner_id}` → `{items(新しい順), selected}`。
    `POST /media {owner_type, owner_id, path, select=true, prompt?, instructions?, seed?, ref_chars?}` は
    手持ちのファイル(アップロード後、セット無し)と生成ウインドウの「決定」(generate の戻り値のセット付き)の

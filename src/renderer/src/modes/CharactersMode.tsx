@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, assetUrl, uploadAsset } from '../api'
 import CharacterVoicePanel from '../CharacterVoicePanel'
 import ImageCropModal, { type CropState } from '../ImageCropModal'
@@ -23,7 +23,10 @@ type Tab = 'characters' | 'places'
 
 /** 資料庫。キャラクターと場所を同じシェル(リサイズ可能なサイドバー + 編集ペイン)で扱う。
  *  場所も登録制のエンティティなので、庫としては同じ性格のもの(docs/design/places.md)。 */
-export default function CharactersMode(): React.JSX.Element {
+// memo: 非表示(display: none)でもマウントされたままなので、App の再レンダーに巻き込まない
+export default memo(CharactersMode)
+
+function CharactersMode(): React.JSX.Element {
   const workspace = useWorkspace()
   const [placeDirty, setPlaceDirty] = useState(false)
   const [placeUnsaved, setPlaceUnsaved] = useState(false)

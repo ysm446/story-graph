@@ -147,7 +147,7 @@ export const api = {
       body: JSON.stringify({ target_chars: targetChars }),
       signal
     }),
-  // 動画挿絵のサムネイル(videoThumb.ts が生成して保存する)
+  // 挿絵のサムネイル(thumbs.ts が生成して保存する。動画は先頭フレーム、静止画は縮小版)
   setNodeThumb: (id: string, thumbPath: string | null) =>
     request<unknown>(`/nodes/${id}/thumb`, { method: 'POST', body: JSON.stringify({ thumb_path: thumbPath }) }),
 

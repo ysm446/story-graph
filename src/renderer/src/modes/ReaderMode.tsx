@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { api, assetUrl, isAbortError, isVideoAsset, onRenderSaved, renderStream } from '../api'
 import { CrossfadeLoopVideo, DEFAULT_VIDEO_CROSSFADE_SECONDS } from '../CrossfadeLoopVideo'
 import { Icon } from '../icons'
@@ -44,7 +44,10 @@ interface PageChunk {
   chapter?: { id: string; title: string; number: number }
 }
 
-export default function ReaderMode({
+// memo: App の再レンダー(通知・タスク進捗)で朗読中の本文を描き直さない
+export default memo(ReaderMode)
+
+function ReaderMode({
   focusNodeId,
   initialGroupId,
   onCurrentSceneChange

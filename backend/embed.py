@@ -53,20 +53,38 @@ def _get_model():
         return _load_model_locked()
 
 
+_loader: threading.Thread | None = None
+_loader_lock = threading.Lock()
+
+
+def _start_background_load() -> None:
+    """モデルの読み込みを別スレッドで 1 回だけ始める(呼び出し側は待たない)。"""
+    global _loader
+    with _loader_lock:
+        if _loader is not None:
+            return
+
+        def run() -> None:
+            with _lock:
+                _load_model_locked()
+
+        _loader = threading.Thread(target=run, name="embed-load", daemon=True)
+        _loader.start()
+
+
 def available() -> bool:
-    """検索経路から呼ばれる。warmup がロード中(初回はダウンロードで分単位)の
-    ときにロック待ちするとイベントループごと固まるため、待たずに False を返して
-    FTS のみで続行する(ロード完了後の検索からベクトルが効く)。"""
+    """検索経路から呼ばれる。ロード済みなら True。
+
+    未ロードならバックグラウンドで読み込みを始めて False を返し、呼び出し側は FTS のみで
+    続行する(ロード完了後の検索からベクトルが効く)。ここで同期ロードすると、310M の
+    モデルを読む 7 秒ほどイベントループごと固まるため待たない。起動時には読み込まず、
+    最初に検索が要るまで約 1.2GB のメモリを使わないようにしている。"""
     if _model is not None:
         return True
     if _load_failed:
         return False
-    if not _lock.acquire(blocking=False):
-        return False
-    try:
-        return _load_model_locked() is not None
-    finally:
-        _lock.release()
+    _start_background_load()
+    return False
 
 
 def is_ready() -> bool:
@@ -75,8 +93,8 @@ def is_ready() -> bool:
 
 
 def warmup() -> None:
-    """起動時にバックグラウンドで呼ぶ(初回ダウンロード・ロードを先に済ませる)。"""
-    if available():
+    """同期でロードして温める(スクリプトやテストから明示的に呼ぶ用。起動時には呼ばない)。"""
+    if _get_model() is not None:
         embed_document("ウォームアップ")
 
 

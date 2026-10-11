@@ -187,6 +187,24 @@ def _dir_size(path: Path) -> int:
     return total
 
 
+# インストール容量のキャッシュ。ComfyUI の portable は数万ファイルあり、数え直すと数秒かかる。
+# status() は右上のバーが数秒ごとに呼ぶので、目印ファイル(インストール時に書く)の更新時刻が
+# 同じ間は前回の値を返す(tts_installer と同じ方式)。カスタムノードの追加などで増えた分は
+# 次のインストール・削除まで反映されないが、設定画面の目安表示なので許容する
+_size_cache: dict[tuple[str, str], int] = {}
+
+
+def _install_size(ins: dict[str, Any]) -> int:
+    try:
+        stamp = str((Path(ins["root"]) / MARKER_NAME).stat().st_mtime_ns)
+    except OSError:
+        stamp = str(ins.get("version"))  # 手動配置(目印なし)は版で代用
+    key = (str(INSTALL_DIR), stamp)
+    if key not in _size_cache:
+        _size_cache[key] = _dir_size(INSTALL_DIR)
+    return _size_cache[key]
+
+
 def status() -> dict[str, Any]:
     ins = find_install()
     return {
@@ -194,11 +212,12 @@ def status() -> dict[str, Any]:
         "install": ins,
         "install_dir": str(INSTALL_DIR),
         "runtime_dir": str(RUNTIME_DIR),
-        "size_bytes": _dir_size(INSTALL_DIR) if ins else 0,
+        "size_bytes": _install_size(ins) if ins else 0,
     }
 
 
 def uninstall() -> None:
+    _size_cache.clear()
     if not INSTALL_DIR.exists():
         return
     trash = INSTALL_DIR.with_name(f".removing-{uuid.uuid4().hex}")

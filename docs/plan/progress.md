@@ -1,9 +1,11 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-07-24 22:38
-更新日時: 2026-10-12 03:56
+更新日時: 2026-10-12 04:08
 
 ## 現在の状態
+
+- 2026-10-12 04:08 **高速化・軽量化(1回目)**(ユーザー依頼)。調査の実測: `/comfy/status` 1回2.88秒(5秒ごと)、バックエンド Python 常駐 1,469MB(うち埋め込みモデル約1,200MB、ロード7秒、1件の埋め込みは8ms)、挿絵付きシーン 130件中101件が原寸PNG(最大1200×904・2MB)、JSバンドル1.99MB(分割なし)、`/graph` 332KB・9ms(問題なし)。対応: (1) `comfy_installer.status` の容量計算を目印ファイルの mtime でキャッシュ(単体計測で初回0.87秒→2回目以降0.000秒)。(2) `videoThumb.ts` を `thumbs.ts` に改め、静止画も長辺576pxのWebPサムネイルを遅延生成して `thumb_path` に載せる。カード(`NodeThumb`)はサムネイル優先。React Flow に `onlyRenderVisibleElements` を追加。(3) `App` の `WorkspaceContext` 値を `useMemo` で固定、`useTasks` を真偽だけ購読する `useProductionLocked` に置換、`StructureMode` / `CharactersMode` / `ReaderMode` を `memo` 化。(4) 起動時の `embed.warmup` をやめ、`embed.available()` が未ロード時にバックグラウンドのスレッドで読み込みを始めて False を返す方式に(初回検索は FTS のみ)。(5) `db.connect` に `PRAGMA synchronous = NORMAL`。`npm run build`(型検査込み)成功、pytest 569件成功。隔離Electron検証 `scripts/check-thumbs.cjs`(`ELECTRON_RUN_AS_NODE` を外して `npx electron` で実行)で、原寸PNG(1216×832・1.3MB)を付けた40シーンの thumb_path が全件埋まり、576×394のWebP(26KB)になり、media.thumb_path にも写り、カードの `<img>` が全てサムネイルを指し、拡大すると描画ノードが42→4件になることを確認。**稼働中の実アプリでの確認は未実施**(稼働中のバックエンドは旧コードのため、再起動後に: 右上バーの負荷、既存ライブラリで挿絵101件のサムネイルが1件ずつ埋まること、章ビュー・整列・新規シーンへのフォーカスが従来どおり動くこと、を確認する)。未着手の候補: 構造モードのドラッグ1フレームごとの全体再実行(キャンバスの状態を子へ切り出す)、設定・鑑賞・関係グラフの `React.lazy` 分割、資料庫のストック一覧でのサムネイル利用。
 
 - 2026-10-12 03:56 キャラクター・場所に「元に戻す」を追加。キャラクター6項目・場所5項目だけを保存値へ戻し、校正入力を再初期化。即時保存される画像・音声は対象外。保存中や画像操作中は無効化し、保存欄を折り返し対応にした。build・差分チェックと既存の隔離Electron検証14項目が成功。取り消し操作そのものの実画面検証は未実施。
 

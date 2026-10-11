@@ -1,7 +1,7 @@
 import DetailSplit from '../DetailSplit'
 import { createPortal } from 'react-dom'
 import { useWorkspace } from '../Workspace'
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import {
   applyNodeChanges,
   Background,
@@ -67,7 +67,7 @@ import {
   useTaskFor
 } from '../tasks'
 import { useElapsedSeconds } from '../useElapsed'
-import { backfillVideoThumbs } from '../videoThumb'
+import { backfillThumbs } from '../thumbs'
 import type {
   Character,
   EventInput,
@@ -207,9 +207,9 @@ function shiftDownstreamX(
 
 /** カード上の挿絵(シーンカード / 章カードの表紙で共用)。挿絵が無ければ何も出さない。
  *
- *  グラフ上のカードは静止画で足りるので、動画の挿絵は保存済みのサムネイルを出す。
- *  まだ無い場合だけ動画要素で先頭フレームを見せる(その裏で
- *  videoThumb.backfillVideoThumbs が生成して、次回からは <img> になる)
+ *  グラフ上のカードは小さな静止画で足りるので、保存済みのサムネイルを出す
+ *  (thumbs.backfillThumbs が生成する)。まだ無い場合、動画は動画要素で先頭フレームを、
+ *  静止画は原画をそのまま見せ、生成が終わって reload されたらサムネイルに切り替わる
  */
 function NodeThumb({
   node,
@@ -222,15 +222,15 @@ function NodeThumb({
 }): React.JSX.Element | null {
   const src = assetUrl(node.image_path)
   if (!src) return null
+  const thumb = assetUrl(node.thumb_path)
   if (isVideoAsset(node.image_path)) {
-    const thumb = assetUrl(node.thumb_path)
     return thumb ? (
       <img src={thumb} className={className} style={style} />
     ) : (
       <video src={src} preload="metadata" muted playsInline className={className} style={style} />
     )
   }
-  return <img src={src} className={className} style={style} />
+  return <img src={thumb ?? src} className={className} style={style} />
 }
 
 type BeatNodeData = {
@@ -2386,10 +2386,10 @@ function StructureModeInner({
   // reload する(再マウント後もタスク完了が画面に反映される)
   useEffect(() => subscribeGraphChanged(() => void reload().catch(() => undefined)), [reload])
 
-  // 動画挿絵のサムネイルを埋める(未生成のものだけ、1 件ずつ)。
-  // 生成できたら reload して、カードを <video> から <img> に切り替える
+  // 挿絵のサムネイルを埋める(未生成のものだけ、1 件ずつ)。
+  // 生成できたら reload して、カードを原画 / <video> からサムネイルの <img> に切り替える
   useEffect(() => {
-    void backfillVideoThumbs(graphNodes).then((created) => {
+    void backfillThumbs(graphNodes).then((created) => {
       if (created) void reload()
     })
   }, [graphNodes, reload])
@@ -4419,6 +4419,10 @@ function StructureModeInner({
             nodes={displayNodes}
             edges={displayEdges}
             nodeTypes={nodeTypes}
+            // 画面に入っているカードだけ DOM に置く(100 枚規模の挿絵付きカードを
+            // 全部描くと重い)。未測定のノードは測るために一度描かれるので、
+            // 実測高さに頼る整列や焼き付けはこれまでどおり動く
+            onlyRenderVisibleElements
             // 既定の Backspace 削除は API を通さず画面だけ消えてしまうため無効化し、
             // 削除は Delete キー(下の keydown ハンドラ)に集約する
             deleteKeyCode={null}
@@ -5430,7 +5434,11 @@ function StructureModeInner({
   )
 }
 
-export default function StructureMode({
+// memo: App はタスクの進捗や通知のたびに再レンダーされるが、props が同じなら
+// 5,000 行規模のこのモードを再実行しない(props の関数は App 側で参照が固定されている)
+export default memo(StructureMode)
+
+function StructureMode({
   settingsVersion = 0,
   focusNodeId,
   onSelectedNodeChange,

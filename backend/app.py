@@ -154,12 +154,10 @@ async def _unhandled_error_rollback(request: Request, exc: Exception):
 
 @app.on_event("startup")
 async def _startup() -> None:
-    # 埋め込みモデルは初回ロードが重いのでバックグラウンドで温める
+    # 埋め込みモデル(約 1.2GB)は起動時には読み込まない。最初の記憶検索のときに
+    # embed.available() がバックグラウンドで読み込み、それまでは FTS だけで検索する
     import asyncio
 
-    import embed
-
-    asyncio.get_event_loop().run_in_executor(None, embed.warmup)
     try:
         import llama_installer
 

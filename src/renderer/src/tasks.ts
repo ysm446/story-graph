@@ -126,6 +126,19 @@ export function useTasks(): Task[] {
   )
 }
 
+/** 制作(production)のタスクが積まれているか。
+ *
+ * App はこれで画面をロックするだけなので、一覧ではなく真偽だけを購読する。
+ * 一覧を購読すると進捗の 1 件更新ごとに App ごと再レンダーされる。
+ */
+export function useProductionLocked(): boolean {
+  return useSyncExternalStore(
+    subscribe,
+    () => snapshot.some((t) => t.kind === 'production'),
+    () => false
+  )
+}
+
 /** 指定シーンに積まれている指定種類のタスク(無ければ null)。
  *
  * ボタンの「待機中…/処理中…」はローカル state ではなく**キューから引く**。

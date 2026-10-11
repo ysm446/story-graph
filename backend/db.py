@@ -255,6 +255,9 @@ def connect(db_path: Path | str | None = None) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     vec_loaded = _try_load_vec(conn)
     conn.execute("PRAGMA journal_mode = WAL")
+    # WAL では NORMAL でも整合性は保たれ(電源断で直前のコミットが消えうるだけ)、
+    # コミットごとの fsync が減って座標保存などの小さな書き込みが軽くなる
+    conn.execute("PRAGMA synchronous = NORMAL")
     conn.execute("PRAGMA foreign_keys = ON")
     init_schema(conn)
     if vec_loaded:

@@ -1,12 +1,12 @@
 import { WorkspaceContext } from './Workspace'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, initApi } from './api'
 import ComfyBar from './ComfyBar'
 import TtsBar from './TtsBar'
 import ModelBar from './ModelBar'
 import StatusBar from './StatusBar'
 import TooltipHost from './Tooltip'
-import { useTasks } from './tasks'
+import { useProductionLocked } from './tasks'
 import StructureMode from './modes/StructureMode'
 import ReaderMode from './modes/ReaderMode'
 import CharactersMode from './modes/CharactersMode'
@@ -155,7 +155,7 @@ function LibraryMenu(): React.JSX.Element {
 }
 
 export default function App(): React.JSX.Element {
-  const productionLocked = useTasks().some((t) => t.kind === 'production')
+  const productionLocked = useProductionLocked()
   const [mode, setMode] = useState<Mode>('structure')
   const [chatHost, setChatHost] = useState<HTMLDivElement | null>(null)
   const [chatOpen, setChatOpen] = useState(() => localStorage.getItem('chatDrawerOpen') === '1')
@@ -277,8 +277,15 @@ export default function App(): React.JSX.Element {
     }
   }, [])
 
+  // Context の値は中身が変わったときだけ作り直す。毎レンダー新しいオブジェクトを渡すと、
+  // シーンの選択や通知で App が再レンダーされるたびに全モードが再レンダーされる
+  const workspaceValue = useMemo(
+    () => ({ mode, chatHost, chatOpen, toggleChat, manual, setManual, revision, changed, libraryDirty }),
+    [mode, chatHost, chatOpen, toggleChat, manual, revision, changed]
+  )
+
   return (
-    <WorkspaceContext.Provider value={{ mode, chatHost, chatOpen, toggleChat, manual, setManual, revision, changed, libraryDirty }}>
+    <WorkspaceContext.Provider value={workspaceValue}>
     <div className="flex h-screen flex-col" style={{ background: 'var(--bg)' }}>
       {/* 上部バー: 左=ライブラリ / 中央=モデル選択 / 右=TTS・ComfyUI 状態 + 設定 */}
       <header
