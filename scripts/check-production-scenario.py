@@ -114,7 +114,7 @@ def bodies(store):
 
 async def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", required=True)
+    parser.add_argument("--model", help="省略時はbase-urlの起動済みサーバーを使う")
     parser.add_argument("--base-url", default="http://127.0.0.1:8089")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--addition-only", action="store_true", help="追記で既存の公開方針と矛盾する秘密設定を足さないか確認する")
@@ -199,9 +199,10 @@ async def main():
         print(f"{label}: completed in {summary[-1]['seconds']}s", flush=True)
         return events
     try:
-        if await llm.health(args.base_url):
-            raise RuntimeError("専用ポートが使用中です")
-        await manager.start({"llm_base_url": args.base_url, "llm_model_path": args.model, "llm_ctx_size": "16384"})
+        if args.model:
+            if await llm.health(args.base_url):
+                raise RuntimeError("専用ポートが使用中です")
+            await manager.start({"llm_base_url": args.base_url, "llm_model_path": args.model, "llm_ctx_size": "16384"})
         if args.consult_only:
             before = (store.graph(), store.list_characters(), store.list_places(), production_memory.read(store))
             chats = {}
@@ -222,7 +223,7 @@ async def main():
             assert "住民" in "".join(e.get("delta", "") for e in events)
             assert (store.graph(), store.list_characters(), store.list_places(), production_memory.read(store)) == before
             events = await turn("consult-approval", "この案で進めて", execute=False, chat_id=chats["consult-scene"])
-            assert "制作を実行" in "".join(e.get("delta", "") for e in events)
+            approval_guidance = "制作を実行" in "".join(e.get("delta", "") for e in events)
             assert (store.graph(), store.list_characters(), store.list_places(), production_memory.read(store)) == before
             original = store.get_node("n15")["beat"]
             events = await turn("consult-execute", "この案で進めて", chat_id=chats["consult-scene"])
@@ -232,6 +233,7 @@ async def main():
             assert all(store.get_node(n["id"]) == n for n in before[0]["nodes"] if n["id"] != "n15")
             assert store.graph()["edges"] == before[0]["edges"]
             assert (store.list_characters(), store.list_places()) == before[1:3]
+            assert approval_guidance, "相談中の承認にモードの切替案内なし（実行段階も検証済み）"
             result["passed"] = True
             print("CONSULT WAIT CHECK PASSED", flush=True)
             return

@@ -36,7 +36,7 @@ def seed(store):
 
 async def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", required=True)
+    parser.add_argument("--model", help="省略時はbase-urlの起動済みサーバーを使う")
     parser.add_argument("--base-url", default="http://127.0.0.1:8089")
     args = parser.parse_args()
     root = ROOT / "data" / ("production-library-branch-" + uuid.uuid4().hex[:8])
@@ -98,9 +98,10 @@ async def main():
         return events
 
     try:
-        if await llm.health(args.base_url):
-            raise RuntimeError("専用ポートが使用中です")
-        await manager.start({"llm_base_url": args.base_url, "llm_model_path": args.model, "llm_ctx_size": "16384"})
+        if args.model:
+            if await llm.health(args.base_url):
+                raise RuntimeError("専用ポートが使用中です")
+            await manager.start({"llm_base_url": args.base_url, "llm_model_path": args.model, "llm_ctx_size": "16384"})
         await turn("01-library-branch", "資料庫にキャラクター『リオ』を登録してください。プロフィールは『森の案内人』、外見は『黒髪』。"
             "場所『森の小屋』も登録してください。説明は『木造の小さな小屋』、雰囲気は『静か』です。"
             "その後、分かれ道(crossroads)から正史とは別の分岐ルートを2シーン作ってください。"

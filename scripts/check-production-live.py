@@ -16,6 +16,7 @@ sys.path.insert(0, str(ROOT / "backend"))
 
 import db
 import embed
+import llm
 from llama_manager import LlamaManager
 import production_agent
 from store import Store
@@ -29,9 +30,10 @@ async def main():
     parser.add_argument("--policy", action="store_true", help="変更範囲と保護指定を検証する")
     parser.add_argument("--reconnect", action="store_true", help="シーン移動と枝ごとのつなぎ替えを検証する")
     parser.add_argument("--memory", action="store_true", help="作業メモの保存と別会話への引継ぎを検証する")
+    parser.add_argument("--clarify", choices=["ambiguous", "question", "approval"], help="実行モードでも編集せず確認・回答すべき依頼を検証する")
     args = parser.parse_args()
-    if sum((args.instructions, args.policy, args.reconnect, args.memory)) > 1:
-        parser.error("--instructions / --policy / --reconnect / --memory は別々に実行してください")
+    if sum((args.instructions, args.policy, args.reconnect, args.memory, bool(args.clarify))) > 1:
+        parser.error("--instructions / --policy / --reconnect / --memory / --clarify は別々に実行してください")
     root = ROOT / "data" / ("production-check-" + uuid.uuid4().hex[:8])
     root.mkdir(parents=True)
     store = Store(db.connect(root / "story-graph.db"), root=str(root))
@@ -47,7 +49,6 @@ async def main():
     try:
         if args.model:
             # 既存サーバーを停止したり設定を変更したりしない。
-            import llm
             if await llm.health(args.base_url):
                 raise RuntimeError("専用ポートが使用中です。別のbase-urlを指定してください")
             await manager.start({"llm_base_url": args.base_url, "llm_model_path": args.model, "llm_ctx_size": "16384"})
@@ -70,6 +71,13 @@ async def main():
             prompt = "接続だけを変更してください。約束（bridge）1シーンだけを帰還（return）の直後へ移動し、元の出発と帰還は直結してください。次に別の道（branch）を、その先の森（branch_child）と一緒に帰還（return）へつなぎ替えてください。本文の変更・新規作成・削除はしないでください。この2操作で終了してください。"
         if args.memory:
             prompt = "作者の決定: アヤは故郷に戻りません。次の作業は帰還（return）の本文を、村に戻らず手紙でケンと和解する内容へ直すことです。今回は本文を編集せず、この決定と次の作業を作業メモに記録して終了してください。"
+        if args.clarify:
+            before = (store.graph(), store.list_characters(), store.list_places())
+            prompt = {
+                "ambiguous": "そのシーンをさっきの案に直してください。",
+                "question": "出発と帰還の間にどのような場面を入れると自然でしょうか？意見だけを聞かせてください。",
+                "approval": "出発(departure)に村を守るための旅立ちだと追記したいです。まず変更案だけ提示して、私の確認があるまで編集は待ってください。",
+            }[args.clarify]
         instruction_sent = False
         async for raw in production_agent.stream(store, args.base_url, None, prompt, True, lambda: None, policy=policy):
             event = json.loads(raw.removeprefix("data: "))
@@ -80,6 +88,14 @@ async def main():
             if "delta" not in event:
                 print(json.dumps(event, ensure_ascii=False), flush=True)
         changes = [e["changed"] for e in events if "changed" in e]
+        if args.clarify:
+            assert not changes, "確認・相談の段階で変更が実行された"
+            assert before == (store.graph(), store.list_characters(), store.list_places())
+            assert not any(e.get("error") for e in events)
+            assert any(e.get("done") for e in events)
+            assert any(e.get("delta") for e in events), "確認または回答がない"
+            print(f"LIVE CLARIFY {args.clarify} CHECK PASSED", flush=True)
+            return
         if args.memory:
             import production_memory
             assert not changes
@@ -151,6 +167,7 @@ async def main():
         print("LIVE CHECK PASSED", flush=True)
     finally:
         (root / "events.json").write_text(json.dumps(events, ensure_ascii=False, indent=2), encoding="utf-8")
+        (root / "prompts.json").write_text(json.dumps(list(llm.PROMPT_LOG), ensure_ascii=False, indent=2), encoding="utf-8")
         print(f"RESULT: {root}", flush=True)
         store.conn.close()
         if args.model:

@@ -443,6 +443,9 @@ def _patch_args(store, args):
 def build_messages(store, history, message, execute, policy, previous_checkpoint, changes, recent_results, run_id=None, selection=None):
     system = chat_agent.build_system(store, store.canon_path(), "all", production=execute) + "\n" + (
         "あなたは制作の担当です。今回の依頼の範囲だけを編集してください。"
+        "現在は実行モードです。作者が対象と変更内容を指定して編集を依頼した場合、その範囲の実行は許可済みです。"
+        "途中指示による対象・内容の変更も同じ扱いです。必要な情報を読んだら編集ツールで反映し、『実行してよいですか』と再承認を求めて終了しないでください。"
+        "ただし実行モードでも、質問・相談だけの発言は編集許可ではありません。対象や変更内容が特定できない場合、明示的な確認待ちの指示がある場合は質問して待ってください。"
         "一度にツールは1つ。編集前に対象と前後の本文を読んでください。"
         "場面の追加では前後の出来事の成立順を確認し、後で初めて起きる出来事を前提にした場面を先に入れないでください。"
         "追記や一部分の訂正・削除はpatch_sceneを優先し、既存本文を全文書き直さないでください。"
@@ -502,6 +505,14 @@ def build_messages(store, history, message, execute, policy, previous_checkpoint
                                    and m["instruction"]["status"] == "reflected"], ensure_ascii=False)
                      + "\n直近の取得結果: "
                      + json.dumps(recent_results[-3:], ensure_ascii=False)})
+    if execute:
+        messages[-1]["content"] += (
+            "\n次の判断: まず最新の本文・保存結果と途中指示を照合してください。"
+            "依頼された変更がすでに反映されていれば、ツールを呼ばず完了を報告してください。"
+            "実行記録は予定ではなく保存済みです。完了後の言い換え・強調・重複追記は不要です。"
+            "未反映の明確な編集依頼だけをツールで実行し、再承認は求めません。"
+            "対象や変更内容が不明、質問だけ、または作者が確認待ちを指定した場合は編集せず回答・確認してください。"
+        )
     return messages
 
 
