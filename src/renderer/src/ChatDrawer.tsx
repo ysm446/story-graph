@@ -1,3 +1,4 @@
+import ChatHistoryPanel from './ChatHistoryPanel'
 import ContextUsageRing from './ContextUsageRing'
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import {
@@ -250,11 +251,7 @@ export default function ChatDrawer({
   // 候補チップは常に入力欄の右上に積む。全部出すと縦を食うので窓を 3 件に
   // 絞り、⟳ で次の 3 件へ送る(ランダムではなく決まった順。docs/design/chat.md)
   const [templateOffset, setTemplateOffset] = useState(0)
-  const [historyOpen, setHistoryOpen] = useState(false)
-  // 左サイドバー(会話一覧)の ⋯ メニューと会話名の編集
-  const [menuOpenId, setMenuOpenId] = useState<string | null>(null)
-  const [renamingId, setRenamingId] = useState<string | null>(null)
-  const [renameText, setRenameText] = useState('')
+
   // 発言の編集(ホバーアクションの ✎)。turn = messages 上の位置
   const [editingTurn, setEditingTurn] = useState<number | null>(null)
   const [editText, setEditText] = useState('')
@@ -398,21 +395,7 @@ export default function ChatDrawer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
-  // サイドバーの ⋯ メニューは、外側クリックと Escape で閉じる
-  useEffect(() => {
-    if (!menuOpenId) return
-    const close = (): void => setMenuOpenId(null)
-    const onKey = (ev: KeyboardEvent): void => {
-      if (ev.key === 'Escape') close()
-    }
-    // メニュー項目の onClick より後に閉じたいので click(bubble)で拾う
-    window.addEventListener('click', close)
-    window.addEventListener('keydown', onKey)
-    return () => {
-      window.removeEventListener('click', close)
-      window.removeEventListener('keydown', onKey)
-    }
-  }, [menuOpenId])
+
 
   // 開いたタイミング(と設定変更時)に質問候補を取っておく
   useEffect(() => {
@@ -857,7 +840,6 @@ export default function ChatDrawer({
     if (busy) return
     const target = history.find((h) => h.id === id)
     if (!window.confirm(`「${chatLabel(target)}」を削除しますか?`)) return
-    setMenuOpenId(null)
     try {
       await chatApi.delete(id)
     } catch {
@@ -867,9 +849,8 @@ export default function ChatDrawer({
     if (id === chatId) startNewChat()
   }
 
-  const commitRename = async (id: string): Promise<void> => {
-    const title = renameText.trim()
-    setRenamingId(null)
+  const commitRename = async (id: string, title: string): Promise<void> => {
+    if (busy) return
     try {
       await chatApi.rename(id, title)
     } catch {
@@ -906,158 +887,10 @@ export default function ChatDrawer({
 
   return (
     <div className="flex h-full min-h-0 flex-col" style={{ background: 'var(--bg-chat)' }}>
-      <div className="shrink-0 border-b px-3 py-1" style={{ borderColor: 'var(--border)' }}>
-        <button onClick={() => setHistoryOpen(!historyOpen)} aria-expanded={historyOpen}
-          className="rounded-md border px-2 py-0.5 text-[11px]"
-          style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-          data-tip="相談の会話一覧を開閉する">{historyOpen ? '会話一覧を閉じる' : '会話一覧'}</button>
-      </div>
-      <aside className="min-h-0 shrink-0 flex-col border-b" style={{ display: historyOpen ? 'flex' : 'none', height: 180, maxHeight: '35%', borderColor: 'var(--border)' }}>
-        <button
-          onClick={startNewChat}
-          disabled={busy}
-          className="m-2 rounded-lg border px-2 py-1 text-[12px] disabled:opacity-50"
-          style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-          data-tip="選択中のシーンをアンカーに新しい会話を始める"
-        >
-          + 新しい会話
-        </button>
-        <div
-          className="inspector-scrollbar min-h-0 flex-1 overflow-y-auto px-2 pb-2"
-          onKeyDown={(e) => {
-            // 会話一覧にフォーカスがあるときの Delete は選択中の会話の削除。
-            // stopPropagation で構造モードの Delete(ノード削除)に届かせない
-            if (e.key !== 'Delete') return
-            const target = e.target as HTMLElement
-            if (target.tagName === 'INPUT') return // 名前変更中は文字の削除に任せる
-            if (!chatId) return
-            e.preventDefault()
-            e.stopPropagation()
-            void deleteChat(chatId)
-          }}
-        >
-          {history.length === 0 && (
-            <div className="px-1 py-3 text-[11px]" style={{ color: 'var(--text-faint)' }}>
-              まだ会話がありません
-            </div>
-          )}
-          {history.map((h) => {
-            const active = h.id === chatId
-            // キャラ会話は本人のアイコンで示す。線画の仮面だと小さくて見分けが
-            // つきにくいので、色と顔がそのまま出るアバターを使う
-            const char = h.char_id ? characters.find((c) => c.id === h.char_id) ?? null : null
-            const isRoom = h.mode === 'room'
-            const subLabel = isRoom
-              ? h.participant_names?.join('・') ?? ''
-              : h.char_name
-                ? `${h.char_name} / `
-                : ''
-            return (
-              <div
-                key={h.id}
-                className="group relative mb-0.5 flex items-center gap-1 rounded-md pr-1"
-                style={active ? { background: 'var(--accent-soft)' } : undefined}
-              >
-                {renamingId === h.id ? (
-                  <input
-                    autoFocus
-                    value={renameText}
-                    onChange={(e) => setRenameText(e.target.value)}
-                    onBlur={() => void commitRename(h.id)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
-                        e.preventDefault()
-                        void commitRename(h.id)
-                      }
-                      if (e.key === 'Escape') setRenamingId(null)
-                    }}
-                    placeholder="会話名(空で既定に戻す)"
-                    className="min-w-0 flex-1 rounded-md border px-1.5 py-1 text-[11px] outline-none"
-                    style={{ background: 'var(--bg-input)', borderColor: 'var(--accent-border)' }}
-                  />
-                ) : (
-                  <>
-                    <button
-                      onClick={() => void loadChat(h.id)}
-                      disabled={busy}
-                      className="flex min-w-0 flex-1 items-center gap-1.5 px-1.5 py-1 text-left disabled:opacity-50"
-                      data-tip={`${isRoom ? subLabel + ' / ' : h.char_name ? h.char_name + ' / ' : ''}${h.anchor_title || '(シーンなし)'} まで`}
-                    >
-                      {/* 相手の目印。キャラ会話はアバター、会話室は二人のアイコン、相談チャットは吹き出し。
-                          幅を揃えて見出しの開始位置がずれないようにする */}
-                      <span
-                        className="flex w-5 shrink-0 items-center justify-center"
-                        style={{ color: 'var(--text-dim)' }}
-                      >
-                        {char ? (
-                          <CharAvatar char={char} size={20} />
-                        ) : isRoom ? (
-                          <Icon name="users" size={15} />
-                        ) : h.char_name ? (
-                          <Icon name="mask" size={16} />
-                        ) : (
-                          <Icon name="chat" size={14} className="opacity-70" />
-                        )}
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span
-                          className="block truncate text-[12px]"
-                          style={{ color: active ? 'var(--text)' : 'var(--text-dim)' }}
-                        >
-                          {chatLabel(h)}
-                        </span>
-                        <span
-                          className="block truncate text-[10px]"
-                          style={{ color: 'var(--text-faint)' }}
-                        >
-                          {isRoom ? `${subLabel} / ` : subLabel}
-                          {h.anchor_title || '(シーンなし)'}
-                        </span>
-                      </span>
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation() // window の click(外側クリックで閉じる)より先に処理する
-                        setMenuOpenId((v) => (v === h.id ? null : h.id))
-                      }}
-                      className="shrink-0 rounded px-1 text-[13px] opacity-0 group-hover:opacity-100"
-                      style={{ color: 'var(--text-faint)', opacity: menuOpenId === h.id ? 1 : undefined }}
-                      aria-label="この会話の操作"
-                      data-tip="この会話の操作"
-                    >
-                      ⋯
-                    </button>
-                  </>
-                )}
-                {menuOpenId === h.id && (
-                  <div
-                    className="absolute right-1 top-full z-20 w-36 overflow-hidden rounded-lg border py-1 shadow-xl shadow-black/40"
-                    style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)' }}
-                  >
-                    <button
-                      onClick={() => {
-                        setMenuOpenId(null)
-                        setRenameText(h.title ?? '')
-                        setRenamingId(h.id)
-                      }}
-                      className="block w-full px-3 py-1.5 text-left text-[12px] hover:bg-[var(--accent-soft)]"
-                      style={{ color: 'var(--text-dim)' }}
-                    >
-                      名前を変更
-                    </button>
-                    <button
-                      onClick={() => void deleteChat(h.id)}
-                      className="delete-action block w-full px-3 py-1.5 text-left text-[12px]"
-                    >
-                      削除
-                    </button>
-                  </div>
-                )}
-              </div>
-            )
-          })}
-        </div>
-      </aside>
+      <ChatHistoryPanel history={history} chatId={chatId} busy={busy} characters={characters}
+        chatLabel={chatLabel} startNewChat={startNewChat} loadChat={loadChat}
+        deleteChat={deleteChat} commitRename={commitRename}
+        newChatTip="選択中のシーンをアンカーに新しい会話を始める" />
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <div ref={panelRef} className="inspector-scrollbar flex min-h-0 flex-1 flex-col overflow-y-auto px-4 pb-3 pt-2">
           {/* ヘッダー: 相手 / アンカー / スコープ */}

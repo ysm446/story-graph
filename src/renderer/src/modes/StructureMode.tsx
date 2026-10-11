@@ -1697,7 +1697,7 @@ function ChapterTab({
         </p>
       )}
       </div>
-      <DetailSplit storageKey="chapterDetailMetaWidth" main={<>
+      <DetailSplit storageKey="chapterDetailMetaWidth" mainOnRight main={<>
       <div>
         <div className="mb-1 flex items-center gap-2">
           <span className="text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>

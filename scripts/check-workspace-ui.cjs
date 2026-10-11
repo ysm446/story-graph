@@ -1,6 +1,6 @@
 // 隔離したライブラリとElectronで、共通チャットの配置・下書き保持・編集ガードを検証する。
 const { app, BrowserWindow, ipcMain } = require('electron')
-const { spawn } = require('node:child_process')
+const { spawn, spawnSync } = require('node:child_process')
 const { mkdirSync, writeFileSync } = require('node:fs')
 const { join, resolve } = require('node:path')
 const { createServer } = require('node:net')
@@ -33,6 +33,17 @@ async function main() {
     if (!response.ok) throw new Error(await response.text())
   }
   ipcMain.handle('bootstrap', () => ({ apiBaseUrl: base, error: null }))
+  const historyCheck = process.argv.includes('--history')
+  if (historyCheck || process.argv.includes('--width')) {
+    const seed = spawnSync(join(root, '.venv/Scripts/python.exe'), ['-c', `from app import store
+for mode in ['production', None]:
+ for title in ['history-one', 'history-two']:
+  chat = store.create_chat(None, 'upto', mode=mode)
+  store.set_chat_title(chat['id'], title + ${process.argv.includes('--width') ? "'long-title-' * 30" : "''"})
+  store.save_chat_messages(chat['id'], [{'role':'user','content':title + '-message'}])
+`], {cwd:join(root,'backend'),env:{...process.env,STORY_GRAPH_LIBRARY:target},windowsHide:true,encoding:'utf8'})
+    if (seed.status !== 0) throw new Error(seed.stderr)
+  }
   const tabsCheck = process.argv.includes('--tabs')
   if (tabsCheck) {
     const chars = await (await fetch(base + '/characters')).json()
@@ -89,6 +100,48 @@ async function main() {
   }
   await click('チャット')
   await click('制作')
+  if (process.argv.includes('--width')) {
+    for (const width of [440, 320]) {
+      await js(`document.querySelector('[aria-label="チャットの幅"]').parentElement.style.width='${width}px'`)
+      await pause(200)
+      await assert(`(() => {const input=document.querySelector('textarea[aria-label="制作への依頼"]');const panel=document.querySelector('[aria-label="チャットの幅"]').parentElement.getBoundingClientRect();const root=input.parentElement.parentElement;return root.getBoundingClientRect().right<=panel.right+1 && root.scrollWidth<=root.clientWidth+1;})()`, width + 'pxで制作チャットが右端に収まる')
+      await click('会話一覧')
+      await assert(`document.querySelector('[aria-label="チャットの幅"]').parentElement.scrollWidth<=${width+1}`, width + 'pxで会話一覧を開いても横にはみ出さない')
+      writeFileSync(join(target, 'chat-width-' + width + '.png'), (await win.webContents.capturePage()).toPNG())
+      await click('会話一覧を閉じる')
+    }
+    console.log('Screenshots: ' + target)
+    win.destroy()
+    return
+  }
+  if (historyCheck) {
+    for (const mode of ['制作','相談']) {
+      if (mode === '相談') await click(mode)
+      await click('会話一覧')
+      await js(`[...document.querySelectorAll('aside button')].find(e=>e.getClientRects().length && e.textContent.includes('history-one')).click()`)
+      await pause(200)
+      await assert(`document.body.textContent.includes('history-one-message')`, mode + 'の一覧から会話を開く')
+      await js(`(() => {const row=[...document.querySelectorAll('aside .group')].find(e=>e.textContent.includes('history-two') && e.getClientRects().length);row.querySelector('[aria-label="この会話の操作"]').click()})()`)
+      await click('名前を変更')
+      await js(`(() => {const el=[...document.querySelectorAll('input[placeholder="会話名(空で既定に戻す)"]')].find(e=>e.getClientRects().length);Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(el,'renamed-history');el.dispatchEvent(new Event('input',{bubbles:true}));})()`)
+      await pause(100)
+      await js(`document.querySelector('input[placeholder="会話名(空で既定に戻す)"]').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))`)
+      for (let i=0; i<50; i++) {
+        if (await js(`document.body.textContent.includes('renamed-history')`)) break
+        await pause(100)
+      }
+      await assert(`document.body.textContent.includes('renamed-history')`, mode + 'の会話名を変更')
+      await js(`(() => {window.confirm=()=>true;const row=[...document.querySelectorAll('aside .group')].find(e=>e.textContent.includes('renamed-history') && e.getClientRects().length);row.querySelector('[aria-label="この会話の操作"]').click()})()`)
+      await click('削除')
+      await assert(`document.body.textContent.includes('history-one-message') && ![...document.querySelectorAll('aside .group')].some(e=>e.getClientRects().length && e.textContent.includes('renamed-history'))`, mode + 'の別会話を削除しても現在の会話を保持')
+      await click('+ 新しい会話')
+      await assert(`![...document.querySelectorAll('aside .group')].some(e=>e.getClientRects().length && e.style.background)`, mode + 'で新しい会話を開始')
+      await click('会話一覧を閉じる')
+    }
+    if (errors.length) throw new Error(errors.join('\n'))
+    win.destroy()
+    return
+  }
   if (process.argv.includes('--details') || chapterCheck || tabsCheck) {
     const targetText = chapterCheck ? '検証章' : '検証シーン'
     for (let i = 0; i < 60; i++) {
@@ -184,6 +237,9 @@ async function main() {
   })()`)
   await click('送信')
   await assert(`!!window.workspaceEmit && [...document.querySelectorAll('[inert]')].some(e=>e.textContent.includes('検証キャラ'))`, '制作中は資料庫の手動編集をロック')
+  await click('会話一覧')
+  await assert(`[...document.querySelectorAll('button')].find(e=>e.getClientRects().length && e.textContent.trim()==='+ 新しい会話').disabled`, '制作中は一覧から新しい会話を開始できない')
+  await click('会話一覧を閉じる')
   await js(`window.workspaceEmit({preview:{node_id:null,beat:'生成中の本文プレビュー'}})`)
   await pause(150)
   await assert(`(() => {const preview=document.querySelector('[aria-label="AI編集中の本文プレビュー"]'); const input=document.querySelector(${JSON.stringify(productionInput)}); return preview?.getClientRects().length && input.parentElement.contains(preview) && preview.textContent.includes('生成中の本文プレビュー');})()`, '資料庫でも制作チャット内に本文プレビューを表示')

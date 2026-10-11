@@ -1,3 +1,4 @@
+import ChatHistoryPanel from './ChatHistoryPanel'
 import ChatRulesPanel from './ChatRulesPanel'
 import ProductionPreviewPanel from './ProductionPreviewPanel'
 import AutoTextarea from './AutoTextarea'
@@ -180,9 +181,8 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
     finally { setHistoryBusy(false) }
   }
 
-  const deleteConversation = async (): Promise<void> => {
-    if (!chatId || busy) return
-    const targetId = chatId
+  const deleteConversation = async (targetId: string): Promise<void> => {
+    if (busy) return
     const title = history.find((item) => item.id === targetId)?.title || '現在の制作の会話'
     if (!window.confirm(`「${title}」の会話履歴を削除しますか?\n会話履歴は元に戻せません。作品・資料庫・作業メモ・スナップショットは残ります。`)) return
     setHistoryBusy(true)
@@ -190,13 +190,15 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
     try {
       await chatApi.delete(targetId)
       setHistory((previous) => previous.filter((item) => item.id !== targetId))
-      setChatId(null)
-      setMessages([])
-      setUsage(null)
-      setLive('')
-      setStatus('')
-      followTargetRef.current = null
-      onFollowTarget(null)
+      if (targetId === chatId) {
+        setChatId(null)
+        setMessages([])
+        setUsage(null)
+        setLive('')
+        setStatus('')
+        followTargetRef.current = null
+        onFollowTarget(null)
+      }
       // 現在のAI保護・変更範囲と、入力中の依頼はそのまま次の会話へ引き継ぐ。
       showStatusNotice('制作の会話履歴を削除しました')
     } catch (e) { setError(`会話履歴を削除できませんでした: ${String(e)}`) }
@@ -392,30 +394,30 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
     }
   }
 
+  const renameConversation = async (id: string, title: string): Promise<void> => {
+    if (busy) return
+    setHistoryBusy(true)
+    try {
+      await chatApi.rename(id, title)
+      setHistory((items) => items.map((item) => item.id === id ? { ...item, title: title || null } : item))
+    } catch (e) { setError(`会話名を変更できませんでした: ${String(e)}`) }
+    finally { setHistoryBusy(false) }
+  }
+
   return (
-    <div className="inspector-scrollbar flex h-full min-h-0 min-w-0 w-full flex-col gap-2 overflow-y-auto px-4 py-2 text-[12px]" style={{ background: 'var(--bg-chat)', color: 'var(--text)' }}>
+    <div className="flex h-full min-h-0 min-w-0 w-full flex-1 flex-col" style={{ background: 'var(--bg-chat)' }}>
+      <ChatHistoryPanel history={history} chatId={chatId} busy={busy} production
+        chatLabel={(item) => item.title || item.snippet || '制作'}
+        startNewChat={() => {
+          if (busy) return
+          setChatId(null); setMessages([]); setUsage(null); setPolicy(defaultProductionPolicy()); setStatus(''); setError('')
+          followTargetRef.current = null; onFollowTarget(null)
+        }}
+        loadChat={load} deleteChat={deleteConversation} commitRename={renameConversation}
+        newChatTip="新しい制作の会話を始める" />
+    <div className="inspector-scrollbar flex flex-1 min-h-0 min-w-0 w-full flex-col gap-2 overflow-y-auto px-4 py-2 text-[12px]" style={{ background: 'var(--bg-chat)', color: 'var(--text)' }}>
       <div className="flex flex-wrap items-center gap-2">
         <span className="shrink-0 text-[11px]" style={{ color: 'var(--text-faint)' }}>制作（実験）</span>
-        <select
-          aria-label="制作の会話" value={chatId ?? ''} disabled={busy}
-          onChange={(e) => {
-            if (e.target.value) void load(e.target.value)
-            else { setChatId(null); setMessages([]); setUsage(null); setPolicy(defaultProductionPolicy()); setStatus(''); setError('') }
-          }}
-          className="min-w-0 flex-1 rounded-md border px-2 py-0.5 text-[12px] outline-none disabled:opacity-50"
-          style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
-          data-tip={busy ? '制作が終わるか停止してから切り替えられます' : '相談とは別の制作履歴を開きます'}
-        >
-          <option value="">新しい制作の会話</option>
-          {chatId && !history.some((h) => h.id === chatId) && <option value={chatId}>現在の制作</option>}
-          {history.map((h) => <option key={h.id} value={h.id}>{h.title || h.snippet || '制作'}</option>)}
-        </select>
-        <button onClick={() => void deleteConversation()} disabled={busy || !chatId}
-          className="delete-action shrink-0 rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-50"
-          aria-label="この制作の会話履歴を削除"
-          data-tip={busy ? '処理が終わるか制作を停止してから削除できます' : !chatId ? '削除する会話を選んでください' : 'この会話の履歴だけを削除します。作品・資料庫・作業メモ・スナップショットは残ります'}>
-          会話を削除
-        </button>
         <button onClick={() => { followRef.current = !follow; setFollow(!follow); onFollowTarget(!follow ? followTargetRef.current : null) }}
           className="shrink-0 rounded-md border px-2 py-0.5 text-[11px]"
           style={follow ? { borderColor: 'var(--border-strong)', background: 'var(--accent-soft)', color: 'var(--text)' } : { borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }}
@@ -485,6 +487,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
             data-tip={sendMode === 'execute' ? '作業前の状態を保存してから、依頼した編集を実行します' : '読み取りだけで回答します'}>送信</button>
         }
       </div>
+    </div>
     </div>
   )
 }
