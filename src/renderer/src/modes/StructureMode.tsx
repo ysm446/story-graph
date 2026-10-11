@@ -765,6 +765,149 @@ function BeatTab({
               ))}
             </div>
           )}
+          {/* 挿絵(画像/動画。装飾専用。LLM には渡さない) */}
+          {lightboxOpen && node.image_path && assetUrl(node.image_path) && (
+            <Lightbox src={assetUrl(node.image_path)!} path={node.image_path} onClose={() => setLightboxOpen(false)} />
+          )}
+          {sceneImageOpen && (
+            <SceneImageModal
+              node={node}
+              characters={characters}
+              onGenerated={onSaved}
+              onClose={() => setSceneImageOpen(false)}
+            />
+          )}
+          {stockOpen && (
+            <MediaPicker
+              ownerType="node"
+              ownerId={node.id}
+              aspect="1216 / 832"
+              accept="image/png,image/jpeg,image/gif,image/webp,video/mp4,video/webm"
+              onChanged={onSaved}
+              onClose={() => setStockOpen(false)}
+            />
+          )}
+          <div>
+            <div className="mb-1 flex items-center justify-between">
+              <span className="text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
+                挿絵
+              </span>
+              <div className="flex gap-1.5">
+                <button
+                  onClick={() => setSceneImageOpen(true)}
+                  className="accent-action inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium"
+                  data-tip="ビート・場所・登場人物(参照画像)から ComfyUI でこの場面の画像を生成します"
+                >
+                  <Icon name="sparkle" size={11} /> 生成
+                </button>
+                <button
+                  onClick={() => setStockOpen(true)}
+                  className="rounded-md border px-2 py-0.5 text-[11px]"
+                  style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+                  data-tip="生成した候補と手持ちの画像・動画の一覧。ここから 1 枚を選び直したり、いらない候補を削除したりできます"
+                >
+                  ストック
+                </button>
+                <button
+                  onClick={() => imageInputRef.current?.click()}
+                  className="rounded-md border px-2 py-0.5 text-[11px]"
+                  style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+                >
+                  {node.image_path ? '変更' : '+ 画像/動画を添付'}
+                </button>
+                {node.image_path && (
+                  <button
+                    onClick={() => void api.setNodeImage(node.id, null).then(onSaved)}
+                    className="rounded-md border px-2 py-0.5 text-[11px]"
+                    style={{ borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }}
+                    data-tip="挿絵を外します(ストックには残るので、あとから選び直せます)"
+                  >
+                    外す
+                  </button>
+                )}
+              </div>
+            </div>
+            <input
+              ref={imageInputRef}
+              type="file"
+              accept="image/png,image/jpeg,image/gif,image/webp,video/mp4,video/webm"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0]
+                e.target.value = ''
+                if (file) handleImageFile(file)
+              }}
+            />
+            <div
+              onDragEnter={(e) => {
+                e.preventDefault()
+                imageDragDepth.current += 1
+                setImageDragOver(true)
+              }}
+              onDragOver={(e) => e.preventDefault()}
+              onDragLeave={() => {
+                imageDragDepth.current -= 1
+                if (imageDragDepth.current <= 0) {
+                  imageDragDepth.current = 0
+                  setImageDragOver(false)
+                }
+              }}
+              onDrop={(e) => {
+                e.preventDefault()
+                imageDragDepth.current = 0
+                setImageDragOver(false)
+                const file = e.dataTransfer.files?.[0]
+                if (file) handleImageFile(file)
+              }}
+              onClick={() => {
+                // 挿絵が無ければファイル選択、あれば拡大表示
+                if (!node.image_path) imageInputRef.current?.click()
+                else setLightboxOpen(true)
+              }}
+              className="relative cursor-zoom-in rounded-xl transition-colors"
+              data-tip={node.image_path ? 'クリックで拡大 / ドロップで差し替え' : undefined}
+              style={imageDragOver ? { outline: '2px dashed var(--accent)', outlineOffset: 2 } : undefined}
+            >
+              {assetUrl(node.image_path) ? (
+                <>
+                  {isVideoAsset(node.image_path) ? (
+                    <video
+                      src={assetUrl(node.image_path)!}
+                      autoPlay
+                      muted
+                      loop
+                      playsInline
+                      className="pointer-events-none mx-auto max-h-60 max-w-full rounded-xl"
+                    />
+                  ) : (
+                    <img
+                      src={assetUrl(node.image_path)!}
+                      draggable={false}
+                      className="pointer-events-none mx-auto max-h-60 max-w-full rounded-xl"
+                    />
+                  )}
+                  {imageDragOver && (
+                    <span
+                      className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-xl text-[12px] font-medium"
+                      style={{ background: 'rgba(13,15,20,0.7)', color: 'var(--accent)' }}
+                    >
+                      ドロップで差し替え
+                    </span>
+                  )}
+                </>
+              ) : (
+                <div
+                  className="cursor-pointer rounded-xl border border-dashed px-4 py-6 text-center text-[12px]"
+                  style={{
+                    borderColor: imageDragOver ? 'var(--accent)' : 'var(--border-strong)',
+                    color: imageDragOver ? 'var(--accent)' : 'var(--text-faint)'
+                  }}
+                >
+                  ここに画像/動画をドロップ(またはクリックで選択)
+                </div>
+              )}
+            </div>
+          </div>
           <label className="block">
             <span className="mb-1 flex items-center justify-between">
               <span className={labelClass.replace('mb-1 block ', '')} style={{ color: 'var(--text-faint)' }}>
@@ -976,149 +1119,6 @@ function BeatTab({
                 style={inputStyle}
               />
             </label>
-          </div>
-          {/* 挿絵(画像/動画。装飾専用。LLM には渡さない) */}
-          {lightboxOpen && node.image_path && assetUrl(node.image_path) && (
-            <Lightbox src={assetUrl(node.image_path)!} path={node.image_path} onClose={() => setLightboxOpen(false)} />
-          )}
-          {sceneImageOpen && (
-            <SceneImageModal
-              node={node}
-              characters={characters}
-              onGenerated={onSaved}
-              onClose={() => setSceneImageOpen(false)}
-            />
-          )}
-          {stockOpen && (
-            <MediaPicker
-              ownerType="node"
-              ownerId={node.id}
-              aspect="1216 / 832"
-              accept="image/png,image/jpeg,image/gif,image/webp,video/mp4,video/webm"
-              onChanged={onSaved}
-              onClose={() => setStockOpen(false)}
-            />
-          )}
-          <div>
-            <div className="mb-1 flex items-center justify-between">
-              <span className="text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
-                挿絵
-              </span>
-              <div className="flex gap-1.5">
-                <button
-                  onClick={() => setSceneImageOpen(true)}
-                  className="accent-action inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium"
-                  data-tip="ビート・場所・登場人物(参照画像)から ComfyUI でこの場面の画像を生成します"
-                >
-                  <Icon name="sparkle" size={11} /> 生成
-                </button>
-                <button
-                  onClick={() => setStockOpen(true)}
-                  className="rounded-md border px-2 py-0.5 text-[11px]"
-                  style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-                  data-tip="生成した候補と手持ちの画像・動画の一覧。ここから 1 枚を選び直したり、いらない候補を削除したりできます"
-                >
-                  ストック
-                </button>
-                <button
-                  onClick={() => imageInputRef.current?.click()}
-                  className="rounded-md border px-2 py-0.5 text-[11px]"
-                  style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-                >
-                  {node.image_path ? '変更' : '+ 画像/動画を添付'}
-                </button>
-                {node.image_path && (
-                  <button
-                    onClick={() => void api.setNodeImage(node.id, null).then(onSaved)}
-                    className="rounded-md border px-2 py-0.5 text-[11px]"
-                    style={{ borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }}
-                    data-tip="挿絵を外します(ストックには残るので、あとから選び直せます)"
-                  >
-                    外す
-                  </button>
-                )}
-              </div>
-            </div>
-            <input
-              ref={imageInputRef}
-              type="file"
-              accept="image/png,image/jpeg,image/gif,image/webp,video/mp4,video/webm"
-              className="hidden"
-              onChange={(e) => {
-                const file = e.target.files?.[0]
-                e.target.value = ''
-                if (file) handleImageFile(file)
-              }}
-            />
-            <div
-              onDragEnter={(e) => {
-                e.preventDefault()
-                imageDragDepth.current += 1
-                setImageDragOver(true)
-              }}
-              onDragOver={(e) => e.preventDefault()}
-              onDragLeave={() => {
-                imageDragDepth.current -= 1
-                if (imageDragDepth.current <= 0) {
-                  imageDragDepth.current = 0
-                  setImageDragOver(false)
-                }
-              }}
-              onDrop={(e) => {
-                e.preventDefault()
-                imageDragDepth.current = 0
-                setImageDragOver(false)
-                const file = e.dataTransfer.files?.[0]
-                if (file) handleImageFile(file)
-              }}
-              onClick={() => {
-                // 挿絵が無ければファイル選択、あれば拡大表示
-                if (!node.image_path) imageInputRef.current?.click()
-                else setLightboxOpen(true)
-              }}
-              className="relative cursor-zoom-in rounded-xl transition-colors"
-              data-tip={node.image_path ? 'クリックで拡大 / ドロップで差し替え' : undefined}
-              style={imageDragOver ? { outline: '2px dashed var(--accent)', outlineOffset: 2 } : undefined}
-            >
-              {assetUrl(node.image_path) ? (
-                <>
-                  {isVideoAsset(node.image_path) ? (
-                    <video
-                      src={assetUrl(node.image_path)!}
-                      autoPlay
-                      muted
-                      loop
-                      playsInline
-                      className="pointer-events-none mx-auto max-h-60 max-w-full rounded-xl"
-                    />
-                  ) : (
-                    <img
-                      src={assetUrl(node.image_path)!}
-                      draggable={false}
-                      className="pointer-events-none mx-auto max-h-60 max-w-full rounded-xl"
-                    />
-                  )}
-                  {imageDragOver && (
-                    <span
-                      className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-xl text-[12px] font-medium"
-                      style={{ background: 'rgba(13,15,20,0.7)', color: 'var(--accent)' }}
-                    >
-                      ドロップで差し替え
-                    </span>
-                  )}
-                </>
-              ) : (
-                <div
-                  className="cursor-pointer rounded-xl border border-dashed px-4 py-6 text-center text-[12px]"
-                  style={{
-                    borderColor: imageDragOver ? 'var(--accent)' : 'var(--border-strong)',
-                    color: imageDragOver ? 'var(--accent)' : 'var(--text-faint)'
-                  }}
-                >
-                  ここに画像/動画をドロップ(またはクリックで選択)
-                </div>
-              )}
-            </div>
           </div>
           <div className="flex items-center gap-2">
             <button onClick={() => void handleDelete()} className="delete-action ml-auto text-[12px]">
