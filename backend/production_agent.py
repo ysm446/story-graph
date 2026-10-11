@@ -565,7 +565,8 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
                         value, revision, basis = await production_memory.review(
                             store, base_url, message,
                             [m["content"] for m in history if m.get("instruction", {}).get("run_id") == run.id
-                             and m["instruction"]["status"] == "reflected"], changes, content)
+                             and m["instruction"]["status"] == "reflected"], changes, content,
+                            check_current=lambda: run.check_epoch(epoch))
                         run.check_epoch(epoch)
                         if production_memory.basis(store) != basis:
                             raise ValueError("照合中に制作資料が変更されました。次の制作で再確認します")

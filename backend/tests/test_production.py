@@ -21,7 +21,7 @@ from store import Store
 def store(tmp_path, monkeypatch):
     monkeypatch.setattr(embed, "available", lambda: False)
     monkeypatch.setattr(embed, "is_ready", lambda: False)
-    async def memory_review(store, *args):
+    async def memory_review(store, *args, **kwargs):
         note = production_memory.read(store)
         return {"content": note["content"], "reason": "照合済み"}, note["revision"], production_memory.basis(store)
     monkeypatch.setattr(production_memory, "review", memory_review)
@@ -1240,7 +1240,7 @@ def test_final_memory_review_runs_without_tool_and_preserves_manual_changes(stor
     prompt = production_memory.prompt(store, None)
     assert "作者が直した動機" in prompt and "村を出る" in prompt
     seen = []
-    async def review(store, base_url, request, instructions, changes, report):
+    async def review(store, base_url, request, instructions, changes, report, **kwargs):
         seen.append(report)
         return {"content": "## 次の作業\n作者の次の依頼待ち", "reason": "手動修正で完了"}, 1, production_memory.basis(store)
     monkeypatch.setattr(production_memory, "review", review)
@@ -1256,7 +1256,7 @@ def test_final_memory_review_runs_without_tool_and_preserves_manual_changes(stor
 
 def test_memory_review_failure_keeps_memo_and_completed_changes(store, monkeypatch):
     production_memory.write(store, "既存の方針", "初期", "user")
-    async def review(*args):
+    async def review(*args, **kwargs):
         raise ValueError("不正な応答")
     monkeypatch.setattr(production_memory, "review", review)
     fake_extraction(monkeypatch)
@@ -1272,7 +1272,7 @@ def test_memory_review_failure_keeps_memo_and_completed_changes(store, monkeypat
 
 def test_pending_instruction_discards_memory_review(store, monkeypatch):
     attempts = []
-    async def review(store, *args):
+    async def review(store, *args, **kwargs):
         attempts.append(True)
         if len(attempts) == 1:
             production.gate.run.submit("late", "新しい方針を優先")
@@ -1287,7 +1287,7 @@ def test_pending_instruction_discards_memory_review(store, monkeypatch):
 
 def test_memory_revision_conflict_keeps_newer_author_note(store, monkeypatch):
     production_memory.write(store, "元のメモ", "初期", "user")
-    async def review(store, *args):
+    async def review(store, *args, **kwargs):
         production_memory.write(store, "作者の新しいメモ", "作者の訂正", "user")
         return {"content": "古い照合案", "reason": "照合"}, 1, production_memory.basis(store)
     monkeypatch.setattr(production_memory, "review", review)
@@ -1300,7 +1300,7 @@ def test_memory_revision_conflict_keeps_newer_author_note(store, monkeypatch):
 
 def test_cancel_during_memory_review_keeps_unreviewed_memo(store, monkeypatch):
     production_memory.write(store, "残す方針", "初期", "user")
-    async def review(*args):
+    async def review(*args, **kwargs):
         raise asyncio.CancelledError()
     monkeypatch.setattr(production_memory, "review", review)
     fake_llm(monkeypatch, [{"content": "完了"}])
