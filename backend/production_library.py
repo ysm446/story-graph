@@ -1,6 +1,7 @@
 """制作チャット専用の資料庫ツール。固定設定と物語内の状態を分ける。"""
 import json
 import re
+import production_settings
 
 from node_operations import atomic_store
 
@@ -19,7 +20,7 @@ FIELD_DESCRIPTIONS = {
     "reading": "名前の読み。読み上げに使う。",
     "color": "表示色。#RRGGBB形式。",
 }
-WRITE_TOOLS = {f"{action}_{kind}" for kind in FIELDS for action in ("create", "update", "delete")}
+WRITE_TOOLS = {f"{action}_{kind}" for kind in FIELDS for action in ("create", "update", "delete")} | production_settings.WRITE_TOOLS
 
 
 def tools(allow_write):
@@ -58,7 +59,7 @@ def tools(allow_write):
                 "parameters": {"type": "object", "properties": properties,
                                "required": required, "additionalProperties": False},
             }})
-    return result
+    return result + production_settings.tools()
 
 
 def _contains(value, target):
@@ -125,6 +126,8 @@ def read(store, args):
 def apply(store, name, args, policy=None, before_commit=None):
     if name not in WRITE_TOOLS or not isinstance(args, dict):
         raise ValueError("資料庫の操作が不正です")
+    if name in production_settings.WRITE_TOOLS:
+        return production_settings.apply(store, name, args, before_commit=before_commit)
     action, kind = name.split("_", 1)
     if kind == "place" and action != "delete" and "place_description" in args:
         if "description" in args and args["description"] != args["place_description"]:

@@ -34,6 +34,75 @@ def edit(store, tool_name, **args):
     return asyncio.run(production.apply_edit(store, "fake", tool_name, {"reason": "作者の依頼", **args}))
 
 
+def test_setting_document_create_update_and_guards(store):
+    created = edit(store, "create_setting_document", title="社会制度", body="旧制度", category="制度")
+    entity_id = created["entity_id"]
+    assert created["entity_type"] == "setting_document"
+    assert created["after"]["status"] == "draft" and created["after"]["ai_mode"] == "search"
+    updated = edit(store, "update_setting_document", id=entity_id, revision=1, body="新制度")
+    assert updated["before"]["body"] == "旧制度" and updated["after"]["body"] == "新制度"
+    assert updated["after"]["category"] == "制度"
+    assert updated["revision"] == 2
+    with pytest.raises(ValueError, match="読み直"):
+        edit(store, "update_setting_document", id=entity_id, revision=1, body="古い変更")
+    with pytest.raises(ValueError, match="同名"):
+        edit(store, "create_setting_document", title="社会制度", body="重複")
+    with pytest.raises(ValueError):
+        edit(store, "update_setting_document", id=entity_id, revision=2, status="invalid")
+    versions = production.NodeVersions(store)
+    edit(store, "update_setting_document", id=entity_id, revision=2, ai_mode="never")
+    with pytest.raises(production.ManualEditPending):
+        versions.check(store, {})
+    with pytest.raises(ValueError, match="参照・編集"):
+        edit(store, "update_setting_document", id=entity_id, revision=3, body="非公開への変更")
+    assert store.get_setting_document(entity_id)["body"] == "新制度"
+
+
+def test_setting_document_tools_only_execute_and_cancel_before_commit(store):
+    names = lambda execute: {tool["function"]["name"] for tool in library.tools(execute)}
+    assert {"create_setting_document", "update_setting_document"} <= names(True)
+    assert not {"create_setting_document", "update_setting_document"} & names(False)
+    def cancel():
+        raise production.InstructionsPending("途中指示")
+    with pytest.raises(production.InstructionsPending):
+        asyncio.run(production.apply_edit(store, "fake", "create_setting_document",
+                    {"title": "中断", "body": "本文", "reason": "依頼"}, before_commit=cancel))
+    assert store.list_setting_documents() == []
+
+
+@pytest.mark.parametrize("execute", [False, True])
+def test_setting_document_stream_and_restore(store, monkeypatch, execute):
+    step = 0
+    async def stream(messages, **kwargs):
+        nonlocal step
+        names = {tool["function"]["name"] for tool in kwargs["tools"]}
+        assert ("create_setting_document" in names) == execute
+        step += 1
+        if step == 1:
+            name, args = "create_setting_document", {"title": "制度", "body": "原文", "reason": "依頼"}
+        elif step == 2 and execute:
+            doc = store.list_setting_documents()[0]
+            name, args = "update_setting_document", {"id": doc["id"], "revision": doc["revision"], "body": "修正した制度", "reason": "修正依頼"}
+        else:
+            yield "done", {"content": "完了"}
+            return
+        yield "done", {"tool_calls": [{"function": {"name": name, "arguments": json.dumps(args)}}]}
+    monkeypatch.setattr(llm, "chat_stream_tools", stream)
+    async def collect():
+        return [json.loads(chunk.removeprefix("data: ").strip()) async for chunk in
+                production.stream(store, "fake", None, "設定資料を作成して修正", execute, lambda: None)]
+    events = asyncio.run(collect())
+    changes = [event["changed"] for event in events if "changed" in event]
+    assert len(changes) == (2 if execute else 0)
+    if execute:
+        assert store.list_setting_documents()[0]["body"] == "修正した制度"
+        assert any(event.get("active_library", {}).get("kind") == "setting_document" for event in events)
+        assert len([m for m in store.get_chat(events[0]["chat_id"])["messages"] if m.get("operation")]) == 2
+        snapshot = next(event["snapshot"] for event in events if "snapshot" in event)
+        snapshots.restore(store, snapshot["id"])
+    assert store.list_setting_documents() == []
+
+
 def test_place_description_tool_alias_is_visible_and_saved(store):
     definitions = {tool["function"]["name"]: tool["function"] for tool in library.tools(True)}
     for name in ("create_place", "update_place"):

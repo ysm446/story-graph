@@ -29,7 +29,8 @@ interface Message {
 
 const operationLabels = { insert_scene: '追加', branch_scene: '分岐を追加', update_scene: '編集', delete_scene: '削除', reconnect_scene: 'つなぎ替え',
   create_character: 'キャラクター登録', update_character: 'キャラクター編集', delete_character: 'キャラクター削除',
-  create_place: '場所登録', update_place: '場所編集', delete_place: '場所削除' }
+  create_place: '場所登録', update_place: '場所編集', delete_place: '場所削除',
+  create_setting_document: '設定資料作成', update_setting_document: '設定資料編集' }
 const libraryFieldLabels: Record<string, string> = {
   name: '名前', profile: 'プロフィール', appearance: '外見', voice: '口調', reading: '読み', color: '色',
   description: '説明', atmosphere: '雰囲気'

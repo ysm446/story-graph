@@ -1,7 +1,7 @@
 import { createContext, useContext } from 'react'
 
 export type WorkspaceMode = 'structure' | 'characters' | 'reader'
-export type ProductionTarget = { kind: 'scene' | 'character' | 'place'; id: string }
+export type ProductionTarget = { kind: 'scene' | 'character' | 'place' | 'setting_document'; id: string }
 
 /** モードをまたぐチャットの表示先と、編集の競合防止を共有する。 */
 export const WorkspaceContext = createContext<{

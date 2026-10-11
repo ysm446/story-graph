@@ -395,7 +395,7 @@ async def list_setting_documents() -> list[dict[str, Any]]:
     return store.list_setting_documents()
 
 
-# 設定資料は作者が編集する。制作チャットには読み取りツールのみ公開する。
+# HTTP経由の手動編集は制作実行中にロックする。
 
 
 @app.post("/setting-documents")

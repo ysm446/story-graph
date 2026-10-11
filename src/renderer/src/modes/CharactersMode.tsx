@@ -210,6 +210,12 @@ function CharactersMode(): React.JSX.Element {
       setShowRelations(false)
       setSelectedId(target.id)
       setDraft(character)
+    } else if (target.kind === 'setting_document') {
+      if (!documents.some((item) => item.id === target.id)) return
+      setTab('settings')
+      setExpanded((value) => ({ ...value, settings: true }))
+      setDocumentQuery('')
+      setSelectedDocumentId(target.id)
     } else {
       if (!places.some((item) => item.id === target.id)) return
       setTab('places')
@@ -217,7 +223,7 @@ function CharactersMode(): React.JSX.Element {
       setSelectedPlaceId(target.id)
     }
     followedTarget.current = target
-  }, [workspace.productionTarget, characters, places, workspace.libraryDirty])
+  }, [workspace.productionTarget, characters, places, documents, workspace.libraryDirty])
 
   const handleCreate = async (kind: Tab): Promise<void> => {
     if (kind === 'settings') {

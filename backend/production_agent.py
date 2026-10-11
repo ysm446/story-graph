@@ -109,7 +109,7 @@ class NodeVersions:
         graph = store.graph()
         self.nodes = {n["id"]: {k: n.get(k) for k in CONTENT_FIELDS} for n in graph["nodes"]}
         self.edges = {(e["from_node"], e["to_node"], e["is_canon"]) for e in graph["edges"]}
-        self.library = (store.list_characters(), store.list_places())
+        self.library = (store.list_characters(), store.list_places(), store.list_setting_documents())
 
     def check(self, store, args):
         current = NodeVersions(store)
@@ -464,6 +464,9 @@ def build_messages(store, history, message, execute, policy, previous_checkpoint
         "通常の文章だけを返すと今回の制作は終了します。終了報告では実行記録にある確定済みの変更と未実施の作業を区別してください。"
         "未実施の作業を『次は編集します』『このまま続けます』と進行中のように告げて終了しないでください。必要な作業が残るならツールで続け、進められない場合は残件と理由を報告してください。"
         "資料庫のキャラクター・場所はread_libraryで一覧と詳細を確認し、新規登録・編集・削除できます。"
+        "設定資料はsearch_setting_documentsで探し、read_setting_documentで全文とrevisionを読んでから編集します。"
+        "create_setting_documentで新規作成、update_setting_documentで指定項目を更新できます。"
+        "新規資料は構想(draft)・必要に応じて検索(search)が既定です。作者の明示指示なしに確定設定へ変更せず、AI参照方法も維持してください。"
         "既存設定は省略で維持し、作者が頼んでいない項目は変更しません。物語中の変化や記憶は固定プロフィールに混ぜません。"
         "資料の登録・編集では、作者が明記した各項目を対応する引数へ漏れなく入れてください。場所の説明の引数はplace_description（保存結果ではdescription）、雰囲気はatmosphereです。"
         "操作結果のafterを依頼された項目と照合し、抜けた設定があればupdateで補ってから完了を報告してください。"
@@ -686,7 +689,7 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
                             break
                         consulted.add(signature)
                     yield _sse({"stage": TOOL_LABELS.get(name, "操作を確認しています…"), "active_node": args.get("node_id") or args.get("after_id")})
-                    if execute and name in {"update_character", "update_place"} and isinstance(args.get("id"), str):
+                    if execute and name in {"update_character", "update_place", "update_setting_document"} and isinstance(args.get("id"), str):
                         kind = name.removeprefix("update_")
                         if getattr(store, f"get_{kind}")(args["id"]) is not None:
                             yield _sse({"active_library": {"kind": kind, "id": args["id"]}})
