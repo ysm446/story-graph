@@ -125,9 +125,9 @@ async function main() {
       win.destroy()
       return
     }
-    await assert(`(() => {const a=document.querySelector('.scene-detail-main').getBoundingClientRect();const b=document.querySelector('.scene-detail-meta').getBoundingClientRect(); return b.x>=a.right-1 && Math.abs(a.y-b.y)<1;})()`, '広い詳細欄は本文と補助情報の2列')
+    await assert(`(() => {const a=document.querySelector('.scene-detail-main').getBoundingClientRect();const b=document.querySelector('.scene-detail-meta').getBoundingClientRect(); return (document.querySelector(".detail-main-right") ? a.x>=b.right-1 : b.x>=a.right-1) && Math.abs(a.y-b.y)<1;})()`, '広い詳細欄は本文と補助情報の2列')
     const divider = await js(`(() => {const r=document.querySelector('.scene-detail-divider').getBoundingClientRect(); return {x:Math.round(r.x),y:Math.round(r.y+30),width:document.querySelector('.scene-detail-meta').clientWidth}})()`)
-    await js(`(() => {const el=document.querySelector('.scene-detail-divider');const rect=el.getBoundingClientRect();el.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,clientX:rect.x,clientY:rect.y+30}));window.dispatchEvent(new PointerEvent('pointermove',{clientX:rect.x-80,clientY:rect.y+30}));window.dispatchEvent(new PointerEvent('pointerup'));})()`)
+    await js(`(() => {const el=document.querySelector('.scene-detail-divider');const rect=el.getBoundingClientRect();el.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,clientX:rect.x,clientY:rect.y+30}));window.dispatchEvent(new PointerEvent('pointermove',{clientX:rect.x+(document.querySelector(".detail-main-right") ? 80 : -80),clientY:rect.y+30}));window.dispatchEvent(new PointerEvent('pointerup'));})()`)
     await pause(200)
     const widthKey = chapterCheck ? 'chapterDetailMetaWidth' : 'sceneDetailMetaWidth'
     await assert(`document.querySelector('.scene-detail-meta').clientWidth > ${divider.width + 40} && Number(localStorage.getItem(${JSON.stringify(widthKey)})) > 42`, '境界のドラッグで補助情報を拡大し幅を保存')

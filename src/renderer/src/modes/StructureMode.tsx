@@ -749,7 +749,7 @@ function BeatTab({
 
   return (
     <div className="scene-detail flex min-h-0 flex-1 flex-col">
-      <DetailSplit storageKey="sceneDetailMetaWidth" main={<>
+      <DetailSplit storageKey="sceneDetailMetaWidth" mainOnRight main={<>
           {/* 「★ このブランチを正史にする」は置かない(2026-08-02 ユーザー判断)。
               正史は**アクティブな結末から遡った道**なので、決めることは「どの結末を
               アクティブにするか」だけ。道を直接選ぶ操作があると概念が二重になるうえ、

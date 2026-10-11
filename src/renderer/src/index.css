@@ -606,6 +606,14 @@ input[type='range']:focus-visible {
   overflow-y: auto;
 }
 
+.scene-detail-layout.detail-main-right {
+  grid-template-columns: clamp(280px, var(--detail-meta-width, 42%), calc(100% - 321px)) 1px minmax(320px, 1fr);
+}
+
+.detail-main-right > .scene-detail-main { grid-column: 3; grid-row: 1; }
+.detail-main-right > .scene-detail-divider { grid-column: 2; grid-row: 1; }
+.detail-main-right > .scene-detail-meta { grid-column: 1; grid-row: 1; }
+
 .scene-detail-main > div {
   max-width: 80ch;
   margin-inline: auto;

@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 
 /** シーン・章で共用する、幅を保存できる下段詳細の2列。 */
-export default function DetailSplit({ storageKey, main, secondary, mainScrollRef, fillMain = false }: {
+export default function DetailSplit({ storageKey, main, secondary, mainScrollRef, fillMain = false, mainOnRight = false }: {
   storageKey: string
   main: ReactNode
   secondary: ReactNode
   mainScrollRef?: React.RefObject<HTMLDivElement | null>
   fillMain?: boolean
+  mainOnRight?: boolean
 }): React.JSX.Element {
   const detailLayoutRef = useRef<HTMLDivElement>(null)
   const detailResizeCleanup = useRef<(() => void) | null>(null)
@@ -21,7 +22,7 @@ export default function DetailSplit({ storageKey, main, secondary, mainScrollRef
     localStorage.setItem(storageKey, String(next))
   }
   return (
-    <div ref={detailLayoutRef} className="scene-detail-layout min-h-0 flex-1"
+    <div ref={detailLayoutRef} className={`scene-detail-layout min-h-0 flex-1${mainOnRight ? ' detail-main-right' : ''}`}
       style={{ '--detail-meta-width': `${metaWidth}%` } as React.CSSProperties}>
       <div ref={mainScrollRef} className={`scene-detail-main inspector-scrollbar min-w-0 p-3${fillMain ? ' detail-fill' : ''}`}>
         <div className="flex flex-col gap-3">{main}</div>
@@ -38,7 +39,7 @@ export default function DetailSplit({ storageKey, main, secondary, mainScrollRef
             const previousSelect = document.body.style.userSelect
             const move = (pointer: PointerEvent): void => {
               const rect = detailLayoutRef.current?.getBoundingClientRect()
-              if (rect?.width) changeMetaWidth((rect.right - pointer.clientX) / rect.width * 100)
+              if (rect?.width) changeMetaWidth((mainOnRight ? pointer.clientX - rect.left : rect.right - pointer.clientX) / rect.width * 100)
             }
             const cleanup = (): void => {
               document.body.style.userSelect = previousSelect
@@ -57,11 +58,11 @@ export default function DetailSplit({ storageKey, main, secondary, mainScrollRef
             if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
             event.preventDefault()
             event.stopPropagation()
-            changeMetaWidth(metaWidth + (event.key === 'ArrowLeft' ? 2 : -2))
+            changeMetaWidth(metaWidth + (event.key === 'ArrowLeft' ? 2 : -2) * (mainOnRight ? -1 : 1))
           }}>
           <div className="absolute inset-y-0 -left-1 -right-1 z-10" />
         </div>
-      <div className="scene-detail-meta inspector-scrollbar min-w-0 p-3">
+      <div className={`scene-detail-meta inspector-scrollbar min-w-0 ${mainOnRight ? 'p-4' : 'p-3'}`}>
         <div className="flex flex-col gap-3">{secondary}</div>
       </div>
     </div>
