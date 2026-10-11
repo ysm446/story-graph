@@ -1,4 +1,5 @@
 import ChatHistoryPanel from './ChatHistoryPanel'
+import { productionSuggestions } from './productionSuggestions'
 import type { ProductionTarget } from './Workspace'
 import ChatRulesPanel from './ChatRulesPanel'
 import ProductionPreviewPanel from './ProductionPreviewPanel'
@@ -143,6 +144,8 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
   const busy = !!task || historyBusy
   const endRef = useRef<HTMLDivElement>(null)
   const taskRef = useRef<string | null>(null)
+  const composerRef = useRef<HTMLDivElement>(null)
+  const suggestions = productionSuggestions(messages, selection)
 
   useEffect(() => {
     if (busy) return
@@ -414,7 +417,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
   }
 
   return (
-    <div className="flex h-full min-h-0 min-w-0 w-full flex-1 flex-col" style={{ background: 'var(--bg-chat)' }}>
+    <div ref={composerRef} className="flex h-full min-h-0 min-w-0 w-full flex-1 flex-col" style={{ background: 'var(--bg-chat)' }}>
       <ChatHistoryPanel history={history} chatId={chatId} busy={busy} production
         chatLabel={(item) => item.title || item.snippet || '制作'}
         startNewChat={() => {
@@ -444,6 +447,18 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
       <div className="inspector-scrollbar min-h-0 flex-1 overflow-y-auto" aria-live="polite">
         <MessageList messages={messages} nodes={nodes} groups={groups} />
         {live && <Markdown text={live} />}
+        {!busy && !error && suggestions.length > 0 && <div aria-label="制作の依頼候補" className="my-2 flex flex-wrap gap-1.5">
+          {suggestions.map((suggestion) => <button key={suggestion.label} type="button" disabled={!!input.trim()}
+            onClick={() => {
+              setInput(suggestion.text)
+              composerRef.current?.querySelector<HTMLTextAreaElement>('textarea[aria-label="制作への依頼"]')?.focus()
+            }}
+            className="chat-suggest-chip max-w-full rounded-full border px-3 py-1 text-left text-[11px] [overflow-wrap:anywhere] disabled:opacity-40"
+            style={{ borderColor: 'var(--accent-border)', color: 'var(--text-dim)', background: 'var(--accent-soft)' }}
+            data-tip={input.trim() ? '入力中の文章を送信するか空にすると選べます' : `${suggestion.text}\nクリックで入力欄に入ります。送信モードを確認して送信してください。`}>
+            {suggestion.label}
+          </button>)}
+        </div>}
         <div ref={endRef} />
       </div>
       <ProductionPreviewPanel />
