@@ -501,7 +501,7 @@ const nodeTypes = { beatNode: BeatNodeCard, chapterNode: ChapterNodeCard }
 
 // 未保存のシーン下書きをノード ID ごとに保持する(セッション内)。
 // ノード非選択で BeatTab がアンマウントされても編集内容が消えないようにする。
-// 保存やキャンセルではなく「一時退避」なので、保存成功時に該当エントリを消す。
+// 一時退避なので、保存成功時や「元に戻す」で該当エントリを消す。
 const beatDraftCache = new Map<string, Partial<StoryNode>>()
 const beatDraftListeners = new Set<() => void>()
 const subscribeBeatDrafts = (listener: () => void): (() => void) => {
@@ -520,6 +520,16 @@ function deleteBeatDraft(nodeId: string): void {
   if (beatDraftCache.delete(nodeId)) beatDraftListeners.forEach((listener) => listener())
 }
 
+function savedBeatDraft(node: StoryNode): Partial<StoryNode> {
+  return {
+    title: node.title,
+    beat: node.beat,
+    emotional_core: node.emotional_core,
+    cast: [...node.cast],
+    location: node.location,
+    story_time: node.story_time
+  }
+}
 
 // putEvents は全件置換なので、手元の node.events を土台にすると、直前の保存が
 // reload 前だった場合にそのイベントが消える。保存前にサーバーの最新を取り直す
@@ -564,6 +574,8 @@ function BeatTab({
   // draft がどのシーンのものか。node が切り替わった直後の 1 レンダーでは draft が
   // まだ前のシーンの値なので、取り違えて退避しないよう突き合わせに使う
   const [draftNodeId, setDraftNodeId] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [draftReset, setDraftReset] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [suggesting, setSuggesting] = useState<'title' | 'emotional_core' | null>(null)
   // 退場の入力中(理由をインラインで入力する。Electron は window.prompt が使えない)
@@ -645,16 +657,7 @@ function BeatTab({
   useEffect(() => {
     // 退避済みの未保存下書きがあれば復元、無ければ保存値で初期化する
     const cached = beatDraftCache.get(node.id)
-    setDraft(
-      cached ?? {
-        title: node.title,
-        beat: node.beat,
-        emotional_core: node.emotional_core,
-        cast: node.cast,
-        location: node.location,
-        story_time: node.story_time
-      }
-    )
+    setDraft(cached ?? savedBeatDraft(node))
     setDraftNodeId(node.id)
     setError(null)
     setSuggesting(null) // 前のシーンで押した自動生成の表示を引き継がない
@@ -702,13 +705,25 @@ function BeatTab({
   }
 
   const handleSave = async (): Promise<void> => {
+    if (saving) return
+    setSaving(true)
     try {
       await api.updateNode(node.id, draft)
       deleteBeatDraft(node.id) // 保存できたら退避を破棄
       onSaved()
     } catch (e) {
       setError(String(e))
+    } finally {
+      setSaving(false)
     }
+  }
+
+  const resetDraft = (): void => {
+    if (saving || suggesting || draftNodeId !== node.id) return
+    setDraft(savedBeatDraft(node))
+    deleteBeatDraft(node.id)
+    setDraftReset((value) => value + 1)
+    setError(null)
   }
 
   const handleDelete = async (): Promise<void> => {
@@ -805,6 +820,7 @@ function BeatTab({
             {/* 高さの自動調整と校正ボタンは共通コンポーネント側で行う(ボタンは本文の下に常に出る)。
                 長いシーン本文の一部を直すことがあるので、前後を文脈として渡す */}
             <ProofreadTextarea
+              key={`${node.id}:${draftReset}`}
               rows={4}
               value={draft.beat ?? ''}
               onChange={(next) => setDraft((d) => ({ ...d, beat: next }))}
@@ -1138,7 +1154,7 @@ function BeatTab({
       </>} />
       <div className="shrink-0 border-t px-3 py-2" style={{ borderColor: 'var(--border)', background: 'var(--bg-sidebar)' }}>
         {error && <div role="alert" className="mb-1 text-[12px]" style={{ color: 'var(--danger)' }}>{error}</div>}
-        <div className="flex items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           {dirty && <span role="status" className="min-w-0 text-[11px]" style={{ color: 'var(--text-dim)' }}>
             未保存の変更があります
           </span>}
@@ -1156,9 +1172,16 @@ function BeatTab({
             >
               <Icon name={aiProtected ? 'robotLock' : 'robotUnlock'} size={20} strokeWidth={1.6} />
             </button>
+            <button
+              onClick={resetDraft}
+              disabled={!dirty || saving || suggesting !== null}
+              className="rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-50"
+              style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+              data-tip={saving || suggesting !== null ? '保存・自動生成が終わるまでお待ちください' : dirty ? 'このシーンの未保存の変更を取り消します' : '変更はありません'}
+            >元に戻す</button>
           <button
             onClick={() => void handleSave()}
-            disabled={!dirty}
+            disabled={!dirty || saving}
             className="shrink-0 rounded-md px-3 py-1 text-[12px] font-medium disabled:opacity-50"
             style={{ background: 'var(--accent)', color: 'var(--text)' }}
             data-tip={dirty ? 'シーンの変更を保存します' : '変更はありません'}
