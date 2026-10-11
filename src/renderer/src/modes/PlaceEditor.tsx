@@ -203,14 +203,10 @@ export default function PlaceEditor({
         </span>
         <input
           value={draft.reading ?? ''}
-          placeholder="やまざき まこと"
           onChange={(e) => setDraft((d) => ({ ...d, reading: e.target.value }))}
           className="block w-full rounded-lg border px-3 py-1.5 text-[13px] outline-none"
           style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
-          data-tip={[
-            '読み上げで、この場所の名前をこの読みで読ませます(台本や本文の表示は漢字のまま)。',
-            '名前と読みを同じように空白で区切ると、姓だけ・名だけも正しく読みます(2 文字以上の部分だけ)。'
-          ].join('\n')}
+          data-tip="読み上げで、この場所の名前を指定した読みで読ませます。台本や本文の表記は変わりません。"
         />
       </label>
       {FIELD_DEFS.map((f) => (

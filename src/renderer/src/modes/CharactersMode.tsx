@@ -513,7 +513,6 @@ function CharactersMode(): React.JSX.Element {
               </span>
               <input
                 value={draft.reading ?? ''}
-                placeholder="やまざき まこと"
                 onChange={(e) => setDraft((d) => ({ ...d, reading: e.target.value }))}
                 className="block w-full rounded-lg border px-3 py-1.5 text-[13px] outline-none"
                 style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
