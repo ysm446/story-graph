@@ -10,6 +10,8 @@ import type { Character, Place, StoryGraph, StoryNode } from '../types'
 import { useWorkspace } from '../Workspace'
 import UnsavedBadge from '../UnsavedBadge'
 import CharAvatar from '../CharAvatar'
+import SettingDocumentEditor, { type SettingDocumentEdits } from './SettingDocumentEditor'
+import type { SettingDocument } from '../types'
 
 const EDITABLE_FIELDS = ['name', 'color', 'profile', 'appearance', 'voice', 'reading'] as const
 
@@ -20,7 +22,7 @@ const FIELD_DEFS: Array<{ key: 'profile' | 'appearance' | 'voice'; label: string
 ]
 
 /** 資料の種類。「関係図」はキャラクターの表示方法として扱う。 */
-type Tab = 'characters' | 'places'
+type Tab = 'characters' | 'places' | 'settings'
 
 /** 資料庫。キャラクターと場所を同じシェル(リサイズ可能なサイドバー + 編集ペイン)で扱う。
  *  場所も登録制のエンティティなので、庫としては同じ性格のもの(docs/design/places.md)。 */
@@ -31,10 +33,16 @@ function CharactersMode(): React.JSX.Element {
   const workspace = useWorkspace()
   const [placeDirty, setPlaceDirty] = useState(false)
   const [placeUnsaved, setPlaceUnsaved] = useState(false)
+  const [documents, setDocuments] = useState<SettingDocument[]>([])
+  const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(null)
+  const [documentEdits, setDocumentEdits] = useState<SettingDocumentEdits>({ ids: [], busy: false })
+  const [documentQuery, setDocumentQuery] = useState('')
+  const [createError, setCreateError] = useState('')
+  const [creating, setCreating] = useState(false)
   const [libraryVersion, setLibraryVersion] = useState(0)
   const reloadSequence = useRef(0)
   const [tab, setTab] = useState<Tab>('characters')
-  const [expanded, setExpanded] = useState({ characters: true, places: true })
+  const [expanded, setExpanded] = useState({ characters: true, places: true, settings: true })
   // キャラクターの見せ方(一覧+編集 ⇄ 関係図)。場所には無い切り替えなので、タブとは別に持つ
   const [showRelations, setShowRelations] = useState(false)
   const [characters, setCharacters] = useState<Character[]>([])
@@ -142,14 +150,16 @@ function CharactersMode(): React.JSX.Element {
 
   const reload = async (refreshDraft = false): Promise<void> => {
     const sequence = ++reloadSequence.current
-    const [chars, placeList, g] = await Promise.all([
+    const [chars, placeList, g, documentList] = await Promise.all([
       api.listCharacters(),
       api.listPlaces(),
-      api.getGraph()
+      api.getGraph(),
+      api.listSettingDocuments()
     ])
     if (sequence !== reloadSequence.current) return
     setCharacters(chars)
     setPlaces(placeList)
+    setDocuments(documentList)
     setGraph(g)
     if (refreshDraft && selectedId === selectedIdRef.current && !workspace.libraryDirty.current) {
       setDraft(chars.find((c) => c.id === selectedId) ?? {})
@@ -210,6 +220,20 @@ function CharactersMode(): React.JSX.Element {
   }, [workspace.productionTarget, characters, places, workspace.libraryDirty])
 
   const handleCreate = async (kind: Tab): Promise<void> => {
+    if (kind === 'settings') {
+      if (creating) return
+      setCreating(true); setCreateError('')
+      try {
+        const created = await api.createSettingDocument('新しい設定資料')
+        await reload()
+        setSelectedDocumentId(created.id)
+        setTab('settings')
+        setDocumentQuery('')
+        setExpanded((value) => ({ ...value, settings: true }))
+      } catch (error) { setCreateError(`設定資料を追加できませんでした: ${String(error)}`) }
+      finally { setCreating(false) }
+      return
+    }
     if (kind === 'places') {
       const created = await api.createPlace({ name: '新しい場所', color: '#5a8fa7' })
       await reload()
@@ -258,9 +282,9 @@ function CharactersMode(): React.JSX.Element {
   }
 
   useEffect(() => {
-    workspace.libraryDirty.current = dirty || placeDirty || saving || cropTarget !== null
+    workspace.libraryDirty.current = dirty || placeDirty || saving || cropTarget !== null || documentEdits.ids.length > 0 || documentEdits.busy || creating
     return () => { workspace.libraryDirty.current = false }
-  }, [dirty, placeDirty, saving, cropTarget, workspace.libraryDirty])
+  }, [dirty, placeDirty, saving, cropTarget, documentEdits, creating, workspace.libraryDirty])
 
   useEffect(() => {
     if (workspace.mode === 'characters') void reload(!(dirty || placeDirty || saving))
@@ -290,8 +314,9 @@ function CharactersMode(): React.JSX.Element {
         style={{ background: 'var(--bg-sidebar)', width: sidebarWidth }}
       >
         <div className="px-3 py-2 text-[13px] font-medium" style={{ color: 'var(--text)' }}>資料庫</div>
+        {createError && <p role="alert" className="px-3 text-[11px]" style={{ color: 'var(--danger)' }}>{createError}</p>}
         <nav aria-label="資料の種類と一覧" className="inspector-scrollbar min-h-0 flex-1 overflow-y-auto px-2 pb-2">
-          {([['characters', 'キャラクター'], ['places', '場所']] as const).map(([kind, label]) => (
+          {([['characters', 'キャラクター'], ['places', '場所'], ['settings', '設定資料']] as const).map(([kind, label]) => (
             <section key={kind} className="mb-2">
               <div className="flex flex-wrap items-center gap-1">
                 <button onClick={() => setExpanded((value) => ({ ...value, [kind]: !value[kind] }))}
@@ -308,11 +333,15 @@ function CharactersMode(): React.JSX.Element {
                   style={{ color: relationsView ? 'var(--text)' : 'var(--text-dim)', background: relationsView ? 'var(--accent-soft)' : undefined }}
                   data-tip={relationsView ? 'キャラクターの編集に戻す' : 'キャラクターどうしの関係図を開く'}>関係図</button>}
                 <button onClick={() => void handleCreate(kind)} aria-label={`${label}を追加`}
-                  className="shrink-0 rounded-md border px-2 py-0.5 text-[11px]"
+                  disabled={creating}
+                  className="shrink-0 rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-50"
                   style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
                   data-tip={`${label}を追加`}>+</button>
               </div>
               <div id={`library-${kind}`} hidden={!expanded[kind]} className="ml-3 border-l pl-1" style={{ borderColor: 'var(--border)' }}>
+                {kind === 'settings' && <input aria-label="設定資料を絞り込む" placeholder="設定資料を絞り込む" value={documentQuery} onChange={(e) => setDocumentQuery(e.target.value)}
+                  className="my-1 w-full min-w-0 rounded-md border px-2 py-0.5 text-[12px] outline-none"
+                  style={{ background: 'var(--bg-input)', borderColor: 'var(--border)', color: 'var(--text)' }} data-tip="タイトル・分類・本文から設定資料を絞り込みます" />}
                 {kind === 'characters' ? characters.map((character) => (
                   <button key={character.id}
                     onClick={() => { setTab('characters'); setShowRelations(false); setSelectedId(character.id) }}
@@ -323,7 +352,7 @@ function CharactersMode(): React.JSX.Element {
                     <span className="min-w-0 flex-1 truncate">{character.name}</span>
                     {character.id === selectedId && dirty && <UnsavedBadge />}
                   </button>
-                )) : places.map((place) => (
+                )) : kind === 'places' ? places.map((place) => (
                   <button key={place.id} onClick={() => { setTab('places'); setSelectedPlaceId(place.id) }}
                     className="mb-0.5 flex w-full min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12px]"
                     style={{ background: tab === 'places' && place.id === selectedPlaceId ? 'var(--accent-soft)' : undefined, color: tab === 'places' && place.id === selectedPlaceId ? 'var(--text)' : 'var(--text-dim)' }}
@@ -339,8 +368,15 @@ function CharactersMode(): React.JSX.Element {
                     <span className="min-w-0 flex-1 truncate">{place.name}</span>
                     {place.id === selectedPlaceId && placeUnsaved && <UnsavedBadge />}
                   </button>
+                )) : documents.filter((document) => `${document.title}\n${document.category}\n${document.body}`.toLocaleLowerCase().includes(documentQuery.toLocaleLowerCase())).map((document) => (
+                  <button key={document.id} onClick={() => { setTab('settings'); setSelectedDocumentId(document.id) }}
+                    className="mb-0.5 flex w-full min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12px]"
+                    style={{ background: tab === 'settings' && document.id === selectedDocumentId ? 'var(--accent-soft)' : undefined, color: 'var(--text)' }} data-tip={document.title}>
+                    <span className="min-w-0 flex-1 truncate">{document.title}</span>
+                    {documentEdits.ids.includes(document.id) && <UnsavedBadge />}
+                  </button>
                 ))}
-                {(kind === 'characters' ? characters : places).length === 0 && <p className="px-2 py-2 text-[11px]" style={{ color: 'var(--text-faint)' }}>まだ{label}がありません</p>}
+                {(kind === 'characters' ? characters : kind === 'places' ? places : documents).length === 0 && <p className="px-2 py-2 text-[11px]" style={{ color: 'var(--text-faint)' }}>まだ{label}がありません</p>}
               </div>
             </section>
           ))}
@@ -359,6 +395,10 @@ function CharactersMode(): React.JSX.Element {
         />
       </div>
       <main className="inspector-scrollbar min-w-0 flex-1 overflow-y-auto p-6">
+        <div hidden={tab !== 'settings'}>
+          <SettingDocumentEditor documents={documents} selectedId={selectedDocumentId} onChanged={reload}
+            onDirty={setDocumentEdits} onDeleted={() => setSelectedDocumentId(null)} />
+        </div>
         <div hidden={tab !== 'places'}>
           {selectedPlace ? (
             <PlaceEditor
@@ -391,7 +431,7 @@ function CharactersMode(): React.JSX.Element {
               onEgoChange={setEgoCharId}
             />
           </div>
-        ) : tab === 'places' ? null : selected ? (
+        ) : tab !== 'characters' ? null : selected ? (
           <div className="mx-auto max-w-2xl">
             {/* 画像 → 画像操作 → 名前 の順に縦に積む(色は名前の隣に項目として置く) */}
             <div className="mb-4 flex flex-col items-start gap-1.5">

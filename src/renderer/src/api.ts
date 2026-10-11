@@ -8,6 +8,7 @@ import type {
   Group,
   MediaItem,
   Place,
+  SettingDocument,
   RenderResult,
   SceneEntry,
   Snapshot,
@@ -46,6 +47,15 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  listSettingDocuments: () => request<SettingDocument[]>('/setting-documents'),
+  createSettingDocument: (title: string) => request<SettingDocument>('/setting-documents', {
+    method: 'POST', body: JSON.stringify({ title })
+  }),
+  updateSettingDocument: (document: SettingDocument) => request<SettingDocument>(`/setting-documents/${document.id}`, {
+    method: 'PUT', body: JSON.stringify({ title: document.title, category: document.category, body: document.body,
+      status: document.status, scope: document.scope, ai_mode: document.ai_mode, revision: document.revision })
+  }),
+  deleteSettingDocument: (id: string, revision: number) => request<unknown>(`/setting-documents/${id}?revision=${revision}`, { method: 'DELETE' }),
   getLibrary: () => request<{ root: string | null }>('/library'),
   switchLibrary: (root: string) =>
     request<{ root: string }>('/library/switch', { method: 'POST', body: JSON.stringify({ root }) }),

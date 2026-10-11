@@ -268,6 +268,8 @@ def connect(db_path: Path | str | None = None) -> sqlite3.Connection:
 
 def init_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(_SCHEMA)
+    import setting_documents
+    conn.executescript(setting_documents.SCHEMA)
     # 単純な列追加は冪等 ALTER で行う(lm-chat の作法)
     for ddl in (
         "ALTER TABLE nodes ADD COLUMN pos_x REAL",  # キャンバス上の手動配置(NULL = 自動レイアウト)

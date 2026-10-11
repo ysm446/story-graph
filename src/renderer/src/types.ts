@@ -48,6 +48,19 @@ export interface MediaItem {
 
 /** 場所。キャラクターと同型の登録制エンティティ(docs/design/places.md)。
  *  シーンは 1 つだけ参照し、空欄なら親から引き継ぐ。 */
+export interface SettingDocument {
+  id: string
+  title: string
+  category: string
+  body: string
+  status: 'confirmed' | 'draft' | 'reference'
+  scope: string
+  ai_mode: 'search' | 'always' | 'never'
+  revision: number
+  created_at: string
+  updated_at: string
+}
+
 export interface Place {
   id: string
   name: string

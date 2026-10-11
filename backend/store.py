@@ -15,6 +15,7 @@ from typing import Any
 
 import db as db_mod
 import embed
+import setting_documents
 import fold as fold_mod
 from validation import validate_node
 
@@ -81,6 +82,19 @@ class Store:
         old_conn.close()
         self.ensure_story_markers()
         self.ensure_chapter_markers()
+
+    # ---- 設定資料 ---------------------------------------------------
+    def list_setting_documents(self):
+        return setting_documents.list_documents(self.conn)
+
+    def get_setting_document(self, document_id):
+        return setting_documents.get_document(self.conn, document_id)
+
+    def save_setting_document(self, data, document_id=None, revision=None):
+        return setting_documents.save_document(self.conn, data, document_id, revision)
+
+    def delete_setting_document(self, document_id, revision):
+        setting_documents.delete_document(self.conn, document_id, revision)
 
     # ---- characters -------------------------------------------------
 

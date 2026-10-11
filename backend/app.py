@@ -31,6 +31,7 @@ import node_operations
 import node_clipboard
 import production_agent
 import rendering
+import setting_documents
 import snapshots
 from comfy_manager import ComfyManager
 from llama_manager import LlamaManager
@@ -386,6 +387,52 @@ async def delete_place(place_id: str) -> dict[str, str]:
     store.delete_place(place_id)
     return {"status": "deleted"}
 
+
+# ---- 設定資料 -------------------------------------------------------
+
+@app.get("/setting-documents")
+async def list_setting_documents() -> list[dict[str, Any]]:
+    return store.list_setting_documents()
+
+
+# 設定資料は作者が編集する。制作チャットには読み取りツールのみ公開する。
+
+
+@app.post("/setting-documents")
+async def create_setting_document(body: setting_documents.DocumentInput) -> dict[str, Any]:
+    if production_agent.gate.active:
+        raise HTTPException(409, "制作を停止してから設定資料を編集してください")
+    try:
+        return store.save_setting_document(body.model_dump())
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from error
+
+
+@app.put("/setting-documents/{document_id}")
+async def update_setting_document(document_id: str, body: setting_documents.DocumentUpdate) -> dict[str, Any]:
+    if production_agent.gate.active:
+        raise HTTPException(409, "制作を停止してから設定資料を編集してください")
+    try:
+        return store.save_setting_document(body.model_dump(exclude={"revision"}), document_id, body.revision)
+    except KeyError as error:
+        raise HTTPException(404, "設定資料が見つかりません") from error
+    except setting_documents.RevisionConflict as error:
+        raise HTTPException(409, str(error)) from error
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from error
+
+
+@app.delete("/setting-documents/{document_id}")
+async def delete_setting_document(document_id: str, revision: int) -> dict[str, str]:
+    if production_agent.gate.active:
+        raise HTTPException(409, "制作を停止してから設定資料を編集してください")
+    try:
+        store.delete_setting_document(document_id, revision)
+    except KeyError as error:
+        raise HTTPException(404, "設定資料が見つかりません") from error
+    except setting_documents.RevisionConflict as error:
+        raise HTTPException(409, str(error)) from error
+    return {"status": "deleted"}
 
 # ---- factions -------------------------------------------------------
 

@@ -227,7 +227,9 @@ def test_proposals_are_plain_text(store, monkeypatch):
     monkeypatch.setattr(llm_mod, "chat_stream_tools", respond)
     before = store.canon_path()
     events = collect_sse(chat_agent.chat_stream(store, "http://fake", None, None, "upto", "この先を2案提案して"))
-    assert {tool["function"]["name"] for tool in sent_tools} == {"get_beats", "get_state", "search_memories"}
+    assert {tool["function"]["name"] for tool in sent_tools} == {
+        "get_beats", "get_state", "search_memories", "search_setting_documents", "read_setting_document"
+    }
     assert "".join(e.get("delta", "") for e in events) == answer
     assert not any("proposals" in e for e in events)
     saved = store.get_chat(events[-1]["chat_id"])["messages"]

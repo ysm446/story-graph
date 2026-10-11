@@ -16,6 +16,7 @@ from typing import Any, AsyncIterator
 
 import llm
 import retrieval
+import setting_documents
 from store import Store, _is_turn_start
 
 
@@ -35,7 +36,7 @@ def _sse(data: dict[str, Any]) -> str:
 
 
 def build_tools() -> list[dict[str, Any]]:
-    return [
+    return setting_documents.tools() + [
         {
             "type": "function",
             "function": {
@@ -311,6 +312,8 @@ def _tool_search_memories(store: Store, path: list[str], scope: str, args: dict[
 
 def dispatch_tool(store: Store, name: str, args: dict[str, Any], path: list[str], scope: str) -> dict[str, Any]:
     try:
+        if name in {"search_setting_documents", "read_setting_document"}:
+            return setting_documents.dispatch(store.conn, name, args)
         if name == "get_beats":
             return _tool_get_beats(store, path, args, scope)
         if name == "get_state":
@@ -816,6 +819,7 @@ def build_system(store: Store, path: list[str], scope: str, *, production: bool 
             "",
             "## キャラクター ID 一覧",
             chars,
+            setting_documents.context(store.conn),
             *([
                 "",
                 "## 物語全体の接続図",
