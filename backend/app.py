@@ -2329,6 +2329,7 @@ class ProductionPolicyIn(BaseModel):
 
 
 class ProductionIn(BaseModel):
+    selected_node_ids: list[str] = Field(default_factory=list, max_length=1000)
     policy: ProductionPolicyIn = Field(default_factory=ProductionPolicyIn)
     chat_id: str | None = None
     message: str = Field(min_length=1, max_length=20000)
@@ -2341,6 +2342,7 @@ class ProductionMemoryIn(BaseModel):
 
 
 class ProductionUsageIn(BaseModel):
+    selected_node_ids: list[str] = Field(default_factory=list, max_length=1000)
     policy: ProductionPolicyIn = Field(default_factory=ProductionPolicyIn)
     chat_id: str | None = None
     message: str = Field(default="", max_length=20000)
@@ -2354,13 +2356,14 @@ async def production_token_usage(body: ProductionUsageIn) -> dict[str, Any]:
         raise HTTPException(404, "制作の会話がありません")
     try:
         policy = production_agent.ProductionPolicy(store, **body.policy.model_dump())
+        selection = production_agent.selected_nodes(store, body.selected_node_ids)
     except ValueError as e:
         raise HTTPException(400, str(e))
     history = list(chat["messages"]) if chat else []
     if body.message.strip():
-        history.append({"role": "user", "content": body.message.strip()})
+        history.append({"role": "user", "content": body.message.strip(), "selected_nodes": selection})
     messages = production_agent.build_messages(store, history, body.message.strip(), body.execute, policy,
-        production_agent.production_memory.read(store)["checkpoint"], [], [])
+        production_agent.production_memory.read(store)["checkpoint"], [], [], selection=selection)
     settings = store.get_settings()
     return await production_agent.context_usage(store, settings.get("llm_base_url") or llm.DEFAULT_BASE_URL,
                                                 messages, body.execute)
@@ -2422,6 +2425,7 @@ async def production_pause(body: ProductionPauseIn) -> dict[str, bool]:
 
 
 class ProductionInstructionIn(BaseModel):
+    selected_node_ids: list[str] = Field(default_factory=list, max_length=1000)
     run_id: str = Field(min_length=1, max_length=64)
     instruction_id: str = Field(min_length=1, max_length=64)
     message: str = Field(min_length=1, max_length=20000)
@@ -2435,7 +2439,13 @@ async def production_instruction(body: ProductionInstructionIn) -> dict[str, Any
     if not body.message.strip():
         raise HTTPException(400, "途中指示を入力してください")
     try:
-        return run.submit(body.instruction_id, body.message.strip())
+        existing = next((m for m in run.history if m.get("instruction", {}).get("id") == body.instruction_id), None)
+        # 再送では受付済みの名称を保持する。受付後に改名・削除されても二重登録しない。
+        if existing and [n["id"] for n in existing.get("selected_nodes", [])] == list(dict.fromkeys(body.selected_node_ids)):
+            selection = existing.get("selected_nodes", [])
+        else:
+            selection = production_agent.selected_nodes(store, body.selected_node_ids)
+        return run.submit(body.instruction_id, body.message.strip(), selection)
     except ValueError as e:
         raise HTTPException(409, str(e))
 
@@ -2446,6 +2456,10 @@ async def production_send(body: ProductionIn) -> StreamingResponse:
         raise HTTPException(400, "依頼を入力してください")
     if body.chat_id and (store.get_chat(body.chat_id) or {}).get("mode") != "production":
         raise HTTPException(404, "制作チャットが見つかりません")
+    try:
+        selection = production_agent.selected_nodes(store, body.selected_node_ids)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     try:
         await production_agent.gate.begin()
     except (RuntimeError, TimeoutError) as e:
@@ -2460,7 +2474,7 @@ async def production_send(body: ProductionIn) -> StreamingResponse:
         production_agent.gate.active = False
         return _sse_error_response(str(e))
     return StreamingResponse(
-        production_agent.stream(store, base_url, body.chat_id, body.message, body.execute, _schedule_audio_gc, policy=policy),
+        production_agent.stream(store, base_url, body.chat_id, body.message, body.execute, _schedule_audio_gc, policy=policy, selection=selection),
         media_type="text/event-stream",
     )
 

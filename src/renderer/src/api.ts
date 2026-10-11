@@ -1294,6 +1294,7 @@ export type ProductionOperation = ProductionOperationBase & ({
 })
 
 export interface ProductionInstruction {
+  selected_nodes?: ProductionSelectedNode[]
   created_at?: string
   role: string
   content: string
@@ -1333,8 +1334,14 @@ export interface ProductionEvent {
   done?: boolean
 }
 
+export interface ProductionSelectedNode {
+  id: string
+  title: string
+  kind: string | null
+}
+
 export const productionApi = {
-  tokenUsage: (body: { chat_id: string | null; message: string; execute: boolean; policy: ProductionPolicy }) =>
+  tokenUsage: (body: { chat_id: string | null; message: string; execute: boolean; policy: ProductionPolicy; selected_node_ids?: string[] }) =>
     request<{ token_count: number; ctx_size: number; estimated: boolean }>('/production/token_usage', {
       method: 'POST', body: JSON.stringify(body)
     }),
@@ -1347,13 +1354,13 @@ export const productionApi = {
   pause: (run_id: string, paused: boolean) => request<{ paused: boolean }>(
     '/production/pause', { method: 'POST', body: JSON.stringify({ run_id, paused }) }
   ),
-  instruct: (run_id: string, instruction_id: string, message: string) => request<ProductionInstruction>(
-    '/production/instruction', { method: 'POST', body: JSON.stringify({ run_id, instruction_id, message }) }
+  instruct: (run_id: string, instruction_id: string, message: string, selected_node_ids: string[] = []) => request<ProductionInstruction>(
+    '/production/instruction', { method: 'POST', body: JSON.stringify({ run_id, instruction_id, message, selected_node_ids }) }
   ),
   list: () => request<ChatSummary[]>('/production/chats'),
   status: () => request<{ active: boolean }>('/production/status'),
   send: (
-    body: { chat_id: string | null; message: string; execute: boolean; policy: ProductionPolicy },
+    body: { chat_id: string | null; message: string; execute: boolean; policy: ProductionPolicy; selected_node_ids?: string[] },
     onEvent: (event: ProductionEvent) => void | Promise<void>,
     signal: AbortSignal
   ) => chatSse<ProductionEvent>('/production/send', body, onEvent, signal)

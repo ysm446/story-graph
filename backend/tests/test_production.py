@@ -370,6 +370,95 @@ def test_memory_review_progress_is_sent_during_production(store, monkeypatch):
     assert production_memory.read(store)["content"] == "確認済み"
 
 
+def test_selection_resolves_ids_without_body_and_does_not_change_policy(store):
+    policy = production.ProductionPolicy(store, protected_ids=["first"])
+    before = policy.spec()
+    selection = production.selected_nodes(store, ["first", "last", "first"])
+    assert selection == [{"id": "first", "title": "出発", "kind": None},
+                         {"id": "last", "title": "帰還", "kind": None}]
+    messages = production.build_messages(store, [], "このシーンを直して", True, policy, None, [], [], selection=selection)
+    assert production.selection_context(selection) in messages[-1]["content"]
+    assert "get_beats" in messages[0]["content"]
+    assert policy.spec() == before
+    with pytest.raises(ValueError, match="選択したノードがありません"):
+        production.selected_nodes(store, ["missing"])
+
+
+def test_selection_is_saved_with_request_and_not_inherited_by_next_request(store, monkeypatch):
+    selection = production.selected_nodes(store, ["first"])
+    captured = []
+    async def model(messages, **kwargs):
+        captured.append(messages)
+        yield "done", {"content": "対象を確認しました"}
+    monkeypatch.setattr(llm, "chat_stream_tools", model)
+    async def check():
+        first = [json.loads(s.removeprefix("data: ")) async for s in production.stream(
+            store, "fake", None, "選択中の本文を確認", False, lambda: None, selection=selection)]
+        chat_id = next(e["chat_id"] for e in first if "chat_id" in e)
+        store.conn.execute("UPDATE nodes SET title='改名後' WHERE id='first'")
+        store.conn.commit()
+        _ = [s async for s in production.stream(store, "fake", chat_id, "次の相談", False, lambda: None)]
+        return store.get_chat(chat_id)["messages"]
+    history = run(check())
+    requests = [m for m in history if m["role"] == "user"]
+    assert requests[0]["selected_nodes"] == selection
+    assert requests[0]["selected_nodes"][0]["title"] == "出発"
+    assert requests[1]["selected_nodes"] == []
+    assert production.selection_context([]) in captured[-1][-1]["content"]
+
+
+def test_selection_api_usage_instruction_retry_and_missing_ids(store, monkeypatch):
+    import app as api
+    monkeypatch.setattr(api, "store", store)
+    monkeypatch.setattr(production, "gate", production.ProductionGate())
+    captured = []
+    async def usage(store, base_url, messages, execute):
+        captured.append(messages)
+        return {"token_count": 1, "ctx_size": 16384, "estimated": True}
+    monkeypatch.setattr(production, "context_usage", usage)
+    chat = store.create_chat(None, "all", mode="production")
+    history = production.ProductionHistory([])
+    active = production.ProductionRun(store, chat["id"], history, True)
+    active.ready = True
+    async def check():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=api.app), base_url="http://test") as client:
+            body = {"message": "このシーン", "selected_node_ids": ["first"]}
+            assert (await client.post("/production/token_usage", json=body)).status_code == 200
+            assert production.selection_context(production.selected_nodes(store, ["first"])) in captured[-1][-1]["content"]
+            missing = {**body, "selected_node_ids": ["missing"]}
+            assert (await client.post("/production/token_usage", json=missing)).status_code == 400
+            assert (await client.post("/production/send", json=missing)).status_code == 400
+            assert not production.gate.active
+            production.gate.run = active
+            instruction = {**body, "run_id": active.id, "instruction_id": "selection-test"}
+            accepted = await client.post("/production/instruction", json=instruction)
+            assert accepted.status_code == 200
+            store.conn.execute("UPDATE nodes SET title='改名後' WHERE id='first'")
+            store.conn.commit()
+            repeated = await client.post("/production/instruction", json=instruction)
+            assert repeated.json() == accepted.json() and len(active.pending) == 1
+            assert (await client.post("/production/instruction", json={**instruction, "selected_node_ids": ["last"]})).status_code == 409
+            active.take()
+            messages = production.build_messages(store, history, "元の依頼", True,
+                production.ProductionPolicy(store), None, [], [], run_id=active.id, selection=[])
+            assert json.dumps([production.message_content(history[0])], ensure_ascii=False) in messages[-1]["content"]
+            assert history[0]["selected_nodes"] == [{"id": "first", "title": "出発", "kind": None}]
+    run(check())
+
+
+def test_selected_protected_node_still_cannot_be_edited(store, monkeypatch):
+    fake_extraction(monkeypatch)
+    fake_llm(monkeypatch, [call("update_scene", {"node_id": "first", "beat": "変更", "reason": "依頼"}), {"content": "保護されています"}])
+    policy = production.ProductionPolicy(store, protected_ids=["first"])
+    async def check():
+        return [json.loads(s.removeprefix("data: ")) async for s in production.stream(
+            store, "fake", None, "選択中の本文を直して", True, lambda: None, policy=policy,
+            selection=production.selected_nodes(store, ["first"]))]
+    events = run(check())
+    assert any(e.get("tool_error") for e in events)
+    assert store.get_node("first")["beat"] == "村を出る"
+
+
 def test_readonly_rejects_write_even_when_model_calls_it(store, monkeypatch):
     before = store.graph()
     fake_llm(monkeypatch, [call("delete_scene", {"node_id": "first", "reason": "削除"}), {"content": "案だけ返します"}])

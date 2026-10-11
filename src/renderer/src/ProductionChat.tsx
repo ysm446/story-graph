@@ -1,7 +1,7 @@
 import ChatRulesPanel from './ChatRulesPanel'
 import AutoTextarea from './AutoTextarea'
 import { memo, useCallback, useEffect, useRef, useState } from 'react'
-import { chatApi, isAbortError, productionApi, type ChatSummary, type ProductionInstruction, type ProductionPolicy, type ProductionOperation } from './api'
+import { chatApi, isAbortError, productionApi, type ChatSummary, type ProductionInstruction, type ProductionPolicy, type ProductionOperation, type ProductionSelectedNode } from './api'
 import { Markdown } from './Markdown'
 import { showStatusNotice } from './statusNotice'
 import { setProductionPreview } from './productionPreview'
@@ -12,6 +12,7 @@ import ProductionPolicyPanel, { defaultProductionPolicy, policySummary } from '.
 import ContextUsageRing, { type ContextUsage } from './ContextUsageRing'
 
 interface Message {
+  selected_nodes?: ProductionSelectedNode[]
   created_at?: string
   policy?: ProductionPolicy
   policy_after?: ProductionPolicy
@@ -62,6 +63,9 @@ const MessageList = memo(function MessageList({ messages, nodes, groups }: {
             {messageTime(m.created_at) && <time dateTime={m.created_at} className="ml-2 tabular-nums" data-tip={new Date(m.created_at!).toLocaleString('ja-JP')}>{messageTime(m.created_at)}</time>}
           </div>
           {m.policy && <p className="mb-1 text-[11px]" style={{ color: 'var(--text-dim)' }}>{m.policy_label || policySummary(m.policy, nodes, groups)}</p>}
+          {m.selected_nodes && <p className="mb-1 text-[11px]" style={{ color: 'var(--text-dim)' }}>
+            送信時の選択: {m.selected_nodes.length ? m.selected_nodes.map((node) => node.title).join('、') : 'なし'}
+          </p>}
           {m.operation && 'entity_id' in m.operation && <details className="mb-1 text-[11px]" style={{ color: 'var(--text-dim)' }}>
             <summary className="cursor-pointer">資料庫の変更内容</summary>
             {Object.keys(m.operation.after ?? m.operation.before ?? {}).filter((field) =>
@@ -86,7 +90,9 @@ const MessageList = memo(function MessageList({ messages, nodes, groups }: {
 })
 
 /** 制作専用チャット。相談履歴とは分け、選択した送信モードで書き込みの可否を決める。 */
-export default function ProductionChat({ beforeExecute, onChanged, onFollowTarget, onManualEdit, nodes, groups, policy, setPolicy }: {
+export default function ProductionChat({ beforeExecute, onChanged, onFollowTarget, onManualEdit, nodes, groups, policy, setPolicy, selectedNodeIds, chapterSelected }: {
+  selectedNodeIds: string[]
+  chapterSelected: boolean
   policy: ProductionPolicy
   setPolicy: React.Dispatch<React.SetStateAction<ProductionPolicy>>
   onManualEdit: (paused: boolean) => void
@@ -118,7 +124,12 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
   const [runId, setRunId] = useState<string | null>(null)
   const runRef = useRef<string | null>(null)
   const [sendingInstruction, setSendingInstruction] = useState(false)
-  const instructionRequest = useRef<{ runId: string; text: string; id: string } | null>(null)
+  const instructionRequest = useRef<{ runId: string; text: string; id: string; selectedIds: string[] } | null>(null)
+  const selectionKey = JSON.stringify(selectedNodeIds)
+  const selection = selectedNodeIds.map((id) => {
+    const node = nodes.find((item) => item.id === id)
+    return { id, title: node?.title || '(無題)', kind: node?.kind ?? null }
+  })
   const [follow, setFollow] = useState(true)
   const followRef = useRef(true)
   const followTargetRef = useRef<string | null>(null)
@@ -133,12 +144,12 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
     if (busy) return
     let stale = false
     const timer = window.setTimeout(() => {
-      void productionApi.tokenUsage({ chat_id: chatId, message: input, execute: sendMode === 'execute', policy })
+      void productionApi.tokenUsage({ chat_id: chatId, message: input, execute: sendMode === 'execute', policy, selected_node_ids: selectedNodeIds })
         .then((result) => { if (!stale) setUsage(result) })
         .catch(() => { if (!stale) setUsage(null) })
     }, 400)
     return () => { stale = true; window.clearTimeout(timer) }
-  }, [busy, chatId, input, sendMode, policy, rulesRefresh, memoryRefresh, memoryDirty, messages, nodes, groups])
+  }, [busy, chatId, input, sendMode, policy, rulesRefresh, memoryRefresh, memoryDirty, messages, nodes, groups, selectionKey])
 
   const bumpMemoryRefresh = useCallback((): void => setMemoryRefresh((value) => value + 1), [])
   const refreshHistory = async (): Promise<void> => setHistory(await productionApi.list())
@@ -207,12 +218,12 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
     const activeRun = runId
     const previous = instructionRequest.current
     const request = previous?.runId === activeRun && previous.text === text
-      ? previous : { runId: activeRun, text, id: crypto.randomUUID() }
+      ? previous : { runId: activeRun, text, id: crypto.randomUUID(), selectedIds: [...selectedNodeIds] }
     instructionRequest.current = request
     setSendingInstruction(true)
     setError('')
     try {
-      const item = await productionApi.instruct(activeRun, request.id, text)
+      const item = await productionApi.instruct(activeRun, request.id, text, request.selectedIds)
       if (runRef.current === activeRun) recordInstruction(item)
       setInput((value) => value.trim() === text ? '' : value)
       instructionRequest.current = null
@@ -251,6 +262,8 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
     const blocked = execute ? beforeExecute() : null
     if (blocked) { setError(blocked); return }
     if (execute && policy.allowed_ids?.length === 0) { setError('変更できるシーンを1つ以上選んでください'); return }
+    const selectedIds = [...selectedNodeIds]
+    const selectedNodes = selection.map((node) => ({ ...node }))
     setError('')
     setStatus('')
     setRunId(null)
@@ -267,7 +280,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
         const startedAt = Date.now()
         setStatus('開始の準備をしています…')
         setStatusAt(new Date().toISOString())
-        setMessages((prev) => [...prev, { role: 'user', content: message, created_at: new Date().toISOString(), policy, policy_label: policySummary(policy, nodes, groups) }])
+        setMessages((prev) => [...prev, { role: 'user', content: message, selected_nodes: selectedNodes, created_at: new Date().toISOString(), policy, policy_label: policySummary(policy, nodes, groups) }])
         let text = ''
         let receivedAt: string | undefined
         let finished = false
@@ -281,7 +294,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
           setLive('')
         }
         try {
-          await productionApi.send({ chat_id: currentChatId, message, execute, policy }, async (event) => {
+          await productionApi.send({ chat_id: currentChatId, message, execute, policy, selected_node_ids: selectedIds }, async (event) => {
             receivedAt = event.timestamp ?? new Date().toISOString()
             const created_at = receivedAt
             if (event.usage) setUsage(event.usage)
@@ -428,6 +441,11 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
       <p className="text-[11px]" style={{ color: 'var(--text-faint)' }}>
         {status && messageTime(statusAt) && <time dateTime={statusAt} className="mr-2 tabular-nums">{messageTime(statusAt)}</time>}
         {task?.status === 'pending' ? '待機しています…' : status || '全体の接続関係と資料庫のキャラクター・場所を参照できます。相談するだけでは作品を変更しません。'}
+      </p>
+      <p className="shrink-0 text-[11px]" style={{ color: 'var(--text-dim)' }}
+        data-tip="送信時の選択を依頼に添えます。送信後に選択を変えても対象は変わりません。変更範囲・AI保護は引き続き適用されます。本文は保存済みの内容を参照します。">
+        選択中: {selection.length ? selection.map((node) => node.title).join('、') : 'なし'}
+        {chapterSelected && '（章カードは添付されません。本文を扱うシーンを選んでください）'}
       </p>
       <AutoTextarea ariaLabel="制作への依頼" value={input} onChange={setInput} disabled={sendingInstruction || (busy && !runId)}
         onKeyDown={(e) => {

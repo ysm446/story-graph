@@ -5238,6 +5238,8 @@ function StructureModeInner({
               {chatKind === 'production' && <div className="min-h-0 flex-1"><ProductionChat
                 policy={productionPolicy} setPolicy={setProductionPolicy}
                 nodes={graphNodes} groups={groups}
+                selectedNodeIds={displayNodes.filter((n) => n.selected && n.type !== 'chapterNode').map((n) => n.id)}
+                chapterSelected={displayNodes.some((n) => n.selected && n.type === 'chapterNode')}
                 beforeExecute={() => beatDraftCache.size > 0 ? '未保存のシーンがあります。保存してから制作を実行してください。' : null}
                 onManualEdit={setProductionManual}
                 onFollowTarget={followProductionTarget}

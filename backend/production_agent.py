@@ -56,6 +56,25 @@ class ProductionHistory(list):
         super().append(item)
 
 
+def selected_nodes(store, node_ids):
+    """送信時の選択をIDと名称で固定する。本文はget_beatsで最新の保存内容を読む。"""
+    result = []
+    for node_id in dict.fromkeys(node_ids):
+        node = store.get_node(node_id)
+        if node is None:
+            raise ValueError(f"選択したノードがありません。選び直してください: {node_id}")
+        result.append({"id": node_id, "title": node.get("title") or "(無題)", "kind": node.get("kind")})
+    return result
+
+
+def selection_context(selection):
+    return "\nこの発言の送信時に選択していたノード（参照対象。編集許可ではありません）: " + json.dumps(selection, ensure_ascii=False)
+
+
+def message_content(item):
+    return item["content"] + (selection_context(item["selected_nodes"]) if "selected_nodes" in item else "")
+
+
 class ProductionGate:
     """制作と手動編集を切り替える。別の生成やライブラリ切替は作業終了まで止める。"""
 
@@ -146,17 +165,17 @@ class ProductionRun:
         if self.paused or self.epoch != epoch:
             raise ManualEditPending("手動編集に切り替わったため、未確定の操作を破棄して読み直します")
 
-    def submit(self, instruction_id, content):
+    def submit(self, instruction_id, content, selection=None):
         if not self.accepting:
             raise ValueError("この作業は途中指示を受け付けていません")
         existing = next((m for m in self.history if m.get("instruction", {}).get("id") == instruction_id), None)
         if existing:
-            if existing["content"] != content:
+            if existing["content"] != content or existing.get("selected_nodes", []) != (selection or []):
                 raise ValueError("同じ指示IDで異なる内容は送れません")
             return existing
         if len(self.pending) >= 8:
             raise ValueError("未反映の指示が8件あります。反映を待ってから送ってください")
-        item = {"role": "user", "content": content,
+        item = {"role": "user", "content": content, "selected_nodes": selection or [],
                 "instruction": {"id": instruction_id, "status": "accepted", "run_id": self.id}}
         self.history.append(item)
         self.store.save_chat_messages(self.chat_id, self.history)
@@ -420,7 +439,7 @@ def _patch_args(store, args):
     return {"node_id": args.get("node_id"), "beat": updated, "reason": args.get("reason")}
 
 
-def build_messages(store, history, message, execute, policy, previous_checkpoint, changes, recent_results, run_id=None):
+def build_messages(store, history, message, execute, policy, previous_checkpoint, changes, recent_results, run_id=None, selection=None):
     system = chat_agent.build_system(store, store.canon_path(), "all", production=execute) + "\n" + (
         "あなたは制作の担当です。今回の依頼の範囲だけを編集してください。"
         "一度にツールは1つ。編集前に対象と前後の本文を読んでください。"
@@ -464,15 +483,19 @@ def build_messages(store, history, message, execute, policy, previous_checkpoint
                    "『ここまでの場面は残す』と指示されたら、追加済みの場面も含めて削除・統合・置き換えで失わせず、指定された残りの作業だけを進めてください。")
     system += production_memory.prompt(store, previous_checkpoint, allow_write=execute)
     system += "\n作者が画面で指定した変更条件（最優先）: " + policy.describe()
+    system += ("\n『今選択しているノード』『このシーン』は、その発言に添付された送信時の選択を参照します。"
+               "選択は後から変わりません。本文はget_beatsで読み直し、選択だけを編集命令と見なさないでください。"
+               "選択なしで対象が不明なら推測せず確認し、複数選択で単数の対象が曖昧な場合も確認してください。"
+               "過去の発言の選択を今回の選択として扱わないでください。変更範囲・保護指定は選択より優先です。")
     # 各ステップで最新図を作り、本文を含むツール結果は直近だけ保持する。
-    conversation = [{"role": m["role"], "content": m["content"]} for m in history
+    conversation = [{"role": m["role"], "content": message_content(m)} for m in history
                     if m.get("role") in ("user", "assistant") and not m.get("operation") and not m.get("snapshot")
                     and m.get("instruction", {}).get("status") != "unapplied"][-12:]
     messages = [{"role": "system", "content": system}, *conversation]
-    messages.append({"role": "user", "content": "今回の依頼: " + message + "\n今回の実行記録: "
+    messages.append({"role": "user", "content": "今回の依頼: " + message + selection_context(selection or []) + "\n今回の実行記録: "
                      + json.dumps(changes, ensure_ascii=False)
                      + "\n今回の途中指示（当初の依頼より優先）: "
-                     + json.dumps([m["content"] for m in history
+                     + json.dumps([message_content(m) for m in history
                                    if m.get("instruction") and m["instruction"].get("run_id") == run_id
                                    and m["instruction"]["status"] == "reflected"], ensure_ascii=False)
                      + "\n直近の取得結果: "
@@ -488,7 +511,7 @@ async def context_usage(store, base_url, messages, execute):
             "estimated": counted is None, "ctx_size": int(store.get_settings().get("llm_ctx_size") or 16384)}
 
 
-async def stream(store: Store, base_url: str, chat_id: str | None, message: str, execute: bool, on_delete, policy=None):
+async def stream(store: Store, base_url: str, chat_id: str | None, message: str, execute: bool, on_delete, policy=None, selection=None):
     policy = policy or ProductionPolicy(store)
     chat = store.get_chat(chat_id) if chat_id else store.create_chat(None, "all", mode="production")
     if chat is None or chat.get("mode") != "production":
@@ -496,7 +519,7 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
         return
     chat_id = chat["id"]
     history = ProductionHistory(chat["messages"])
-    request_message = {"role": "user", "content": message, "execute": execute, "policy": policy.initial, "policy_label": policy.label}
+    request_message = {"role": "user", "content": message, "selected_nodes": selection or [], "execute": execute, "policy": policy.initial, "policy_label": policy.label}
     history.append(request_message)
     store.save_chat_messages(chat_id, history)
     run = ProductionRun(store, chat_id, history, execute)
@@ -511,8 +534,8 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
     checkpoint_started = False
     outcome = "interrupted"
     def save_checkpoint(status, report=""):
-        production_memory.checkpoint(store, run.id, chat_id, message, status, changes,
-            [{"content": m["content"], "status": m["instruction"]["status"]} for m in history
+        production_memory.checkpoint(store, run.id, chat_id, message_content(request_message), status, changes,
+            [{"content": message_content(m), "status": m["instruction"]["status"]} for m in history
              if m.get("instruction", {}).get("run_id") == run.id], report)
     try:
         yield _sse({"chat_id": chat_id, "run_id": run.id, "accepting_instructions": execute})
@@ -538,7 +561,7 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
             for item in run.take():
                 yield _sse({"instruction": item})
             messages = build_messages(store, history, message, execute, policy, previous_checkpoint,
-                                      changes, recent_results, run.id)
+                                      changes, recent_results, run.id, selection=selection)
             yield _sse({"usage": await context_usage(store, base_url, messages, execute)})
             yield _sse({"stage": f"確認しています… ({step + 1}/{MAX_STEPS})"})
             result: dict[str, Any] = {}
@@ -580,8 +603,8 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
                     try:
                         run.check_epoch(epoch)
                         async with aclosing(production_memory.review_stream(
-                            store, base_url, message,
-                            [m["content"] for m in history if m.get("instruction", {}).get("run_id") == run.id
+                            store, base_url, message_content(request_message),
+                            [message_content(m) for m in history if m.get("instruction", {}).get("run_id") == run.id
                              and m["instruction"]["status"] == "reflected"], changes, content,
                             check_current=lambda: run.check_epoch(epoch))) as reviews:
                             async for kind, reviewed in reviews:
