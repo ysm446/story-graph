@@ -13,10 +13,12 @@ const FIELD_DEFS: Array<{ key: 'description' | 'atmosphere'; label: string; rows
 export default function PlaceEditor({
   place,
   onChanged,
+  onDirty,
   onDeleted
 }: {
   place: Place
   onChanged: () => Promise<void>
+  onDirty?: (dirty: boolean) => void
   onDeleted: () => void
 }): React.JSX.Element {
   const [draft, setDraft] = useState<Partial<Place>>(place)
@@ -35,6 +37,11 @@ export default function PlaceEditor({
   const dirty = (['name', 'color', 'description', 'atmosphere', 'reading'] as const).some(
     (key) => (draft[key] ?? '') !== (place[key] ?? '')
   )
+
+  useEffect(() => {
+    onDirty?.(dirty || saving || uploading)
+    return () => onDirty?.(false)
+  }, [dirty, saving, uploading, onDirty])
 
   const handleSave = async (): Promise<void> => {
     setSaving(true)

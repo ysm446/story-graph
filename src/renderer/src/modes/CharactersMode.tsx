@@ -7,6 +7,7 @@ import RefImagePanel from '../RefImagePanel'
 import ProofreadTextarea from '../ProofreadTextarea'
 import RelationGraph from '../RelationGraph'
 import type { Character, Place, StoryGraph, StoryNode } from '../types'
+import { useWorkspace } from '../Workspace'
 
 const FIELD_DEFS: Array<{ key: 'profile' | 'appearance' | 'voice'; label: string; rows: number }> = [
   { key: 'profile', label: 'プロフィール(性格の基調・背景)', rows: 5 },
@@ -20,6 +21,10 @@ type Tab = 'characters' | 'places'
 /** 資料庫。キャラクターと場所を同じシェル(リサイズ可能なサイドバー + 編集ペイン)で扱う。
  *  場所も登録制のエンティティなので、庫としては同じ性格のもの(docs/design/places.md)。 */
 export default function CharactersMode(): React.JSX.Element {
+  const workspace = useWorkspace()
+  const [placeDirty, setPlaceDirty] = useState(false)
+  const [libraryVersion, setLibraryVersion] = useState(0)
+  const reloadSequence = useRef(0)
   const [tab, setTab] = useState<Tab>('characters')
   // キャラクターの見せ方(一覧+編集 ⇄ 関係図)。場所には無い切り替えなので、タブとは別に持つ
   const [showRelations, setShowRelations] = useState(false)
@@ -30,6 +35,8 @@ export default function CharactersMode(): React.JSX.Element {
   const [egoCharId, setEgoCharId] = useState<string | null>(null)
   const [selectedPlaceId, setSelectedPlaceId] = useState<string | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const selectedIdRef = useRef(selectedId)
+  selectedIdRef.current = selectedId
   const [draft, setDraft] = useState<Partial<Character>>({})
   const [saving, setSaving] = useState(false)
   const [cropTarget, setCropTarget] = useState<{
@@ -123,15 +130,21 @@ export default function CharactersMode(): React.JSX.Element {
   const selected = characters.find((c) => c.id === selectedId) ?? null
   const selectedPlace = places.find((p) => p.id === selectedPlaceId) ?? null
 
-  const reload = async (): Promise<void> => {
+  const reload = async (refreshDraft = false): Promise<void> => {
+    const sequence = ++reloadSequence.current
     const [chars, placeList, g] = await Promise.all([
       api.listCharacters(),
       api.listPlaces(),
       api.getGraph()
     ])
+    if (sequence !== reloadSequence.current) return
     setCharacters(chars)
     setPlaces(placeList)
     setGraph(g)
+    if (refreshDraft && selectedId === selectedIdRef.current && !workspace.libraryDirty.current) {
+      setDraft(chars.find((c) => c.id === selectedId) ?? {})
+      setLibraryVersion((value) => value + 1)
+    }
   }
 
   // 正史パス(canon エッジを根から辿る。StructureMode と同じ導出)
@@ -156,10 +169,6 @@ export default function CharactersMode(): React.JSX.Element {
     }
     return path
   }, [graph])
-
-  useEffect(() => {
-    void reload()
-  }, [])
 
   useEffect(() => {
     setDraft(selected ?? {})
@@ -204,6 +213,15 @@ export default function CharactersMode(): React.JSX.Element {
     (['name', 'color', 'profile', 'appearance', 'voice', 'reading'] as const).some(
       (key) => (draft[key] ?? '') !== (selected[key] ?? '')
     )
+
+  useEffect(() => {
+    workspace.libraryDirty.current = dirty || placeDirty || saving || cropTarget !== null
+    return () => { workspace.libraryDirty.current = false }
+  }, [dirty, placeDirty, saving, cropTarget, workspace.libraryDirty])
+
+  useEffect(() => {
+    if (workspace.mode === 'characters') void reload(!(dirty || placeDirty || saving))
+  }, [workspace.revision, workspace.mode])
 
   const handleDelete = async (): Promise<void> => {
     if (!selectedId) return
@@ -391,8 +409,10 @@ export default function CharactersMode(): React.JSX.Element {
         ) : tab === 'places' ? (
           selectedPlace ? (
             <PlaceEditor
+              key={`${selectedPlace.id}:${libraryVersion}`}
               place={selectedPlace}
               onChanged={reload}
+              onDirty={setPlaceDirty}
               onDeleted={() => setSelectedPlaceId(null)}
             />
           ) : (

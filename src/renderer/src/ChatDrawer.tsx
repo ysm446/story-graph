@@ -1,4 +1,3 @@
-import ChatRulesPanel from './ChatRulesPanel'
 import ContextUsageRing from './ContextUsageRing'
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import {
@@ -196,9 +195,7 @@ const ROOM_TURN_OPTIONS = [1, 2, 4, 6] // 1 回で続けて話させる発言数
 // 候補は会話と一緒にスクロールするので、固定枠だった頃より多めに出せる
 const TEMPLATE_WINDOW = 5 // 同時に見せる件数
 const MAX_DYNAMIC = 3 // うち、内容から生成された質問に使う枠(生成側の上限も 3 件)
-const SIDEBAR_MIN = 140 // 会話一覧の最小幅(見出しが読める下限)
-const SIDEBAR_MAX = 420 // 同・最大幅。会話エリアを潰さない上限
-const SIDEBAR_DEFAULT = 264 // 会話名 + キャラ名 / シーン名の 2 行が切れにくい幅
+
 // アンカーが動いてから使用量を取り直すまでの待ち。選択が落ち着いてから 1 回だけ
 // 投げるための間で、矢印キーの連打(1 回 60ms 程度)は十分に吸収できる長さ
 const USAGE_DEBOUNCE_MS = 400
@@ -218,8 +215,7 @@ export default function ChatDrawer({
   canonTailId: string | null
   nodesById: Record<string, StoryNode>
   characters: Character[]
-  // 開閉と高さは親(構造モード)が持つ。相談チャットはノードエリアとの
-  // 分割ペインなので、レイアウトの権限を親側に集約している
+  // 開閉・寸法は共通ワークスペースが持つ。非表示でも会話と下書きを保持する
   open: boolean
   onClose: () => void
   // 設定「内容から質問候補を作る」。オフなら生成も表示もしない
@@ -248,19 +244,13 @@ export default function ChatDrawer({
   // 再生成中はこの項目の直後に書きかけの吹き出しを出す(null = 一番下)
   const [liveAfter, setLiveAfter] = useState<number | null>(null)
   const [input, setInput] = useState('')
-  const [rulesDirty, setRulesDirty] = useState(false)
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
   const [history, setHistory] = useState<ChatSummary[]>([])
   // 候補チップは常に入力欄の右上に積む。全部出すと縦を食うので窓を 3 件に
   // 絞り、⟳ で次の 3 件へ送る(ランダムではなく決まった順。docs/design/chat.md)
   const [templateOffset, setTemplateOffset] = useState(0)
-  // 左サイドバー(会話一覧)の幅。分割線のドラッグで変えられる。モードを
-  // 切り替えるとこのコンポーネントは破棄されるので localStorage に覚えておく
-  const [sidebarWidth, setSidebarWidth] = useState(() => {
-    const saved = Number(localStorage.getItem('chatSidebarWidth'))
-    return saved >= SIDEBAR_MIN && saved <= SIDEBAR_MAX ? saved : SIDEBAR_DEFAULT
-  })
+  const [historyOpen, setHistoryOpen] = useState(false)
   // 左サイドバー(会話一覧)の ⋯ メニューと会話名の編集
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null)
   const [renamingId, setRenamingId] = useState<string | null>(null)
@@ -280,7 +270,6 @@ export default function ChatDrawer({
   const stickToBottomRef = useRef(true)
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
   const panelRef = useRef<HTMLDivElement | null>(null) // 入力欄の高さの上限を決めるのに使う
-  const rootRef = useRef<HTMLDivElement | null>(null) // 会話一覧の最大幅を決めるのに使う
   const usageSeqRef = useRef(0) // 使用量の取得は追い越しがあるので最後の応答だけ採用する
   const busyElapsed = useElapsedSeconds(busy)
   // 返答の読み上げ(docs/design/voice.md §6.1)。キャラとの会話はキャラの声、相談は相談相手の声
@@ -292,33 +281,6 @@ export default function ChatDrawer({
   useEffect(() => {
     if (voice.error) setStatus(`読み上げに失敗しました: ${voice.error}`)
   }, [voice.error])
-
-  // 分割線のドラッグで会話一覧の幅を変える(構造モードの分割線と同じ作り)。
-  // 会話エリアは最低 320px 残す
-  const beginSidebarResize = useCallback(
-    (event: React.PointerEvent): void => {
-      event.preventDefault()
-      const startX = event.clientX
-      const startW = sidebarWidth
-      const rootWidth = rootRef.current?.clientWidth ?? 0
-      const maxW = rootWidth > 0 ? Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, rootWidth - 320)) : SIDEBAR_MAX
-      const onMove = (ev: PointerEvent): void => {
-        const next = Math.min(maxW, Math.max(SIDEBAR_MIN, startW + (ev.clientX - startX)))
-        setSidebarWidth(next)
-      }
-      const onUp = (): void => {
-        window.removeEventListener('pointermove', onMove)
-        window.removeEventListener('pointerup', onUp)
-        setSidebarWidth((w) => {
-          localStorage.setItem('chatSidebarWidth', String(Math.round(w)))
-          return w
-        })
-      }
-      window.addEventListener('pointermove', onMove)
-      window.addEventListener('pointerup', onUp)
-    },
-    [sidebarWidth]
-  )
 
   // 入力欄は内容に合わせて縦に伸ばす(1 行から始めて、書いた分だけ広がる)。
   // 会話が潰れないようドロワーの高さの 40% を上限にし、超えたらスクロールする
@@ -683,7 +645,6 @@ export default function ChatDrawer({
     if (room) return sendRoom(override)
     const message = (override ?? input).trim()
     if (!message || busy) return
-    if (!charId && rulesDirty) { setStatus('AIへのルールを保存するか、元に戻してから送信してください。'); return }
     let insertPos: number | null = null
     if (replaceTurn !== undefined) {
       const kept = items.filter((it) => !(it.turn === replaceTurn && it.kind !== 'user'))
@@ -944,10 +905,14 @@ export default function ChatDrawer({
   ) : null
 
   return (
-    <div ref={rootRef} className="flex h-full min-h-0" style={{ background: 'var(--bg-chat)' }}>
-      {/* 左サイドバー: これまでの会話。各項目の ⋯ で名前の変更と削除。
-          幅は右端の分割線をドラッグして変えられる */}
-      <aside className="flex shrink-0 flex-col" style={{ width: sidebarWidth }}>
+    <div className="flex h-full min-h-0 flex-col" style={{ background: 'var(--bg-chat)' }}>
+      <div className="shrink-0 border-b px-3 py-1" style={{ borderColor: 'var(--border)' }}>
+        <button onClick={() => setHistoryOpen(!historyOpen)} aria-expanded={historyOpen}
+          className="rounded-md border px-2 py-0.5 text-[11px]"
+          style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+          data-tip="相談の会話一覧を開閉する">{historyOpen ? '会話一覧を閉じる' : '会話一覧'}</button>
+      </div>
+      <aside className="min-h-0 shrink-0 flex-col border-b" style={{ display: historyOpen ? 'flex' : 'none', height: 180, maxHeight: '35%', borderColor: 'var(--border)' }}>
         <button
           onClick={startNewChat}
           disabled={busy}
@@ -1093,21 +1058,8 @@ export default function ChatDrawer({
           })}
         </div>
       </aside>
-      {/* リサイズハンドル: 線はレイアウト実体の 1px、当たり判定だけ左右 3px はみ出させる */}
-      <div
-        className="relative w-px shrink-0 cursor-col-resize transition-colors hover:bg-[var(--accent-border)]"
-        style={{ background: 'var(--border)' }}
-        data-tip="ドラッグで幅を変更"
-      >
-        <div
-          onPointerDown={beginSidebarResize}
-          className="absolute inset-y-0 z-10 cursor-col-resize"
-          style={{ left: -3, right: -3 }}
-        />
-      </div>
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <div ref={panelRef} className="inspector-scrollbar flex min-h-0 flex-1 flex-col overflow-y-auto px-4 pb-3 pt-2">
-          {!charId && !room && <div className="mb-2"><ChatRulesPanel busy={busy} onDirty={setRulesDirty} onSaved={() => { void refreshUsage(chatId, liveAnchor) }} /></div>}
           {/* ヘッダー: 相手 / アンカー / スコープ */}
           <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px]" style={{ color: 'var(--text-faint)' }}>
             {/* 話す相手: 相談(編集者) or キャラ本人。切替は新規チャット扱い */}

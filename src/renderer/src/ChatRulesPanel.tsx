@@ -5,7 +5,7 @@ import { api } from './api'
 const key = 'author_chat_rules'
 const example = '・シーン本文は、1シーンあたり600文字程度に収める。\n・シーン本文は小説調ではなく、出来事と人物の行動が分かる指示書形式で書く。'
 
-/** 相談と制作で共有する、作者だけが変更するルール。 */
+/** 制作エージェント専用の指示。保存キーは以前の設定を引き継ぐ。 */
 export default function ChatRulesPanel({ busy, onDirty, onSaved }: {
   busy: boolean; onDirty: (dirty: boolean) => void; onSaved: () => void
 }): React.JSX.Element {
@@ -38,10 +38,10 @@ export default function ChatRulesPanel({ busy, onDirty, onSaved }: {
   const button = 'rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-50'
   const style = { borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }
   return <details className="shrink-0 rounded-lg border px-3 py-1.5 text-[12px]" style={{ borderColor: 'var(--border)', background: 'var(--bg-elevated)' }}>
-    <summary className="cursor-pointer" data-tip="この作品の相談と制作で共有する、文体や長さなどのルールを設定します">AIへのルール{dirty ? ' · 未保存' : saved?.trim() ? ' · 設定済み' : ''}</summary>
+    <summary className="cursor-pointer" data-tip="制作エージェントの作業方針や制約を設定します">制作エージェントへの指示{dirty ? ' · 未保存' : saved?.trim() ? ' · 設定済み' : ''}</summary>
     <div className="inspector-scrollbar mt-2 flex max-h-[50vh] flex-col gap-2 overflow-y-auto">
-      <p className="text-[11px]" style={{ color: 'var(--text-dim)' }}>この作品の相談・制作に共通で適用します。キャラクターとの会話には適用しません。AIはこの設定を書き換えません。</p>
-      <AutoTextarea ariaLabel="AIへのルール" minRows={3} maxLength={6000} value={draft} placeholder={example}
+      <p className="text-[11px]" style={{ color: 'var(--text-dim)' }}>この作品の制作チャットに適用します。「相談する」で変更案を考えるときにも使います。相談（編集者）やキャラクターとの会話には適用しません。AIはこの設定を書き換えません。</p>
+      <AutoTextarea ariaLabel="制作エージェントへの指示" minRows={3} maxLength={6000} value={draft} placeholder={example}
         disabled={busy || saving || saved === null}
         onChange={(value) => { setDraft(value); setNotice('') }}
         className="w-full shrink-0 rounded-md border px-2 py-0.5 text-[12px] outline-none"

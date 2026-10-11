@@ -590,3 +590,43 @@ input[type='range']:focus-visible {
   color: var(--delete-hover);
   border-color: var(--delete-border);
 }
+.scene-detail {
+  container-type: inline-size;
+}
+
+/* 下段のシーン詳細。本文と補助情報を別々にスクロールできるようにする。 */
+.scene-detail-layout {
+  display: grid;
+  grid-template-columns: minmax(320px, 1fr) 1px clamp(280px, var(--detail-meta-width, 42%), calc(100% - 321px));
+  overflow: hidden;
+}
+
+.scene-detail-main,
+.scene-detail-meta {
+  overflow-y: auto;
+}
+
+.scene-detail-main > div {
+  max-width: 80ch;
+  margin-inline: auto;
+}
+
+@container (max-width: 719px) {
+  .scene-detail-divider {
+    display: none;
+  }
+  .scene-detail-layout {
+    display: block;
+    overflow-y: auto;
+  }
+
+  .scene-detail-main,
+  .scene-detail-meta {
+    overflow: visible;
+  }
+
+  .scene-detail-meta {
+    border-left: 0;
+    border-top: 1px solid var(--border);
+  }
+}

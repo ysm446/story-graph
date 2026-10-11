@@ -257,7 +257,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
   const send = (execute: boolean): void => {
     const message = input.trim()
     if (!message || busy) return
-    if (rulesDirty) { setError('AIへのルールを保存するか、元に戻してから送信してください。'); return }
+    if (rulesDirty) { setError('制作エージェントへの指示を保存するか、元に戻してから送信してください。'); return }
     if (memoryDirty) { setError('作業メモを保存するか、編集をキャンセルしてから送信してください。'); return }
     const blocked = execute ? beforeExecute() : null
     if (blocked) { setError(blocked); return }
@@ -392,8 +392,8 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
   }
 
   return (
-    <div className="inspector-scrollbar flex h-full min-h-0 flex-col gap-2 overflow-y-auto px-4 py-2 text-[12px]" style={{ background: 'var(--bg-chat)', color: 'var(--text)' }}>
-      <div className="flex items-center gap-2">
+    <div className="inspector-scrollbar flex h-full min-h-0 min-w-0 w-full flex-col gap-2 overflow-y-auto px-4 py-2 text-[12px]" style={{ background: 'var(--bg-chat)', color: 'var(--text)' }}>
+      <div className="flex flex-wrap items-center gap-2">
         <span className="shrink-0 text-[11px]" style={{ color: 'var(--text-faint)' }}>制作（実験）</span>
         <select
           aria-label="制作の会話" value={chatId ?? ''} disabled={busy}

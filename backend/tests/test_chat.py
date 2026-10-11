@@ -817,18 +817,18 @@ def test_graph_summary_uses_same_fallback_as_canon_when_ending_is_unrooted(store
     assert ending in graph["detached_roots"]
 
 
-def test_author_rules_apply_to_consultation_and_production_not_characters(store):
+def test_author_rules_apply_only_to_production_agent(store):
     import production_agent
     import chat_rules
     rule = "シーン本文は600文字程度。小説ではなく指示書形式で書く。"
     baseline = chat_agent.build_system(store, store.canon_path(), "all")
     store.set_settings({chat_rules.KEY: rule})
     for scope in ("upto", "all"):
-        assert rule in chat_agent.build_system(store, store.canon_path(), scope)
+        assert rule not in chat_agent.build_system(store, store.canon_path(), scope)
     for execute in (False, True):
         messages = production_agent.build_messages(store, [], "場面を考える", execute,
             production_agent.ProductionPolicy(store), None, [], [])
-        assert rule in messages[0]["content"]
+        assert messages[0]["content"].count(rule) == 1
         assert "相談中の編集禁止、参照範囲、保護条件" in messages[0]["content"]
     assert rule not in chat_agent.build_character_system(store, store.canon_path(), "aya", "interview")
     assert rule not in chat_agent.build_room_system(store, store.canon_path(), "aya", ["aya", "ken"])

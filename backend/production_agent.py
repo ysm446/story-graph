@@ -13,6 +13,7 @@ from production_preview import scene_preview
 from typing import Any
 
 import chat_agent
+import chat_rules
 import db
 import generation
 import llm
@@ -481,6 +482,7 @@ def build_messages(store, history, message, execute, policy, previous_checkpoint
     if any(m.get("instruction", {}).get("run_id") == run_id and m.get("instruction", {}).get("status") == "reflected" for m in history):
         system += ("実行記録にある変更はすでに確定しています。方針変更だけを理由に取り消してはいけません。"
                    "『ここまでの場面は残す』と指示されたら、追加済みの場面も含めて削除・統合・置き換えで失わせず、指定された残りの作業だけを進めてください。")
+    system += chat_rules.prompt(store)
     system += production_memory.prompt(store, previous_checkpoint, allow_write=execute)
     system += "\n作者が画面で指定した変更条件（最優先）: " + policy.describe()
     system += ("\n『今選択しているノード』『このシーン』は、その発言に添付された送信時の選択を参照します。"

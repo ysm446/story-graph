@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { WorkspaceContext } from './Workspace'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, initApi } from './api'
 import ComfyBar from './ComfyBar'
 import TtsBar from './TtsBar'
@@ -156,6 +157,25 @@ function LibraryMenu(): React.JSX.Element {
 export default function App(): React.JSX.Element {
   const productionLocked = useTasks().some((t) => t.kind === 'production')
   const [mode, setMode] = useState<Mode>('structure')
+  const [chatHost, setChatHost] = useState<HTMLDivElement | null>(null)
+  const [chatOpen, setChatOpen] = useState(() => localStorage.getItem('chatDrawerOpen') === '1')
+  const [chatWidth, setChatWidth] = useState(() => {
+    const saved = Number(localStorage.getItem('workspaceChatWidth'))
+    return saved >= 320 && saved <= 900 ? saved : 440
+  })
+  const [manual, setManual] = useState(false)
+  const [revision, setRevision] = useState(0)
+  const libraryDirty = useRef(false)
+  const changed = useCallback(() => setRevision((value) => value + 1), [])
+  const toggleChat = useCallback(() => setChatOpen((value) => {
+    localStorage.setItem('chatDrawerOpen', value ? '0' : '1')
+    return !value
+  }), [])
+  const resizeChat = (event: React.PointerEvent<HTMLDivElement>): void => {
+    event.currentTarget.setPointerCapture(event.pointerId)
+    event.preventDefault()
+  }
+
   // モードをまたいで持ち回る「いま見ているシーン」。構造モードでは選択シーン、
   // 鑑賞モードでは読んでいるシーンが入り、モードを切り替えるとそこへ飛ぶ
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
@@ -258,6 +278,7 @@ export default function App(): React.JSX.Element {
   }, [])
 
   return (
+    <WorkspaceContext.Provider value={{ mode, chatHost, chatOpen, toggleChat, manual, setManual, revision, changed, libraryDirty }}>
     <div className="flex h-screen flex-col" style={{ background: 'var(--bg)' }}>
       {/* 上部バー: 左=ライブラリ / 中央=モデル選択 / 右=TTS・ComfyUI 状態 + 設定 */}
       <header
@@ -288,7 +309,6 @@ export default function App(): React.JSX.Element {
       </header>
       {/* 下段メニューバー: モード切替 */}
       <nav
-        inert={productionLocked}
         className="flex h-9 shrink-0 items-center gap-1 border-b px-3"
         style={{ background: 'var(--bg-sidebar)', borderColor: 'var(--border)' }}
       >
@@ -296,7 +316,9 @@ export default function App(): React.JSX.Element {
           <button
             key={m.id}
             onClick={() => setMode(m.id)}
-            className="rounded-lg px-3 py-1 text-[13px] transition-colors"
+            disabled={productionLocked && m.id === 'reader'}
+            data-tip={productionLocked && m.id === 'reader' ? '制作が終わるか停止してから鑑賞できます' : undefined}
+            className="rounded-lg px-3 py-1 text-[13px] transition-colors disabled:opacity-50"
             style={
               mode === m.id
                 ? { background: 'var(--accent-soft)', color: 'var(--text)' }
@@ -306,8 +328,12 @@ export default function App(): React.JSX.Element {
             {m.label}
           </button>
         ))}
+        {mode !== 'reader' && <button onClick={toggleChat}
+          className="ml-auto rounded-md border px-2 py-0.5 text-[11px]"
+          style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)', background: chatOpen ? 'var(--accent-soft)' : undefined }}
+          aria-expanded={chatOpen} data-tip="共通チャットの表示を切り替える">チャット</button>}
       </nav>
-      <div className="min-h-0 flex-1">
+      <div className="flex min-h-0 flex-1 overflow-hidden">
         {backendReady === false ? (
           <div className="flex h-full items-center justify-center">
             <div
@@ -325,7 +351,7 @@ export default function App(): React.JSX.Element {
           </div>
         ) : (
           <>
-            {mode === 'structure' && (
+            <div className="min-w-0 flex-1" style={{ display: mode === 'structure' ? 'block' : 'none' }}>
               <StructureMode
                 settingsVersion={settingsVersion}
                 focusNodeId={selectedNodeId}
@@ -333,19 +359,35 @@ export default function App(): React.JSX.Element {
                 onSelectionCountChange={setSelectedCount}
                 onReaderScopeChange={setReaderScopeGroupId}
               />
-            )}
+            </div>
             {mode === 'reader' && (
-              <ReaderMode
+              <div className="min-w-0 flex-1"><ReaderMode
                 focusNodeId={selectedNodeId}
                 initialGroupId={readerScopeGroupId}
                 onCurrentSceneChange={setSelectedNodeId}
-              />
+              /></div>
             )}
-            {mode === 'characters' && <CharactersMode />}
+            <div className="min-w-0 flex-1" style={{ display: mode === 'characters' ? 'block' : 'none' }}
+              inert={productionLocked && !manual}><CharactersMode /></div>
+            <div className="min-h-0 shrink-0" style={{ display: chatOpen && mode !== 'reader' ? 'flex' : 'none', width: chatWidth, maxWidth: '60%' }}>
+              <div role="separator" aria-label="チャットの幅" aria-orientation="vertical"
+                onPointerDown={resizeChat}
+                onPointerMove={(event) => {
+                  if (!event.currentTarget.hasPointerCapture(event.pointerId)) return
+                  const width = Math.max(320, Math.min(900, window.innerWidth * 0.6, window.innerWidth - event.clientX))
+                  setChatWidth(width)
+                  localStorage.setItem('workspaceChatWidth', String(width))
+                }}
+                className="relative w-px shrink-0 cursor-col-resize" style={{ background: 'var(--border)', touchAction: 'none' }}
+                data-tip="ドラッグでチャットの幅を変更">
+                <div className="absolute inset-y-0 -left-1 -right-1 z-10" />
+              </div>
+              <div ref={setChatHost} className="flex min-h-0 min-w-0 flex-1 flex-col" />
+            </div>
           </>
         )}
       </div>
-      <StatusBar backendReady={backendReady === true} selectedCount={selectedCount} />
+      <StatusBar backendReady={backendReady === true} selectedCount={mode === 'structure' ? selectedCount : 0} />
       {/* ツールチップの共有ホスト。アプリ全体で 1 つだけ置く(Tooltip.tsx) */}
       <TooltipHost />
       {/* 設定ポップアップ */}
@@ -418,5 +460,6 @@ export default function App(): React.JSX.Element {
         </div>
       )}
     </div>
+    </WorkspaceContext.Provider>
   )
 }

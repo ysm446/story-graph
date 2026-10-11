@@ -1,3 +1,6 @@
+import DetailSplit from '../DetailSplit'
+import { createPortal } from 'react-dom'
+import { useWorkspace } from '../Workspace'
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import {
   applyNodeChanges,
@@ -746,9 +749,8 @@ function BeatTab({
   }, [draft, dirty, node.id, draftNodeId])
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="inspector-scrollbar min-h-0 flex-1 overflow-y-auto p-3">
-        <div className="flex flex-col gap-3">
+    <div className="scene-detail flex min-h-0 flex-1 flex-col">
+      <DetailSplit storageKey="sceneDetailMetaWidth" main={<>
           {/* 「★ このブランチを正史にする」は置かない(2026-08-02 ユーザー判断)。
               正史は**アクティブな結末から遡った道**なので、決めることは「どの結末を
               アクティブにするか」だけ。道を直接選ぶ操作があると概念が二重になるうえ、
@@ -765,7 +767,90 @@ function BeatTab({
               ))}
             </div>
           )}
+          <label className="block">
+            <span className="mb-1 flex items-center justify-between">
+              <span className={labelClass.replace('mb-1 block ', '')} style={{ color: 'var(--text-faint)' }}>
+                Title
+              </span>
+              <button
+                onClick={(e) => {
+                  e.preventDefault()
+                  suggestField('title')
+                }}
+                disabled={suggesting !== null || !(draft.beat ?? '').trim()}
+                // 色は index.css の .accent-action(校正ボタンなど LLM を走らせるボタン共通)
+                className="accent-action inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium disabled:opacity-40"
+                data-tip="シーン本文からタイトルを自動生成"
+              >
+                {suggesting === 'title' ? (
+                  `生成中… (${suggestElapsed}s)`
+                ) : (
+                  <>
+                    <Icon name="sparkle" size={11} />
+                    自動生成
+                  </>
+                )}
+              </button>
+            </span>
+            <input
+              value={draft.title ?? ''}
+              onChange={(e) => setDraft((d) => ({ ...d, title: e.target.value }))}
+              className="w-full rounded-lg border px-3 py-1.5 text-[13px] outline-none"
+              style={inputStyle}
+            />
+          </label>
+          <label className="block">
+            <span className={labelClass} style={{ color: 'var(--text-faint)' }}>
+              シーン(出来事の仕様書)
+            </span>
+            {/* 高さの自動調整と校正ボタンは共通コンポーネント側で行う(ボタンは本文の下に常に出る)。
+                長いシーン本文の一部を直すことがあるので、前後を文脈として渡す */}
+            <ProofreadTextarea
+              rows={4}
+              value={draft.beat ?? ''}
+              onChange={(next) => setDraft((d) => ({ ...d, beat: next }))}
+              style={inputStyle}
+              withContext
+            />
+          </label>
+          <label className="block">
+            <span className="mb-1 flex items-center justify-between">
+              <span className={labelClass.replace('mb-1 block ', '')} style={{ color: 'var(--text-faint)' }}>
+                Emotional core
+              </span>
+              <button
+                onClick={(e) => {
+                  e.preventDefault()
+                  suggestField('emotional_core')
+                }}
+                disabled={suggesting !== null || !(draft.beat ?? '').trim()}
+                // 色は index.css の .accent-action(校正ボタンなど LLM を走らせるボタン共通)
+                className="accent-action inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium disabled:opacity-40"
+                data-tip="シーン本文から感情の核を自動生成"
+              >
+                {suggesting === 'emotional_core' ? (
+                  `生成中… (${suggestElapsed}s)`
+                ) : (
+                  <>
+                    <Icon name="sparkle" size={11} />
+                    自動生成
+                  </>
+                )}
+              </button>
+            </span>
+            {/* 長い一文になることがあるので、input ではなく自動で高さが伸びる textarea */}
+            <textarea
+              ref={coreTextareaRef}
+              rows={1}
+              value={draft.emotional_core ?? ''}
+              onChange={(e) => setDraft((d) => ({ ...d, emotional_core: e.target.value }))}
+              className="w-full resize-none overflow-hidden rounded-lg border px-3 py-1.5 text-[13px] leading-relaxed outline-none"
+              style={inputStyle}
+            />
+          </label>
+      </>} secondary={<>
           {/* 挿絵(画像/動画。装飾専用。LLM には渡さない) */}
+          {createPortal(<>
           {lightboxOpen && node.image_path && assetUrl(node.image_path) && (
             <Lightbox src={assetUrl(node.image_path)!} path={node.image_path} onClose={() => setLightboxOpen(false)} />
           )}
@@ -787,12 +872,13 @@ function BeatTab({
               onClose={() => setStockOpen(false)}
             />
           )}
+          </>, document.body)}
           <div>
-            <div className="mb-1 flex items-center justify-between">
+            <div className="mb-1 flex flex-wrap items-center gap-1.5">
               <span className="text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
                 挿絵
               </span>
-              <div className="flex gap-1.5">
+              <div className="flex flex-wrap gap-1.5">
                 <button
                   onClick={() => setSceneImageOpen(true)}
                   className="accent-action inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium"
@@ -877,13 +963,13 @@ function BeatTab({
                       muted
                       loop
                       playsInline
-                      className="pointer-events-none mx-auto max-h-60 max-w-full rounded-xl"
+                      className="pointer-events-none h-auto w-full rounded-xl"
                     />
                   ) : (
                     <img
                       src={assetUrl(node.image_path)!}
                       draggable={false}
-                      className="pointer-events-none mx-auto max-h-60 max-w-full rounded-xl"
+                      className="pointer-events-none h-auto w-full rounded-xl"
                     />
                   )}
                   {imageDragOver && (
@@ -897,7 +983,7 @@ function BeatTab({
                 </>
               ) : (
                 <div
-                  className="cursor-pointer rounded-xl border border-dashed px-4 py-6 text-center text-[12px]"
+                  className="cursor-pointer rounded-xl border border-dashed px-3 py-2 text-center text-[12px]"
                   style={{
                     borderColor: imageDragOver ? 'var(--accent)' : 'var(--border-strong)',
                     color: imageDragOver ? 'var(--accent)' : 'var(--text-faint)'
@@ -908,87 +994,6 @@ function BeatTab({
               )}
             </div>
           </div>
-          <label className="block">
-            <span className="mb-1 flex items-center justify-between">
-              <span className={labelClass.replace('mb-1 block ', '')} style={{ color: 'var(--text-faint)' }}>
-                Title
-              </span>
-              <button
-                onClick={(e) => {
-                  e.preventDefault()
-                  suggestField('title')
-                }}
-                disabled={suggesting !== null || !(draft.beat ?? '').trim()}
-                // 色は index.css の .accent-action(校正ボタンなど LLM を走らせるボタン共通)
-                className="accent-action inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium disabled:opacity-40"
-                data-tip="シーン本文からタイトルを自動生成"
-              >
-                {suggesting === 'title' ? (
-                  `生成中… (${suggestElapsed}s)`
-                ) : (
-                  <>
-                    <Icon name="sparkle" size={11} />
-                    自動生成
-                  </>
-                )}
-              </button>
-            </span>
-            <input
-              value={draft.title ?? ''}
-              onChange={(e) => setDraft((d) => ({ ...d, title: e.target.value }))}
-              className="w-full rounded-lg border px-3 py-1.5 text-[13px] outline-none"
-              style={inputStyle}
-            />
-          </label>
-          <label className="block">
-            <span className={labelClass} style={{ color: 'var(--text-faint)' }}>
-              シーン(出来事の仕様書)
-            </span>
-            {/* 高さの自動調整と校正ボタンは共通コンポーネント側で行う(ボタンは本文の下に常に出る)。
-                長いシーン本文の一部を直すことがあるので、前後を文脈として渡す */}
-            <ProofreadTextarea
-              rows={4}
-              value={draft.beat ?? ''}
-              onChange={(next) => setDraft((d) => ({ ...d, beat: next }))}
-              style={inputStyle}
-              withContext
-            />
-          </label>
-          <label className="block">
-            <span className="mb-1 flex items-center justify-between">
-              <span className={labelClass.replace('mb-1 block ', '')} style={{ color: 'var(--text-faint)' }}>
-                Emotional core
-              </span>
-              <button
-                onClick={(e) => {
-                  e.preventDefault()
-                  suggestField('emotional_core')
-                }}
-                disabled={suggesting !== null || !(draft.beat ?? '').trim()}
-                // 色は index.css の .accent-action(校正ボタンなど LLM を走らせるボタン共通)
-                className="accent-action inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium disabled:opacity-40"
-                data-tip="シーン本文から感情の核を自動生成"
-              >
-                {suggesting === 'emotional_core' ? (
-                  `生成中… (${suggestElapsed}s)`
-                ) : (
-                  <>
-                    <Icon name="sparkle" size={11} />
-                    自動生成
-                  </>
-                )}
-              </button>
-            </span>
-            {/* 長い一文になることがあるので、input ではなく自動で高さが伸びる textarea */}
-            <textarea
-              ref={coreTextareaRef}
-              rows={1}
-              value={draft.emotional_core ?? ''}
-              onChange={(e) => setDraft((d) => ({ ...d, emotional_core: e.target.value }))}
-              className="w-full resize-none overflow-hidden rounded-lg border px-3 py-1.5 text-[13px] leading-relaxed outline-none"
-              style={inputStyle}
-            />
-          </label>
           <div>
             <span className={labelClass} style={{ color: 'var(--text-faint)' }}>
               Cast
@@ -1131,8 +1136,7 @@ function BeatTab({
             onChanged={onSaved}
             onBusyChange={(busy: boolean) => onNodeBusyChange(node.id, busy)}
           />
-        </div>
-      </div>
+      </>} />
       <div className="shrink-0 border-t px-3 py-2" style={{ borderColor: 'var(--border)', background: 'var(--bg-sidebar)' }}>
         {error && <div role="alert" className="mb-1 text-[12px]" style={{ color: 'var(--danger)' }}>{error}</div>}
         <div className="flex items-center justify-between gap-2">
@@ -1656,7 +1660,9 @@ function ChapterTab({
   }
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="scene-detail flex min-h-0 flex-1 flex-col">
+      <div className="shrink-0 border-b px-3 py-2" style={{ borderColor: 'var(--border)' }}>
+
       <div className="flex items-center gap-2">
         <span className="shrink-0 text-[10px] uppercase tracking-[0.2em]" style={{ color: 'var(--text-faint)' }}>
           {group.on_canon ? `第${number}章` : '別ルートの章'}
@@ -1687,86 +1693,8 @@ function ChapterTab({
           ⚠ {group.warning}
         </p>
       )}
-      {/* 表紙(章カードのサムネイル)。挿絵はシーンのもので、章はどれを使うかだけを持つ */}
-      {cover && (
-        <div>
-          <div className="mb-1 flex items-center gap-2">
-            <span className="text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
-              表紙
-            </span>
-            <span className="min-w-0 flex-1 truncate text-[11px]" style={{ color: 'var(--text-faint)' }}>
-              {group.cover_node_id ? nodeTitle(cover.id) : `自動(${nodeTitle(cover.id)})`}
-            </span>
-            {group.cover_node_id && (
-              <button
-                onClick={() => onSetCover(null)}
-                data-tip="表紙の指定を外して、章内で最初に挿絵があるシーンに戻す"
-                className="shrink-0 rounded px-1 text-[11px] hover:bg-[var(--accent-soft)]"
-                style={{ color: 'var(--text-faint)' }}
-              >
-                自動に戻す
-              </button>
-            )}
-          </div>
-          <NodeThumb node={cover} className="mx-auto max-h-40 max-w-full rounded-xl" />
-        </div>
-      )}
-      <div>
-        <span className="mb-1 block text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
-          シーン({group.node_ids.length})
-          {group.node_ids.length > group.route.length && (
-            <span className="ml-1.5 normal-case tracking-normal">
-              うち読む道 {group.route.length}
-            </span>
-          )}
-        </span>
-        <div className="flex flex-col">
-          {group.node_ids.map((id, i) => (
-            <div key={id} className="group/scene flex items-center rounded-md hover:bg-[var(--accent-soft)]">
-              <button
-                onClick={() => onSelectScene(id)}
-                className="min-w-0 flex-1 truncate px-2 py-1 text-left text-[12px]"
-                style={{ color: 'var(--text-dim)' }}
-              >
-                {/* ルート(読む道)のシーンだけ番号を振る。分岐・島は番号なし */}
-                {i < group.route.length ? `${i + 1}. ` : '⌁ '}
-                {nodeTitle(id)}
-              </button>
-              {i >= group.route.length && (
-                <span
-                  className="shrink-0 px-1 text-[10px]"
-                  style={{ color: 'var(--text-faint)' }}
-                  data-tip="この章のシーンですが、読む道(鑑賞モード・まとめ)には乗っていません"
-                >
-                  別の道
-                </span>
-              )}
-              {/* 挿絵のあるシーンだけ、表紙にできる */}
-              {nodeById.get(id)?.image_path && (
-                <button
-                  onClick={() => onSetCover(group.cover_node_id === id ? null : id)}
-                  aria-label="章の表紙にする"
-                  data-tip={
-                    group.cover_node_id === id
-                      ? '表紙の指定を外す(自動に戻す)'
-                      : 'このシーンの挿絵を章の表紙にする'
-                  }
-                  className={`shrink-0 rounded px-1.5 py-1 ${
-                    group.cover_node_id === id ? '' : 'opacity-0 group-hover/scene:opacity-100'
-                  }`}
-                  style={
-                    group.cover_node_id === id
-                      ? { background: 'var(--accent-soft)', color: 'var(--accent)' }
-                      : { color: 'var(--text-faint)' }
-                  }
-                >
-                  <Icon name="image" size={12} />
-                </button>
-              )}
-            </div>
-          ))}
-        </div>
       </div>
+      <DetailSplit storageKey="chapterDetailMetaWidth" main={<>
       <div>
         <div className="mb-1 flex items-center gap-2">
           <span className="text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
@@ -1876,18 +1804,97 @@ function ChapterTab({
                 </div>
               )
             )}
-            {dirty && (
+
+          </div>
+        )}
+      </div>      </>} secondary={<>
+      {/* 表紙(章カードのサムネイル)。挿絵はシーンのもので、章はどれを使うかだけを持つ */}
+      {cover && (
+        <div>
+          <div className="mb-1 flex items-center gap-2">
+            <span className="text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
+              表紙
+            </span>
+            <span className="min-w-0 flex-1 truncate text-[11px]" style={{ color: 'var(--text-faint)' }}>
+              {group.cover_node_id ? nodeTitle(cover.id) : `自動(${nodeTitle(cover.id)})`}
+            </span>
+            {group.cover_node_id && (
               <button
-                onClick={() => void save()}
-                disabled={busy}
-                className="self-end rounded-lg px-3 py-1 text-[12px] font-medium text-white disabled:opacity-50"
-                style={{ background: 'var(--accent)' }}
+                onClick={() => onSetCover(null)}
+                data-tip="表紙の指定を外して、章内で最初に挿絵があるシーンに戻す"
+                className="shrink-0 rounded px-1 text-[11px] hover:bg-[var(--accent-soft)]"
+                style={{ color: 'var(--text-faint)' }}
               >
-                まとめを保存
+                自動に戻す
               </button>
             )}
           </div>
-        )}
+          <NodeThumb node={cover} className="h-auto w-full rounded-xl" />
+        </div>
+      )}
+      <div>
+        <span className="mb-1 block text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
+          シーン({group.node_ids.length})
+          {group.node_ids.length > group.route.length && (
+            <span className="ml-1.5 normal-case tracking-normal">
+              うち読む道 {group.route.length}
+            </span>
+          )}
+        </span>
+        <div className="flex flex-col">
+          {group.node_ids.map((id, i) => (
+            <div key={id} className="group/scene flex items-center rounded-md hover:bg-[var(--accent-soft)]">
+              <button
+                onClick={() => onSelectScene(id)}
+                className="min-w-0 flex-1 truncate px-2 py-1 text-left text-[12px]"
+                style={{ color: 'var(--text-dim)' }}
+              >
+                {/* ルート(読む道)のシーンだけ番号を振る。分岐・島は番号なし */}
+                {i < group.route.length ? `${i + 1}. ` : '⌁ '}
+                {nodeTitle(id)}
+              </button>
+              {i >= group.route.length && (
+                <span
+                  className="shrink-0 px-1 text-[10px]"
+                  style={{ color: 'var(--text-faint)' }}
+                  data-tip="この章のシーンですが、読む道(鑑賞モード・まとめ)には乗っていません"
+                >
+                  別の道
+                </span>
+              )}
+              {/* 挿絵のあるシーンだけ、表紙にできる */}
+              {nodeById.get(id)?.image_path && (
+                <button
+                  onClick={() => onSetCover(group.cover_node_id === id ? null : id)}
+                  aria-label="章の表紙にする"
+                  data-tip={
+                    group.cover_node_id === id
+                      ? '表紙の指定を外す(自動に戻す)'
+                      : 'このシーンの挿絵を章の表紙にする'
+                  }
+                  className={`shrink-0 rounded px-1.5 py-1 ${
+                    group.cover_node_id === id ? '' : 'opacity-0 group-hover/scene:opacity-100'
+                  }`}
+                  style={
+                    group.cover_node_id === id
+                      ? { background: 'var(--accent-soft)', color: 'var(--accent)' }
+                      : { color: 'var(--text-faint)' }
+                  }
+                >
+                  <Icon name="image" size={12} />
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+      </>} />
+      <div className="flex shrink-0 items-center justify-end gap-2 border-t px-3 py-2" style={{ borderColor: 'var(--border)' }}>
+        {dirty && <span className="mr-auto text-[11px]" style={{ color: 'var(--text-dim)' }}>未保存の変更があります</span>}
+        <button onClick={() => void save()} disabled={busy || !dirty}
+          className="rounded-md px-3 py-1 text-[12px] font-medium disabled:opacity-50"
+          style={{ background: 'var(--accent)', color: 'var(--text)' }}
+          data-tip={dirty ? '章のまとめの変更を保存します' : '変更はありません'}>まとめを保存</button>
       </div>
     </div>
   )
@@ -2267,23 +2274,17 @@ function StructureModeInner({
   const busyNodeIds = useBusyNodeIds()
   const productionLocked = useTasks().some((t) => t.kind === 'production')
   const [productionPolicy, setProductionPolicy] = useState<ProductionPolicy>(defaultProductionPolicy)
-  const [productionManual, setProductionManual] = useState(false)
+  const workspace = useWorkspace()
+  const { chatHost, chatOpen, toggleChat, manual: productionManual, setManual: setProductionManual } = workspace
   const productionEditingLocked = productionLocked && !productionManual
   const [chatKind, setChatKind] = useState<'consult' | 'production'>('consult')
   const markNodeBusy = setNodeBusy
-  const [inspectorWidth, setInspectorWidth] = useState(() => {
-    const saved = Number(localStorage.getItem('inspectorWidth'))
-    return saved >= 320 && saved <= 900 ? saved : 480
+  const [inspectorOpen, setInspectorOpen] = useState(() => localStorage.getItem('inspectorOpen') !== '0')
+  const [inspectorHeight, setInspectorHeight] = useState(() => {
+    const saved = Number(localStorage.getItem('inspectorHeight'))
+    return saved >= 220 && saved <= 1200 ? saved : 340
   })
   const rowRef = useRef<HTMLDivElement | null>(null)
-  // 相談チャットはノードエリアとの上下分割ペイン。開閉と高さは親が持つ。
-  // モードを切り替えるとこのコンポーネントは破棄されるので、高さと同じく
-  // localStorage に覚えておく(閉じた状態が既定)
-  const [chatOpen, setChatOpen] = useState(() => localStorage.getItem('chatDrawerOpen') === '1')
-  const [chatHeight, setChatHeight] = useState(() => {
-    const saved = Number(localStorage.getItem('chatDrawerHeight'))
-    return saved >= 220 && saved <= 1200 ? saved : 440
-  })
   const canvasColumnRef = useRef<HTMLDivElement | null>(null)
   const canvasRef = useRef<HTMLElement | null>(null) // React Flow の描画領域(中央配置の基準)
   // 生成 UI はキャンバスの面積を食うので、既定は畳んでツールバーのボタンから開く
@@ -2310,39 +2311,6 @@ function StructureModeInner({
     return () => resizeCleanupRef.current?.()
   }, [])
 
-  const beginInspectorResize = useCallback(
-    (event: React.PointerEvent): void => {
-      event.preventDefault()
-      let current = inspectorWidth
-      const onMove = (ev: PointerEvent): void => {
-        const rect = rowRef.current?.getBoundingClientRect()
-        if (!rect) return
-        // インスペクタが広がった分だけノードエリアは縮む
-        const next = Math.min(900, Math.max(320, rect.right - ev.clientX))
-        if (next === current) return
-        shiftViewportForShrink(next - current, 0)
-        current = next
-        setInspectorWidth(next)
-      }
-      const cleanup = (): void => {
-        window.removeEventListener('pointermove', onMove)
-        window.removeEventListener('pointerup', onUp)
-        resizeCleanupRef.current = null
-      }
-      const onUp = (): void => {
-        cleanup()
-        setInspectorWidth((w) => {
-          localStorage.setItem('inspectorWidth', String(Math.round(w)))
-          return w
-        })
-      }
-      window.addEventListener('pointermove', onMove)
-      window.addEventListener('pointerup', onUp)
-      resizeCleanupRef.current = cleanup
-    },
-    [inspectorWidth, shiftViewportForShrink]
-  )
-
   // prefetchedGraph: 直前の処理(placeCreatedNode)が取得済みのグラフを使い回す。
   // /graph は全ノード + 全イベント入りで大きいので、シーン作成のたびに 2 回
   // 取り直さない
@@ -2365,8 +2333,7 @@ function StructureModeInner({
     onSelectedNodeChange?.(selectedId)
   }, [selectedId, onSelectedNodeChange])
 
-  // 範囲選択の数をステータスバーへ。モードを離れるとこのコンポーネントは
-  // 破棄されるが、ステータスバーは生きているので、アンマウント時に 0 を送る
+  // 範囲選択の数をステータスバーへ。構造以外での表示はAppが抑制する。
   const selectionCount = flowNodes.filter((n) => n.selected).length
   useEffect(() => {
     onSelectionCountChange?.(selectionCount)
@@ -2376,8 +2343,10 @@ function StructureModeInner({
   }, [onSelectionCountChange])
 
   useEffect(() => {
-    void reload().catch((e) => setGenStatus(`読み込みに失敗しました: ${String(e)}`))
-  }, [reload])
+    if (workspace.mode === 'structure') {
+      void reload().catch((e) => setGenStatus(`読み込みに失敗しました: ${String(e)}`))
+    }
+  }, [reload, workspace.mode])
 
   // キュー(tasks.ts)の runner は完了時に notifyGraphChanged を呼ぶ。runner の
   // クロージャは積んだ時点のコンポーネントを握るため、マウント中はここで購読して
@@ -3088,31 +3057,29 @@ function StructureModeInner({
     }
   }, [menu])
 
-  const toggleChat = useCallback((): void => {
-    // 分割線(1px)を含めた分だけノードエリアが縮む / 拡がる
-    shiftViewportForShrink(0, chatOpen ? -(chatHeight + 1) : chatHeight + 1)
-    setChatOpen((prev) => {
-      localStorage.setItem('chatDrawerOpen', prev ? '0' : '1')
-      return !prev
-    })
-  }, [chatOpen, chatHeight, shiftViewportForShrink])
+  const toggleInspector = (): void => {
+    const height = Math.min(inspectorHeight, (rowRef.current?.clientHeight ?? window.innerHeight) * 0.7)
+    shiftViewportForShrink(0, inspectorOpen ? -(height + 1) : height + 1)
+    setInspectorOpen(!inspectorOpen)
+    localStorage.setItem('inspectorOpen', inspectorOpen ? '0' : '1')
+  }
 
-  // 分割線のドラッグでチャットの高さを変える(上へドラッグで拡大)。
+  // 分割線のドラッグで詳細欄の高さを変える(上へドラッグで拡大)。
   // ノードエリアは最低 160px 残す
-  const beginChatResize = useCallback(
+  const beginInspectorResize = useCallback(
     (event: React.PointerEvent): void => {
       event.preventDefault()
       const startY = event.clientY
-      const startH = chatHeight
-      const columnHeight = canvasColumnRef.current?.clientHeight
-      const maxH = columnHeight ? Math.max(columnHeight - 160, 220) : Math.round(window.innerHeight * 0.7)
+      const columnHeight = rowRef.current?.clientHeight
+      const maxH = columnHeight ? Math.max(220, Math.min(columnHeight - 160, columnHeight * 0.7)) : Math.round(window.innerHeight * 0.7)
+      const startH = Math.min(inspectorHeight, maxH)
       let current = startH
       const onMove = (ev: PointerEvent): void => {
         const next = Math.min(Math.max(startH + (startY - ev.clientY), 220), maxH)
         if (next === current) return
         shiftViewportForShrink(0, next - current)
         current = next
-        setChatHeight(next)
+        setInspectorHeight(next)
       }
       const cleanup = (): void => {
         document.body.style.userSelect = ''
@@ -3122,15 +3089,30 @@ function StructureModeInner({
       }
       const onUp = (): void => {
         cleanup()
-        localStorage.setItem('chatDrawerHeight', String(Math.round(current)))
+        localStorage.setItem('inspectorHeight', String(Math.round(current)))
       }
       document.body.style.userSelect = 'none'
       window.addEventListener('pointermove', onMove)
       window.addEventListener('pointerup', onUp)
       resizeCleanupRef.current = cleanup
     },
-    [chatHeight, shiftViewportForShrink]
+    [inspectorHeight, shiftViewportForShrink]
   )
+
+  // 共通チャットの幅・開閉で変わるキャンバスの横幅にも中心位置を追従する。
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    let previous = canvas.clientWidth
+    const observer = new ResizeObserver(() => {
+      const width = canvas.clientWidth
+      if (width <= 0) return
+      if (previous > 0) shiftViewportForShrink(previous - width, 0)
+      previous = width
+    })
+    observer.observe(canvas)
+    return () => observer.disconnect()
+  }, [shiftViewportForShrink])
 
   // 選択ノードまでのパス(親エッジを遡る)。関係図は選択中の時間軸を表示する
   const pathToSelected = useMemo(() => {
@@ -3630,6 +3612,15 @@ function StructureModeInner({
     []
   )
 
+  const previousMode = useRef(workspace.mode)
+  useEffect(() => {
+    if (previousMode.current === 'reader' && workspace.mode === 'structure' && focusNodeId) {
+      focusDoneRef.current = false
+      setPendingFocusId(focusNodeId)
+    }
+    previousMode.current = workspace.mode
+  }, [workspace.mode, focusNodeId])
+
   // 制作では章に隠れたシーンも開く。通常の追加操作のfocusWhenReadyとは分ける。
   const followProductionTarget = useCallback((nodeId: string | null): void => {
     if (nodeId) setInspectorTab('beat')
@@ -3641,7 +3632,7 @@ function StructureModeInner({
   // 章に畳まれて見えないときは、その章の中に入ってから寄せる
   useEffect(() => {
     // 画面に何か出てから判断する(ノードの構築前は「見えない」と区別が付かない)
-    if (!pendingFocusId || graphNodes.length === 0 || displayNodes.length === 0) return
+    if (workspace.mode !== 'structure' || !pendingFocusId || graphNodes.length === 0 || displayNodes.length === 0) return
     const finish = (): void => {
       focusDoneRef.current = true
       setPendingFocusId(null)
@@ -3664,7 +3655,7 @@ function StructureModeInner({
       finish()
     }, 80)
     return () => clearTimeout(timer)
-  }, [pendingFocusId, displayNodes, graphNodes, chapterView, chapterSeq, focusNodeOnCanvas])
+  }, [workspace.mode, pendingFocusId, displayNodes, graphNodes, chapterView, chapterSeq, focusNodeOnCanvas])
 
   // ---- キーボード操作 -------------------------------------------------
 
@@ -3806,6 +3797,7 @@ function StructureModeInner({
   // 矢印 = ノード間の移動(← → が親子、↑ ↓ が分岐レーン)
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent): void => {
+      if (workspace.mode !== 'structure') return
       if (productionEditingLocked) return
       if (event.isComposing || event.defaultPrevented) return
       const target = event.target as HTMLElement | null
@@ -3900,7 +3892,7 @@ function StructureModeInner({
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [reactFlow, displayNodes, selectedId, selectedEdgeId, detachEdge, deleteNodeById, deleteNodes, navigateSelection, productionEditingLocked, copyNodes, pasteNodes, nodeClipboard])
+  }, [workspace.mode, reactFlow, displayNodes, selectedId, selectedEdgeId, detachEdge, deleteNodeById, deleteNodes, navigateSelection, productionEditingLocked, copyNodes, pasteNodes, nodeClipboard])
 
   // ---- 章の操作 -------------------------------------------------------
   // Electron は window.prompt を使えない(呼ぶと例外)ので、名前の入力は
@@ -4386,9 +4378,9 @@ function StructureModeInner({
 
   return (
     <div className="flex h-full flex-col">
-      <div ref={rowRef} className="flex min-h-0 flex-1">
-        {/* ノードエリア + 相談チャット(インスペクタに被らないよう左カラム内に収める) */}
-        <div ref={canvasColumnRef} className="flex min-w-0 flex-1 flex-col">
+      <div ref={rowRef} className="flex min-h-0 flex-1 flex-col">
+        {/* 中央のキャンバス。詳細欄はこの下、共通チャットはAppの右ペインへ表示する */}
+        <div ref={canvasColumnRef} className="flex min-h-0 min-w-0 flex-1 flex-col">
         <main ref={canvasRef} inert={productionEditingLocked} className="relative min-h-0 flex-1" style={{ background: 'var(--bg-canvas)' }}>
           <ReactFlow
             nodes={displayNodes}
@@ -4778,20 +4770,20 @@ function StructureModeInner({
                 <Icon name="alignNodes" size={17} />
               </button>
             </Panel>
-            {/* 相談チャットのトグルは左下(生成 UI と離し、ミニマップの反対側に置く) */}
+            {/* 詳細欄のトグルは左下(生成 UI と離し、ミニマップの反対側に置く) */}
             <Panel position="bottom-left">
               <button
-                onClick={toggleChat}
+                onClick={toggleInspector}
                 className="flex h-10 w-10 items-center justify-center rounded-full border shadow-lg shadow-black/30"
                 style={{
-                  background: chatOpen ? 'var(--accent-soft)' : 'var(--bg-card)',
-                  borderColor: chatOpen ? 'var(--accent-border)' : 'var(--border-strong)',
-                  color: chatOpen ? 'var(--accent)' : 'var(--text-dim)'
+                  background: inspectorOpen ? 'var(--accent-soft)' : 'var(--bg-card)',
+                  borderColor: inspectorOpen ? 'var(--accent-border)' : 'var(--border-strong)',
+                  color: inspectorOpen ? 'var(--accent)' : 'var(--text-dim)'
                 }}
-                aria-label={chatOpen ? '相談チャットを閉じる' : '相談チャットを下段に開く'}
-                data-tip={chatOpen ? '相談チャットを閉じる' : '相談チャットを下段に開く'}
+                aria-label={inspectorOpen ? '詳細欄を閉じる' : '詳細欄を下段に開く'}
+                data-tip={inspectorOpen ? '詳細欄を閉じる' : '詳細欄を下段に開く'}
               >
-                <Icon name="chat" size={18} />
+                <span className="text-[11px]">詳細</span>
               </button>
             </Panel>
             {graphNodes.length === 0 && (
@@ -5194,21 +5186,8 @@ function StructureModeInner({
             </div>
           )}
         </main>
-        {chatOpen && (
-          <>
-            {/* 上下の分割線(インスペクタの分割線と同じ見た目・当たり判定) */}
-            <div
-              className="relative h-px shrink-0 cursor-row-resize transition-colors hover:bg-[var(--accent-border)]"
-              style={{ background: 'var(--border)' }}
-              data-tip="ドラッグで高さを変更"
-            >
-              <div
-                onPointerDown={beginChatResize}
-                className="absolute inset-x-0 z-10 cursor-row-resize"
-                style={{ top: -3, bottom: -3 }}
-              />
-            </div>
-            <div className="flex min-h-0 shrink-0 flex-col" style={{ height: chatHeight }}>
+        </div>
+        {chatHost && createPortal(<div className="flex h-full min-h-0 flex-col" style={{ background: 'var(--bg-chat)' }}>
               <div className="flex shrink-0 items-center gap-2 border-b px-4 py-1" style={{ background: 'var(--bg-chat)', borderColor: 'var(--border)' }}>
                 <div className="flex overflow-hidden rounded-md border" style={{ borderColor: 'var(--border-strong)' }}>
                   {([['consult', '相談'], ['production', '制作']] as const).map(([value, label]) => (
@@ -5219,14 +5198,14 @@ function StructureModeInner({
                   ))}
                 </div>
                 {productionLocked && <span className="text-[11px]" style={{ color: 'var(--text-dim)' }}>{productionManual ? '手動編集中・保存後に制作を再開できます' : '手動編集は制作チャットから切り替えられます'}</span>}
-                {chatKind === 'production' && <button disabled={productionLocked} onClick={toggleChat}
+                {chatKind === 'production' && <button onClick={toggleChat}
                   className="ml-auto rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-50"
                   style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-                  data-tip={productionLocked ? '停止してから閉じられます' : '制作チャットを閉じます'}>閉じる</button>}
+                  data-tip="チャットを折りたたみます。制作中の処理は継続します">閉じる</button>}
               </div>
               <div className="min-h-0 flex-1" hidden={chatKind !== 'consult'}>
               <ChatDrawer
-                open={chatKind === 'consult'}
+                open={chatOpen && workspace.mode !== 'reader' && chatKind === 'consult'}
                 onClose={toggleChat}
                 anchorCandidateId={chatAnchorId}
                 canonTailId={canonPath.length > 0 ? canonPath[canonPath.length - 1].id : null}
@@ -5235,41 +5214,40 @@ function StructureModeInner({
                 dynamicSuggestions={chatDynamicSuggestions}
               />
               </div>
-              {chatKind === 'production' && <div className="min-h-0 flex-1"><ProductionChat
+              <div className="min-h-0 flex-1" style={{ display: chatKind === 'production' ? 'flex' : 'none' }}><ProductionChat
                 policy={productionPolicy} setPolicy={setProductionPolicy}
                 nodes={graphNodes} groups={groups}
-                selectedNodeIds={displayNodes.filter((n) => n.selected && n.type !== 'chapterNode').map((n) => n.id)}
-                chapterSelected={displayNodes.some((n) => n.selected && n.type === 'chapterNode')}
-                beforeExecute={() => beatDraftCache.size > 0 ? '未保存のシーンがあります。保存してから制作を実行してください。' : null}
+                selectedNodeIds={workspace.mode !== 'structure' ? [] : displayNodes.filter((n) => n.selected && n.type !== 'chapterNode').map((n) => n.id)}
+                chapterSelected={workspace.mode === 'structure' && displayNodes.some((n) => n.selected && n.type === 'chapterNode')}
+                beforeExecute={() => workspace.libraryDirty.current ? '未保存の資料があります。保存してから制作を実行してください。' : beatDraftCache.size > 0 ? '未保存のシーンがあります。保存してから制作を実行してください。' : null}
                 onManualEdit={setProductionManual}
                 onFollowTarget={followProductionTarget}
                 onChanged={async (operation) => {
                   await reload(operation.node_id && (operation.action === 'insert_scene' || operation.action === 'branch_scene' || operation.connection?.mode === 'scene') ? await placeCreatedNode(operation.node_id) : undefined)
+                  workspace.changed()
                   if (operation.action === 'delete_scene') setSelectedId((id) => id === operation.node_id ? null : id)
                 }}
-              /></div>}
-            </div>
-          </>
-        )}
-        </div>
-        {/* リサイズハンドル: 線はレイアウト実体の 1px、当たり判定だけ左右 3px はみ出させる */}
+              /></div>
+        </div>, chatHost)}
+        {/* 詳細欄の分割線: 1pxの線と上下3pxの当たり判定 */}
         <div
-          className="relative w-px shrink-0 cursor-col-resize transition-colors hover:bg-[var(--accent-border)]"
-          style={{ background: 'var(--border)' }}
-          data-tip="ドラッグで幅を変更"
+          className="relative h-px shrink-0 cursor-row-resize transition-colors hover:bg-[var(--accent-border)]"
+          style={{ background: 'var(--border)', display: inspectorOpen ? undefined : 'none' }}
+          data-tip="ドラッグで詳細欄の高さを変更"
         >
           <div
             onPointerDown={beginInspectorResize}
-            className="absolute inset-y-0 z-10 cursor-col-resize"
-            style={{ left: -3, right: -3 }}
+            role="separator" aria-label="詳細欄の高さ" aria-orientation="horizontal"
+            className="absolute inset-x-0 z-10 cursor-row-resize"
+            style={{ top: -3, bottom: -3 }}
           />
         </div>
         <aside
-          inert={productionEditingLocked}
+          inert={productionEditingLocked || !inspectorOpen}
           className="flex shrink-0 flex-col"
-          style={{ background: 'var(--bg-sidebar)', width: inspectorWidth }}
+          style={{ background: 'var(--bg-sidebar)', height: inspectorOpen ? inspectorHeight : 0, maxHeight: '70%', overflow: 'hidden' }}
         >
-          <div className="flex gap-1 border-b px-3 py-2" style={{ borderColor: 'var(--border)' }}>
+          <div className="flex shrink-0 gap-1 border-b px-3 py-2" style={{ borderColor: 'var(--border)' }}>
             {(
               [
                 { id: 'beat', label: 'シーン' },
@@ -5292,11 +5270,13 @@ function StructureModeInner({
                 {t.label}
               </button>
             ))}
+            <button onClick={toggleInspector} className="ml-auto rounded-md border px-2 py-0.5 text-[11px]"
+              style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }} data-tip="詳細欄を折りたたむ">閉じる</button>
           </div>
           <ProductionPreviewPanel />
-          <div className={inspectorTab === 'beat' && selectedNode && !selectedNode.kind && !activeGroup
+          <div className={(activeGroup && inspectorTab !== 'graph' && inspectorTab !== 'facts') || (inspectorTab === 'beat' && selectedNode && !selectedNode.kind && !activeGroup)
             ? 'flex min-h-0 flex-1 flex-col overflow-hidden'
-            : 'inspector-scrollbar min-h-0 flex-1 overflow-y-auto p-3'}>
+            : `inspector-scrollbar min-h-0 flex-1 overflow-y-auto p-3 ${inspectorTab === 'graph' || inspectorTab === 'facts' ? '' : 'w-full max-w-[1100px] mx-auto'}`}>
             {inspectorTab === 'graph' ? (
               <RelationGraph
                 characters={characters}
