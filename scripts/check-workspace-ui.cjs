@@ -420,6 +420,7 @@ for mode in ['production', None]:
   await click('送信')
   await assert(`!!window.workspaceEmit && [...document.querySelectorAll('[inert]')].some(e=>e.textContent.includes('検証キャラ'))`, '制作中は資料庫の手動編集をロック')
   await assert(`(() => {const stop=document.querySelector('button[aria-label="停止"]');const r=stop.getBoundingClientRect();return !!stop.querySelector('svg') && stop.textContent.trim()==='' && Math.round(r.width)===26 && Math.round(r.height)===26 && !document.querySelector('button[aria-label="送信"]')})()`, '制作中は送信の位置に同じ丸い形の停止ボタンを出す')
+  await assert(`(() => {const list=document.querySelector('[aria-live="polite"]');const tags=[...list.querySelectorAll('span')].filter(e=>e.textContent==='制作を実行');return tags.length===1 && tags[0].parentElement.textContent.startsWith('あなた') && !list.textContent.includes('変更範囲: 全体') && !list.textContent.includes('送信時の選択: なし')})()`, '実行として送った発言に印を付け、既定の変更範囲・選択なしは表示しない')
   await click('会話一覧')
   await assert(`[...document.querySelectorAll('button')].find(e=>e.getClientRects().length && e.textContent.trim()==='+ 新しい会話').disabled`, '制作中は一覧から新しい会話を開始できない')
   await js(`document.body.dispatchEvent(new MouseEvent('mousedown',{bubbles:true}))`)

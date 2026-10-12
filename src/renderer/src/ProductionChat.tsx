@@ -23,6 +23,8 @@ interface Message {
   policy?: ProductionPolicy
   policy_after?: ProductionPolicy
   policy_label?: string
+  /** 依頼を「制作を実行」として送ったか(相談なら false。古い履歴には無い) */
+  execute?: boolean
   role: string
   content: string
   operation?: ProductionOperation
@@ -68,11 +70,16 @@ const MessageList = memo(function MessageList({ messages, nodes, groups }: {
         }}>
           <div className="mb-1 text-[11px]" style={{ color: 'var(--text-faint)' }}>
             {m.instruction ? `途中指示・${({ accepted: '受け付けました', reflected: '次の判断に反映しました', unapplied: '未反映のまま終了しました' })[m.instruction.status]}` : m.operation ? `${operationLabels[m.operation.action]}: ${m.operation.title || '(無題)'}` : m.role === 'user' ? 'あなた' : '制作'}
+            {/* 相談と実行の発言が混ざるので、作品を書き換えた依頼には印を付ける */}
+            {m.role === 'user' && m.execute === true && !m.instruction && <span className="ml-2" style={{ color: 'var(--warn)' }}>制作を実行</span>}
             {messageTime(m.created_at) && <time dateTime={m.created_at} className="ml-2 tabular-nums" data-tip={new Date(m.created_at!).toLocaleString('ja-JP')}>{messageTime(m.created_at)}</time>}
           </div>
-          {m.policy && <p className="mb-1 text-[11px]" style={{ color: 'var(--text-dim)' }}>{m.policy_label || policySummary(m.policy, nodes, groups)}</p>}
-          {m.selected_nodes && <p className="mb-1 text-[11px]" style={{ color: 'var(--text-dim)' }}>
-            送信時の選択: {m.selected_nodes.length ? m.selected_nodes.map((node) => node.title).join('、') : 'なし'}
+          {/* 送信時の条件は、既定でないときだけ出す(全体・保護なし・選択なしを毎回出すと本文が読みにくい)。
+              変更範囲と保護は相談では使われないので、相談の発言には出さない */}
+          {m.policy && m.execute !== false && (m.policy.allowed_ids !== null || m.policy.group_id !== null || m.policy.protected_ids.length > 0) &&
+            <p className="mb-1 text-[11px]" style={{ color: 'var(--text-dim)' }}>{m.policy_label || policySummary(m.policy, nodes, groups)}</p>}
+          {!!m.selected_nodes?.length && <p className="mb-1 text-[11px]" style={{ color: 'var(--text-dim)' }}>
+            送信時の選択: {m.selected_nodes.map((node) => node.title).join('、')}
           </p>}
           {m.operation && 'entity_id' in m.operation && <details className="mb-1 text-[11px]" style={{ color: 'var(--text-dim)' }}>
             <summary className="cursor-pointer">{m.operation.entity_type === 'chapter' ? '章の変更内容' : '資料庫の変更内容'}</summary>
@@ -305,7 +312,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
         pendingMessageRef.current = null
         setStatus('開始の準備をしています…')
         setStatusAt(new Date().toISOString())
-        setMessages((prev) => [...prev, { role: 'user', content: message, selected_nodes: selectedNodes, created_at: new Date().toISOString(), policy, policy_label: policySummary(policy, nodes, groups) }])
+        setMessages((prev) => [...prev, { role: 'user', content: message, selected_nodes: selectedNodes, created_at: new Date().toISOString(), execute, policy, policy_label: policySummary(policy, nodes, groups) }])
         let text = ''
         let receivedAt: string | undefined
         let finished = false
