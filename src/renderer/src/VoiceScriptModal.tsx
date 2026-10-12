@@ -45,13 +45,25 @@ export default function VoiceScriptModal({
 
   useEffect(() => {
     openRef.current = true
-    api.voiceScript(render.id).then(apply).catch((e) => setError(String(e)))
+    let active = true
+    api.voiceScript(render.id).then((s) => { if (active) apply(s) }).catch((e) => { if (active) setError(String(e)) })
     api.listCharacters().then(setCharacters).catch(() => undefined)
     return () => {
+      active = false
       openRef.current = false
       audioRef.current?.pause()
     }
   }, [render.id])
+
+  // 閉じて開き直した間に「話者と感情を付ける」が終わると、結果は前の画面に届いて捨てられる。
+  // 処理中→終了の切り替わりを見て、サーバーに保存された台本を読み直す
+  const wasAnnotating = useRef(annotating)
+  useEffect(() => {
+    if (wasAnnotating.current && !annotating) {
+      api.voiceScript(render.id).then((s) => { if (openRef.current) apply(s) }).catch(() => undefined)
+    }
+    wasAnnotating.current = annotating
+  }, [annotating, render.id])
 
   const update = (index: number, patch: Partial<VoiceLine>): void => {
     setLines((prev) => prev.map((l, i) => (i === index ? { ...l, ...patch, edited: true } : l)))
@@ -116,10 +128,16 @@ export default function VoiceScriptModal({
       const url = URL.createObjectURL(blob)
       const audio = new Audio(url)
       const release = applyVoiceRate(audio) // 読み上げと同じ速さで聞く
-      audio.onended = () => {
+      // 途中で止めたり差し替えたりしても解放する(onended だけでは漏れる)
+      let released = false
+      const cleanup = (): void => {
+        if (released) return
+        released = true
         release()
         URL.revokeObjectURL(url)
       }
+      audio.onended = cleanup
+      audio.onpause = cleanup
       audioRef.current = audio
       await audio.play()
     } catch (e) {
@@ -221,6 +239,7 @@ export default function VoiceScriptModal({
                 <select
                   value={line.speaker}
                   onChange={(e) => update(i, { speaker: e.target.value })}
+                  disabled={annotating}
                   className="w-24 shrink-0 rounded-md border px-1 py-0.5 text-[11px] outline-none"
                   style={inputStyle}
                   data-tip="話者"
@@ -234,6 +253,7 @@ export default function VoiceScriptModal({
                 <select
                   value={line.emotion}
                   onChange={(e) => update(i, { emotion: e.target.value })}
+                  disabled={annotating}
                   className="w-20 shrink-0 rounded-md border px-1 py-0.5 text-[11px] outline-none"
                   style={inputStyle}
                   data-tip="読むときの感情"
@@ -244,13 +264,13 @@ export default function VoiceScriptModal({
                     </option>
                   ))}
                 </select>
-                <input
-                  type="number"
+                <NumberField
+                  value={line.intensity}
                   min={0}
                   max={1}
                   step={0.1}
-                  value={line.intensity}
-                  onChange={(e) => update(i, { intensity: Math.min(1, Math.max(0, Number(e.target.value) || 0)) })}
+                  disabled={annotating}
+                  onCommit={(v) => update(i, { intensity: v })}
                   className="w-12 shrink-0 rounded-md border px-1 py-0.5 text-[11px] tabular-nums outline-none"
                   style={inputStyle}
                   data-tip="感情の強さ(0〜1)。0.8 以上で強めに演じます"
@@ -258,17 +278,18 @@ export default function VoiceScriptModal({
                 <input
                   value={line.text}
                   onChange={(e) => update(i, { text: e.target.value })}
+                  disabled={annotating}
                   className="min-w-0 flex-1 rounded-md border px-2 py-0.5 text-[12px] outline-none"
                   style={inputStyle}
                   data-tip={line.source_text && line.source_text !== line.text ? `清書の文: ${line.source_text}` : undefined}
                 />
-                <input
-                  type="number"
+                <NumberField
+                  value={line.pause_after_ms}
                   min={0}
                   max={5000}
                   step={50}
-                  value={line.pause_after_ms}
-                  onChange={(e) => update(i, { pause_after_ms: Math.min(5000, Math.max(0, Number(e.target.value) || 0)) })}
+                  disabled={annotating}
+                  onCommit={(v) => update(i, { pause_after_ms: Math.round(v) })}
                   className="w-16 shrink-0 rounded-md border px-1 py-0.5 text-[11px] tabular-nums outline-none"
                   style={inputStyle}
                   data-tip="この行の後の間(ミリ秒)"
@@ -320,5 +341,63 @@ export default function VoiceScriptModal({
         </div>
       </div>
     </div>
+  )
+}
+
+/** 数値欄。入力中は文字列のまま持ち、確定(blur / Enter)で範囲に収めて親へ渡す。
+ *  controlled の type="number" に数値を書き戻すと「0.」のような途中入力が消えて小数が打てない */
+function NumberField({
+  value,
+  min,
+  max,
+  step,
+  disabled,
+  onCommit,
+  className,
+  style,
+  'data-tip': tip
+}: {
+  value: number
+  min: number
+  max: number
+  step: number
+  disabled?: boolean
+  onCommit: (value: number) => void
+  className?: string
+  style?: React.CSSProperties
+  'data-tip'?: string
+}): React.JSX.Element {
+  const [text, setText] = useState(String(value))
+  useEffect(() => {
+    setText(String(value))
+  }, [value])
+  const commit = (): void => {
+    const parsed = Number(text)
+    if (!Number.isFinite(parsed) || text.trim() === '') {
+      setText(String(value))
+      return
+    }
+    const clamped = Math.min(max, Math.max(min, parsed))
+    setText(String(clamped))
+    if (clamped !== value) onCommit(clamped)
+  }
+  return (
+    <input
+      type="number"
+      inputMode="decimal"
+      min={min}
+      max={max}
+      step={step}
+      value={text}
+      disabled={disabled}
+      onChange={(e) => setText(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') e.currentTarget.blur()
+      }}
+      className={className}
+      style={style}
+      data-tip={tip}
+    />
   )
 }

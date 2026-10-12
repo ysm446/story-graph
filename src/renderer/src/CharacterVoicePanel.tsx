@@ -129,8 +129,9 @@ export default function CharacterVoicePanel({
       {assigned && open && (
         <div className="mt-2 rounded-lg border p-3" style={{ borderColor: 'var(--border)', background: 'var(--bg-elevated)' }}>
           <VoiceProfileEditor
-            // 「この人の声を作る」の下書きは後から届くので、説明が変わったら欄を読み直す
-            key={`${assigned.id}:${assigned.caption ?? ''}`}
+            // id だけで固定する(説明を含めると保存のたびに作り直され、入力中の欄や
+            // フォーカスが消える)。後から届く下書きは VoiceProfileEditor 側で欄へ反映する
+            key={assigned.id}
             profile={assigned}
             usedBy={usedBy(assigned.id)}
             draftFromCharId={character.id}

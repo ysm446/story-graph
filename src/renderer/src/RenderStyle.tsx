@@ -98,9 +98,11 @@ export function LengthSelect({
         value={showCustom ? 'custom' : String(value)}
         onChange={(e) => {
           if (e.target.value === 'custom') {
+            // 0 から選んだときは onChange(1200) を呼ばない。呼ぶと value が
+            // プリセット(1200)になって追従 effect が入力欄を閉じてしまう。
+            // 入力欄を 1200 で開き、確定(blur / Enter)で保存する。
             setCustomOpen(true)
             setCustomText(String(value || 1200))
-            if (!value) onChange(1200)
             return
           }
           setCustomOpen(false)

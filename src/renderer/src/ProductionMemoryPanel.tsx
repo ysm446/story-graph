@@ -23,6 +23,9 @@ function ProductionMemoryPanel({ busy, refresh, onDirty, onChanged }: {
     productionApi.memory().then((value) => { if (active) setMemory(value) }).catch((e) => { if (active) setError(String(e)) })
     return () => { active = false }
   }, [refresh, busy])
+  // 編集を始めた時点の版。編集中に制作がメモを更新して再取得が走っても、保存は
+  // この版を基準にして競合(409)を検出させる。
+  const editBaseRevision = useRef<number | null>(null)
   const save = async (): Promise<void> => {
     if (!memory) return
     setSaving(true)
@@ -30,7 +33,7 @@ function ProductionMemoryPanel({ busy, refresh, onDirty, onChanged }: {
     setNotice('')
     historyEpoch.current += 1
     try {
-      setMemory(await productionApi.saveMemory(draft, memory.revision))
+      setMemory(await productionApi.saveMemory(draft, editBaseRevision.current ?? memory.revision))
       setEditing(false)
       setVersions([])
       onChanged()
@@ -74,7 +77,7 @@ function ProductionMemoryPanel({ busy, refresh, onDirty, onChanged }: {
             setError('')
             void productionApi.memory().then(setMemory).catch((e) => setError(String(e)))
           }} data-tip="入力を取り消し、保存済みのメモを読み直します">キャンセル</button>
-        </> : <button className={button} style={style} disabled={busy || saving || !memory} onClick={() => { setDraft(memory?.content ?? ''); setEditing(true) }} data-tip={busy ? '制作が終わるか停止してから修正できます' : '方針や決定事項を修正します'}>メモを編集</button>}
+        </> : <button className={button} style={style} disabled={busy || saving || !memory} onClick={() => { setDraft(memory?.content ?? ''); editBaseRevision.current = memory?.revision ?? null; setEditing(true) }} data-tip={busy ? '制作が終わるか停止してから修正できます' : '方針や決定事項を修正します'}>メモを編集</button>}
         <button className={button} style={style} disabled={saving} onClick={() => {
           const epoch = historyEpoch.current
           void productionApi.memoryHistory().then((value) => { if (epoch === historyEpoch.current) setVersions(value) }).catch((e) => { if (epoch === historyEpoch.current) setError(String(e)) })

@@ -271,6 +271,7 @@ export default function ChatDrawer({
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
   const panelRef = useRef<HTMLDivElement | null>(null) // 入力欄の高さの上限を決めるのに使う
   const usageSeqRef = useRef(0) // 使用量の取得は追い越しがあるので最後の応答だけ採用する
+  const loadSeqRef = useRef(0) // 会話の読み込みも同様に最後の要求だけ採用する
   // 返答の読み上げ(docs/design/voice.md §6.1)。キャラとの会話はキャラの声、相談は相談相手の声
   const voice = useChatVoice({ charId, mode: charId ? (roleplay ? 'roleplay' : 'interview') : null })
   const stopVoice = voice.stop
@@ -339,10 +340,18 @@ export default function ChatDrawer({
 
   // 内容ベースの質問候補を取り直す。失敗・未起動・設定オフはすべて無視して
   // 固定の候補のまま(バックエンドが空配列を返す)。キャラモードでは使わない
-  const refreshSuggestions = async (cid: string | null, anchor: string | null): Promise<void> => {
-    if (!dynamicSuggestions || charId || room) return
+  // 会話の読み込み直後は state がまだ古いので、呼び出し側から上書き値を渡せる
+  const refreshSuggestions = async (
+    cid: string | null,
+    anchor: string | null,
+    overrides?: { charId?: string | null; room?: boolean; scope?: 'upto' | 'all' }
+  ): Promise<void> => {
+    const c = overrides?.charId !== undefined ? overrides.charId : charId
+    const r = overrides?.room !== undefined ? overrides.room : room
+    const sc = overrides?.scope ?? scope
+    if (!dynamicSuggestions || c || r) return
     try {
-      const res = await chatApi.suggestQuestions({ chat_id: cid, anchor_node: anchor, scope })
+      const res = await chatApi.suggestQuestions({ chat_id: cid, anchor_node: anchor, scope: sc })
       if (res.questions.length > 0) setDynamicQuestions(res.questions)
     } catch {
       /* 候補は無くても困らないので黙って諦める */
@@ -355,10 +364,12 @@ export default function ChatDrawer({
     cid: string | null,
     anchor: string | null,
     charOverride?: string | null,
-    participantsOverride?: string[] | null
+    participantsOverride?: string[] | null,
+    roleplayOverride?: boolean
   ): Promise<void> => {
     const c = charOverride !== undefined ? charOverride : charId
     const p = participantsOverride !== undefined ? participantsOverride : room ? participants : null
+    const rp = roleplayOverride !== undefined ? roleplayOverride : roleplay
     const seq = ++usageSeqRef.current
     if (p && p.length < 2) {
       // 参加者が揃うまでは数えるものが無い
@@ -371,7 +382,7 @@ export default function ChatDrawer({
         anchor_node: anchor,
         scope: c || p ? 'upto' : scope,
         char_id: c,
-        mode: p ? 'room' : roleplay ? 'roleplay' : 'interview',
+        mode: p ? 'room' : rp ? 'roleplay' : 'interview',
         participants: p
       })
       if (seq !== usageSeqRef.current) return // 新しい要求に追い越された
@@ -489,18 +500,22 @@ export default function ChatDrawer({
   }
 
   const loadChat = async (id: string): Promise<void> => {
+    // 一覧を素早く2回押したとき、先に返った方で後の選択を上書きしない
+    const seq = ++loadSeqRef.current
     let chat
     try {
       chat = await chatApi.get(id)
     } catch {
-      setStatus('会話の読み込みに失敗しました')
+      if (seq === loadSeqRef.current) setStatus('会話の読み込みに失敗しました')
       return
     }
+    if (seq !== loadSeqRef.current) return
     voice.stop()
     const isRoom = chat.mode === 'room' && !!chat.participants
+    const nextScope = chat.scope === 'all' ? 'all' : 'upto'
     setChatId(chat.id)
     setAnchorNode(chat.anchor_node)
-    setScope(chat.scope === 'all' ? 'all' : 'upto')
+    setScope(nextScope)
     setCharId(chat.char_id ?? null)
     setRoleplay(chat.mode === 'roleplay')
     setRoom(isRoom)
@@ -510,8 +525,8 @@ export default function ChatDrawer({
     // turn は会話ごとの添字なので、別の会話に持ち越すと同じ位置のメッセージに
     // 前の会話の編集欄(と本文)が現れてしまう
     setEditingTurn(null)
-    if (!chat.char_id && !isRoom) void refreshSuggestions(chat.id, chat.anchor_node)
-    void refreshUsage(chat.id, chat.anchor_node, chat.char_id ?? null, isRoom ? chat.participants : null)
+    if (!chat.char_id && !isRoom) void refreshSuggestions(chat.id, chat.anchor_node, { charId: null, room: false, scope: nextScope })
+    void refreshUsage(chat.id, chat.anchor_node, chat.char_id ?? null, isRoom ? chat.participants : null, chat.mode === 'roleplay')
     setItems(buildDisplay(chat.messages))
   }
 
@@ -725,7 +740,7 @@ export default function ChatDrawer({
       )
     } catch (err) {
       if (isAbortError(err)) voice.stop()
-      setStatus(isAbortError(err) ? 'キャンセルしました(途中の回答は保存されません)' : String(err))
+      setStatus(isAbortError(err) ? 'キャンセルしました(ここまでの発言と途中の調べものは保存されています)' : String(err))
     } finally {
       abortRef.current = null
       setBusy(false)

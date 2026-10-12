@@ -42,8 +42,9 @@ export default function SettingDocumentEditor({ documents, selectedId, onChanged
     setBusy(true); setError('')
     try {
       await api.updateSettingDocument(draft)
-      discard(draft.id)
+      // 一覧を読み直してから下書きを捨てる(先に捨てると、読み直すまで保存前の内容が一瞬見える)
       await onChanged()
+      discard(draft.id)
     } catch (e) { setError(`保存できませんでした: ${String(e)}`) }
     finally { setBusy(false) }
   }

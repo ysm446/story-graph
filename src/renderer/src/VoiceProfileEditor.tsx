@@ -64,6 +64,17 @@ export default function VoiceProfileEditor({
   const drafting = useTasks().some((t) => t.kind === 'voice-caption' && t.nodeId === profile.id)
   const draftElapsed = useElapsedSeconds(drafting)
 
+  // 「この人の声を作る」の下書きは後から届く。入力中でなければ(欄が直前の保存値のまま
+  // なら)欄へ反映し、入力中なら巻き戻さない
+  const lastProfileCaption = useRef(profile.caption ?? '')
+  useEffect(() => {
+    const next = profile.caption ?? ''
+    if (next !== lastProfileCaption.current) {
+      setCaption((current) => (current === lastProfileCaption.current ? next : current))
+      lastProfileCaption.current = next
+    }
+  }, [profile.caption])
+
   // 別の声に切り替わったら欄を読み直す(同じ声の保存結果では、入力中の欄を巻き戻さない)
   useEffect(() => {
     setName(profile.name)
@@ -159,7 +170,9 @@ export default function VoiceProfileEditor({
       if (!blob) throw new Error('音声が返りませんでした')
       const url = URL.createObjectURL(blob)
       const audio = new Audio(url)
+      // 途中で止めたり差し替えたりしても URL を解放する(onended だけでは漏れる)
       audio.onended = () => URL.revokeObjectURL(url)
+      audio.onpause = () => URL.revokeObjectURL(url)
       audioRef.current = audio
       await audio.play()
       setLastTested({

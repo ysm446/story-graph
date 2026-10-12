@@ -134,6 +134,8 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
   const manualRef = useRef(false)
   const [runId, setRunId] = useState<string | null>(null)
   const runRef = useRef<string | null>(null)
+  // 待機列で順番待ちのまま停止されたとき、入力欄へ戻す依頼文(動き出したら null)
+  const pendingMessageRef = useRef<string | null>(null)
   const [sendingInstruction, setSendingInstruction] = useState(false)
   const instructionRequest = useRef<{ runId: string; text: string; id: string; selectedIds: string[] } | null>(null)
   const selectionKey = JSON.stringify(selectedNodeIds)
@@ -287,6 +289,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
     runRef.current = null
     setInput('')
     setProductionPreview(null)
+    pendingMessageRef.current = message
     let currentChatId = chatId
     let activeNode: string | null = null
     const id = enqueueTask({
@@ -294,6 +297,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
       runner: async ({ signal, update }) => {
         // 待機列で待った時間は含めず、実際に動き出してからを測る。
         const startedAt = Date.now()
+        pendingMessageRef.current = null
         setStatus('開始の準備をしています…')
         setStatusAt(new Date().toISOString())
         setMessages((prev) => [...prev, { role: 'user', content: message, selected_nodes: selectedNodes, created_at: new Date().toISOString(), policy, policy_label: policySummary(policy, nodes, groups) }])
@@ -510,7 +514,12 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
           className="rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-50"
           style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
           data-tip="指示を受け付け、次の判断に取り込みます。確定済みの変更は自動では戻りません">途中指示を送る</button>}
-        {busy ? <button onClick={() => { runRef.current = null; setRunId(null); if (taskId) cancelTask(taskId) }}
+        {busy ? <button onClick={() => {
+          runRef.current = null; setRunId(null); if (taskId) cancelTask(taskId)
+          // まだ動き出していない依頼は履歴にも残っていないので、入力欄へ戻す
+          const pending = pendingMessageRef.current
+          if (pending) { pendingMessageRef.current = null; setInput((prev) => prev || pending) }
+        }}
           className="rounded-md border px-2 py-0.5 text-[11px]"
           style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }} data-tip="未確定の生成を止めます。確定済みの変更は残ります">停止</button> :
           <button onClick={submit} disabled={!input.trim()}

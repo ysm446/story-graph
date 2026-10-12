@@ -64,7 +64,13 @@ export default function PlaceEditor({
   const handleSave = async (): Promise<void> => {
     setSaving(true)
     try {
-      await api.updatePlace(place.id, draft)
+      // 変えた項目だけ送る。draft は選択時点の丸ごとコピーなので、そのまま PATCH すると
+      // 編集中に別の経路(制作チャットなど)で保存された項目を古い値で巻き戻す
+      const patch = Object.fromEntries(
+        EDITABLE_FIELDS.filter((k) => (draft[k] ?? '') !== (place[k] ?? ''))
+          .map((k) => [k, k === 'name' ? (draft[k] ?? '') : (draft[k] || null)])
+      )
+      if (Object.keys(patch).length > 0) await api.updatePlace(place.id, patch)
       await onChanged()
     } finally {
       setSaving(false)

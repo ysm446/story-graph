@@ -268,9 +268,13 @@ function CharactersMode(): React.JSX.Element {
     try {
       // 編集欄の項目だけ送る。draft は選択時点の丸ごとコピーなので、そのまま PATCH すると
       // 選択後にその場で保存された項目(参照画像・関係図の座標など)を古い値で巻き戻す
+      // 変えた項目だけ送る。未設定(null)の項目を '' に変えて送ると、色の既定値
+      // (char.color ?? …)が効かなくなる。空にしたときは name 以外 null にする
       const patch = Object.fromEntries(
-        EDITABLE_FIELDS.map((k) => [k, draft[k] ?? ''])
+        EDITABLE_FIELDS.filter((k) => (draft[k] ?? '') !== (selected?.[k] ?? ''))
+          .map((k) => [k, k === 'name' ? (draft[k] ?? '') : (draft[k] || null)])
       )
+      if (Object.keys(patch).length === 0) return
       await api.updateCharacter(selectedId, patch)
       await reload()
     } finally {

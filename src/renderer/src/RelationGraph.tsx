@@ -435,7 +435,8 @@ export default function RelationGraph({
     }
     svg.addEventListener('wheel', onWheel, { passive: false })
     return () => svg.removeEventListener('wheel', onWheel)
-  }, [width, height])
+    // シーン 0 件で描画した後に svg が現れる場合があるので、path の有無でも登録し直す
+  }, [width, height, path.length > 0])
 
   const charMap = useMemo(() => Object.fromEntries(characters.map((c) => [c.id, c])), [characters])
 
