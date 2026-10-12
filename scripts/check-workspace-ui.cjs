@@ -233,10 +233,11 @@ for mode in ['production', None]:
     const divider = await js(`(() => {const r=document.querySelector('.scene-detail-divider').getBoundingClientRect(); return {x:Math.round(r.x),y:Math.round(r.y+30),width:document.querySelector('.scene-detail-meta').clientWidth}})()`)
     await js(`(() => {const el=document.querySelector('.scene-detail-divider');const rect=el.getBoundingClientRect();el.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,clientX:rect.x,clientY:rect.y+30}));window.dispatchEvent(new PointerEvent('pointermove',{clientX:rect.x+(document.querySelector(".detail-main-right, .detail-three") ? 80 : -80),clientY:rect.y+30}));window.dispatchEvent(new PointerEvent('pointerup'));})()`)
     await pause(200)
-    const widthKey = chapterCheck ? 'chapterDetailMetaWidth' : 'sceneDetailEventsWidth'
-    await assert(`document.querySelector('.scene-detail-meta').clientWidth > ${divider.width + 40} && Number(localStorage.getItem(${JSON.stringify(widthKey)})) > ${chapterCheck ? 42 : 34}`, '境界のドラッグで補助情報を拡大し幅を保存')
-    if (!chapterCheck) {
-      // シーンタブは幅で 3列 → 2列(挿絵・設定とイベントを縦に重ねる) → 1列 と切り替わる
+    const widthKey = chapterCheck ? 'chapterDetailListWidth' : 'sceneDetailEventsWidth'
+    await assert(`document.querySelector('.scene-detail-meta').clientWidth > ${divider.width + 40} && Number(localStorage.getItem(${JSON.stringify(widthKey)})) > 34`, '境界のドラッグで補助情報を拡大し幅を保存')
+    {
+      // シーン・章のタブは幅で 3列 → 2列(左の2つを縦に重ねる) → 1列 と切り替わる
+      const middle = chapterCheck ? 'シーン(' : 'イベント'
       const rects = `(() => {const r=(q)=>{const b=document.querySelector(q).getBoundingClientRect();return {x:b.x,y:b.y,width:b.width,right:b.right,bottom:b.bottom}};return {aside:r('.scene-detail-aside'),meta:r('.scene-detail-meta'),main:r('.scene-detail-main'),width:document.querySelector('.scene-detail').clientWidth}})()`
       const medium = await js(rects)
       if (!(medium.width < 1100 && Math.abs(medium.aside.x - medium.meta.x) < 1 && medium.meta.y >= medium.aside.bottom - 1 && medium.main.x >= medium.aside.right - 1)) errors.push('中くらいの幅で挿絵・設定とイベントが左の1列に重なっていない: ' + JSON.stringify(medium))
@@ -247,7 +248,8 @@ for mode in ['production', None]:
       const wide = await js(rects)
       if (!(wide.width >= 1100 && Math.abs(wide.aside.y - wide.meta.y) < 1 && Math.abs(wide.meta.y - wide.main.y) < 1 && wide.meta.x >= wide.aside.right - 1 && wide.main.x >= wide.meta.right - 1 && Math.round(wide.aside.width) === 264)) errors.push('広い幅で3列になっていない: ' + JSON.stringify(wide))
       else console.log('PASS 広い幅では挿絵・設定 / イベント / 本文の3列')
-      await assert(`document.querySelector('.scene-detail-meta').textContent.includes('イベント') && !document.querySelector('.scene-detail-aside').textContent.includes('イベント')`, 'イベントは中央の列に置く')
+      await assert(`document.querySelector('.scene-detail-meta').textContent.includes(${JSON.stringify(middle)}) && !document.querySelector('.scene-detail-aside').textContent.includes(${JSON.stringify(middle)})`, (chapterCheck ? 'シーン一覧' : 'イベント') + 'は中央の列に置く')
+      if (chapterCheck) await assert(`document.querySelector('.scene-detail-aside').textContent.includes('表紙') && document.querySelector('.scene-detail-main').textContent.includes('まとめ')`, '章は左に表紙、右にまとめを置く')
       const before = wide.meta.width
       await js(`(() => {const el=document.querySelector('.scene-detail-divider');const rect=el.getBoundingClientRect();el.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,clientX:rect.x,clientY:rect.y+30}));window.dispatchEvent(new PointerEvent('pointermove',{clientX:rect.x+60,clientY:rect.y+30}));window.dispatchEvent(new PointerEvent('pointerup'))})()`)
       await pause(200)
@@ -257,7 +259,7 @@ for mode in ['production', None]:
       await js(`(() => {const el=document.querySelector('.scene-detail-aside-divider');const rect=el.getBoundingClientRect();el.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,clientX:rect.x,clientY:rect.y+30}));window.dispatchEvent(new PointerEvent('pointermove',{clientX:rect.x+56,clientY:rect.y+30}));window.dispatchEvent(new PointerEvent('pointerup'))})()`)
       await pause(200)
       const asideDragged = await js(rects)
-      if (!(Math.abs(asideDragged.aside.width - 320) < 4 && Number(await js(`localStorage.getItem('sceneDetailEventsWidthAside')`)) === Math.round(asideDragged.aside.width) && asideDragged.meta.x >= asideDragged.aside.right - 1 && asideDragged.main.x >= asideDragged.meta.right - 1)) errors.push('左の境界のドラッグで挿絵・設定の列が広がっていない: ' + JSON.stringify(asideDragged))
+      if (!(Math.abs(asideDragged.aside.width - 320) < 4 && Number(await js(`localStorage.getItem(${JSON.stringify(widthKey + 'Aside')})`)) === Math.round(asideDragged.aside.width) && asideDragged.meta.x >= asideDragged.aside.right - 1 && asideDragged.main.x >= asideDragged.meta.right - 1)) errors.push('左の境界のドラッグで挿絵・設定の列が広がっていない: ' + JSON.stringify(asideDragged))
       else console.log('PASS 左の境界のドラッグで挿絵・設定の列を広げ、幅を保存')
       writeFileSync(join(target, 'details-three.png'), (await win.webContents.capturePage()).toPNG())
       if (errors.length) throw new Error(errors.join('\n'))

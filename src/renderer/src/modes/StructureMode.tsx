@@ -1737,7 +1737,7 @@ function ChapterTab({
         </p>
       )}
       </div>
-      <DetailSplit storageKey="chapterDetailMetaWidth" mainOnRight main={<>
+      <DetailSplit storageKey="chapterDetailListWidth" defaultWidth={34} main={<>
       <div>
         <div className="mb-1 flex items-center gap-2">
           <span className="text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
@@ -1850,9 +1850,9 @@ function ChapterTab({
 
           </div>
         )}
-      </div>      </>} secondary={<>
+      </div>      </>} aside={<>
       {/* 表紙(章カードのサムネイル)。挿絵はシーンのもので、章はどれを使うかだけを持つ */}
-      {cover && (
+      {cover ? (
         <div>
           <div className="mb-1 flex items-center gap-2">
             <span className="text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
@@ -1874,7 +1874,17 @@ function ChapterTab({
           </div>
           <NodeThumb node={cover} className="h-auto w-full rounded-xl" />
         </div>
+      ) : (
+        <div>
+          <span className="mb-1 block text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
+            表紙
+          </span>
+          <p className="text-[11px] leading-relaxed" style={{ color: 'var(--text-faint)' }}>
+            まだ表紙がありません。章の中のシーンに挿絵を付けると、最初の1枚が表紙になります。
+          </p>
+        </div>
       )}
+      </>} secondary={<>
       <div>
         <span className="mb-1 block text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
           シーン({group.node_ids.length})
