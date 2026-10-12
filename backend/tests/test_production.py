@@ -492,12 +492,15 @@ def test_consult_write_attempt_ends_once_and_saves_guidance(store, monkeypatch, 
 
 
 def test_consult_repeated_read_stops_without_exhausting_steps(store, monkeypatch):
-    fake_llm(monkeypatch, [call("get_beats", {"node_ids": ["first"]})] * 2)
+    # 同じ取得は2回目・3回目に前回の結果を返し、4回目で止める。止めたあとはツール無しで回答をまとめる
+    fake_llm(monkeypatch, [call("get_beats", {"node_ids": ["first"]})] * 4 + [{"content": "出発の本文はこうです。"}])
     events = run(collect(store, False))
-    assert events[-1].get("done")
-    assert sum(e.get("stage") == production.TOOL_LABELS["get_beats"] for e in events) == 1
-    assert any("いったん停止" in e.get("delta", "") for e in events)
-    assert "いったん停止" in store.get_chat(events[0]["chat_id"])["messages"][-1]["content"]
+    assert events[-1].get("done") and events[-1]["outcome"] == "stalled"
+    assert sum(e.get("stage") == production.TOOL_LABELS["get_beats"] for e in events) == 4
+    assert any("同じ情報の取得" in e.get("tool_error", "") for e in events)
+    history = store.get_chat(events[0]["chat_id"])["messages"]
+    assert "停止しました" in history[-1]["content"]
+    assert history[-2]["content"] == "出発の本文はこうです。"
 
 
 def test_consult_distinct_reads_can_answer_normally(store, monkeypatch):

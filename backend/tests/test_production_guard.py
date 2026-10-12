@@ -74,15 +74,20 @@ def done(events):
 
 def test_repeated_read_returns_cached_result_then_stops(store, monkeypatch):
     read = call("get_beats", {"node_ids": ["first"]})
-    prompts = fake_llm(monkeypatch, [read, read, read, {"content": "終了"}])
+    prompts = fake_llm(monkeypatch, [read, read, read, read, {"content": "ここまでの情報では出発の本文を確認しました。"}])
     events = collect(store)
     assert done(events)["outcome"] == "stalled"
-    assert len(prompts) == 3  # 3回目の同じ取得で止まり、4つ目の応答は使われない
-    # 2回目は結果と注意を返し、3回目で停止理由を通知する
+    # 4回目の同じ取得で止まり、5つ目の応答はツール無しの「まとめ」として使われる
+    assert len(prompts) == 5
+    assert "作業は停止しました" in json.dumps(prompts[4], ensure_ascii=False)
+    # 2回目・3回目は結果と注意を返し(3回目は停止の予告つき)、4回目で停止理由を通知する
     assert "2回目" in json.dumps(prompts[2], ensure_ascii=False)
+    assert "次に同じ取得をすると作業は停止します" in json.dumps(prompts[3], ensure_ascii=False)
     assert any("同じ情報の取得" in e.get("tool_error", "") for e in events)
+    assert any("出発の本文を確認しました" in e.get("delta", "") for e in events)
     history = store.get_chat(events[0]["chat_id"])["messages"]
     assert history[-1].get("outcome") == "stalled"
+    assert history[-2].get("closing") is True
     assert "確定済みの変更 0 件" in history[-1]["content"]
     assert production_memory.read(store)["checkpoint"]["status"] == "stalled"
     assert not store.reviews, "停止時は作業メモの見直しをしない"
@@ -98,13 +103,22 @@ def test_reads_after_a_commit_are_not_counted_as_repeats(store, monkeypatch):
     assert not any("同じ情報の取得" in e.get("tool_error", "") for e in events)
 
 
-def test_consult_mode_keeps_its_own_repeat_rule(store, monkeypatch):
+def test_consult_mode_uses_the_same_repeat_rule_and_still_answers(store, monkeypatch):
     read = call("get_beats", {"node_ids": ["first"]})
-    fake_llm(monkeypatch, [read, read])
+    prompts = fake_llm(monkeypatch, [read, read, read, read, {"content": "案: 出発の末尾に約束の一文を足す。"}])
     events = collect(store, execute=False)
-    assert done(events)["outcome"] == "completed"
-    assert done(events)["summary"] is None
-    assert any("いったん停止" in e.get("delta", "") for e in events)
+    assert done(events)["outcome"] == "stalled"
+    assert done(events)["summary"] == guard.OUTCOME_LABELS["stalled"]
+    assert len(prompts) == 5
+    assert "変更案を具体的に示して" in json.dumps(prompts[4], ensure_ascii=False)
+    assert any("約束の一文" in e.get("delta", "") for e in events)
+    assert not any(e.get("changed") for e in events)
+
+
+def test_consult_completion_has_no_summary(store, monkeypatch):
+    fake_llm(monkeypatch, [{"content": "案です"}])
+    events = collect(store, execute=False)
+    assert done(events)["outcome"] == "completed" and done(events)["summary"] is None
 
 
 def test_applied_operation_is_returned_as_saved_then_stops(store, monkeypatch):
@@ -123,7 +137,7 @@ def test_applied_operation_is_returned_as_saved_then_stops(store, monkeypatch):
 
 def test_same_error_gets_guidance_then_stops(store, monkeypatch):
     bad = call("patch_scene", {"node_id": "first", "mode": "append", "text": "", "reason": "追記"})
-    prompts = fake_llm(monkeypatch, [bad, bad, bad, {"content": "終了"}])
+    prompts = fake_llm(monkeypatch, [bad, bad, bad, {"content": "追記できませんでした。"}])
     events = collect(store)
     errors = [e["tool_error"] for e in events if e.get("tool_error")]
     assert len(errors) == 3
@@ -131,17 +145,32 @@ def test_same_error_gets_guidance_then_stops(store, monkeypatch):
     assert "同じエラーが3回" in errors[2]
     assert done(events)["outcome"] == "stalled"
     assert done(events)["tool_errors"] == 3
-    assert len(prompts) == 3
+    assert len(prompts) == 4  # 最後はツール無しのまとめ
 
 
-def test_different_errors_do_not_stop_and_success_resets(store, monkeypatch):
+def test_identical_errors_count_across_the_whole_run(store, monkeypatch):
     bad = call("patch_scene", {"node_id": "first", "mode": "append", "text": "", "reason": "追記"})
     other = call("patch_scene", {"node_id": "first", "mode": "replace", "old_text": "無い文", "text": "x", "reason": "置換"})
     ok = call("patch_scene", {"node_id": "first", "mode": "append", "text": "空を見上げる。", "reason": "追記"})
-    fake_llm(monkeypatch, [bad, other, bad, ok, bad, {"content": "完了"}])
+    # 別のエラーや成功を挟んでも、同じエラーが3回目で止まる
+    fake_llm(monkeypatch, [bad, other, bad, ok, bad, {"content": "報告"}])
     events = collect(store)
-    assert done(events)["outcome"] == "completed"
+    assert done(events)["outcome"] == "stalled"
     assert done(events)["tool_errors"] == 4
+    assert store.get_node("first")["beat"] == "村を出る。空を見上げる。"
+
+
+def test_second_edit_of_same_scene_adds_one_note(store, monkeypatch):
+    first = call("patch_scene", {"node_id": "first", "mode": "append", "text": "一つ目。", "reason": "追記"})
+    second = call("patch_scene", {"node_id": "first", "mode": "append", "text": "二つ目。", "reason": "追記"})
+    third = call("patch_scene", {"node_id": "first", "mode": "append", "text": "三つ目。", "reason": "追記"})
+    prompts = fake_llm(monkeypatch, [first, second, third, {"content": "完了"}])
+    events = collect(store)
+    assert done(events)["outcome"] == "completed" and done(events)["changes"] == 3
+    texts = [json.dumps(p, ensure_ascii=False) for p in prompts]
+    assert "2回編集しました" not in texts[1]
+    assert "2回編集しました" in texts[2]
+    assert "2回編集しました" not in texts[3]
 
 
 # ---- 空応答・途切れた報告 --------------------------------------------
@@ -374,3 +403,152 @@ def test_done_event_carries_summary_and_tool_call_events(store, monkeypatch):
     assert final["summary"].startswith("完了しました（変更 1 件")
     calls = [e["tool_call"] for e in events if e.get("tool_call")]
     assert calls == [{"name": "get_beats", "target": None}, {"name": "patch_scene", "target": "first"}]
+
+
+# ---- 取りやめ判定の誤検出対策と相談の承認案内 --------------------------
+
+def test_cancelled_ids_mentioned_in_latest_instruction_or_remaining_are_kept(store, monkeypatch):
+    async def chat_json(messages, **kwargs):
+        return {"cancelled_node_ids": ["first", "last"], "remaining": "帰還(last)に青い布の描写を足す"}
+    monkeypatch.setattr(llm, "chat_json", chat_json)
+    cancelled, remaining = asyncio.run(guard.reconcile_instructions(
+        store, "fake", "出発と帰還を補強", ["赤いランタンはやめて、first には青い布を足して"], []))
+    # first は最新指示に、last は残作業にIDが出るので、どちらも取りやめにしない
+    assert cancelled == [] and "青い布" in remaining
+
+
+def test_cancel_block_is_lifted_on_second_attempt(store, monkeypatch):
+    async def chat_json(messages, **kwargs):
+        return {"cancelled_node_ids": ["first"], "remaining": "帰還を直す"}
+    monkeypatch.setattr(llm, "chat_json", chat_json)
+    prompts = []
+    async def model(messages, **kwargs):
+        prompts.append(messages)
+        if len(prompts) == 1:
+            production.gate.run.submit("keep", "出発は残して")
+            yield "done", call("get_beats", {"node_ids": ["first"]})
+        elif len(prompts) in (2, 3):
+            yield "done", call("patch_scene", {"node_id": "first", "mode": "append", "text": "x", "reason": "対象は出発"})
+        else:
+            yield "done", {"content": "完了"}
+    monkeypatch.setattr(llm, "chat_stream_tools", model)
+    events = collect(store)
+    errors = [e["tool_error"] for e in events if e.get("tool_error")]
+    assert len(errors) == 1 and "判定を解除します" in errors[0]
+    assert any("取りやめ判定を解除しました" in e.get("stage", "") for e in events)
+    assert store.get_node("first")["beat"] == "村を出る。x"
+    assert done(events)["outcome"] == "completed"
+
+
+@pytest.mark.parametrize("message, answer, expected", [
+    ("この案で進めて", "私は相談役なので編集できません。ご自身で編集画面から追記してください。", True),
+    ("この案で進めて", "案は未実施です。「制作を実行」に切り替えて「この案で進めて」と送ってください。", False),
+    ("出発の本文はどんな内容ですか", "出発では村を出ます。", False),
+    ("お願いします", "", True),
+])
+def test_consult_guidance_for(message, answer, expected):
+    assert (guard.consult_guidance_for(message, answer) is not None) == expected
+
+
+def test_consult_approval_without_guidance_gets_it_appended(store, monkeypatch):
+    fake_llm(monkeypatch, [{"content": "私は相談役です。ご自身で編集してください。"}])
+    events = collect(store, execute=False, message="この案で進めて")
+    text = "".join(e.get("delta", "") for e in events)
+    assert "制作を実行" in text
+    history = store.get_chat(events[0]["chat_id"])["messages"]
+    assert history[-1]["content"].startswith("私は相談役です。") and "制作を実行" in history[-1]["content"]
+    assert done(events)["outcome"] == "completed"
+
+
+def test_consult_question_does_not_get_guidance(store, monkeypatch):
+    fake_llm(monkeypatch, [{"content": "出発では村を出ます。"}])
+    events = collect(store, execute=False, message="出発の内容を教えて")
+    assert "制作を実行" not in "".join(e.get("delta", "") for e in events)
+
+
+def test_step_limit_gets_a_closing_report(store, monkeypatch):
+    reads = [call("get_beats", {"node_ids": [nid]}) for nid in ["first", "last", "first"]]
+    edits = [call("patch_scene", {"node_id": "first", "mode": "append", "text": f"{i}。", "reason": "追記"}) for i in range(20)]
+    # 読み取りと書き込みを交互にして反復停止にかからないまま上限へ到達させる
+    sequence = []
+    for i in range(production.MAX_STEPS):
+        sequence.append(edits[i] if i % 2 else call("get_beats", {"node_ids": ["first"]}))
+    prompts = fake_llm(monkeypatch, sequence + [{"content": "上限までの報告"}])
+    events = collect(store)
+    assert done(events)["outcome"] == "limit"
+    assert len(prompts) == production.MAX_STEPS + 1
+    assert any("上限までの報告" in e.get("delta", "") for e in events)
+    history = store.get_chat(events[0]["chat_id"])["messages"]
+    assert history[-2].get("closing") and history[-1].get("outcome") == "limit"
+
+
+def test_closing_text_that_is_a_tool_call_string_is_hidden(store, monkeypatch):
+    read = call("get_beats", {"node_ids": ["first"]})
+    fake_llm(monkeypatch, [read, read, read, read, {"content": '{"node_id": "last", "mode": "append", "text": "x"}<tool_call|>'}])
+    events = collect(store)
+    assert done(events)["outcome"] == "stalled"
+    assert not any("<tool_call" in e.get("delta", "") for e in events)
+    assert any("本文ではなかったため表示しません" in e.get("stage", "") for e in events)
+    history = store.get_chat(events[0]["chat_id"])["messages"]
+    assert not any(m.get("closing") for m in history)
+
+
+@pytest.mark.parametrize("text, usable", [
+    ("確定済みの変更は1件です。", True),
+    ("", False),
+    ('{"name": "patch_scene"}', False),
+    ("本文です。<tool_call|>", False),
+    ("出発を直しました。<|tool_call>", False),
+])
+def test_closing_text_is_usable(text, usable):
+    assert guard.closing_text_is_usable(text) == usable
+
+
+def test_protection_error_guidance_is_specific(store, monkeypatch):
+    policy = production.ProductionPolicy(store, allowed_ids=["first"], protected_ids=["last"])
+    blocked = call("patch_scene", {"node_id": "last", "mode": "append", "text": "x", "reason": "補強"})
+    fake_llm(monkeypatch, [blocked, blocked, {"content": "帰還は保護のため変更していません。"}])
+    async def go():
+        return [json.loads(s.removeprefix("data: ")) async for s in production.stream(
+            store, "fake", None, "補強して", True, lambda: None, policy=policy)]
+    events = asyncio.run(go())
+    errors = [e["tool_error"] for e in events if e.get("tool_error")]
+    assert len(errors) == 2 and "依頼文や途中指示では解除できません" in errors[1] and "正しい形" not in errors[1]
+    assert done(events)["outcome"] == "completed"
+
+
+# ---- 同じ内容のシーンの重複追加 ------------------------------------------
+
+SCENE = "旅の途中で、アヤはふとケンとの約束を思い出した。足を止め、村に残した彼の言葉が彼女の背中を押した。"
+
+
+def test_duplicate_scene_detects_identical_and_near_identical(store):
+    store.append_node({"id": "mid", "title": "約束の記憶", "beat": SCENE, "cast": ["aya"]})
+    assert guard.duplicate_scene(store, SCENE) == ("mid", "約束の記憶")
+    assert guard.duplicate_scene(store, SCENE.replace("ふと", "")) == ("mid", "約束の記憶")
+    assert guard.duplicate_scene(store, "まったく別の場面。") is None
+    assert guard.duplicate_scene(store, SCENE, exclude_id="mid") is None
+    # 短い本文は完全一致だけ
+    assert guard.duplicate_scene(store, "村を出る。") == ("first", "出発")
+    assert guard.duplicate_scene(store, "村を出た。") is None
+
+
+def test_second_insert_of_the_same_scene_is_rejected(store, monkeypatch):
+    first = call("insert_scene", {"after_id": "first", "title": "約束の記憶", "beat": SCENE, "cast": ["aya"], "reason": "挿入"})
+    prompts = fake_llm(monkeypatch, [first, {"content": "次"}])
+    # 1回目の挿入後に、新しいIDの後ろへ同じ本文を挿入しようとする
+    original = llm.chat_stream_tools
+    state = {"inserted": None}
+    async def wrapped(messages, **kwargs):
+        if len(prompts) == 1 and state["inserted"] is None:
+            state["inserted"] = next(n["id"] for n in store.graph()["nodes"] if n.get("title") == "約束の記憶")
+            yield "done", call("insert_scene", {"after_id": state["inserted"], "title": "約束の記憶", "beat": SCENE, "cast": ["aya"], "reason": "再挿入"})
+            return
+        async for item in original(messages, **kwargs):
+            yield item
+    monkeypatch.setattr(llm, "chat_stream_tools", wrapped)
+    events = collect(store)
+    errors = [e["tool_error"] for e in events if e.get("tool_error")]
+    assert len(errors) == 1 and "同じ内容のシーンが既にあります" in errors[0]
+    assert sum(1 for n in store.graph()["nodes"] if n.get("title") == "約束の記憶") == 1
+    assert done(events)["outcome"] == "completed" and done(events)["changes"] == 1

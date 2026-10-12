@@ -220,7 +220,10 @@ async def main():
                 assert "制作を実行" in answer, "モードの切替案内なし"
                 assert all(text in answer for text in expected), "具体的な変更案なし"
                 chats[label] = events[0]["chat_id"]
-                assert not any(e.get("changed") or e.get("tool_error") for e in events)
+                assert not any(e.get("changed") for e in events)
+                # ハーネスの反復停止(同じ取得の繰り返しを止めて、取得済みの情報で案をまとめた)は
+                # ツールの失敗ではないので許す。案の内容と切替案内は上の条件で確認済み。
+                assert not any(e.get("tool_error") and "停止しました" not in e["tool_error"] for e in events), "相談中のツールエラー"
                 assert summary[-1]["steps"] < production.MAX_STEPS, "相談の変更依頼で上限まで確認を繰り返した"
                 assert (store.graph(), store.list_characters(), store.list_places(), production_memory.read(store)) == before
             events = await turn("consult-question", "記録係の決意(n15)では、ケンは住民への情報公開をどう考えていますか？", execute=False)

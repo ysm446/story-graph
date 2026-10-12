@@ -1,7 +1,7 @@
 # Gemma 4 12B 制作モード実機検証
 
 作成日時: 2026-10-12 00:37
-更新日時: 2026-10-12 00:45
+更新日時: 2026-10-12 13:10
 
 ## 条件
 
@@ -65,3 +65,47 @@
 サーバーログにはGemma4の古いチャットテンプレートへ互換処理を行う旨の警告もある。ただし、これが空回答の原因かどうかは切り分けていない。Q4版、31Bとの同条件比較、実アプリUIでの通し操作は未検証。
 
 専用サーバーは検証後に停止した。関連pytestは137件成功、変更したPythonファイルの構文確認・差分チェックも成功。フロントエンドの変更はなくbuildは実施していない。
+
+## ハーネス制御後の再検証（2026-10-12 13:10）
+
+- llama.cpp b10430、専用ポート8089、コンテキスト32768、GPUオフロード、Jinja、cache-reuse 256。埋め込み無効（FTS）、隔離DB。各項目1回。
+- 1周目はハーネス第1弾（コミット `30f49ad`）、2周目はその再検証で直した版（照合の誤検出対策・相談の反復ルール統一・停止時のまとめ・承認案内・エラー計数・再編集注記）、3周目以降は読み取り反復の停止4回目化・まとめのフィルタ・保護エラー案内・重複挿入ガードを加えた版。詳細は [production-chat.md「ハーネスの制御」](../design/production-chat.md)。
+- 表の「終了理由」はハーネスが記録した outcome（completed / stalled / limit）。「判定」は各スクリプトの検証条件。
+
+### 1周目（第1弾）
+
+| 項目 | 判定 | 終了理由 | ステップ | 変更 | ツールエラー | 秒 | 記録 |
+|---|---|---|---:|---:|---:|---:|---|
+| 本文修正・挿入・後続依頼で削除と再接続 | 合格 | completed | 7 | 3 | 0 | 45 | production-check-77ff235b |
+| 途中指示で対象を変更 1回目 | 合格 | completed | 4 | 1 | 0 | 25 | production-check-633e1a7c |
+| 途中指示で対象を変更 2回目 | 合格 | completed | 4 | 1 | 0 | 25 | production-check-13da18e2 |
+| 途中指示で対象を変更 3回目 | 合格 | completed | 4 | 1 | 0 | 24 | production-check-e5929fa3 |
+| 対象が不明な依頼 | 合格 | completed | 1 | 0 | 0 | 8 | production-check-3726a740 |
+| 意見だけを求める質問 | 合格 | completed | 1 | 0 | 0 | 17 | production-check-b1fc720c |
+| 明示的な確認待ち | 合格 | completed | 1 | 0 | 0 | 10 | production-check-28afc09f |
+| 保護対象・編集範囲 | 合格 | completed | 3 | 1 | 0 | 21 | production-check-b459b2bd |
+| 作業メモの保存・別会話への引き継ぎ | 合格 | completed | 2 | 1 | 0 | 34 | production-check-bf602609 |
+| シーン移動・枝の接続変更 | 合格 | completed | 4 | 2 | 0 | 20 | production-check-0f689992 |
+| 48シーン：相談5段階→実行 | 不合格 | comp/comp/comp/comp/comp/comp | 10 | 1 | 0 | 81 | production-scenario-16df9765 |
+| 資料庫・分岐 7段階 | 合格 | comp/comp/comp/comp/comp/comp/comp | 28 | 11 | 0 | 160 | production-library-branch-449c416a |
+
+- 48シーン相談の不合格は26B A4Bと同じく、相談モードのまま「この案で進めて」に切替案内を欠いたため。実行段階は指定文を1回で完全一致追記（第1弾前は余分な改行で不合格だった）。
+
+### 2周目（承認案内などの後）
+
+| 項目 | 判定 | 終了理由 | ステップ | 変更 | ツールエラー | 秒 | 記録 |
+|---|---|---|---:|---:|---:|---:|---|
+| 本文修正・挿入・後続依頼で削除と再接続 | 合格 | completed | 7 | 3 | 0 | 40 | production-check-59a713df |
+| 途中指示で対象を変更 1回目 | 合格 | completed | 4 | 1 | 0 | 24 | production-check-6bc6a0c1 |
+| 途中指示で対象を変更 2回目 | 合格 | completed | 6 | 1 | 2 | 27 | production-check-33ed4d71 |
+| 途中指示で対象を変更 3回目 | 合格 | completed | 4 | 1 | 0 | 23 | production-check-fd6bce75 |
+| 対象が不明な依頼 | 合格 | completed | 1 | 0 | 0 | 10 | production-check-95ba0d0c |
+| 意見だけを求める質問 | 合格 | completed | 1 | 0 | 0 | 16 | production-check-6903a53e |
+| 明示的な確認待ち | 合格 | completed | 1 | 0 | 0 | 10 | production-check-bad10244 |
+| 保護対象・編集範囲 | 合格 | completed | 3 | 1 | 0 | 19 | production-check-85685a3e |
+| 作業メモの保存・別会話への引き継ぎ | 合格 | completed | 2 | 1 | 0 | 32 | production-check-f0841112 |
+| シーン移動・枝の接続変更 | 合格 | completed | 4 | 2 | 0 | 21 | production-check-b43307e9 |
+| 48シーン：相談5段階→実行 | 合格 | comp/comp/comp/comp/comp/comp | 11 | 1 | 0 | 46 | production-scenario-30fdd636 |
+| 資料庫・分岐 7段階 | 合格 | comp/comp/comp/comp/comp/comp/comp | 30 | 11 | 0 | 175 | production-library-branch-926a6b45 |
+
+12項目すべて合格。途中指示2回目では「追記では空でないtext」のエラーが2回続いた時点で添えた正しい形の案内のあと、3回目で成功した。

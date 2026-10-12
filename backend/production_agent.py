@@ -343,6 +343,11 @@ async def apply_edit(store: Store, base_url: str, name: str, args: dict, before_
     if name == "update_scene" and not from_patch and "beat" in args:
         # 全文置換で既存の内容の大半が失われる編集は、明示の rewrite が無ければ保存しない。
         production_guard.check_rewrite(original.get("beat") or "", args["beat"], bool(args.get("rewrite")))
+    if name in CREATE_SCENE_TOOLS:
+        duplicate = production_guard.duplicate_scene(store, args["beat"])
+        if duplicate is not None:
+            raise ValueError(f"同じ内容のシーンが既にあります: {duplicate[0]}「{duplicate[1]}」。重複して追加しません。"
+                             "追加済みなら次の作業へ進み、別の場面が必要なら内容を変えてください")
     before = None
     if policy is not None:
         policy.check_target(original["id"])
@@ -569,7 +574,6 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
     monitor = production_guard.RunMonitor()
     recent_results = []
     changes = []
-    consulted = set()
     snapshot = None
     completed = False
     finished_outcome = None  # 判断ループを抜けた理由(completed / stalled / empty / truncated)。None のまま尽きたら limit
@@ -728,6 +732,18 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
                     run.close()
                     yield _sse({"delta": notice})
                     yield _sse({"response_end": True})
+                else:
+                    # 相談モードで作者が承認・実行を求めたのに切替案内が無い返答(自分で編集するよう
+                    # 促すなど)には、サーバーが案内を添える。モデルの言い回しに頼らない。
+                    extra = production_guard.consult_guidance_for(message, content)
+                    if extra:
+                        if history and history[-1].get("role") == "assistant" and history[-1].get("content") == content and content:
+                            history[-1]["content"] = content + "\n\n" + extra
+                        else:
+                            history.append({"role": "assistant", "content": extra})
+                        store.save_chat_messages(chat_id, history)
+                        yield _sse({"delta": extra})
+                        yield _sse({"response_end": True})
                 completed = True
                 break
             # 相談中の編集試行は再判断ループへ返さず、案内を保存して入力待ちへ戻す。
@@ -757,17 +773,6 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
                                          if truncated else f"引数のJSONが不正です: {e}")
                     if not isinstance(args, dict):
                         raise ValueError("引数はオブジェクトで指定してください")
-                    if not execute:
-                        signature = (name, json.dumps(args, sort_keys=True, ensure_ascii=False))
-                        if signature in consulted:
-                            notice = "同じ情報の確認が続いたため、いったん停止しました。追加で確認したい点を教えてください。変更を実行する場合は「制作を実行」に切り替えて依頼を送ってください。"
-                            history.append({"role": "assistant", "content": notice})
-                            store.save_chat_messages(chat_id, history)
-                            yield _sse({"delta": notice})
-                            yield _sse({"response_end": True, "active_node": None})
-                            completed = True
-                            break
-                        consulted.add(signature)
                     yield _sse({"stage": TOOL_LABELS.get(name, "操作を確認しています…"), "active_node": args.get("node_id") or args.get("after_id")})
                     # 検証スクリプトと画面の記録用。本文は含めず、ツール名と対象だけを流す。
                     yield _sse({"tool_call": {"name": name, "target": args.get("node_id") or args.get("after_id") or args.get("id")}})
@@ -799,7 +804,11 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
                             payload = repeated
                             yield _sse({"stage": "適用済みの変更の再実行を省きました"})
                         else:
-                            monitor.check_cancelled(name, args)
+                            lifted = monitor.check_cancelled(name, args)
+                            if lifted:
+                                history.append({"role": "assistant", "content": lifted, "instruction_review": True})
+                                store.save_chat_messages(chat_id, history)
+                                yield _sse({"stage": lifted})
                             payload = await apply_edit(store, base_url, name, args, before_commit=lambda: run.check_epoch(epoch), policy=policy, versions=versions)
                             versions = NodeVersions(store)
                             # 縮める前の本文(previous_beat)は次の判断のツール結果にだけ渡し、履歴・画面・引継ぎには残さない。
@@ -815,14 +824,13 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
                             save_checkpoint("running")
                             yield _sse({"changed": operation})
                     else:
-                        # 読み取り。実行中の同じ取得は2回目に前回の結果を返し、3回目で止める。
-                        payload = monitor.repeated_read(name, args) if execute else None
+                        # 読み取り。同じ取得は2回目に前回の結果を返し、3回目で止める(相談・実行とも)。
+                        payload = monitor.repeated_read(name, args)
                         if payload is None:
                             payload = (production_library.read(store, args) if name == "read_library"
                                        else production_chapters.read(store) if name == "read_chapters"
                                        else chat_agent.dispatch_tool(store, name, args, store.canon_path(), "all"))
-                            if execute:
-                                monitor.note_read(name, args, payload)
+                            monitor.note_read(name, args, payload)
                         if isinstance(payload, dict) and payload.get("error"):
                             payload["error"], stalled = tally_error(name, str(payload["error"]))
                             yield _sse({"tool_error": stalled or payload["error"]})
@@ -856,6 +864,37 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
             if completed:
                 break
         outcome = "completed" if completed else (finished_outcome or "limit")
+        if outcome in ("stalled", "limit") and not (run.pending or run.paused):
+            # 反復や上限で止めたときも、作者には取得済みの情報に基づく回答・報告を残す(ツールは渡さない)。
+            # 報告は実行記録と区別して保存し、終了理由は変えない。
+            closing_note = (f"作業は停止しました({production_guard.OUTCOME_LABELS[outcome]}"
+                            + (f": {stop_detail}" if stop_detail else "") + ")。ツールは使えません。"
+                            + ("実行記録にある確定済みの変更と未実施の作業を区別して、作者への短い報告を書いてください。"
+                               if execute else
+                               "取得済みの情報だけで、質問に答えるか変更案を具体的に示してください。変更は実行しません。"))
+            yield _sse({"stage": "停止前に、ここまでの情報で回答をまとめています…", "active_node": None})
+            try:
+                closing_messages = build_messages(store, history, message, execute, policy, previous_checkpoint,
+                                                  changes, recent_results, run.id, selection=selection,
+                                                  cancelled_text=monitor.cancelled_prompt(), notes=[closing_note])
+                closing_text = ""
+                # ツール呼び出しを文字列で書いてしまう応答を画面に流さないよう、まとめは溜めてから出す。
+                async for kind, value in llm.chat_stream_tools(
+                    closing_messages, base_url=base_url, temperature=0.5, max_tokens=1024, label="制作チャット(まとめ)",
+                ):
+                    if kind == "content":
+                        closing_text += value
+                    elif kind == "done":
+                        closing_text = (value.get("content") or closing_text)
+                if production_guard.closing_text_is_usable(closing_text):
+                    history.append({"role": "assistant", "content": closing_text, "closing": True})
+                    store.save_chat_messages(chat_id, history)
+                    yield _sse({"delta": closing_text})
+                    yield _sse({"response_end": True})
+                else:
+                    yield _sse({"stage": "まとめの応答が本文ではなかったため表示しません"})
+            except Exception as e:  # noqa: BLE001 まとめの失敗で停止の記録を妨げない
+                yield _sse({"stage": f"回答のまとめに失敗しました: {e}"})
         if outcome != "completed":
             notice = production_guard.OUTCOME_LABELS[outcome] + (f": {stop_detail}" if stop_detail else "。")
             notice += f" 確定済みの変更 {len(changes)} 件は残しています。続きが必要なら、残りの作業を具体的に依頼してください。"
@@ -864,8 +903,9 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
             yield _sse({"response_end": True, "active_node": None})
         # doneを送った後に届く途中指示を受け付けないよう、通知の前に閉じる。
         run.close()
-        summary = (production_guard.OUTCOME_LABELS[outcome] + f"（変更 {len(changes)} 件"
-                   + (f"・ツールエラー {monitor.tool_errors} 件" if monitor.tool_errors else "") + "）") if execute else None
+        summary = ((production_guard.OUTCOME_LABELS[outcome] + f"（変更 {len(changes)} 件"
+                    + (f"・ツールエラー {monitor.tool_errors} 件" if monitor.tool_errors else "") + "）") if execute
+                   else production_guard.OUTCOME_LABELS[outcome] if outcome != "completed" else None)
         yield _sse({"done": True, "chat_id": chat_id, "outcome": outcome, "summary": summary,
                     "changes": len(changes), "tool_errors": monitor.tool_errors, "steps": steps_used})
     except (asyncio.CancelledError, GeneratorExit):
