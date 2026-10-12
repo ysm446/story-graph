@@ -466,7 +466,9 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
       <ChatRulesPanel busy={busy} onDirty={setRulesDirty} onSaved={() => setRulesRefresh((v) => v + 1)} />
       <ProductionMemoryPanel busy={busy} refresh={memoryRefresh} onDirty={setMemoryDirty} onChanged={bumpMemoryRefresh} />
       <ProductionPolicyPanel value={policy} onChange={setPolicy} nodes={nodes} groups={groups} busy={busy} />
-      <div className="inspector-scrollbar min-h-0 flex-1 overflow-y-auto" aria-live="polite">
+      {/* スクロールバーは親の右の余白(16px)へ出し、発言との間を 6px 空ける。溝を常に確保するので、
+          スクロールの有無にかかわらず発言の右端は上のパネルや入力欄と揃う(16 = バー10 + 余白6) */}
+      <div className="inspector-scrollbar -mr-4 min-h-0 flex-1 overflow-y-auto pr-1.5 [scrollbar-gutter:stable]" aria-live="polite">
         <MessageList messages={messages} nodes={nodes} groups={groups} />
         {live && <Markdown text={live} />}
         {!busy && !error && suggestions.length > 0 && <div aria-label="制作の依頼候補" className="my-2 flex flex-wrap gap-1.5">
@@ -512,11 +514,11 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
         <span className="min-w-0 flex-1 basis-0 truncate text-[11px]" style={{ color: 'var(--text-faint)' }} data-tip="Enterで送信・Shift＋Enterで改行">Enterで送信・Shift＋Enterで改行</span>
         {usage && <ContextUsageRing usage={usage} />}
         <div role="group" aria-label="制作チャットの送信モード"
-          className="flex overflow-hidden rounded-md border" style={{ borderColor: sendMode === 'execute' ? 'var(--warn-border)' : 'var(--border-strong)' }}>
+          className="flex h-[26px] shrink-0 overflow-hidden rounded-md border" style={{ borderColor: sendMode === 'execute' ? 'var(--warn-border)' : 'var(--border-strong)' }}>
           {([['consult', '相談する'], ['execute', '制作を実行']] as const).map(([value, label]) => (
             <button key={value} type="button" aria-pressed={sendMode === value} disabled={busy}
               onClick={() => setSendMode(value)}
-              className="whitespace-nowrap px-2.5 py-0.5 text-[12px] disabled:opacity-50"
+              className="flex h-full items-center whitespace-nowrap px-2.5 text-[12px] disabled:opacity-50"
               style={sendMode !== value ? { color: 'var(--text-faint)' }
                 : value === 'execute' ? { background: 'var(--warn-soft)', color: 'var(--warn)' }
                   : { background: 'var(--accent-soft)', color: 'var(--text)' }}
@@ -535,12 +537,16 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
           const pending = pendingMessageRef.current
           if (pending) { pendingMessageRef.current = null; setInput((prev) => prev || pending) }
         }}
-          className="rounded-md border px-2 py-0.5 text-[11px]"
-          style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }} data-tip="未確定の生成を止めます。確定済みの変更は残ります">停止</button> :
+          aria-label="停止"
+          className="inline-flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full border hover:bg-[var(--accent-soft)]"
+          style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }} data-tip="停止(未確定の生成を止めます。確定済みの変更は残ります)">
+          {/* 送信の↑と同じ丸い形のまま、中身だけ■に変える(処理中に文字のボタンへ変わると位置と形が飛ぶ) */}
+          <Icon name="stop" size={12} />
+        </button> :
           <button onClick={submit} disabled={!input.trim()} aria-label="送信"
-            className={`${sendMode === 'execute' ? 'warn-action' : 'accent-action'} inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border disabled:opacity-40`}
+            className={`${sendMode === 'execute' ? 'warn-action' : 'accent-action'} inline-flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full border disabled:opacity-40`}
             data-tip={sendMode === 'execute' ? '制作を実行として送信(作業前の状態を保存してから、依頼した編集を実行します)' : '相談として送信(読み取りだけで回答します)'}>
-            <Icon name="arrowUp" size={15} strokeWidth={2.4} />
+            <Icon name="arrowUp" size={14} strokeWidth={2.4} />
           </button>
         }
       </div>

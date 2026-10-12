@@ -108,7 +108,7 @@ export default function StatusBar({
 
   return (
     <footer
-      className="flex h-7 shrink-0 items-center gap-3 border-t px-3"
+      className="flex h-9 shrink-0 items-center gap-3 border-t px-3"
       style={{ background: 'var(--bg-sidebar)', borderColor: 'var(--border)', color: 'var(--text)' }}
     >
       {/* 処理キュー(ページを移動しても消えない。実行は 1 件ずつ) */}
