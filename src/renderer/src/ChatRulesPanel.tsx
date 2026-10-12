@@ -1,8 +1,10 @@
 import AutoTextarea from './AutoTextarea'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api } from './api'
 
 const key = 'author_chat_rules'
+/** 設定画面で同じ指示を保存したときの通知。開いたままのパネルを読み直す */
+export const CHAT_RULES_EVENT = 'story-graph:chat-rules-changed'
 const example = '・シーン本文は、1シーンあたり600文字程度に収める。\n・シーン本文は小説調ではなく、出来事と人物の行動が分かる指示書形式で書く。'
 
 /** 制作エージェント専用の指示。保存キーは以前の設定を引き継ぐ。 */
@@ -24,6 +26,22 @@ export default function ChatRulesPanel({ busy, onDirty, onSaved }: {
     }).catch((e) => { if (active) setError(String(e)) })
     return () => { active = false }
   }, [])
+  // 設定画面で保存されたら読み直す。編集中の下書きは残し、「元に戻す」の戻り先だけ更新する
+  const latest = useRef({ saved, draft })
+  latest.current = { saved, draft }
+  useEffect(() => {
+    const reload = (): void => {
+      void api.getSettings().then((settings) => {
+        const next = settings[key] ?? ''
+        const { saved: before, draft: current } = latest.current
+        setSaved(next)
+        if (before === null || current === before) setDraft(next)
+        onSaved()
+      }).catch(() => undefined)
+    }
+    window.addEventListener(CHAT_RULES_EVENT, reload)
+    return () => window.removeEventListener(CHAT_RULES_EVENT, reload)
+  }, [onSaved])
   const save = async (): Promise<void> => {
     if (busy || saving || saved === null) return
     setSaving(true); setError(''); setNotice('')

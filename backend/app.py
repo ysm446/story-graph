@@ -1048,6 +1048,17 @@ async def get_generation_prompt() -> dict[str, str]:
     }
 
 
+@app.get("/prompts/fixed")
+async def get_fixed_prompts() -> dict[str, str]:
+    """設定では変えられず、システムプロンプトに必ず付く部分(設定画面の読み取り専用表示用)。"""
+    return {
+        "generation": generation.GENERATION_RULES,
+        "rendering": "\n".join(rendering.fixed_rules(False)),
+        "production_execute": production_agent.EXECUTE_RULES.strip(),
+        "production_consult": production_agent.CONSULT_RULES.strip(),
+    }
+
+
 @app.get("/models")
 async def list_models() -> dict[str, Any]:
     import system_info

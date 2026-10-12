@@ -324,6 +324,9 @@ export const api = {
     >('/debug/prompts'),
   getGenerationPrompt: () =>
     request<{ default: string; rules: string; current: string }>('/generation_prompt'),
+  /** 設定では変えられず、システムプロンプトに必ず付く部分(設定画面の読み取り専用表示用) */
+  getFixedPrompts: () =>
+    request<{ generation: string; rendering: string; production_execute: string; production_consult: string }>('/prompts/fixed'),
 
   systemResources: () =>
     request<{

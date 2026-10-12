@@ -1,7 +1,7 @@
 # UI スタイルガイド(色・タイポ・余白・部品)
 
 作成日時: 2026-08-09 16:00
-更新日時: 2026-10-13 03:08
+更新日時: 2026-10-13 06:32
 
 新しい画面や部品を足すときに **見た目を揃えるための具体値** をまとめる。
 [overview.md](overview.md) がアーキテクチャの入口なら、本書は UI の入口。
@@ -389,6 +389,14 @@ Tailwind の既定スケール(`1 = 4px`)をそのまま使う。**使う段は�
 `settings-card` / `settings-group-title` / `settings-field` / `settings-field-header` /
 `settings-field-label` / `settings-field-hint` / `settings-slider` / `settings-value-badge`。
 設定画面に何か足すときは **Tailwind で似た見た目を作り直さず、このクラスに乗る**。
+
+- 左の一覧は、関連する項目を見出しの下にまとめられる(現状は「システムプロンプト」の 5 項目)。見出しは押せないラベルで
+  `mt-2 px-2.5 pb-1 text-[11px] font-medium`・`--text-dim`、配下の項目は `pl-5` で字下げし、まとまりの次の項目に `mt-2` を置く。
+  1 項目 1 ページは保つ(プロンプトは長文なので、1 ページに並べると下の項目が探しにくい)。
+- 効く範囲が項目ごとに違う設定は、見出しの直下に `settings-field-hint` で「適用先: …」を 1 行書く(`Section` の `scope`)。
+- 設定で変えられずに必ず付く指示は、読み取り専用の枠(`rounded-lg border px-3 py-2 text-[12px]`、背景 `--bg-elevated`、
+  文字 `--text-faint`)で見せる(`FixedPrompt`。組み込みの校正プリセットと同じ見た目)。ラベルに「(編集不可)」を付け、
+  長いものは `details` の「全文を表示」に畳む。編集欄と食い違ったときにどちらが残るかをヒントに書く。
 
 ### 状態の点・ヒント・エラー
 

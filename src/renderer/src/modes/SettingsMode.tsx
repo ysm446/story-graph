@@ -14,6 +14,7 @@ import {
   type LlamaServerStatus
 } from '../api'
 import AutoTextarea from '../AutoTextarea'
+import { CHAT_RULES_EVENT } from '../ChatRulesPanel'
 import { showStatusNotice } from '../statusNotice'
 import { DEFAULT_VIDEO_CROSSFADE_SECONDS } from '../CrossfadeLoopVideo'
 import { PresetEditorModal, type PresetDraft } from '../RenderStyle'
@@ -89,10 +90,11 @@ interface PromptLogEntry {
 const SECTIONS = [
   { id: 'engine', label: '推論エンジン' },
   { id: 'params', label: '推論パラメータ' },
-  { id: 'generation', label: 'シーン生成プロンプト' },
+  { id: 'generation', label: 'シーン生成' },
+  { id: 'presets', label: '清書(スタイルプリセット)' },
   { id: 'proofread', label: '校正' },
-  { id: 'presets', label: 'スタイルプリセット' },
-  { id: 'promptio', label: 'プロンプト入出力' },
+  { id: 'agent', label: '制作エージェントへの指示' },
+  { id: 'promptio', label: '書き出し / 読み込み' },
   { id: 'structure', label: '構造モード' },
   { id: 'chat', label: '相談チャット' },
   { id: 'reader', label: '鑑賞モード' },
@@ -104,24 +106,66 @@ const SECTIONS = [
 
 type SectionId = (typeof SECTIONS)[number]['id']
 
+// 左ナビで「システムプロンプト」の見出しの下にまとめる項目(SECTIONS では連続して並べる)。
+// LLM への指示がどこに書いてあるかを 1 か所で探せるようにする
+const PROMPT_GROUP_LABEL = 'システムプロンプト'
+const PROMPT_GROUP: ReadonlySet<SectionId> = new Set<SectionId>(['generation', 'presets', 'proofread', 'agent', 'promptio'])
+
 /** 選択中のセクションだけを描く(見出し + 中身)。
  *  非表示のセクションはマウントしないので、一覧の取得も開いたときだけ走る */
 function Section({
   id,
   current,
   title,
+  scope,
   children
 }: {
   id: SectionId
   current: SectionId
   title: string
+  /** この設定がどの機能に効くか(プロンプト系は効く範囲が項目ごとに違うので明記する) */
+  scope?: string
   children: React.ReactNode
 }): React.JSX.Element | null {
   if (id !== current) return null
   return (
     <div className="flex flex-col gap-2.5">
       <div className="settings-group-title">{title}</div>
+      {scope && <p className="settings-field-hint">適用先: {scope}</p>}
       {children}
+    </div>
+  )
+}
+
+// 設定では変えられず、システムプロンプトに必ず付く部分。編集欄の内容と食い違う指示を
+// 書いても残るので、読み取り専用で見せる(組み込みの校正プリセットと同じ見た目)
+function FixedPrompt({ label, text, hint, collapsed = false }: {
+  label: string
+  text: string | undefined
+  hint: string
+  collapsed?: boolean
+}): React.JSX.Element {
+  if (!text) return <></>
+  const body = (
+    <p
+      className="whitespace-pre-wrap rounded-lg border px-3 py-2 text-[12px] leading-relaxed"
+      style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-faint)' }}
+    >
+      {text}
+    </p>
+  )
+  return (
+    <div className="settings-field">
+      <div className="settings-field-header">
+        <span className="settings-field-label">{label}</span>
+      </div>
+      {collapsed ? (
+        <details>
+          <summary className="cursor-pointer text-[12px]" style={{ color: 'var(--text-dim)' }}>全文を表示</summary>
+          <div className="mt-2">{body}</div>
+        </details>
+      ) : body}
+      <p className="settings-field-hint">{hint}</p>
     </div>
   )
 }
@@ -1822,6 +1866,7 @@ export default function SettingsMode(): React.JSX.Element {
   const [modelsDir, setModelsDir] = useState<{ dir: string; fallback: string; exists: boolean } | null>(null)
   const [modelsDirError, setModelsDirError] = useState<string | null>(null)
   const [genPromptDefault, setGenPromptDefault] = useState('')
+  const [fixedPrompts, setFixedPrompts] = useState<Awaited<ReturnType<typeof api.getFixedPrompts>> | null>(null)
   const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const busyElapsed = useElapsedSeconds(busy !== null)
 
@@ -1856,6 +1901,7 @@ export default function SettingsMode(): React.JSX.Element {
     void refreshStatus()
     void loadModels()
     void api.getGenerationPrompt().then((r) => setGenPromptDefault(r.default))
+    void api.getFixedPrompts().then(setFixedPrompts).catch(() => undefined)
   }, [])
 
   const showSaved = (): void => {
@@ -1936,23 +1982,33 @@ export default function SettingsMode(): React.JSX.Element {
       {/* 左: セクション一覧。右: 選んだセクションの設定 */}
       <aside className="flex w-48 shrink-0 flex-col" style={{ background: 'var(--bg-sidebar)' }}>
         <div className="inspector-scrollbar min-h-0 flex-1 overflow-y-auto p-2">
-          {SECTIONS.map(({ id, label }) => (
-            <button
-              key={id}
-              onClick={() => {
-                setSection(id)
-                localStorage.setItem('settingsSection', id)
-              }}
-              className="mb-0.5 block w-full rounded-md px-2.5 py-1.5 text-left text-[12px] transition-colors"
-              style={
-                section === id
-                  ? { background: 'var(--accent-soft)', color: 'var(--text)' }
-                  : { color: 'var(--text-faint)' }
-              }
-            >
-              {label}
-            </button>
-          ))}
+          {SECTIONS.map(({ id, label }, index) => {
+            const grouped = PROMPT_GROUP.has(id)
+            const previousGrouped = index > 0 && PROMPT_GROUP.has(SECTIONS[index - 1].id)
+            return (
+              <div key={id} className={!grouped && previousGrouped ? 'mt-2' : undefined}>
+                {grouped && !previousGrouped && (
+                  <div className="mt-2 px-2.5 pb-1 text-[11px] font-medium" style={{ color: 'var(--text-dim)' }}>
+                    {PROMPT_GROUP_LABEL}
+                  </div>
+                )}
+                <button
+                  onClick={() => {
+                    setSection(id)
+                    localStorage.setItem('settingsSection', id)
+                  }}
+                  className={`mb-0.5 block w-full rounded-md py-1.5 pr-2.5 text-left text-[12px] transition-colors ${grouped ? 'pl-5' : 'pl-2.5'}`}
+                  style={
+                    section === id
+                      ? { background: 'var(--accent-soft)', color: 'var(--text)' }
+                      : { color: 'var(--text-faint)' }
+                  }
+                >
+                  {label}
+                </button>
+              </div>
+            )
+          })}
         </div>
         {/* 保存の合図はどのセクションでも同じ場所に出す */}
         <p className="h-5 px-3 pb-2 text-[11px]" style={{ color: 'var(--accent)' }}>
@@ -2182,7 +2238,8 @@ export default function SettingsMode(): React.JSX.Element {
             </div>
           </Section>
 
-          <Section id="generation" current={section} title="シーン生成プロンプト">
+          <Section id="generation" current={section} title="シーン生成プロンプト"
+            scope="構造モードの「生成」(シーン本文と出来事の下書き)。制作チャットと清書には使いません。">
             <div className="settings-card">
               <div className="settings-field">
                 <div className="settings-field-header">
@@ -2225,14 +2282,18 @@ export default function SettingsMode(): React.JSX.Element {
                   style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
                 />
                 <p className="settings-field-hint">
-                  空欄ならプレースホルダのデフォルトが使われます。末尾に JSON 形式の指定と
-                  イベント発行ルール(char_introduce 必須 / delta 範囲 等)が自動で追加されます。
+                  空欄ならプレースホルダのデフォルトが使われます。
                 </p>
               </div>
+              <FixedPrompt
+                label="必ず付くルール(編集不可)"
+                text={fixedPrompts?.generation}
+                hint="上のプロンプトの後ろに必ず付きます。上のプロンプトに食い違う指示を書いても、このルールは残ります。"
+              />
             </div>
           </Section>
 
-          <Section id="proofread" current={section} title="校正">
+          <Section id="proofread" current={section} title="校正" scope="シーンタブの「校正」。">
             <div className="settings-card">
               <BuiltinProofreadPrompts />
               <div className="settings-field">
@@ -2256,13 +2317,67 @@ export default function SettingsMode(): React.JSX.Element {
             </div>
           </Section>
 
-          <Section id="presets" current={section} title="スタイルプリセット(清書の文体指示)">
+          <Section id="presets" current={section} title="スタイルプリセット(清書の文体指示)"
+            scope="鑑賞モードと清書タブの清書。選んだプリセットの本文が、そのままシステムプロンプトになります。">
             <div className="settings-card">
               <StylePresetsSection />
+              <FixedPrompt
+                label="必ず付く厳守事項(編集不可)"
+                text={fixedPrompts?.rendering}
+                hint="プリセット本文の後ろに、人称の行・分量の指定(指定したとき)とあわせて必ず付きます。視点キャラを指定した清書では「視点キャラが知らないことは地の文にも書かない」が加わります。"
+              />
             </div>
           </Section>
 
-          <Section id="promptio" current={section} title="プロンプトの書き出し / 読み込み">
+          <Section id="agent" current={section} title="制作エージェントへの指示"
+            scope="制作チャット(「相談する」「制作を実行」の両方)。相談チャット・キャラクターとの会話・シーン生成・清書には使いません。">
+            <div className="settings-card">
+              <div className="settings-field">
+                <div className="settings-field-header">
+                  <span className="settings-field-label">作者からの指示</span>
+                  <div className="settings-field-controls">
+                    <span className="text-[11px] tabular-nums" style={{ color: 'var(--text-faint)' }}>
+                      {(values.author_chat_rules ?? '').length} / 6000
+                    </span>
+                  </div>
+                </div>
+                <AutoTextarea
+                  ariaLabel="制作エージェントへの指示(設定)"
+                  minRows={4}
+                  maxLength={6000}
+                  value={values.author_chat_rules ?? ''}
+                  placeholder={'・シーン本文は、1シーンあたり600文字程度に収める。\n・シーン本文は小説調ではなく、出来事と人物の行動が分かる指示書形式で書く。'}
+                  onChange={(v) => setValues((prev) => ({ ...prev, author_chat_rules: v }))}
+                  onBlur={() =>
+                    void save({ author_chat_rules: values.author_chat_rules ?? '' }).then(() =>
+                      window.dispatchEvent(new Event(CHAT_RULES_EVENT))
+                    )
+                  }
+                  className="w-full rounded-lg border px-3 py-2 text-[13px] leading-relaxed outline-none"
+                  style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
+                />
+                <p className="settings-field-hint">
+                  制作チャットの「制作エージェントへの指示」と同じ内容です。どちらで保存しても反映され、次の送信から適用します。
+                  「回答」「1シーンの本文」など対象を明記してください。空にすると解除できます。この作品だけの設定です。
+                </p>
+              </div>
+              <FixedPrompt
+                label="実行モードの固定の指示(編集不可)"
+                text={fixedPrompts?.production_execute}
+                hint="「制作を実行」で送ったときに必ず付きます。上の指示はこの後ろに入ります。編集の許可・保護・参照範囲は上の指示では解除できません。"
+                collapsed
+              />
+              <FixedPrompt
+                label="相談モードの固定の指示(編集不可)"
+                text={fixedPrompts?.production_consult}
+                hint="「相談する」で送ったときに必ず付きます。どちらのモードでも、この前に相談チャットと共通の基本指示(物語の読み方とツールの使い方)が付きます。"
+                collapsed
+              />
+            </div>
+          </Section>
+
+          <Section id="promptio" current={section} title="プロンプトの書き出し / 読み込み"
+            scope="シーン生成プロンプト・カスタム校正プロンプト・スタイルプリセット。制作エージェントへの指示は含みません。">
             <div className="settings-card">
               <PromptIoSection values={values} save={save} />
             </div>

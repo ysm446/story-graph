@@ -139,6 +139,19 @@ def _place_block(store: Store, node_id: str) -> list[str]:
     return ["## 場所", "\n".join(lines), ""]
 
 
+def fixed_rules(pov: bool) -> list[str]:
+    """清書のシステムプロンプトに必ず付く厳守事項(プリセットでは変えられない。設定画面にも出す)。"""
+    return [
+        "厳守事項:",
+        "- シーンに書かれている出来事以外を発生させない(新しい事件・移動・関係の変化を起こさない)",
+        "- 許されるのは描写・内面・会話の肉付けのみ",
+        "- 「状態」にない情報を登場人物に知らせない"
+        + ("(視点キャラが知らないことは地の文にも書かない)" if pov else ""),
+        "- 直前シーンの末尾から自然に接続する(あらすじの繰り返しをしない)",
+        "- 見出し・注釈・メタ情報は書かず、本文のみを出力する",
+    ]
+
+
 def build_render_messages(
     store: Store,
     node: dict[str, Any],
@@ -169,13 +182,7 @@ def build_render_messages(
             f"人称: {person_text}",
             *([length_text] if length_text else []),
             "",
-            "厳守事項:",
-            "- シーンに書かれている出来事以外を発生させない(新しい事件・移動・関係の変化を起こさない)",
-            "- 許されるのは描写・内面・会話の肉付けのみ",
-            "- 「状態」にない情報を登場人物に知らせない"
-            + ("(視点キャラが知らないことは地の文にも書かない)" if pov_char else ""),
-            "- 直前シーンの末尾から自然に接続する(あらすじの繰り返しをしない)",
-            "- 見出し・注釈・メタ情報は書かず、本文のみを出力する",
+            *fixed_rules(bool(pov_char)),
         ]
     )
     place_name = store.place_name(store.effective_location(node["id"])[0])
