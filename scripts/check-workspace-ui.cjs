@@ -242,6 +242,20 @@ for mode in ['production', None]:
       return
     }
     await assert(`(() => {const a=document.querySelector('.scene-detail-main').getBoundingClientRect();const b=(document.querySelector('.scene-detail-side')||document.querySelector('.scene-detail-meta')).getBoundingClientRect(); return (document.querySelector(".detail-main-right, .detail-three") ? a.x>=b.right-1 : b.x>=a.right-1) && Math.abs(a.y-b.y)<1;})()`, '広い詳細欄は本文と補助情報の2列')
+    if (chapterCheck) {
+      // 章を選んでいるときのタブは 章 / 関係図 / 事実。関係図・事実は章の最後のシーンまでを表示する。
+      await assert(`(() => {const tab=[...document.querySelectorAll('button')].find(e=>e.getClientRects().length && e.textContent.trim()==='関係図');const labels=[...tab.parentElement.querySelectorAll('button')].map(e=>e.textContent.trim());return labels.slice(0,3).join('|')==='章|関係図|事実' && !labels.some(e=>['シーン','清書','キャラ'].includes(e))})()`, '章を選ぶとタブは 章 / 関係図 / 事実 だけ')
+      await click('関係図')
+      await pause(400)
+      await assert(`document.body.textContent.includes('第1章「検証章」の終わり(「検証シーン」)まで') && !!document.querySelector('.scene-detail-main svg')`, '章の関係図は章の最後のシーンまでを表示')
+      await click('事実')
+      await pause(400)
+      await assert(`document.body.textContent.includes('第1章「検証章」の終わり(「検証シーン」)まで') && !document.querySelector('.scene-detail-aside')`, '章の事実は章の最後のシーンまでを表示')
+      writeFileSync(join(target, 'chapter-facts.png'), (await win.webContents.capturePage()).toPNG())
+      await click('章')
+      await pause(300)
+      await assert(`!!document.querySelector('.scene-detail-aside') && document.querySelector('.scene-detail-aside').textContent.includes('表紙')`, '章タブで章の詳細へ戻る')
+    }
     const divider = await js(`(() => {const r=document.querySelector('.scene-detail-divider').getBoundingClientRect(); return {x:Math.round(r.x),y:Math.round(r.y+30),width:document.querySelector('.scene-detail-meta').clientWidth}})()`)
     await js(`(() => {const el=document.querySelector('.scene-detail-divider');const rect=el.getBoundingClientRect();el.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,clientX:rect.x,clientY:rect.y+30}));window.dispatchEvent(new PointerEvent('pointermove',{clientX:rect.x+(document.querySelector(".detail-main-right, .detail-three") ? 80 : -80),clientY:rect.y+30}));window.dispatchEvent(new PointerEvent('pointerup'));})()`)
     await pause(200)

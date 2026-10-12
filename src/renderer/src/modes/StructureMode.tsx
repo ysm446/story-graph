@@ -1484,12 +1484,12 @@ function CharTab({
               Relationships
             </h4>
             {Object.entries(charState.relationships).map(([target, rel]) => (
-              <div key={target} className="mb-1 flex items-center gap-2 text-[12px]">
+              <div key={target} className="mb-1.5 flex items-center gap-2 text-[12px]">
                 {/* 相手はアイコンでも示す(名前だけだと並んだときに見分けにくい) */}
-                <span className="flex w-28 min-w-0 shrink-0 items-center gap-1.5" style={{ color: 'var(--text-dim)' }} data-tip={nameOf(target)}>
+                <span className="flex w-32 min-w-0 shrink-0 items-center gap-2" style={{ color: 'var(--text-dim)' }} data-tip={nameOf(target)}>
                   {characters.find((c) => c.id === target)
-                    ? <CharAvatar char={characters.find((c) => c.id === target)!} size={18} />
-                    : <span className="h-[18px] w-[18px] shrink-0" />}
+                    ? <CharAvatar char={characters.find((c) => c.id === target)!} size={24} />
+                    : <span className="h-6 w-6 shrink-0" />}
                   <span className="min-w-0 flex-1 truncate">{nameOf(target)}</span>
                 </span>
                 {/* 0 を中心に、好意は右へ・反感は左へ伸ばす(-1.0〜+1.0) */}
@@ -3212,15 +3212,15 @@ function StructureModeInner({
     return () => observer.disconnect()
   }, [shiftViewportForShrink])
 
-  // 選択ノードまでのパス(親エッジを遡る)。関係図は選択中の時間軸を表示する
-  const pathToSelected = useMemo(() => {
-    if (!selectedId) return null
+  // あるノードまでのパス(親エッジを遡る)。関係図・事実は、選択中のシーン(章なら章の最後のシーン)までの時間軸を表示する
+  const pathToNode = useCallback((targetId: string | null) => {
+    if (!targetId) return null
     const parentMap = new Map(graphEdges.map((e) => [e.to_node, e.from_node]))
     const nodeById = new Map(graphNodes.map((n) => [n.id, n]))
-    if (!nodeById.has(selectedId)) return null
-    const ids: string[] = [selectedId]
-    const seen = new Set([selectedId])
-    let current = selectedId
+    if (!nodeById.has(targetId)) return null
+    const ids: string[] = [targetId]
+    const seen = new Set([targetId])
+    let current = targetId
     while (parentMap.has(current)) {
       const parent = parentMap.get(current)!
       if (seen.has(parent)) break
@@ -3234,7 +3234,8 @@ function StructureModeInner({
       .map((id) => nodeById.get(id)!)
       .filter(Boolean)
       .filter((n) => !n.kind)
-  }, [selectedId, graphNodes, graphEdges])
+  }, [graphNodes, graphEdges])
+  const pathToSelected = useMemo(() => pathToNode(selectedId), [pathToNode, selectedId])
 
   // 正史パス(canon エッジを根から辿る)
   const canonPath = useMemo(() => {
@@ -4229,6 +4230,12 @@ function StructureModeInner({
   const activeGroup = selectedNode
     ? null
     : (groups.find((g) => g.id === selectedChapterId) ?? focusedGroup)
+  // 章を指しているときの関係図・事実は「その章の最後のシーンまで」(相談チャットのアンカーと同じ扱い)
+  const chapterEndId = activeGroup ? (activeGroup.route.at(-1) ?? null) : null
+  const chapterEndPath = useMemo(() => pathToNode(chapterEndId), [pathToNode, chapterEndId])
+  // 章のときに出すタブは 章 / 関係図 / 事実。清書・キャラはシーンに結びついた画面なので出さない。
+  // 清書・キャラを開いたまま章を選んだら章を見せ、シーンに戻れば元のタブに戻る(inspectorTab は書き換えない)
+  const shownTab = activeGroup && (inspectorTab === 'render' || inspectorTab === 'char') ? 'beat' : inspectorTab
 
   // 鑑賞モードのスコープ。章の中にいる間はその章、章ビューで章カードを選んで
   // いればその章(島・分岐の章でもよい)。null = 全体(正史)
@@ -5416,19 +5423,19 @@ function StructureModeInner({
           <div className="flex shrink-0 gap-1 border-b px-3 py-2" style={{ borderColor: 'var(--border)' }}>
             {(
               [
-                { id: 'beat', label: 'シーン' },
+                { id: 'beat', label: activeGroup ? '章' : 'シーン' },
                 { id: 'render', label: '清書' },
                 { id: 'char', label: 'キャラ' },
                 { id: 'graph', label: '関係図' },
                 { id: 'facts', label: '事実' }
               ] as const
-            ).map((t) => (
+            ).filter((t) => !activeGroup || (t.id !== 'render' && t.id !== 'char')).map((t) => (
               <button
                 key={t.id}
                 onClick={() => setInspectorTab(t.id)}
                 className="rounded-md px-3 py-1 text-[12px]"
                 style={
-                  inspectorTab === t.id
+                  shownTab === t.id
                     ? { background: 'var(--accent-soft)', color: 'var(--text)' }
                     : { color: 'var(--text-dim)' }
                 }
@@ -5440,18 +5447,30 @@ function StructureModeInner({
               style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }} data-tip="詳細欄を折りたたむ">閉じる</button>
           </div>
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-            {inspectorTab === 'graph' ? (
+            {activeGroup && (shownTab === 'graph' || shownTab === 'facts') && (
+              // どの時点を見ているか。章のときは選んだシーンが無いので明示する
+              <div className="shrink-0 border-b px-3 py-1 text-[11px]" style={{ borderColor: 'var(--border)', color: 'var(--text-faint)' }}>
+                {chapterEndPath
+                  ? `第${groups.indexOf(activeGroup) + 1}章「${activeGroup.title}」の終わり(「${chapterEndPath.at(-1)?.title || '無題'}」)まで`
+                  : `第${groups.indexOf(activeGroup) + 1}章「${activeGroup.title}」にはまだシーンがありません`}
+              </div>
+            )}
+            {activeGroup && !chapterEndPath && (shownTab === 'graph' || shownTab === 'facts') ? (
+              <div className="pt-8 text-center text-[12px]" style={{ color: 'var(--text-faint)' }}>
+                章にシーンを追加すると、章の終わりの時点の{shownTab === 'graph' ? '関係' : '事実'}を表示します
+              </div>
+            ) : shownTab === 'graph' ? (
               <RelationGraph detailLayout autoFit
                 characters={characters}
-                path={pathToSelected ?? canonPath}
+                path={(activeGroup ? chapterEndPath : pathToSelected) ?? canonPath}
                 allNodes={graphNodes}
                 onCharactersChanged={() => void reload()}
               />
-            ) : inspectorTab === 'facts' ? (
+            ) : shownTab === 'facts' ? (
               <FactTimeline
-                path={pathToSelected ?? canonPath}
+                path={(activeGroup ? chapterEndPath : pathToSelected) ?? canonPath}
                 characters={characters}
-                selectedNodeId={selectedId}
+                selectedNodeId={activeGroup ? chapterEndId : selectedId}
                 onSelectNode={(nodeId) => focusNodeOnCanvas(nodeId)}
               />
             ) : activeGroup ? (
