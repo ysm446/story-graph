@@ -34,6 +34,103 @@ def edit(store, tool_name, **args):
     return asyncio.run(production.apply_edit(store, "fake", tool_name, {"reason": "作者の依頼", **args}))
 
 
+def test_chapter_create_rename_and_read(store):
+    import production_chapters
+    original = store.get_node("first")
+    created = edit(store, "create_chapter", title="出発の章", node_ids=["first"])
+    assert created["entity_type"] == "chapter" and created["in_id"] and created["out_id"]
+    chapter_id = created["entity_id"]
+    assert store.get_node("first")["group_id"] == chapter_id
+    assert store.get_node("first")["beat"] == original["beat"]
+    assert store.get_node("last")["group_id"] is None
+    renamed = edit(store, "rename_chapter", chapter_id=chapter_id, title="旅立ち")
+    assert renamed["before"]["title"] == "出発の章" and renamed["after"]["title"] == "旅立ち"
+    assert production_chapters.read(store)["chapters"][0]["title"] == "旅立ち"
+    with pytest.raises(ValueError, match="同名"):
+        edit(store, "create_chapter", title="旅立ち", node_ids=[])
+
+
+def test_chapter_add_only_requested_and_atomic_failure(store):
+    chapter = edit(store, "create_chapter", title="空の章", node_ids=[])
+    chapter_id = chapter["entity_id"]
+    edit(store, "add_scenes_to_chapter", chapter_id=chapter_id, node_ids=["first"])
+    assert store.get_node("first")["group_id"] == chapter_id
+    assert store.get_node("last")["group_id"] is None
+    other = edit(store, "create_chapter", title="別章", node_ids=[])
+    before = store.graph()
+    with pytest.raises(ValueError):
+        edit(store, "add_scenes_to_chapter", chapter_id=other["entity_id"], node_ids=["last", "first"])
+    assert store.graph() == before
+
+
+def test_chapter_policy_rollback_and_versions(store):
+    before = store.graph()
+    # firstを章にすると接続先lastにも影響するため、候補全体の検証で拒否・巻き戻す。
+    with pytest.raises(ValueError):
+        asyncio.run(production.apply_edit(store, "fake", "create_chapter",
+            {"title": "保護違反", "node_ids": ["first"], "reason": "依頼"},
+            policy=ProductionPolicy(store, protected_ids=["last"])))
+    assert store.graph() == before and not store.list_groups()
+    created = edit(store, "create_chapter", title="章", node_ids=["first"])
+    with pytest.raises(ValueError):
+        asyncio.run(production.apply_edit(store, "fake", "rename_chapter",
+            {"chapter_id": created["entity_id"], "title": "変更", "reason": "依頼"},
+            policy=ProductionPolicy(store, protected_ids=["first"])))
+    versions = production.NodeVersions(store)
+    store.update_group(created["entity_id"], {"title": "手動改名"})
+    with pytest.raises(production.ManualEditPending):
+        versions.check(store, {"chapter_id": created["entity_id"]})
+
+
+def test_chapter_cancel_and_invalid_members(store):
+    def cancel():
+        raise production.InstructionsPending("途中指示")
+    with pytest.raises(production.InstructionsPending):
+        asyncio.run(production.apply_edit(store, "fake", "create_chapter",
+            {"title": "中断", "node_ids": [], "reason": "依頼"}, before_commit=cancel))
+    for node_ids in (["missing"], "first", [3]):
+        with pytest.raises(ValueError):
+            edit(store, "create_chapter", title="不正", node_ids=node_ids)
+    assert not store.list_groups()
+
+
+@pytest.mark.parametrize("execute", [False, True])
+def test_chapter_stream_tools_history_and_restore(store, monkeypatch, execute):
+    step = 0
+    async def stream(messages, **kwargs):
+        nonlocal step
+        names = {tool["function"]["name"] for tool in kwargs["tools"]}
+        assert "read_chapters" in names
+        assert ("create_chapter" in names) == execute
+        step += 1
+        if step == 1:
+            name, args = "read_chapters", {}
+        elif step == 2:
+            name, args = "create_chapter", {"title": "制作した章", "node_ids": [], "reason": "依頼"}
+        elif step == 3 and execute:
+            name, args = "rename_chapter", {"chapter_id": store.list_groups()[0]["id"], "title": "改名した章", "reason": "改名"}
+        elif step == 4 and execute:
+            name, args = "add_scenes_to_chapter", {"chapter_id": store.list_groups()[0]["id"], "node_ids": ["first"], "reason": "追加"}
+        else:
+            yield "done", {"content": "完了"}
+            return
+        yield "done", {"tool_calls": [{"function": {"name": name, "arguments": json.dumps(args)}}]}
+    monkeypatch.setattr(llm, "chat_stream_tools", stream)
+    async def collect():
+        return [json.loads(chunk.removeprefix("data: ").strip()) async for chunk in
+                production.stream(store, "fake", None, "章を作り改名してシーンを追加", execute, lambda: None)]
+    events = asyncio.run(collect())
+    changes = [event["changed"] for event in events if "changed" in event]
+    assert len(changes) == (3 if execute else 0)
+    if execute:
+        assert changes[-1]["entity_type"] == "chapter"
+        assert store.list_groups()[0]["title"] == "改名した章"
+        assert store.get_node("last")["group_id"] is None
+        assert len([m for m in store.get_chat(events[0]["chat_id"])["messages"] if m.get("operation")]) == 3
+        snapshots.restore(store, next(event["snapshot"] for event in events if "snapshot" in event)["id"])
+    assert not store.list_groups()
+
+
 def test_setting_document_create_update_and_guards(store):
     created = edit(store, "create_setting_document", title="社会制度", body="旧制度", category="制度")
     entity_id = created["entity_id"]

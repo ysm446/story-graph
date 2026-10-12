@@ -31,10 +31,11 @@ interface Message {
 const operationLabels = { insert_scene: '追加', branch_scene: '分岐を追加', update_scene: '編集', delete_scene: '削除', reconnect_scene: 'つなぎ替え',
   create_character: 'キャラクター登録', update_character: 'キャラクター編集', delete_character: 'キャラクター削除',
   create_place: '場所登録', update_place: '場所編集', delete_place: '場所削除',
-  create_setting_document: '設定資料作成', update_setting_document: '設定資料編集' }
+  create_setting_document: '設定資料作成', update_setting_document: '設定資料編集',
+  create_chapter: '章を作成', rename_chapter: '章名を変更', add_scenes_to_chapter: '章にシーンを追加' }
 const libraryFieldLabels: Record<string, string> = {
   name: '名前', profile: 'プロフィール', appearance: '外見', voice: '口調', reading: '読み', color: '色',
-  description: '説明', atmosphere: '雰囲気'
+  description: '説明', atmosphere: '雰囲気', title: 'タイトル', node_ids: '所属シーンID'
 }
 
 function messageTime(value?: string): string {
@@ -72,7 +73,7 @@ const MessageList = memo(function MessageList({ messages, nodes, groups }: {
             送信時の選択: {m.selected_nodes.length ? m.selected_nodes.map((node) => node.title).join('、') : 'なし'}
           </p>}
           {m.operation && 'entity_id' in m.operation && <details className="mb-1 text-[11px]" style={{ color: 'var(--text-dim)' }}>
-            <summary className="cursor-pointer">資料庫の変更内容</summary>
+            <summary className="cursor-pointer">{m.operation.entity_type === 'chapter' ? '章の変更内容' : '資料庫の変更内容'}</summary>
             {Object.keys(m.operation.after ?? m.operation.before ?? {}).filter((field) =>
               m.operation && 'entity_id' in m.operation && m.operation.before?.[field] !== m.operation.after?.[field]
             ).map((field) => {

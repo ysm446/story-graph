@@ -201,7 +201,7 @@ function CharactersMode(): React.JSX.Element {
   const followedTarget = useRef(workspace.productionTarget)
   useEffect(() => {
     const target = workspace.productionTarget
-    if (!target || target.kind === 'scene' || followedTarget.current === target || workspace.libraryDirty.current) return
+    if (!target || target.kind === 'scene' || target.kind === 'chapter' || followedTarget.current === target || workspace.libraryDirty.current) return
     if (target.kind === 'character') {
       const character = characters.find((item) => item.id === target.id)
       if (!character) return

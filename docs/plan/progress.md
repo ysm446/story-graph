@@ -1,9 +1,11 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-07-24 22:38
-更新日時: 2026-10-12 09:10
+更新日時: 2026-10-12 10:48
 
 ## 現在の状態
+
+- 2026-10-12 10:48 制作にread_chapters/create_chapter/rename_chapter/add_scenes_to_chapterを追加。章の作成・改名・指定シーンだけの追加を既存Storeとトランザクションで適用。保護と範囲外への接続影響は全体を巻き戻し、章名・所属・接続の手動変更を競合検出する。空章にも対応し、入口IDを返す。既存の手動追加の後続取り込みは維持し、制作だけ無効化。変更履歴・スナップショット・章カード追従に対応。build・Python構文確認、制作関連pytest197件・Store70件、隔離Electron38項目成功。制作通信は模擬SSE。実LLMによる章立ての通し検証は未実施。
 
 - 2026-10-12 09:10 **制作ハーネスの精度向上（第1弾）と制作チャットの実用調整**（ユーザー依頼）。plan.md の課題5点に対応する決定的な制御を `backend/production_guard.py` に実装し、`production_agent.stream` へ組み込んだ: (1) 反復の抑制（同じ取得は2回目に前回の結果と注意を返し3回目で `stalled` 停止、適用済み操作は `already_applied` 付きで保存済み結果を返し再反復で停止、同じツールエラーは2回目に直し方を添え3回目で停止、確定後・成功で数え直し）。(2) 途中指示の取り込み時に構造化出力で取りやめ対象を照合し、対象への `update/patch/delete/reconnect` をサーバーで拒否、照合結果を以後の指示に渡す（失敗時は何も禁止しない、相談では照合しない）。(3) 終了理由 `completed / limit / stalled / empty / truncated / error / interrupted` を区別。空応答は1回だけ注記付きで再判断、報告の途切れは完了と記録しない。完了以外は作業メモを見直さず、引継ぎ記録の status と履歴に理由と確定変更数を残す。SSE `done` に outcome / summary / changes / tool_errors / steps、`tool_call`（名前と対象のみ）を追加し、画面の完了表示に要約を出す。(4) `update_scene` に `rewrite`（元の本文80文字以上で文の保持率50%未満なら明示が無い限り拒否。前半へ縮める分割は許可、patch_scene は対象外）。登録した資料が未使用なら完了前に1回注記。(5) `scripts/production_metrics.py` で途中経過を集計し、3つの実機検証スクリプトが `metrics.json` と METRICS 行を出す。設計は [production-chat.md「ハーネスの制御」](../design/production-chat.md)、plan.md の課題節に対応関係を追記。検証: 新規 pytest 28件を含む全612件成功、build成功、隔離Electron検証36項目成功。31B Q6_K の小規模8項目を実機で再実行し全項目合格・ツールエラー0件（[記録](../reference/gemma31-production-validation.md)。最初の2項目はユーザーのアプリの llama-server、その終了後は専用ポート8089で実行し検証後に停止）。**未実施**: 26B A4B・12B・Qwen3.8-27B での再検証（第1弾が狙う癖はこれらで観測されたもの）、48シーン・資料庫分岐の複合検証、実アプリ画面での完了表示の目視。残課題は意味の重複追記・依頼にない設定の検出、改善前後の複数試行比較。
 

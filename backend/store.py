@@ -2365,7 +2365,7 @@ class Store:
         self._resync_canon()
         self.conn.commit()
 
-    def add_node_to_group(self, group_id: str, node_id: str) -> dict[str, Any]:
+    def add_node_to_group(self, group_id: str, node_id: str, *, include_following: bool = True) -> dict[str, Any]:
         """シーンを章に入れる。
 
         メンバーは鎖でなくてよい(§9 Step 1)ので、**どのシーンでも入れられる**
@@ -2375,6 +2375,7 @@ class Store:
         **繋がっている後続のシーンも一緒に入れる**(まだどの章にも属していない
         ものだけ)。島を何シーンか書いてから繋いだときに、1 シーンだけ入って
         残りが取り残されるのを防ぐ。
+        制作ツールは include_following=False で指定シーンだけを追加する。
         """
         group = next((g for g in self.list_groups() if g["id"] == group_id), None)
         if group is None:
@@ -2392,7 +2393,7 @@ class Store:
             raise ValueError("章の出口より下流のシーンは章に入れられません")
         targets = [node_id]
         current = node_id
-        while True:
+        while include_following:
             children = [
                 r["to_node"]
                 for r in self.conn.execute("SELECT to_node FROM edges WHERE from_node = ?", (current,))

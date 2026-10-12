@@ -3657,7 +3657,7 @@ function StructureModeInner({
   // 制作では章に隠れたシーンも開く。通常の追加操作のfocusWhenReadyとは分ける。
   const followProductionTarget = useCallback((target: ProductionTarget | null): void => {
     workspace.followTarget(target)
-    const nodeId = target?.kind === 'scene' ? target.id : null
+    const nodeId = target?.kind === 'chapter' ? `chapter:${target.id}` : target?.kind === 'scene' ? target.id : null
     if (nodeId) setInspectorTab('beat')
     focusDoneRef.current = nodeId === null
     setPendingFocusId(nodeId)
@@ -3673,6 +3673,13 @@ function StructureModeInner({
       setPendingFocusId(null)
     }
     const target = graphNodes.find((n) => n.id === pendingFocusId)
+    if (pendingFocusId.startsWith('chapter:')) {
+      if (!groups.some((group) => `chapter:${group.id}` === pendingFocusId)) return finish()
+      if (chapterView !== 'chapters') return setChapterView('chapters')
+      if (!displayNodes.some((node) => node.id === pendingFocusId)) return
+      const timer = setTimeout(() => { focusNodeOnCanvas(pendingFocusId); finish() }, 80)
+      return () => clearTimeout(timer)
+    }
     if (!target) return finish() // 鑑賞モードにいる間に消えたシーン
     if (!displayNodes.some((n) => n.id === pendingFocusId)) {
       // 章ビューでは章カードに畳まれている / 別の章の中を見ている
@@ -3690,7 +3697,7 @@ function StructureModeInner({
       finish()
     }, 80)
     return () => clearTimeout(timer)
-  }, [workspace.mode, pendingFocusId, displayNodes, graphNodes, chapterView, chapterSeq, focusNodeOnCanvas])
+  }, [workspace.mode, pendingFocusId, displayNodes, graphNodes, groups, chapterView, chapterSeq, focusNodeOnCanvas])
 
   // ---- キーボード操作 -------------------------------------------------
 

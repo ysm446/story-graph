@@ -1,0 +1,94 @@
+"""制作から章の器と所属を編集する。本文・イベントは変更しない。"""
+from node_operations import atomic_store
+
+WRITE_TOOLS = {"create_chapter", "rename_chapter", "add_scenes_to_chapter"}
+
+
+def tools(allow_write):
+    definitions = [("read_chapters", "章のID・名前・所属シーン・入口と出口を読む。編集前に確認する。", {}, [])]
+    if allow_write:
+        ids = {"type": "array", "items": {"type": "string"}, "description": "対象シーンID。別の章に所属するシーンとマーカーは指定不可"}
+        definitions += [
+            ("create_chapter", "指定シーンを新しい章にまとめる。node_idsが空なら空の章を作る。返されたin_idの後ろにinsert_sceneで本文を追加できる。",
+             {"title": {"type": "string"}, "node_ids": ids}, ["title", "node_ids"]),
+            ("rename_chapter", "章の名前だけを変更する。",
+             {"chapter_id": {"type": "string"}, "title": {"type": "string"}}, ["chapter_id", "title"]),
+            ("add_scenes_to_chapter", "既存章に指定シーンだけ追加する。後続は自動追加しない。他章からの移動や接続変更はしない。章の出口より下流のシーンは追加不可。",
+             {"chapter_id": {"type": "string"}, "node_ids": ids}, ["chapter_id", "node_ids"]),
+        ]
+    result = []
+    for name, description, properties, required in definitions:
+        if name in WRITE_TOOLS:
+            properties = {**properties, "reason": {"type": "string", "description": "作者の依頼に対する変更理由"}}
+            required = [*required, "reason"]
+        result.append({"type": "function", "function": {"name": name, "description": description,
+            "parameters": {"type": "object", "properties": properties, "required": required, "additionalProperties": False}}})
+    return result
+
+
+def read(store):
+    return {"chapters": [{key: group.get(key) for key in ("id", "title", "node_ids", "in_id", "out_id", "route", "warning")}
+                         for group in store.list_groups()]}
+
+
+def apply(store, name, args, policy=None, before_commit=None):
+    allowed = {"reason", "title", "node_ids"} if name == "create_chapter" else {"reason", "chapter_id", "title" if name == "rename_chapter" else "node_ids"}
+    if name not in WRITE_TOOLS or set(args) - allowed or not isinstance(args.get("reason"), str) or not args["reason"].strip():
+        raise ValueError("章の操作項目と変更理由を確認してください")
+    title = args.get("title")
+    if name != "add_scenes_to_chapter" and (not isinstance(title, str) or not title.strip()):
+        raise ValueError("章の名前を入力してください")
+    original = None
+    if name != "create_chapter":
+        if not isinstance(args.get("chapter_id"), str):
+            raise ValueError("chapter_idが必要です")
+        original = store.get_group(args["chapter_id"])
+        if original is None:
+            raise ValueError("指定した章がありません")
+    ids = args.get("node_ids", [])
+    if name != "rename_chapter":
+        if "node_ids" not in args or not isinstance(ids, list) or any(not isinstance(nid, str) for nid in ids):
+            raise ValueError("node_idsはシーンIDの配列で指定してください")
+        ids = list(dict.fromkeys(ids))
+        if name == "add_scenes_to_chapter" and not ids:
+            raise ValueError("追加するシーンを指定してください")
+        for nid in ids:
+            node = store.get_node(nid)
+            if node is None or node.get("kind") is not None:
+                raise ValueError("通常のシーンだけを指定してください")
+            if node.get("group_id") is not None:
+                raise ValueError("既に章に属しているシーンは追加できません")
+    if title is not None:
+        title = title.strip()
+        if any(group["title"] == title and group["id"] != args.get("chapter_id") for group in store.list_groups()):
+            raise ValueError("同名の章が存在します。章の一覧を確認してください")
+        if original and original["title"] == title:
+            raise ValueError("その章名は反映済みです")
+    before = store.graph()
+    if policy:
+        if policy.group_id and (not original or original["id"] != policy.group_id):
+            raise ValueError("指定した章の範囲外です")
+        if name == "create_chapter" and not ids and policy.allowed is not None:
+            raise ValueError("空の章の作成は変更範囲を全体にしてください")
+        targets = set(ids)
+        if original:
+            targets.update(node["id"] for node in before["nodes"] if node.get("group_id") == original["id"])
+        for nid in targets:
+            policy.check_target(nid)
+    if before_commit:
+        before_commit()
+    with atomic_store(store) as tx:
+        if name == "create_chapter":
+            group = tx.create_group(title, ids)
+        elif name == "rename_chapter":
+            group = tx.update_group(original["id"], {"title": title})
+        else:
+            for nid in ids:
+                tx.add_node_to_group(original["id"], nid, include_following=False)
+            group = tx.get_group(original["id"])
+        if policy:
+            policy.check_candidate(before, tx.graph())
+    return {"action": name, "entity_type": "chapter", "entity_id": group["id"], "title": group["title"],
+            "reason": args["reason"], "in_id": group.get("in_id"), "out_id": group.get("out_id"), "node_ids": group["node_ids"],
+            "before": {"title": original["title"], "node_ids": ", ".join(original["node_ids"])} if original else None,
+            "after": {"title": group["title"], "node_ids": ", ".join(group["node_ids"])}}

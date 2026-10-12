@@ -170,7 +170,7 @@ export default function App(): React.JSX.Element {
   const followTarget = useCallback((target: ProductionTarget | null) => {
     if (target && libraryDirty.current) return
     setProductionTarget(target)
-    if (target) setMode(target.kind === 'scene' ? 'structure' : 'characters')
+    if (target) setMode(target.kind === 'scene' || target.kind === 'chapter' ? 'structure' : 'characters')
   }, [])
   const changed = useCallback(() => setRevision((value) => value + 1), [])
   const toggleChat = useCallback(() => setChatOpen((value) => {

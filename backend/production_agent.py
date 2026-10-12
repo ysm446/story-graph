@@ -21,6 +21,7 @@ import node_operations
 import snapshots
 import production_memory
 import production_library
+import production_chapters
 import production_continuity
 import production_guard
 from store import Store
@@ -29,7 +30,7 @@ from production_policy import CONTENT_FIELDS, ProductionPolicy
 
 MAX_STEPS = 16
 CREATE_SCENE_TOOLS = {"insert_scene", "branch_scene"}
-WRITE_TOOLS = CREATE_SCENE_TOOLS | {"update_scene", "patch_scene", "delete_scene", "reconnect_scene"} | production_library.WRITE_TOOLS
+WRITE_TOOLS = CREATE_SCENE_TOOLS | {"update_scene", "patch_scene", "delete_scene", "reconnect_scene"} | production_library.WRITE_TOOLS | production_chapters.WRITE_TOOLS
 TOOL_LABELS = {
     "get_beats": "シーンを読んでいます…", "get_state": "状態を確認しています…",
     "search_memories": "記憶を調べています…", "insert_scene": "シーンを追加しています…",
@@ -39,6 +40,8 @@ TOOL_LABELS = {
     "update_scene": "シーンを編集しています…", "delete_scene": "シーンを削除しています…",
     "patch_scene": "シーンの指定箇所を編集しています…",
     "read_library": "資料庫を読んでいます…",
+    "read_chapters": "章の構成を読んでいます…",
+    **{name: "章を編集しています…" for name in production_chapters.WRITE_TOOLS},
     **{name: "資料庫を更新しています…" for name in production_library.WRITE_TOOLS},
 }
 
@@ -111,9 +114,14 @@ class NodeVersions:
         self.nodes = {n["id"]: {k: n.get(k) for k in CONTENT_FIELDS} for n in graph["nodes"]}
         self.edges = {(e["from_node"], e["to_node"], e["is_canon"]) for e in graph["edges"]}
         self.library = (store.list_characters(), store.list_places(), store.list_setting_documents())
+        self.chapters = [tuple(row) for row in store.conn.execute("SELECT id,title FROM groups ORDER BY id")]
 
     def check(self, store, args):
         current = NodeVersions(store)
+        if self.chapters != current.chapters:
+            raise ManualEditPending("章が更新されたため構成を読み直します")
+        if ("node_ids" in args or "chapter_id" in args) and (self.nodes != current.nodes or self.edges != current.edges):
+            raise ManualEditPending("章の編集対象が更新されたため構成を読み直します")
         if self.library != current.library:
             raise ManualEditPending("資料庫が更新されたため、設定を読み直します")
         targets = {args.get(k) for k in ("node_id", "after_id", "parent_id")} - {None}
@@ -237,7 +245,7 @@ class ProductionMiddleware:
 
 
 def tools(allow_write: bool):
-    result = chat_agent.build_tools() + production_library.tools(allow_write)
+    result = chat_agent.build_tools() + production_library.tools(allow_write) + production_chapters.tools(allow_write)
     if not allow_write:
         return result
     result.append({"type": "function", "function": {
@@ -318,6 +326,8 @@ async def apply_edit(store: Store, base_url: str, name: str, args: dict, before_
         raise ValueError("引数はオブジェクトで指定してください")
     versions = versions or NodeVersions(store)
     versions.check(store, args)
+    if name in production_chapters.WRITE_TOOLS:
+        return production_chapters.apply(store, name, args, policy=policy, before_commit=before_commit)
     if name in production_library.WRITE_TOOLS:
         return production_library.apply(store, name, args, policy=policy, before_commit=before_commit)
     # 部分編集は新しい断片だけを補正する。保存済みの本文を巻き込まない。
@@ -474,6 +484,8 @@ def build_messages(store, history, message, execute, policy, previous_checkpoint
         "通常の文章だけを返すと今回の制作は終了します。終了報告では実行記録にある確定済みの変更と未実施の作業を区別してください。"
         "未実施の作業を『次は編集します』『このまま続けます』と進行中のように告げて終了しないでください。必要な作業が残るならツールで続け、進められない場合は残件と理由を報告してください。"
         "資料庫のキャラクター・場所はread_libraryで一覧と詳細を確認し、新規登録・編集・削除できます。"
+        "章はread_chaptersで所属と入口・出口を確認し、create_chapterで作成、rename_chapterで改名、add_scenes_to_chapterで指定シーンを追加できます。"
+        "章立ての依頼には実際に章を作ってください。空の章を作ったら返されたin_idをinsert_sceneのafter_idに使って中身を作れます。"
         "設定資料はsearch_setting_documentsで探し、read_setting_documentで全文とrevisionを読んでから編集します。"
         "create_setting_documentで新規作成、update_setting_documentで指定項目を更新できます。"
         "新規資料は構想(draft)・必要に応じて検索(search)が既定です。作者の明示指示なしに確定設定へ変更せず、AI参照方法も維持してください。"
@@ -807,6 +819,7 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
                         payload = monitor.repeated_read(name, args) if execute else None
                         if payload is None:
                             payload = (production_library.read(store, args) if name == "read_library"
+                                       else production_chapters.read(store) if name == "read_chapters"
                                        else chat_agent.dispatch_tool(store, name, args, store.canon_path(), "all"))
                             if execute:
                                 monitor.note_read(name, args, payload)

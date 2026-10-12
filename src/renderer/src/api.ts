@@ -1294,8 +1294,8 @@ export type ProductionOperation = ProductionOperationBase & ({
   action: 'insert_scene' | 'branch_scene' | 'update_scene' | 'delete_scene' | 'reconnect_scene'
   node_id: string
 } | {
-  action: 'create_character' | 'update_character' | 'delete_character' | 'create_place' | 'update_place' | 'delete_place' | 'create_setting_document' | 'update_setting_document'
-  entity_type: 'character' | 'place' | 'setting_document'
+  action: 'create_character' | 'update_character' | 'delete_character' | 'create_place' | 'update_place' | 'delete_place' | 'create_setting_document' | 'update_setting_document' | 'create_chapter' | 'rename_chapter' | 'add_scenes_to_chapter'
+  entity_type: 'character' | 'place' | 'setting_document' | 'chapter'
   entity_id: string
   before: Record<string, string | null> | null
   after: Record<string, string | null> | null
