@@ -303,6 +303,7 @@ for mode in ['production', None]:
   await pause(200)
   const profileSelector = '[data-edit-group="profile"] textarea'
   await assert(`document.querySelector(${JSON.stringify(profileSelector)}).value==='保存済みプロフィール' && document.activeElement===document.querySelector(${JSON.stringify(profileSelector)}) && document.querySelectorAll('.character-editor-body textarea').length===1`, '鉛筆を押した項目だけが編集欄になりフォーカスが入る')
+  await assert(`(() => {const g=document.querySelector('[data-edit-group="profile"]');const area=g.querySelector('textarea').getBoundingClientRect();const buttons=[...g.querySelectorAll('button')].filter(e=>['取り消し','確定'].includes(e.textContent.trim()));const proof=[...g.querySelectorAll('button')].find(e=>e.textContent.includes('校正')).getBoundingClientRect();const [cancel,commit]=buttons.map(e=>e.getBoundingClientRect());return buttons.map(e=>e.textContent.trim()).join('|')==='取り消し|確定' && Math.abs(commit.right-area.right)<2 && cancel.right<commit.x && commit.y>proof.bottom-1})()`, '確定と取り消しは校正の下の段に右寄せで、確定が右端')
   await input(profileSelector, '未保存のプロフィール')
   await click('制作を実行')
   await click('送信')

@@ -361,16 +361,10 @@ function CharactersMode(): React.JSX.Element {
     </button>
   )
 
+  // 編集欄の右下に置く(校正ボタンの下の段)。主な操作の「確定」を右端にする
   const editActions = (group: EditGroup): React.JSX.Element => (
-    <div className="mt-1.5 flex flex-wrap items-center gap-2">
-      <button
-        onClick={() => void commitEdit(group)}
-        disabled={saving || (group === 'identity' && !(draft.name ?? '').trim())}
-        className="accent-action rounded-md border px-2.5 py-1 text-[12px] font-medium disabled:opacity-40"
-        data-tip={group === 'identity' && !(draft.name ?? '').trim() ? '名前を入力してください' : 'この項目を保存します(Ctrl+Enter)'}
-      >
-        {saving ? '保存中…' : '確定'}
-      </button>
+    <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
+      {groupDirty(group) && <UnsavedBadge />}
       <button
         onClick={() => cancelEdit(group)}
         disabled={saving}
@@ -380,9 +374,16 @@ function CharactersMode(): React.JSX.Element {
       >
         取り消し
       </button>
-      {groupDirty(group) && <UnsavedBadge />}
+      <button
+        onClick={() => void commitEdit(group)}
+        disabled={saving || (group === 'identity' && !(draft.name ?? '').trim())}
+        className="accent-action rounded-md border px-2.5 py-1 text-[12px] font-medium disabled:opacity-40"
+        data-tip={group === 'identity' && !(draft.name ?? '').trim() ? '名前を入力してください' : 'この項目を保存します(Ctrl+Enter)'}
+      >
+        {saving ? '保存中…' : '確定'}
+      </button>
       {saveError?.group === group && (
-        <p role="alert" className="w-full text-[12px]" style={{ color: 'var(--danger)' }}>{saveError.message}</p>
+        <p role="alert" className="w-full text-right text-[12px]" style={{ color: 'var(--danger)' }}>{saveError.message}</p>
       )}
     </div>
   )
