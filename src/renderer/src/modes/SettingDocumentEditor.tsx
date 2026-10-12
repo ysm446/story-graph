@@ -96,8 +96,8 @@ export default function SettingDocumentEditor({ documents, selectedId, onChanged
       {preview ? <div className="rounded-lg border p-3 text-[12px]" style={{ borderColor: 'var(--border)' }}><Markdown text={draft.body} /></div>
         : <textarea aria-label="設定資料の本文" value={draft.body} rows={16} maxLength={100000} onChange={(e) => change('body', e.target.value)} className={`${inputClass} leading-relaxed`} style={inputStyle} />}
       <p className="text-[11px]" style={{ color: 'var(--text-faint)' }}>作成: {new Date(document.created_at).toLocaleString('ja-JP')} ／ 更新: {new Date(document.updated_at).toLocaleString('ja-JP')}</p>
-      {error && <p role="alert" className="text-[12px]" style={{ color: 'var(--danger)' }}>{error}</p>}
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="library-save-bar">
+        {error && <p role="alert" className="w-full text-[12px]" style={{ color: 'var(--danger)' }}>{error}</p>}
         <button onClick={() => void save()} disabled={!dirty || !draft.title.trim()} className="rounded-md px-3 py-1 text-[12px] font-medium disabled:opacity-50" style={{ background: 'var(--accent)', color: 'var(--text)' }} data-tip="設定資料の変更を保存します">{busy ? '保存中…' : '保存'}</button>
         <button onClick={() => discard(document.id)} disabled={!dirty} className={buttonClass} style={buttonStyle} data-tip="この設定資料の未保存の変更を取り消します">元に戻す</button>
         {dirty && <UnsavedBadge />}

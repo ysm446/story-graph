@@ -594,6 +594,23 @@ input[type='range']:focus-visible {
   container-type: inline-size;
 }
 
+/* 資料庫(キャラクター・場所・設定資料)の保存欄。長い資料でも保存・元に戻すが常に見えるよう、
+   スクロール領域の下端に固定する。margin-bottom は親(main)の p-6 を打ち消して下端に揃えるため。 */
+.library-save-bar {
+  position: sticky;
+  bottom: -24px; /* 固定位置は親の p-6 の内側で測られるので、その分だけ下げる */
+  z-index: 10;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  margin-bottom: -24px;
+  padding: 10px 0 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+}
+
 /* 下段のシーン詳細。本文と補助情報を別々にスクロールできるようにする。 */
 .scene-detail-layout {
   display: grid;

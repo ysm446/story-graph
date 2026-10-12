@@ -305,6 +305,9 @@ for mode in ['production', None]:
   await click('構造')
   await click('資料庫')
   await assert(`document.querySelector(${JSON.stringify(profileSelector)}).value === '未保存のプロフィール'`, '資料庫の未保存編集もモードをまたいで保持')
+  await assert(`(() => {const main=[...document.querySelectorAll('main')].find(e=>e.getClientRects().length);const bar=[...document.querySelectorAll('.library-save-bar')].find(e=>e.getClientRects().length);main.scrollTop=0;const m=main.getBoundingClientRect(),b=bar.getBoundingClientRect();return main.scrollHeight>main.clientHeight+40 && Math.abs(b.bottom-m.bottom)<2 && b.top>m.top && [...bar.querySelectorAll('button')].map(e=>e.textContent.trim()).join('|')==='保存|元に戻す|削除'})()`, '資料庫の保存欄は先頭までスクロールしても下端に見える')
+  await assert(`(() => {const main=[...document.querySelectorAll('main')].find(e=>e.getClientRects().length);const bar=[...document.querySelectorAll('.library-save-bar')].find(e=>e.getClientRects().length);main.scrollTop=main.scrollHeight;const m=main.getBoundingClientRect(),b=bar.getBoundingClientRect();const ok=Math.abs(b.bottom-m.bottom)<2;main.scrollTop=0;return ok})()`, '資料庫の保存欄は末尾までスクロールしても下端に揃う')
+  writeFileSync(join(target, 'library-save-bar.png'), (await win.webContents.capturePage()).toPNG())
   await input(profileSelector, '保存済みプロフィール')
   // LLMは起動せず、SSEの到着順と確定済みデータの再読込を検証する。
   await js(`(() => {

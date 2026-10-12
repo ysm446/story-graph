@@ -610,7 +610,7 @@ function CharactersMode(): React.JSX.Element {
             ))}
             {/* 読み上げの声(docs/design/voice.md §5)。選んだその場で保存する */}
             <CharacterVoicePanel character={selected} onChanged={reload} />
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="library-save-bar">
               <button
                 onClick={() => void handleSave()}
                 disabled={saving || !dirty}

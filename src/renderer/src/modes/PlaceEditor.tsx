@@ -232,7 +232,7 @@ export default function PlaceEditor({
       <p className="mb-4 text-[11px] leading-relaxed" style={{ color: 'var(--text-faint)' }}>
         説明と雰囲気は、この場所を舞台にするシーンの清書に毎回渡されます。
       </p>
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="library-save-bar">
         <button
           onClick={() => void handleSave()}
           disabled={saving || !dirty}
