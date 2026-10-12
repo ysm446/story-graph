@@ -10,7 +10,7 @@ import type { Character, Place, StoryGraph, StoryNode } from '../types'
 import { useWorkspace } from '../Workspace'
 import UnsavedBadge from '../UnsavedBadge'
 import CharAvatar from '../CharAvatar'
-import { Icon } from '../icons'
+import { EditActions, EditPencil, ReadText, editKeys as fieldEditKeys, focusEditGroup } from '../FieldEdit'
 import SettingDocumentEditor, { type SettingDocumentEdits } from './SettingDocumentEditor'
 import type { SettingDocument } from '../types'
 
@@ -56,6 +56,11 @@ function CharactersMode(): React.JSX.Element {
     return documents.filter((document) => `${document.title}\n${document.category}\n${document.body}`.toLocaleLowerCase().includes(query))
   }, [documents, documentQuery])
   const [createError, setCreateError] = useState('')
+  // 新規作成した直後の場所・設定資料。全項目を編集状態で開かせ、開いたら消す
+  const [newPlaceId, setNewPlaceId] = useState<string | null>(null)
+  const [newDocumentId, setNewDocumentId] = useState<string | null>(null)
+  const clearNewPlace = useCallback(() => setNewPlaceId(null), [])
+  const clearNewDocument = useCallback(() => setNewDocumentId(null), [])
   const [creating, setCreating] = useState(false)
   const [libraryVersion, setLibraryVersion] = useState(0)
   const reloadSequence = useRef(0)
@@ -257,6 +262,7 @@ function CharactersMode(): React.JSX.Element {
       try {
         const created = await api.createSettingDocument('新しい設定資料')
         await reload()
+        setNewDocumentId(created.id)
         setSelectedDocumentId(created.id)
         setTab('settings')
         setDocumentQuery('')
@@ -270,6 +276,7 @@ function CharactersMode(): React.JSX.Element {
       await reload()
       setTab('places')
       setExpanded((value) => ({ ...value, places: true }))
+      setNewPlaceId(created.id)
       setSelectedPlaceId(created.id)
       return
     }
@@ -300,9 +307,7 @@ function CharactersMode(): React.JSX.Element {
     const saved = Object.fromEntries(GROUP_FIELDS[group].map((key) => [key, selected[key]]))
     setDraft((current) => ({ ...current, ...saved }))
     setEditing((current) => new Set(current).add(group))
-    requestAnimationFrame(() => {
-      document.querySelector<HTMLElement>(`[data-edit-group="${group}"] textarea, [data-edit-group="${group}"] input:not([type="color"])`)?.focus()
-    })
+    focusEditGroup(group)
   }
 
   const cancelEdit = (group: EditGroup): void => {
@@ -337,55 +342,22 @@ function CharactersMode(): React.JSX.Element {
     }
   }
 
-  /** 編集欄の中のキー操作。Ctrl+Enter で確定、Esc で取り消し(変換中の Esc は IME に任せる) */
-  const editKeys = (group: EditGroup) => (event: React.KeyboardEvent): void => {
-    if (!editing.has(group) || event.nativeEvent.isComposing) return
-    if (event.key === 'Escape') {
-      event.stopPropagation()
-      cancelEdit(group)
-    } else if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
-      event.preventDefault()
-      void commitEdit(group)
-    }
-  }
+  const editKeys = (group: EditGroup): ((event: React.KeyboardEvent) => void) =>
+    fieldEditKeys(editing.has(group), () => void commitEdit(group), () => cancelEdit(group))
 
   const editButton = (group: EditGroup, label: string): React.JSX.Element => (
-    <button
-      onClick={() => startEdit(group)}
-      aria-label={`${label}を編集`}
-      data-tip={`${label}を編集`}
-      className="shrink-0 rounded-md p-1 hover:bg-[var(--accent-soft)]"
-      style={{ color: 'var(--text-faint)' }}
-    >
-      <Icon name="pen" size={13} />
-    </button>
+    <EditPencil label={label} onClick={() => startEdit(group)} />
   )
 
-  // 編集欄の右下に置く(校正ボタンの下の段)。主な操作の「確定」を右端にする
   const editActions = (group: EditGroup): React.JSX.Element => (
-    <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
-      {groupDirty(group) && <UnsavedBadge />}
-      <button
-        onClick={() => cancelEdit(group)}
-        disabled={saving}
-        className="rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-50"
-        style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-        data-tip="この項目の変更を取り消して閉じます(Esc)"
-      >
-        取り消し
-      </button>
-      <button
-        onClick={() => void commitEdit(group)}
-        disabled={saving || (group === 'identity' && !(draft.name ?? '').trim())}
-        className="accent-action rounded-md border px-2.5 py-1 text-[12px] font-medium disabled:opacity-40"
-        data-tip={group === 'identity' && !(draft.name ?? '').trim() ? '名前を入力してください' : 'この項目を保存します(Ctrl+Enter)'}
-      >
-        {saving ? '保存中…' : '確定'}
-      </button>
-      {saveError?.group === group && (
-        <p role="alert" className="w-full text-right text-[12px]" style={{ color: 'var(--danger)' }}>{saveError.message}</p>
-      )}
-    </div>
+    <EditActions
+      dirty={groupDirty(group)}
+      saving={saving}
+      blocked={group === 'identity' && !(draft.name ?? '').trim() ? '名前を入力してください' : undefined}
+      error={saveError?.group === group ? saveError.message : undefined}
+      onCommit={() => void commitEdit(group)}
+      onCancel={() => cancelEdit(group)}
+    />
   )
 
   // 下書きが保存値と異なるか(シーンエディタと同じ判定方式)。画像は
@@ -516,7 +488,8 @@ function CharactersMode(): React.JSX.Element {
       <main className="inspector-scrollbar min-w-0 flex-1 overflow-y-auto p-6">
         <div hidden={tab !== 'settings'}>
           <SettingDocumentEditor documents={documents} selectedId={selectedDocumentId} onChanged={reload}
-            onDirty={setDocumentEdits} onDeleted={() => setSelectedDocumentId(null)} />
+            onDirty={setDocumentEdits} onDeleted={() => setSelectedDocumentId(null)}
+            newId={newDocumentId} onOpenedNew={clearNewDocument} />
         </div>
         <div hidden={tab !== 'places'}>
           {selectedPlace ? (
@@ -527,6 +500,8 @@ function CharactersMode(): React.JSX.Element {
               onDirty={setPlaceDirty}
               onUnsavedChange={setPlaceUnsaved}
               onDeleted={() => setSelectedPlaceId(null)}
+              startEditing={newPlaceId === selectedPlace.id}
+              onStartedEditing={clearNewPlace}
             />
           ) : (
             <div className="flex h-full items-center justify-center text-[13px]" style={{ color: 'var(--text-faint)' }}>
@@ -751,21 +726,8 @@ function CharactersMode(): React.JSX.Element {
                       />
                       {editActions(f.key)}
                     </>
-                  ) : saved ? (
-                    // 本文を押しても編集に入れる(鉛筆は小さいので)。文字を選択してコピーするときは開かない
-                    <p
-                      onClick={() => {
-                        if (!window.getSelection()?.toString()) startEdit(f.key)
-                      }}
-                      className="cursor-text whitespace-pre-wrap text-[13px] leading-relaxed"
-                      style={{ color: 'var(--text)' }}
-                    >
-                      {saved}
-                    </p>
                   ) : (
-                    <button onClick={() => startEdit(f.key)} className="text-[12px]" style={{ color: 'var(--text-faint)' }}>
-                      + {f.short}を書く
-                    </button>
+                    <ReadText value={saved} emptyLabel={f.short} onEdit={() => startEdit(f.key)} />
                   )}
                 </section>
               )

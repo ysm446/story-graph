@@ -594,26 +594,9 @@ input[type='range']:focus-visible {
   container-type: inline-size;
 }
 
-/* 資料庫(キャラクター・場所・設定資料)の保存欄。長い資料でも保存・元に戻すが常に見えるよう、
-   スクロール領域の下端に固定する。margin-bottom は親(main)の p-6 を打ち消して下端に揃えるため。 */
-.library-save-bar {
-  position: sticky;
-  bottom: -24px; /* 固定位置は親の p-6 の内側で測られるので、その分だけ下げる */
-  z-index: 10;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  margin-top: 8px;
-  margin-bottom: -24px;
-  padding: 10px 0 12px;
-  border-top: 1px solid var(--border);
-  background: var(--bg);
-}
-
 /* 資料庫のキャラクター編集。上段(左=アイコン・名前・読み / 右=参照画像)を固定し、下段の文章欄だけをスクロールする
    (長いプロフィールを書いているあいだも、顔と名前と立ち絵が見えているように。文章欄は全幅を使う)。
-   親(main)はスクロールさせず、高さいっぱいの中で 上=上段+文章欄 / 下=保存欄 に分ける。 */
+   親(main)はスクロールさせず、その高さいっぱいを使う。 */
 .character-editor {
   container-type: size;
   display: grid;

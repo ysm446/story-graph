@@ -1,34 +1,55 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, assetUrl, uploadAsset } from '../api'
+import { EditActions, EditPencil, ReadText, editKeys, focusEditGroup } from '../FieldEdit'
 import ProofreadTextarea from '../ProofreadTextarea'
 import type { Place } from '../types'
-import UnsavedBadge from '../UnsavedBadge'
 
 const EDITABLE_FIELDS = ['name', 'color', 'description', 'atmosphere', 'reading'] as const
 
-const FIELD_DEFS: Array<{ key: 'description' | 'atmosphere'; label: string; rows: number }> = [
-  { key: 'description', label: '説明(地形・規模・成り立ち)', rows: 5 },
-  { key: 'atmosphere', label: '雰囲気・空気感', rows: 3 }
+const FIELD_DEFS: Array<{ key: 'description' | 'atmosphere'; label: string; short: string; rows: number }> = [
+  { key: 'description', label: '説明(地形・規模・成り立ち)', short: '説明', rows: 5 },
+  { key: 'atmosphere', label: '雰囲気・空気感', short: '雰囲気', rows: 3 }
 ]
 
-/** 場所の編集ペイン(キャラクター編集と同じ構成)。
+/** 編集の単位(キャラクターと同じ考え方)。名前・読み・色はまとめて編集する */
+type EditGroup = 'identity' | 'description' | 'atmosphere'
+const GROUP_FIELDS: Record<EditGroup, ReadonlyArray<(typeof EDITABLE_FIELDS)[number]>> = {
+  identity: ['name', 'reading', 'color'],
+  description: ['description'],
+  atmosphere: ['atmosphere']
+}
+const ALL_GROUPS: EditGroup[] = ['identity', 'description', 'atmosphere']
+/** data-edit-group の値。キャラクターの編集欄と名前が重ならないようにする */
+const groupName = (group: EditGroup): string => `place-${group}`
+
+/** 場所のページ(キャラクターと同じ構成)。読む表示が既定で、鉛筆か本文を押した項目だけを編集欄にし、項目ごとに確定して保存する。
  *  説明と雰囲気は清書プロンプトに毎回渡るので、背景描写の一貫性に直結する。 */
 export default function PlaceEditor({
   place,
   onChanged,
   onDirty,
   onUnsavedChange,
-  onDeleted
+  onDeleted,
+  startEditing = false,
+  onStartedEditing
 }: {
   place: Place
   onChanged: () => Promise<void>
   onDirty?: (dirty: boolean) => void
   onUnsavedChange?: (dirty: boolean) => void
   onDeleted: () => void
+  /** 新規作成の直後だけ true。全項目を編集状態で開く */
+  startEditing?: boolean
+  onStartedEditing?: () => void
 }): React.JSX.Element {
   const [draft, setDraft] = useState<Partial<Place>>(place)
   const [draftReset, setDraftReset] = useState(0)
   const [saving, setSaving] = useState(false)
+  const [editing, setEditing] = useState<ReadonlySet<EditGroup>>(() => new Set(startEditing ? ALL_GROUPS : []))
+  const [saveError, setSaveError] = useState<{ group: EditGroup; message: string } | null>(null)
+  useEffect(() => {
+    if (startEditing) onStartedEditing?.()
+  }, [])
   const [uploading, setUploading] = useState(false)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   // 参考画像へのドラッグ&ドロップ。子要素をまたぐと dragleave が誤発火するので、
@@ -44,11 +65,33 @@ export default function PlaceEditor({
     (key) => (draft[key] ?? '') !== (place[key] ?? '')
   )
 
-  const resetDraft = (): void => {
-    if (!dirty || saving || uploading) return
-    const saved = Object.fromEntries(EDITABLE_FIELDS.map((key) => [key, place[key] ?? '']))
+  const groupDirty = (group: EditGroup): boolean =>
+    GROUP_FIELDS[group].some((key) => (draft[key] ?? '') !== (place[key] ?? ''))
+
+  const closeEdit = (group: EditGroup): void => {
+    setEditing((current) => {
+      const next = new Set(current)
+      next.delete(group)
+      return next
+    })
+    setSaveError((current) => (current?.group === group ? null : current))
+  }
+
+  const startEdit = (group: EditGroup): void => {
+    if (saving || editing.has(group)) return
+    // 開く単位だけ保存値から読み直す(制作チャットなどが保存した値を取りこぼさない)
+    const saved = Object.fromEntries(GROUP_FIELDS[group].map((key) => [key, place[key]]))
+    setDraft((current) => ({ ...current, ...saved }))
+    setEditing((current) => new Set(current).add(group))
+    focusEditGroup(groupName(group))
+  }
+
+  const cancelEdit = (group: EditGroup): void => {
+    if (saving) return
+    const saved = Object.fromEntries(GROUP_FIELDS[group].map((key) => [key, place[key]]))
     setDraft((current) => ({ ...current, ...saved }))
     setDraftReset((value) => value + 1)
+    closeEdit(group)
   }
 
   useEffect(() => {
@@ -61,21 +104,43 @@ export default function PlaceEditor({
     return () => onUnsavedChange?.(false)
   }, [dirty, onUnsavedChange])
 
-  const handleSave = async (): Promise<void> => {
+  const commitEdit = async (group: EditGroup): Promise<void> => {
+    if (saving) return
+    if (group === 'identity' && !(draft.name ?? '').trim()) return
     setSaving(true)
     try {
       // 変えた項目だけ送る。draft は選択時点の丸ごとコピーなので、そのまま PATCH すると
       // 編集中に別の経路(制作チャットなど)で保存された項目を古い値で巻き戻す
       const patch = Object.fromEntries(
-        EDITABLE_FIELDS.filter((k) => (draft[k] ?? '') !== (place[k] ?? ''))
+        GROUP_FIELDS[group].filter((k) => (draft[k] ?? '') !== (place[k] ?? ''))
           .map((k) => [k, k === 'name' ? (draft[k] ?? '') : (draft[k] || null)])
       )
-      if (Object.keys(patch).length > 0) await api.updatePlace(place.id, patch)
-      await onChanged()
+      if (Object.keys(patch).length > 0) {
+        await api.updatePlace(place.id, patch)
+        await onChanged()
+      }
+      closeEdit(group)
+    } catch (e) {
+      setSaveError({ group, message: `保存できませんでした: ${String(e)}` })
     } finally {
       setSaving(false)
     }
   }
+
+  const actions = (group: EditGroup): React.JSX.Element => (
+    <EditActions
+      dirty={groupDirty(group)}
+      saving={saving}
+      blocked={group === 'identity' && !(draft.name ?? '').trim() ? '名前を入力してください' : undefined}
+      error={saveError?.group === group ? saveError.message : undefined}
+      onCommit={() => void commitEdit(group)}
+      onCancel={() => cancelEdit(group)}
+    />
+  )
+  const keys = (group: EditGroup): ((event: React.KeyboardEvent) => void) =>
+    editKeys(editing.has(group), () => void commitEdit(group), () => cancelEdit(group))
+  // 画像の枠の色。名前・色を編集している間は下書きを映し、それ以外は保存値
+  const shownColor = editing.has('identity') ? draft.color : place.color
 
   /** 参考画像を設定・差し替える。装飾専用(LLM には渡らない)なので清書は stale にならない。
    *  名前や説明と違って保存ボタンは待たず、キャラのプロフィール画像と同じく即保存する。 */
@@ -138,7 +203,7 @@ export default function PlaceEditor({
           }}
           className="w-full overflow-hidden rounded-xl border transition-colors"
           style={{
-            borderColor: draft.color ?? 'var(--border)',
+            borderColor: shownColor ?? 'var(--border)',
             background: 'var(--bg-input)',
             ...(imageDragOver ? { outline: '2px dashed var(--accent)', outlineOffset: 2 } : {})
           }}
@@ -178,82 +243,95 @@ export default function PlaceEditor({
           </div>
         )}
       </div>
-      <div className="mb-4 flex w-full items-end gap-2">
-        <label className="block min-w-0 flex-1">
-          <span className="mb-1 block text-[12px]" style={{ color: 'var(--text-dim)' }}>
-            名前
-          </span>
-          <input
-            value={draft.name ?? ''}
-            onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
-            className="block h-11 w-full rounded-lg border px-3 text-[18px] font-semibold outline-none"
-            style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
-          />
-        </label>
-        <label className="block shrink-0">
-          <span className="mb-1 block text-[12px]" style={{ color: 'var(--text-dim)' }}>
-            色
-          </span>
-          <input
-            type="color"
-            value={draft.color ?? '#5a8fa7'}
-            onChange={(e) => setDraft((d) => ({ ...d, color: e.target.value }))}
-            className="color-swatch block h-11 w-12 cursor-pointer"
-            data-tip="シーンカードの場所表示に使う色"
-          />
-        </label>
+      <div className="mb-5" data-edit-group={groupName('identity')} onKeyDown={keys('identity')}>
+        {editing.has('identity') ? (
+          <>
+            <div className="flex w-full items-end gap-2">
+              <label className="block min-w-0 flex-1">
+                <span className="mb-1 block text-[12px]" style={{ color: 'var(--text-dim)' }}>
+                  名前
+                </span>
+                <input
+                  value={draft.name ?? ''}
+                  onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.nativeEvent.isComposing && !e.ctrlKey && !e.metaKey) void commitEdit('identity')
+                  }}
+                  className="block h-11 w-full rounded-lg border px-3 text-[18px] font-semibold outline-none"
+                  style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
+                />
+              </label>
+              <label className="block shrink-0">
+                <span className="mb-1 block text-[12px]" style={{ color: 'var(--text-dim)' }}>
+                  色
+                </span>
+                <input
+                  type="color"
+                  value={draft.color ?? '#5a8fa7'}
+                  onChange={(e) => setDraft((d) => ({ ...d, color: e.target.value }))}
+                  className="color-swatch block h-11 w-12 cursor-pointer"
+                  data-tip="シーンカードの場所表示に使う色"
+                />
+              </label>
+            </div>
+            <label className="mt-3 block">
+              <span className="mb-1 block text-[12px]" style={{ color: 'var(--text-dim)' }}>
+                読み(ひらがな)
+              </span>
+              <input
+                value={draft.reading ?? ''}
+                onChange={(e) => setDraft((d) => ({ ...d, reading: e.target.value }))}
+                className="block w-full rounded-lg border px-3 py-1.5 text-[13px] outline-none"
+                style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
+                data-tip="読み上げで、この場所の名前を指定した読みで読ませます。台本や本文の表記は変わりません。"
+              />
+            </label>
+            {actions('identity')}
+          </>
+        ) : (
+          <>
+            <div className="flex items-start gap-1.5">
+              <h2 data-place-name className="min-w-0 text-[22px] font-semibold leading-tight [overflow-wrap:anywhere]" style={{ color: 'var(--text)' }}>
+                {place.name || '(名前なし)'}
+              </h2>
+              <EditPencil label="名前・読み・色" onClick={() => startEdit('identity')} />
+            </div>
+            <p className="mt-1 text-[12px]" style={{ color: place.reading ? 'var(--text-dim)' : 'var(--text-faint)' }}>
+              {place.reading || '読みは未設定'}
+            </p>
+          </>
+        )}
       </div>
-      <label className="mb-4 block">
-        <span className="mb-1 block text-[12px]" style={{ color: 'var(--text-dim)' }}>
-          読み(ひらがな)
-        </span>
-        <input
-          value={draft.reading ?? ''}
-          onChange={(e) => setDraft((d) => ({ ...d, reading: e.target.value }))}
-          className="block w-full rounded-lg border px-3 py-1.5 text-[13px] outline-none"
-          style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
-          data-tip="読み上げで、この場所の名前を指定した読みで読ませます。台本や本文の表記は変わりません。"
-        />
-      </label>
       {FIELD_DEFS.map((f) => (
-        <label key={f.key} className="mb-4 block">
-          <span className="mb-1 block text-[12px]" style={{ color: 'var(--text-dim)' }}>
-            {f.label}
-          </span>
-          <ProofreadTextarea
-            key={`${place.id}:${f.key}:${draftReset}`}
-            rows={f.rows}
-            value={(draft[f.key] as string | null) ?? ''}
-            onChange={(next) => setDraft((d) => ({ ...d, [f.key]: next }))}
-            style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
-          />
-        </label>
+        <section key={f.key} className="mb-5" data-edit-group={groupName(f.key)} onKeyDown={keys(f.key)}>
+          <div className="mb-1 flex items-center gap-1.5">
+            <span className="text-[12px]" style={{ color: 'var(--text-dim)' }}>
+              {f.label}
+            </span>
+            {!editing.has(f.key) && <EditPencil label={f.short} onClick={() => startEdit(f.key)} />}
+          </div>
+          {editing.has(f.key) ? (
+            <>
+              <ProofreadTextarea
+                key={`${place.id}:${f.key}:${draftReset}`}
+                rows={f.rows}
+                value={(draft[f.key] as string | null) ?? ''}
+                onChange={(next) => setDraft((d) => ({ ...d, [f.key]: next }))}
+                style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
+              />
+              {actions(f.key)}
+            </>
+          ) : (
+            <ReadText value={place[f.key] ?? ''} emptyLabel={f.short} onEdit={() => startEdit(f.key)} />
+          )}
+        </section>
       ))}
-      <p className="mb-4 text-[11px] leading-relaxed" style={{ color: 'var(--text-faint)' }}>
+      <p className="text-[11px] leading-relaxed" style={{ color: 'var(--text-faint)' }}>
         説明と雰囲気は、この場所を舞台にするシーンの清書に毎回渡されます。
       </p>
-      <div className="library-save-bar">
-        <button
-          onClick={() => void handleSave()}
-          disabled={saving || !dirty}
-          className="rounded-lg px-4 py-1.5 text-[13px] font-medium text-white disabled:opacity-40"
-          style={{ background: saving ? 'var(--accent-hover)' : 'var(--accent)' }}
-          data-tip={dirty ? undefined : '変更はありません'}
-        >
-          {saving ? '保存中…' : '保存'}
-        </button>
-        <button onClick={resetDraft} disabled={!dirty || saving || uploading}
-          className="rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-50"
-          style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-          data-tip={saving || uploading ? '保存・画像のアップロードが終わるまでお待ちください' : dirty ? 'この場所の未保存の変更を取り消します' : '変更はありません'}>
-          元に戻す
-        </button>
-        {dirty && <UnsavedBadge />}
-        <button
-          onClick={() => void handleDelete()}
-          className="delete-action ml-auto rounded-lg px-3 py-1.5 text-[13px]"
-        >
-          削除
+      <div className="mt-6 flex border-t pt-3" style={{ borderColor: 'var(--border)' }}>
+        <button onClick={() => void handleDelete()} className="delete-action ml-auto text-[12px]">
+          この場所を削除
         </button>
       </div>
     </div>
