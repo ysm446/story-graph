@@ -780,7 +780,7 @@ function BeatTab({
 
   return (
     <div className="scene-detail flex min-h-0 flex-1 flex-col">
-      <DetailSplit storageKey="sceneDetailMetaWidth" mainOnRight main={<>
+      <DetailSplit storageKey="sceneDetailEventsWidth" defaultWidth={34} main={<>
           {/* 「★ このブランチを正史にする」は置かない(2026-08-02 ユーザー判断)。
               正史は**アクティブな結末から遡った道**なので、決めることは「どの結末を
               アクティブにするか」だけ。道を直接選ぶ操作があると概念が二重になるうえ、
@@ -879,7 +879,7 @@ function BeatTab({
               style={inputStyle}
             />
           </label>
-      </>} secondary={<>
+      </>} aside={<>
           {/* 挿絵(画像/動画。装飾専用。LLM には渡さない) */}
           {createPortal(<>
           {lightboxOpen && node.image_path && assetUrl(node.image_path) && (
@@ -1161,6 +1161,7 @@ function BeatTab({
               削除
             </button>
           </div>
+      </>} secondary={<>
           <EventsEditor
             node={node}
             characters={characters}

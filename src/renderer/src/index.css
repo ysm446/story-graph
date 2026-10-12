@@ -614,6 +614,41 @@ input[type='range']:focus-visible {
 .detail-main-right > .scene-detail-divider { grid-column: 2; grid-row: 1; }
 .detail-main-right > .scene-detail-meta { grid-column: 1; grid-row: 1; }
 
+/* シーンタブの3列: 挿絵・設定(px で保存) | イベント | 本文。下段は横に広く縦に短いので、横へ並べて縦スクロールを減らす。
+   本文 360px・イベント 260px を先に確保し、左の列はその残りまでしか広げない。 */
+.scene-detail-layout.detail-three {
+  --detail-aside: clamp(200px, var(--detail-aside-width, 264px), calc(100% - 622px));
+  grid-template-columns: var(--detail-aside) 1px clamp(260px, var(--detail-meta-width, 34%), calc(100% - var(--detail-aside) - 362px)) 1px minmax(360px, 1fr);
+}
+
+.detail-three > .scene-detail-side { display: contents; }
+.detail-three .scene-detail-aside { grid-column: 1; grid-row: 1; overflow-y: auto; }
+.detail-three .scene-detail-aside-divider { grid-column: 2; grid-row: 1; position: relative; background: var(--border); cursor: col-resize; }
+.detail-three .scene-detail-meta { grid-column: 3; grid-row: 1; }
+.detail-three > .scene-detail-divider { grid-column: 4; grid-row: 1; }
+.detail-three > .scene-detail-main { grid-column: 5; grid-row: 1; }
+
+/* 3列が入らない幅では、挿絵・設定とイベントを左の1列に縦に重ねる(左から右の順は変えない)。 */
+@container (max-width: 1099px) {
+  .scene-detail-layout.detail-three {
+    grid-template-columns: clamp(280px, var(--detail-meta-width, 34%), calc(100% - 321px)) 1px minmax(320px, 1fr);
+  }
+  .detail-three > .scene-detail-side {
+    display: block;
+    grid-column: 1;
+    grid-row: 1;
+    min-width: 0;
+    overflow-y: auto;
+  }
+  .detail-three .scene-detail-aside,
+  .detail-three .scene-detail-meta {
+    overflow: visible;
+  }
+  .detail-three .scene-detail-aside-divider { height: 1px; cursor: default; pointer-events: none; }
+  .detail-three > .scene-detail-divider { grid-column: 2; }
+  .detail-three > .scene-detail-main { grid-column: 3; }
+}
+
 .scene-detail-main > div {
   max-width: 80ch;
   margin-inline: auto;
@@ -645,4 +680,9 @@ input[type='range']:focus-visible {
     border-left: 0;
     border-top: 1px solid var(--border);
   }
+
+  /* 3列も本文を先にした1列へ。区切りは各ブロックの上線で示す */
+  .detail-three > .scene-detail-side { overflow: visible; }
+  .detail-three .scene-detail-aside { border-top: 1px solid var(--border); }
+  .detail-three .scene-detail-aside-divider { display: none; }
 }
