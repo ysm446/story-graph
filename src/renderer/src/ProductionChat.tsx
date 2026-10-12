@@ -97,8 +97,10 @@ const MessageList = memo(function MessageList({ messages, nodes, groups }: {
 })
 
 /** 制作専用チャット。相談履歴とは分け、選択した送信モードで書き込みの可否を決める。 */
-export default function ProductionChat({ beforeExecute, onChanged, onFollowTarget, onManualEdit, nodes, groups, policy, setPolicy, selectedNodeIds, chapterSelected, active = true }: {
+export default function ProductionChat({ beforeExecute, onChanged, onFollowTarget, onManualEdit, nodes, groups, policy, setPolicy, selectedNodeIds, chapterSelected, chapter, active = true }: {
   selectedNodeIds: string[]
+  /** レビュー候補の対象にする章(選択中の章カード、無ければ開いている章)。シーン選択中は null */
+  chapter: { id: string; title: string } | null
   /** 画面に出ているか。隠れている間はコンテキスト量の問い合わせ(サーバーで全文を組み立てる)を止める */
   active?: boolean
   chapterSelected: boolean
@@ -152,7 +154,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
   const endRef = useRef<HTMLDivElement>(null)
   const taskRef = useRef<string | null>(null)
   const composerRef = useRef<HTMLDivElement>(null)
-  const suggestions = productionSuggestions(messages, selection)
+  const suggestions = productionSuggestions(messages, selection, chapter)
 
   useEffect(() => {
     // 隠れている間(相談タブ・鑑賞モード・チャットを閉じている)は問い合わせない。
@@ -484,7 +486,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
       <p className="shrink-0 text-[11px]" style={{ color: 'var(--text-dim)' }}
         data-tip="送信時の選択を依頼に添えます。送信後に選択を変えても対象は変わりません。変更範囲・AI保護は引き続き適用されます。本文は保存済みの内容を参照します。">
         選択中: {selection.length ? selection.map((node) => node.title).join('、') : 'なし'}
-        {chapterSelected && '（章カードは添付されません。本文を扱うシーンを選んでください）'}
+        {chapterSelected && '（章カードは添付されません。章全体は候補の章レビューから、本文はシーンを選んで依頼できます）'}
       </p>
       <AutoTextarea ariaLabel="制作への依頼" value={input} onChange={setInput} disabled={sendingInstruction || (busy && !runId)}
         onKeyDown={(e) => {

@@ -4476,6 +4476,13 @@ function StructureModeInner({
     return productionSelectedRef.current
   }, [productionSelectedNodeIds])
   const productionChapterSelected = workspace.mode === 'structure' && displayNodes.some((n) => n.selected && n.type === 'chapterNode')
+  // 制作の章レビュー候補の対象。シーン選択中は選択レビューを優先するので渡さない
+  const productionChapterId = workspace.mode === 'structure' && productionSelectedStable.length === 0 ? (activeGroup?.id ?? null) : null
+  const productionChapterTitle = activeGroup?.title ?? ''
+  const productionChapter = useMemo(
+    () => (productionChapterId ? { id: productionChapterId, title: productionChapterTitle } : null),
+    [productionChapterId, productionChapterTitle]
+  )
   const beforeProductionExecute = useStableCallback((): string | null =>
     workspace.libraryDirty.current
       ? '未保存の資料があります。保存してから制作を実行してください。'
@@ -5357,6 +5364,7 @@ function StructureModeInner({
                 nodes={graphNodes} groups={groups}
                 selectedNodeIds={productionSelectedStable}
                 chapterSelected={productionChapterSelected}
+                chapter={productionChapter}
                 active={chatOpen && chatKind === 'production' && workspace.mode !== 'reader'}
                 beforeExecute={beforeProductionExecute}
                 onManualEdit={setProductionManual}

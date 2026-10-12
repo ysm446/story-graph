@@ -8,14 +8,17 @@ interface ContextMessage {
   instruction?: unknown
 }
 
-/** 初期版は選択・直近の応答・確定済み操作から候補を組み立てる。 */
-export function productionSuggestions(messages: ContextMessage[], selection: ProductionSelectedNode[]): { label: string; text: string }[] {
+/**
+ * 初期版は選択・開いている章・直近の応答・確定済み操作から候補を組み立てる。
+ * 選択と章のレビューは会話の起点になるので、会話が空でも出す。章はシーンを選択していないときだけ。
+ */
+export function productionSuggestions(messages: ContextMessage[], selection: ProductionSelectedNode[],
+  chapter: { id: string; title: string } | null = null): { label: string; text: string }[] {
   const reverseUser = [...messages].reverse().findIndex((message) => message.role === 'user')
   const lastUser = reverseUser < 0 ? -1 : messages.length - 1 - reverseUser
   const recent = messages.slice(lastUser + 1)
   const reply = [...recent].reverse().find((message) => message.role === 'assistant' && !message.operation && !message.snapshot && !message.instruction && message.content.trim())
   const changes = recent.flatMap((message) => message.operation ? [message.operation] : [])
-  if (!reply && !changes.length) return []
   const result: { label: string; text: string }[] = []
   if (reply) result.push({
     label: 'この案で進めて',
@@ -25,6 +28,9 @@ export function productionSuggestions(messages: ContextMessage[], selection: Pro
   if (selection.length) {
     const label = selection.length === 1 ? `選択中の「${selection[0].title}」をレビュー` : `選択中の${selection.length}件をレビュー`
     result.push({ label, text: `次の選択対象をレビューしてください。対象はこの一覧に固定し、送信時の選択が変わっていても変更しないでください。\n${selection.map((node) => `・${node.title}（ID: ${node.id}）`).join('\n')}\n${review}` })
+  } else if (chapter) {
+    const title = chapter.title || '無題'
+    result.push({ label: `章「${title}」をレビュー`, text: `次の章をレビューしてください。対象はこの章に固定し、送信時の画面や選択が変わっていても変更しないでください。\n・${title}（章ID: ${chapter.id}）\n章に含まれるシーンを確認して本文を読み、章全体の流れも見たうえで、${review}` })
   }
   if (changes.length) {
     const targets = [...new Set(changes.map((operation) => `${operation.title || '無題'}（${'entity_id' in operation ? operation.entity_type + ': ' + operation.entity_id : 'scene: ' + operation.node_id}）`))]
