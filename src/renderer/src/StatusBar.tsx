@@ -28,15 +28,15 @@ function ResourceBar({ label, pct, detail }: { label: string; pct: number; detai
   const clampedPct = Math.min(100, Math.max(0, pct))
   const barColor = clampedPct > 85 ? '#ef4444' : clampedPct > 65 ? '#f97316' : 'var(--accent)'
   return (
-    <div className="flex items-center gap-1.5">
-      <span className="text-[10px] font-medium opacity-50">{label}</span>
-      <div className="h-[3px] w-10 overflow-hidden rounded-full bg-white/10">
+    <div className="flex items-center gap-2">
+      <span className="text-[12px] font-medium opacity-50">{label}</span>
+      <div className="h-[5px] w-16 overflow-hidden rounded-full bg-white/10">
         <div
           className="h-full rounded-full transition-[width] duration-500 ease-out"
           style={{ width: `${clampedPct}%`, backgroundColor: barColor }}
         />
       </div>
-      <span className="text-[10px] tabular-nums opacity-60">{detail}</span>
+      <span className="text-[12px] tabular-nums opacity-60">{detail}</span>
     </div>
   )
 }
