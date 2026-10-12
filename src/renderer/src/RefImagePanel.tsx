@@ -321,12 +321,12 @@ export default function RefImagePanel({
           )}
           {appearance !== (character.appearance ?? '') && (
             <p className="text-[11px]" style={{ color: '#f2a3a3' }}>
-              外見に未保存の変更があります。プロンプトは保存済みの内容から作るので、先に「保存」を押してください。
+              外見に未保存の変更があります。プロンプトは保存済みの内容から作るので、先に外見を「確定」してください。
             </p>
           )}
           {!appearance.trim() && !url && (
             <p className="text-[11px]" style={{ color: 'var(--text-faint)' }}>
-              「外見」が空のままだと、プロンプトは無難な既定の姿になります。先に外見を書いて保存してから生成すると狙いどおりになります。
+              「外見」が空のままだと、プロンプトは無難な既定の姿になります。先に外見を書いて確定してから生成すると狙いどおりになります。
             </p>
           )}
           {error && (

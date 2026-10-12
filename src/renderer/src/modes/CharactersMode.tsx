@@ -378,8 +378,11 @@ function CharactersMode(): React.JSX.Element {
   }, [workspace.revision, workspace.mode])
 
   // アイコンの頭文字と縁の色。名前・色を編集している間は下書きを映し、それ以外は保存値
-  const shownName = editing.has('identity') ? draft.name : selected?.name
-  const shownColor = editing.has('identity') ? draft.color : selected?.color
+  // 人物を切り替えた直後の1回の描画では、draft と editing がまだ前の人物のもの(effect で入れ替える)。
+  // その間は下書きを使わない(前の人物の外見と比べて「未保存の変更」の警告が一瞬出る、などを防ぐ)
+  const draftInSync = !!selected && draft.id === selected.id
+  const shownName = draftInSync && editing.has('identity') ? draft.name : selected?.name
+  const shownColor = draftInSync && editing.has('identity') ? draft.color : selected?.color
 
   const handleDelete = async (): Promise<void> => {
     if (!selectedId) return
@@ -690,7 +693,7 @@ function CharactersMode(): React.JSX.Element {
                 場面画像を作るときに編集モデルの入力として渡す(docs/design/image-gen.md) */}
             <RefImagePanel
               character={selected}
-              appearance={draft.appearance ?? ''}
+              appearance={draftInSync && editing.has('appearance') ? (draft.appearance ?? '') : (selected.appearance ?? '')}
               onChanged={async (patch) => {
                 setDraft((d) => ({ ...d, ...patch }))
                 await reload()

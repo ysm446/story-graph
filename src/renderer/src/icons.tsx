@@ -6,6 +6,7 @@ export type IconName =
   | 'robotLock' // AI編集から保護(閉じた鍵)
   | 'robotUnlock' // AI編集を許可(開いた鍵)
   | 'chat' // 吹き出し(相談チャット)
+  | 'globe' // 世界(人物に属さない事実)
   | 'mask' // 芝居の仮面(キャラクターと話す)
   | 'search' // ツール実行(調査)
   | 'recall' // 記憶をたどる
@@ -56,6 +57,14 @@ const PATHS: Record<IconName, React.JSX.Element> = {
     </>
   ),
   chat: <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />,
+  // lucide の globe
+  globe: (
+    <>
+      <circle cx="12" cy="12" r="10" />
+      <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" />
+      <path d="M2 12h20" />
+    </>
+  ),
   mask: (
     <>
       <path d="M3 5v6a7 7 0 0 0 7 7 7 7 0 0 0 7-7V5z" />

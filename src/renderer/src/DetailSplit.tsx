@@ -67,7 +67,7 @@ export default function DetailSplit({ storageKey, main, secondary, aside, mainSc
   return (
     <div ref={detailLayoutRef} className={`scene-detail-layout min-h-0 flex-1${three ? ' detail-three' : mainOnRight ? ' detail-main-right' : ''}`}
       style={{ '--detail-meta-width': `${metaWidth}%`, '--detail-aside-width': `${asideWidth}px` } as React.CSSProperties}>
-      <div ref={mainScrollRef} className={`scene-detail-main inspector-scrollbar min-w-0 p-3${fillMain ? ' detail-fill' : ''}`}>
+      <div ref={mainScrollRef} className={`scene-detail-main inspector-scrollbar min-w-0 px-5 py-3${fillMain ? ' detail-fill' : ''}`}>
         <div className="flex flex-col gap-3">{main}</div>
       </div>
         <div className="scene-detail-divider relative cursor-col-resize"
@@ -91,7 +91,7 @@ export default function DetailSplit({ storageKey, main, secondary, aside, mainSc
         </div>
       {three ? (
         <div className="scene-detail-side inspector-scrollbar">
-          <div className="scene-detail-aside inspector-scrollbar min-w-0 p-4">
+          <div className="scene-detail-aside inspector-scrollbar min-w-0 px-5 py-4">
             <div className="flex flex-col gap-3">{aside}</div>
           </div>
           {/* 3列のときだけ縦の境界になる。縦に重なる幅では横線になり、操作は CSS で止める */}
@@ -112,12 +112,12 @@ export default function DetailSplit({ storageKey, main, secondary, aside, mainSc
             }}>
             <div className="absolute inset-y-0 -left-1 -right-1 z-10" />
           </div>
-          <div ref={metaRef} className="scene-detail-meta inspector-scrollbar min-w-0 p-4">
+          <div ref={metaRef} className="scene-detail-meta inspector-scrollbar min-w-0 px-5 py-4">
             <div className="flex flex-col gap-3">{secondary}</div>
           </div>
         </div>
       ) : (
-        <div ref={metaRef} className={`scene-detail-meta inspector-scrollbar min-w-0 ${mainOnRight ? 'p-4' : 'p-3'}`}>
+        <div ref={metaRef} className={`scene-detail-meta inspector-scrollbar min-w-0 px-5 ${mainOnRight ? 'py-4' : 'py-3'}`}>
           <div className="flex flex-col gap-3">{secondary}</div>
         </div>
       )}

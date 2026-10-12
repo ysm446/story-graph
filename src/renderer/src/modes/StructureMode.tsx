@@ -1169,7 +1169,7 @@ function BeatTab({
             onBusyChange={(busy: boolean) => onNodeBusyChange(node.id, busy)}
           />
       </>} />
-      <div className="shrink-0 border-t px-3 py-2" style={{ borderColor: 'var(--border)', background: 'var(--bg-sidebar)' }}>
+      <div className="shrink-0 border-t px-5 py-2" style={{ borderColor: 'var(--border)', background: 'var(--bg-sidebar)' }}>
         {error && <div role="alert" className="mb-1 text-[12px]" style={{ color: 'var(--danger)' }}>{error}</div>}
         <div className="flex flex-wrap items-center justify-between gap-2">
           {dirty && <span role="status" className="min-w-0 text-[11px]" style={{ color: 'var(--text-dim)' }}>
@@ -1716,7 +1716,7 @@ function ChapterTab({
 
   return (
     <div className="scene-detail flex min-h-0 flex-1 flex-col">
-      <div className="shrink-0 border-b px-3 py-2" style={{ borderColor: 'var(--border)' }}>
+      <div className="shrink-0 border-b px-5 py-2" style={{ borderColor: 'var(--border)' }}>
 
       <div className="flex items-center gap-2">
         <span className="shrink-0 text-[10px] uppercase tracking-[0.2em]" style={{ color: 'var(--text-faint)' }}>
@@ -1954,7 +1954,7 @@ function ChapterTab({
         </div>
       </div>
       </>} />
-      <div className="flex shrink-0 items-center justify-end gap-2 border-t px-3 py-2" style={{ borderColor: 'var(--border)' }}>
+      <div className="flex shrink-0 items-center justify-end gap-2 border-t px-5 py-2" style={{ borderColor: 'var(--border)' }}>
         {dirty && <span className="mr-auto text-[11px]" style={{ color: 'var(--text-dim)' }}>未保存の変更があります</span>}
         <button onClick={() => void save()} disabled={busy || !dirty}
           className="rounded-md px-3 py-1 text-[12px] font-medium disabled:opacity-50"
@@ -4697,7 +4697,7 @@ function StructureModeInner({
               {/* 幅は中身に合わせる(パネルの領域はキャンバスのクリックを奪うため)。
                   生成パネルとステータスの幅は各要素側で持たせ、ツールバーの並びを潰さない */}
               <div className="flex w-fit max-w-full flex-col gap-2">
-                {/* 章内ビューのパンくず(章名 / 名前の変更 / 解除) */}
+                {/* 章内ビューのパンくず(現在地を示すだけ。名前の変更は下段の章の詳細と、章カードの右クリックから) */}
                 {effectiveView === 'focused' && focusedGroup && (
                   <div
                     className="flex w-fit max-w-full items-center gap-1.5 rounded-xl border px-2 py-1.5 text-[12px] shadow-lg shadow-black/30"
@@ -4718,15 +4718,6 @@ function StructureModeInner({
                         {focusedGroup.on_canon ? `第${groups.indexOf(focusedGroup) + 1}章` : '別ルートの章'}「{focusedGroup.title}」
                       </span>
                     </nav>
-                    <button
-                      onClick={() => void renameChapter(focusedGroup)}
-                      className="shrink-0 rounded-md px-1 py-0.5 hover:bg-[var(--accent-soft)]"
-                      style={{ color: 'var(--text-faint)' }}
-                      aria-label="章の名前を変更"
-                      data-tip="章の名前を変更"
-                    >
-                      ✎
-                    </button>
                   </div>
                 )}
                 {/* ツールバー: 補助操作はアイコンだけにして面積を詰める。
@@ -5420,7 +5411,7 @@ function StructureModeInner({
           className="flex shrink-0 flex-col"
           style={{ background: 'var(--bg-sidebar)', height: inspectorOpen ? inspectorHeight : 0, maxHeight: '70%', overflow: 'hidden' }}
         >
-          <div className="flex shrink-0 gap-1 border-b px-3 py-2" style={{ borderColor: 'var(--border)' }}>
+          <div className="flex shrink-0 gap-1 border-b px-5 py-2" style={{ borderColor: 'var(--border)' }}>
             {(
               [
                 { id: 'beat', label: activeGroup ? '章' : 'シーン' },
@@ -5449,7 +5440,7 @@ function StructureModeInner({
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             {activeGroup && (shownTab === 'graph' || shownTab === 'facts') && (
               // どの時点を見ているか。章のときは選んだシーンが無いので明示する
-              <div className="shrink-0 border-b px-3 py-1 text-[11px]" style={{ borderColor: 'var(--border)', color: 'var(--text-faint)' }}>
+              <div className="shrink-0 border-b px-5 py-1 text-[11px]" style={{ borderColor: 'var(--border)', color: 'var(--text-faint)' }}>
                 {chapterEndPath
                   ? `第${groups.indexOf(activeGroup) + 1}章「${activeGroup.title}」の終わり(「${chapterEndPath.at(-1)?.title || '無題'}」)まで`
                   : `第${groups.indexOf(activeGroup) + 1}章「${activeGroup.title}」にはまだシーンがありません`}

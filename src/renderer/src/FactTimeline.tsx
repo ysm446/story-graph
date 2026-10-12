@@ -1,4 +1,6 @@
 import { useMemo, useState } from 'react'
+import CharAvatar from './CharAvatar'
+import { Icon } from './icons'
 import type { Character, StoryNode } from './types'
 
 /** 事実(fact_set)の状態帯タイムライン。
@@ -71,8 +73,8 @@ export default function FactTimeline({
 }): React.JSX.Element {
   // 表示対象。null = 世界の facts
   const [target, setTarget] = useState<string | null>(() => characters[0]?.id ?? null)
-  // 削除済み・読み込み前のキャラを指したままにしない(select に該当の option が
-  // 無いと先頭のキャラが選ばれて見えるのに、帯は居ないキャラで計算されてしまう)
+  // 削除済み・読み込み前のキャラを指したままにしない(一覧に該当の行が無いのに、
+  // 帯だけ居ないキャラで計算されてしまう)
   const effectiveTarget =
     target !== null && !characters.some((c) => c.id === target)
       ? (characters[0]?.id ?? null)
@@ -84,26 +86,36 @@ export default function FactTimeline({
   const gridWidth = Math.max(path.length, 1) * COLUMN_WIDTH
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b px-3 py-2" style={{ borderColor: 'var(--border)' }}>
-        <select
-          value={effectiveTarget ?? '__world__'}
-          onChange={(e) => setTarget(e.target.value === '__world__' ? null : e.target.value)}
-          className="rounded-md border px-2 py-1 text-[12px]"
-          style={{ background: 'var(--bg-input)', borderColor: 'var(--border)', color: 'var(--text-dim)' }}
+    <div className="char-detail flex min-h-0 flex-1 flex-col">
+      {/* 左に対象の一覧(キャラタブと同じ行: アイコン + 名前)、右に事実の帯。対象は人物の全員と、
+          人物に属さない「世界」。狭いときは上の横並びに戻す(index.css の char-detail) */}
+      <div className="char-detail-layout">
+      <div className="char-detail-list inspector-scrollbar" role="group" aria-label="事実を見る対象">
+        {characters.map((c) => (
+          <button
+            key={c.id}
+            onClick={() => setTarget(c.id)}
+            aria-pressed={c.id === effectiveTarget}
+            className="flex w-full min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12px]"
+            style={c.id === effectiveTarget ? { background: 'var(--accent-soft)', color: 'var(--text)' } : { color: 'var(--text-dim)' }}
+            data-tip={c.name}
+          >
+            <CharAvatar char={c} size={24} />
+            <span className="min-w-0 flex-1 truncate">{c.name}</span>
+          </button>
+        ))}
+        <button
+          onClick={() => setTarget(null)}
+          aria-pressed={effectiveTarget === null}
+          className="flex w-full min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12px] fact-world-row"
+          style={effectiveTarget === null ? { background: 'var(--accent-soft)', color: 'var(--text)' } : { color: 'var(--text-dim)' }}
+          data-tip="人物に属さない事実(天候・情勢など)"
         >
-          {characters.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
-          ))}
-          <option value="__world__">世界(world)</option>
-        </select>
-        <span className="text-[11px]" style={{ color: 'var(--text-faint)' }}>
-          帯をクリックすると値が変わったシーンを選択します
-        </span>
+          <span className="flex h-6 w-6 shrink-0 items-center justify-center"><Icon name="globe" size={16} /></span>
+          <span className="min-w-0 flex-1 truncate">世界</span>
+        </button>
       </div>
-
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       {keys.length === 0 ? (
         <div className="py-6 text-center text-[12px]" style={{ color: 'var(--text-faint)' }}>
           このパスに fact_set がありません。
@@ -111,14 +123,15 @@ export default function FactTimeline({
           シーンのイベントに fact_set(location / goal など)が入ると帯が並びます。
         </div>
       ) : (
-        <div className="inspector-scrollbar min-h-0 flex-1 overflow-auto p-3">
+        <div className="inspector-scrollbar min-h-0 flex-1 overflow-auto px-5 py-3">
           <div style={{ width: gridWidth + KEY_WIDTH }}>
             {/* シーンの見出し(選択中のシーンを強調) */}
             <div
               className="sticky top-0 z-20 mb-1 grid"
               style={{ gridTemplateColumns: `${KEY_WIDTH}px repeat(${Math.max(path.length, 1)}, ${COLUMN_WIDTH}px)`, background: 'var(--bg-sidebar)' }}
             >
-              <div className="sticky left-0 z-10 px-2 py-1 text-[11px]" style={{ background: 'var(--bg-sidebar)', color: 'var(--text-faint)' }}>項目</div>
+              <div className="sticky left-0 z-10 px-2 py-1 text-[11px]" style={{ background: 'var(--bg-sidebar)', color: 'var(--text-faint)' }}
+                data-tip="帯をクリックすると、値が変わったシーンを選択します">項目</div>
               {path.map((node, index) => (
                 <button
                   key={node.id}
@@ -160,7 +173,7 @@ export default function FactTimeline({
                         }}
                         data-tip={`${key} = ${band.value}(${band.start + 1} 話目から${
                           band.end < path.length ? ` ${band.end} 話目まで` : '現在まで'
-                        })`}
+                        })\nクリックで値が変わったシーンを選択`}
                       >
                         {band.value}
                       </button>
@@ -171,6 +184,8 @@ export default function FactTimeline({
           </div>
         </div>
       )}
+      </div>
+      </div>
     </div>
   )
 }

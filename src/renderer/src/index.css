@@ -647,8 +647,8 @@ input[type='range']:focus-visible {
   }
 }
 
-/* 下段のキャラタブ。左に登場人物の一覧(アイコン + 名前)、右に選んだ人物の状態。
-   右側は scene-detail(2列の切り替えを自分の幅で判定する)。 */
+/* 下段のキャラタブ・事実タブ。左に対象の一覧(アイコン + 名前)、右に選んだ対象の内容。
+   キャラタブの右側は scene-detail(2列の切り替えを自分の幅で判定する)。 */
 .char-detail {
   container-type: inline-size;
 }
@@ -664,10 +664,26 @@ input[type='range']:focus-visible {
   flex-direction: column;
   flex-shrink: 0;
   gap: 2px;
-  width: 176px;
+  width: 188px;
   overflow-y: auto;
-  padding: 8px;
+  /* 行の内側の余白(8px)と合わせて、アイコンの左が詳細エリア共通の 20px に揃う */
+  padding: 8px 8px 8px 12px;
   border-right: 1px solid var(--border);
+}
+
+/* 事実タブの「世界」は人物ではないので、区切り線を挟んで一覧の末尾に置く。 */
+.char-detail-list > .fact-world-row {
+  margin-top: 6px;
+  position: relative;
+}
+
+.char-detail-list > .fact-world-row::before {
+  content: "";
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  top: -4px;
+  border-top: 1px solid var(--border);
 }
 
 /* 狭いときは一覧を上の横並びへ戻す(左の列を置くと状態の欄が窮屈になる)。 */
@@ -688,6 +704,12 @@ input[type='range']:focus-visible {
   .char-detail-list > button {
     width: auto;
     max-width: 100%;
+  }
+  .char-detail-list > .fact-world-row {
+    margin-top: 0;
+  }
+  .char-detail-list > .fact-world-row::before {
+    display: none;
   }
 }
 

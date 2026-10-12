@@ -216,7 +216,7 @@ for mode in ['production', None]:
         await assert(`(() => {const aside=[...document.querySelectorAll('aside')].find(e=>e.textContent.includes('清書'));return aside.scrollWidth<=aside.clientWidth+1;})()`, label + 'は詳細欄の幅内に収まる')
         if (label !== '事実') await assert(`!!document.querySelector('.scene-detail-layout')`, label + 'は左右分割')
         if (label === 'キャラ') {
-          await assert(`(() => {const list=document.querySelector('.char-detail-list');const row=list.querySelector('button');const l=list.getBoundingClientRect(),d=document.querySelector('.char-detail .scene-detail').getBoundingClientRect();return row.lastElementChild.textContent.trim()==='検証キャラ' && row.getAttribute('aria-pressed')==='true' && row.children.length===2 && Math.round(l.width)===176 && d.x>=l.right-1 && Math.abs(l.y-d.y)<1})()`, 'キャラは左に登場人物の一覧(アイコンと名前)、右に状態')
+          await assert(`(() => {const list=document.querySelector('.char-detail-list');const row=list.querySelector('button');const l=list.getBoundingClientRect(),d=document.querySelector('.char-detail .scene-detail').getBoundingClientRect();return row.lastElementChild.textContent.trim()==='検証キャラ' && row.getAttribute('aria-pressed')==='true' && row.children.length===2 && Math.round(l.width)===188 && d.x>=l.right-1 && Math.abs(l.y-d.y)<1})()`, 'キャラは左に登場人物の一覧(アイコンと名前)、右に状態')
         }
         if (label === '関係図') {
           await assert(`document.querySelector('.scene-detail-main svg').querySelectorAll('g[transform]').length===2`, '関係図に登場人物を表示')
@@ -225,6 +225,12 @@ for mode in ['production', None]:
           await assert(`document.querySelector('.scene-detail-meta').textContent.includes('検証用の関係')`, '関係線のクリックで右欄に履歴を表示')
         }
         if (label === '事実') {
+          await assert(`(() => {const list=document.querySelector('.char-detail-list[aria-label="事実を見る対象"]');const rows=[...list.querySelectorAll('button')];const l=list.getBoundingClientRect();return !list.closest('.char-detail').querySelector('select') && rows.map(r=>r.lastElementChild.textContent).join('|')==='検証キャラ|相手キャラ|世界' && rows[0].getAttribute('aria-pressed')==='true' && !!rows.at(-1).querySelector('svg') && Math.round(l.width)===188})()`, '事実は左に対象の一覧(人物と世界)を並べ、プルダウンは無い')
+          await js(`document.querySelector('.char-detail-list .fact-world-row').click()`)
+          await pause(150)
+          await assert(`document.querySelector('.char-detail-list .fact-world-row').getAttribute('aria-pressed')==='true' && document.querySelector('.char-detail-list button').getAttribute('aria-pressed')==='false'`, '事実の一覧で世界に切り替えられる')
+          await js(`document.querySelector('.char-detail-list button').click()`)
+          await pause(150)
           await assert(`!!document.querySelector('aside .sticky.top-0')`, '事実のシーン見出しを固定')
         }
         writeFileSync(join(target, label + '-wide.png'), (await win.webContents.capturePage()).toPNG())
