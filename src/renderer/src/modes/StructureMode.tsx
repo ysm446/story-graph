@@ -1305,23 +1305,29 @@ function CharTab({
   const inputStyle = { background: 'var(--bg-input)', borderColor: 'var(--border)' }
 
   return (
-    <div className="scene-detail flex min-h-0 flex-1 flex-col">
-      <div className="flex shrink-0 flex-wrap gap-1.5 border-b px-3 py-2" style={{ borderColor: 'var(--border)' }}>
-        {node.cast.map((id) => (
-          <button
-            key={id}
-            onClick={() => setCharId(id)}
-            className="rounded-full border px-2.5 py-1 text-[12px]"
-            style={
-              id === charId
-                ? { background: 'var(--accent-soft)', borderColor: 'var(--accent-border)', color: 'var(--text)' }
-                : { borderColor: 'var(--border)', color: 'var(--text-faint)' }
-            }
-          >
-            {nameOf(id)}
-          </button>
-        ))}
+    <div className="char-detail flex min-h-0 flex-1 flex-col">
+      {/* 左に登場人物の一覧(資料庫の一覧と同じ行: アイコン + 名前)、右に選んだ人物の状態。
+          下段は横に広く縦に短いので、選択を上の行ではなく左の列に置く。狭いときは上の横並びに戻す(index.css の char-detail) */}
+      <div className="char-detail-layout">
+      <div className="char-detail-list inspector-scrollbar" role="group" aria-label="このシーンの登場人物">
+        {node.cast.map((id) => {
+          const character = characters.find((c) => c.id === id)
+          return (
+            <button
+              key={id}
+              onClick={() => setCharId(id)}
+              aria-pressed={id === charId}
+              className="flex w-full min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12px]"
+              style={id === charId ? { background: 'var(--accent-soft)', color: 'var(--text)' } : { color: 'var(--text-dim)' }}
+              data-tip={nameOf(id)}
+            >
+              {character ? <CharAvatar char={character} size={24} /> : <span className="h-6 w-6 shrink-0" />}
+              <span className="min-w-0 flex-1 truncate">{nameOf(id)}</span>
+            </button>
+          )
+        })}
       </div>
+      <div className="scene-detail flex min-h-0 min-w-0 flex-1 flex-col">
       {node.cast.length === 0 && (
         <div className="text-[12px]" style={{ color: 'var(--text-faint)' }}>
           cast が空です
@@ -1479,8 +1485,12 @@ function CharTab({
             </h4>
             {Object.entries(charState.relationships).map(([target, rel]) => (
               <div key={target} className="mb-1 flex items-center gap-2 text-[12px]">
-                <span className="w-20 truncate" style={{ color: 'var(--text-dim)' }}>
-                  {nameOf(target)}
+                {/* 相手はアイコンでも示す(名前だけだと並んだときに見分けにくい) */}
+                <span className="flex w-28 min-w-0 shrink-0 items-center gap-1.5" style={{ color: 'var(--text-dim)' }} data-tip={nameOf(target)}>
+                  {characters.find((c) => c.id === target)
+                    ? <CharAvatar char={characters.find((c) => c.id === target)!} size={18} />
+                    : <span className="h-[18px] w-[18px] shrink-0" />}
+                  <span className="min-w-0 flex-1 truncate">{nameOf(target)}</span>
                 </span>
                 {/* 0 を中心に、好意は右へ・反感は左へ伸ばす(-1.0〜+1.0) */}
                 <div
@@ -1578,6 +1588,8 @@ function CharTab({
           このキャラはまだ物語に登場していません(char_introduce 前)
         </div>
       )}
+      </div>
+      </div>
     </div>
   )
 }

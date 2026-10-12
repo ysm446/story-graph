@@ -215,6 +215,9 @@ for mode in ['production', None]:
         await pause(250)
         await assert(`(() => {const aside=[...document.querySelectorAll('aside')].find(e=>e.textContent.includes('清書'));return aside.scrollWidth<=aside.clientWidth+1;})()`, label + 'は詳細欄の幅内に収まる')
         if (label !== '事実') await assert(`!!document.querySelector('.scene-detail-layout')`, label + 'は左右分割')
+        if (label === 'キャラ') {
+          await assert(`(() => {const list=document.querySelector('.char-detail-list');const row=list.querySelector('button');const l=list.getBoundingClientRect(),d=document.querySelector('.char-detail .scene-detail').getBoundingClientRect();return row.lastElementChild.textContent.trim()==='検証キャラ' && row.getAttribute('aria-pressed')==='true' && row.children.length===2 && Math.round(l.width)===176 && d.x>=l.right-1 && Math.abs(l.y-d.y)<1})()`, 'キャラは左に登場人物の一覧(アイコンと名前)、右に状態')
+        }
         if (label === '関係図') {
           await assert(`document.querySelector('.scene-detail-main svg').querySelectorAll('g[transform]').length===2`, '関係図に登場人物を表示')
           await js(`document.querySelector('.scene-detail-main svg polyline[stroke="transparent"]').dispatchEvent(new MouseEvent('click',{bubbles:true}))`)
@@ -228,6 +231,7 @@ for mode in ['production', None]:
         win.setSize(1050,800)
         await pause(250)
         if (label !== '事実') await assert(`getComputedStyle(document.querySelector('.scene-detail-layout')).display==='block'`, label + 'は狭幅で1列')
+        if (label === 'キャラ') await assert(`(() => {const l=document.querySelector('.char-detail-list').getBoundingClientRect(),d=document.querySelector('.char-detail .scene-detail').getBoundingClientRect();return d.y>=l.bottom-1 && getComputedStyle(document.querySelector('.char-detail-list')).flexDirection==='row'})()`, 'キャラは狭幅で登場人物を上の横並びに戻す')
         writeFileSync(join(target, label + '-narrow.png'), (await win.webContents.capturePage()).toPNG())
         win.setSize(1440,1000)
         await pause(250)

@@ -647,6 +647,50 @@ input[type='range']:focus-visible {
   }
 }
 
+/* 下段のキャラタブ。左に登場人物の一覧(アイコン + 名前)、右に選んだ人物の状態。
+   右側は scene-detail(2列の切り替えを自分の幅で判定する)。 */
+.char-detail {
+  container-type: inline-size;
+}
+
+.char-detail-layout {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.char-detail-list {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  gap: 2px;
+  width: 176px;
+  overflow-y: auto;
+  padding: 8px;
+  border-right: 1px solid var(--border);
+}
+
+/* 狭いときは一覧を上の横並びへ戻す(左の列を置くと状態の欄が窮屈になる)。 */
+@container (max-width: 719px) {
+  .char-detail-layout {
+    flex-direction: column;
+  }
+  .char-detail-list {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 6px;
+    width: auto;
+    overflow: visible;
+    padding: 8px 12px;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .char-detail-list > button {
+    width: auto;
+    max-width: 100%;
+  }
+}
+
 /* 下段のシーン詳細。本文と補助情報を別々にスクロールできるようにする。 */
 .scene-detail-layout {
   display: grid;
