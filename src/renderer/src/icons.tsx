@@ -7,6 +7,7 @@ export type IconName =
   | 'robotUnlock' // AI編集を許可(開いた鍵)
   | 'chat' // 吹き出し(相談チャット)
   | 'globe' // 世界(人物に属さない事実)
+  | 'arrowUp' // 送信
   | 'mask' // 芝居の仮面(キャラクターと話す)
   | 'search' // ツール実行(調査)
   | 'recall' // 記憶をたどる
@@ -57,6 +58,13 @@ const PATHS: Record<IconName, React.JSX.Element> = {
     </>
   ),
   chat: <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />,
+  // lucide の arrow-up
+  arrowUp: (
+    <>
+      <path d="m5 12 7-7 7 7" />
+      <path d="M12 19V5" />
+    </>
+  ),
   // lucide の globe
   globe: (
     <>

@@ -123,7 +123,7 @@ export default function FactTimeline({
           シーンのイベントに fact_set(location / goal など)が入ると帯が並びます。
         </div>
       ) : (
-        <div className="inspector-scrollbar min-h-0 flex-1 overflow-auto px-5 py-3">
+        <div className="detail-gutter inspector-scrollbar min-h-0 flex-1 overflow-auto py-3 pl-5 pr-2.5">
           <div style={{ width: gridWidth + KEY_WIDTH }}>
             {/* シーンの見出し(選択中のシーンを強調) */}
             <div

@@ -26,7 +26,11 @@
   --danger: #ef4444;
   --delete-hover: #cf9393;
   --delete-border: rgba(207, 147, 147, 0.4);
-  --context-warning: #f59e0b;
+  /* 注意して進む操作(作品を書き換える「制作を実行」など)。エラー・中止の --danger、削除の --delete-* とは別の用途 */
+  --warn: #f59e0b;
+  --warn-soft: rgba(245, 158, 11, 0.14);
+  --warn-border: rgba(245, 158, 11, 0.55);
+  --context-warning: var(--warn);
   font-family: "Inter", "Segoe UI", "Noto Sans JP", system-ui, sans-serif;
 }
 
@@ -190,6 +194,21 @@ input[type='range']:focus-visible {
 .accent-action:hover:not(:disabled) {
   background: var(--accent);
   color: #fff;
+}
+
+/* accent-action の注意色版。作品を書き換える送信など、押す前に気づいてほしい主操作に使う */
+.warn-action {
+  border-color: var(--warn-border);
+  background: var(--warn-soft);
+  color: var(--warn);
+  transition:
+    background-color 0.15s,
+    color 0.15s;
+}
+
+.warn-action:hover:not(:disabled) {
+  background: var(--warn);
+  color: var(--bg);
 }
 
 /* 設定画面のスライダー・カード(lm-chat の styles.css から移植) */
@@ -725,6 +744,16 @@ input[type='range']:focus-visible {
   overflow-y: auto;
 }
 
+/* 下段の左右の余白は 20px。スクロールする列は、スクロールバー(10px)の溝を常に確保し、
+   右の余白をその分だけ減らす(pr-2.5)。中身の右端が、スクロールの有無にかかわらず
+   タブの行の「閉じる」や下の保存欄のボタンと同じ位置に揃う。 */
+.scene-detail-main,
+.scene-detail-meta,
+.scene-detail-aside,
+.detail-gutter {
+  scrollbar-gutter: stable;
+}
+
 .scene-detail-layout.detail-main-right {
   grid-template-columns: clamp(280px, var(--detail-meta-width, 42%), calc(100% - 321px)) 1px minmax(320px, 1fr);
 }
@@ -758,6 +787,7 @@ input[type='range']:focus-visible {
     grid-row: 1;
     min-width: 0;
     overflow-y: auto;
+    scrollbar-gutter: stable;
   }
   .detail-three .scene-detail-aside,
   .detail-three .scene-detail-meta {
@@ -788,6 +818,7 @@ input[type='range']:focus-visible {
   .scene-detail-layout {
     display: block;
     overflow-y: auto;
+    scrollbar-gutter: stable;
   }
 
   .scene-detail-main,
@@ -801,7 +832,7 @@ input[type='range']:focus-visible {
   }
 
   /* 3列も本文を先にした1列へ。区切りは各ブロックの上線で示す */
-  .detail-three > .scene-detail-side { overflow: visible; }
+  .detail-three > .scene-detail-side { overflow: visible; scrollbar-gutter: auto; }
   .detail-three .scene-detail-aside { border-top: 1px solid var(--border); }
   .detail-three .scene-detail-aside-divider { display: none; }
 }

@@ -83,7 +83,8 @@ for mode in ['production', None]:
   await win.loadFile(join(root, 'out/renderer/index.html'))
   const js = (source) => win.webContents.executeJavaScript(source)
   const click = async (label) => {
-    await js(`(() => { const el = [...document.querySelectorAll('button')].find(e => e.textContent.trim() === ${JSON.stringify(label)} && e.getClientRects().length); if (!el) throw new Error('ボタンがありません: ' + ${JSON.stringify(label)}); el.click() })()`)
+    // 文字の無いアイコンのボタン(送信の ↑ など)は aria-label で探す
+    await js(`(() => { const visible = [...document.querySelectorAll('button')].filter(e => e.getClientRects().length); const el = visible.find(e => e.textContent.trim() === ${JSON.stringify(label)}) ?? visible.find(e => e.getAttribute('aria-label') === ${JSON.stringify(label)}); if (!el) throw new Error('ボタンがありません: ' + ${JSON.stringify(label)}); el.click() })()`)
     await pause(180)
   }
   const assert = async (condition, message) => {
@@ -293,6 +294,10 @@ for mode in ['production', None]:
       const asideDragged = await js(rects)
       if (!(Math.abs(asideDragged.aside.width - 320) < 4 && Number(await js(`localStorage.getItem(${JSON.stringify(widthKey + 'Aside')})`)) === Math.round(asideDragged.aside.width) && asideDragged.meta.x >= asideDragged.aside.right - 1 && asideDragged.main.x >= asideDragged.meta.right - 1)) errors.push('左の境界のドラッグで挿絵・設定の列が広がっていない: ' + JSON.stringify(asideDragged))
       else console.log('PASS 左の境界のドラッグで挿絵・設定の列を広げ、幅を保存')
+      // 左右の余白: 中身・タブの行の「閉じる」・下のボタンの端を 20px に揃える(スクロールバーの有無で変わらない)。
+      const edges = await js(`(() => {const panel=document.querySelector('.scene-detail').getBoundingClientRect();const visible=(q)=>[...document.querySelectorAll(q)].filter(e=>e.getClientRects().length);const close=visible('button').filter(e=>e.textContent.trim()==='閉じる').map(e=>e.getBoundingClientRect()).filter(r=>r.right<=panel.right+1 && r.right>panel.right-60 && Math.abs(r.bottom-panel.top)<60)[0];const footer=[...document.querySelector('.scene-detail').children].at(-1);const last=[...footer.querySelectorAll('button')].at(-1).getBoundingClientRect();const field=document.querySelector('.scene-detail-main input, .scene-detail-main textarea, .scene-detail-main p').getBoundingClientRect();const left=document.querySelector('.scene-detail-aside > div').getBoundingClientRect();return {close:panel.right-close.right,footer:panel.right-last.right,field:panel.right-field.right,left:left.x-panel.x}})()`)
+      if (!Object.values(edges).every((value) => Math.abs(value - 20) < 1.5)) errors.push('詳細エリアの左右の端が 20px に揃っていない: ' + JSON.stringify(edges))
+      else console.log('PASS 詳細エリアの中身・閉じる・下のボタンの端が左右 20px に揃う')
       writeFileSync(join(target, 'details-three.png'), (await win.webContents.capturePage()).toPNG())
       if (errors.length) throw new Error(errors.join('\n'))
     }
@@ -337,7 +342,12 @@ for mode in ['production', None]:
   await assert(`document.querySelector(${JSON.stringify(profileSelector)}).value==='保存済みプロフィール' && document.activeElement===document.querySelector(${JSON.stringify(profileSelector)}) && document.querySelectorAll('.character-editor-body textarea').length===1`, '鉛筆を押した項目だけが編集欄になりフォーカスが入る')
   await assert(`(() => {const g=document.querySelector('[data-edit-group="profile"]');const area=g.querySelector('textarea').getBoundingClientRect();const buttons=[...g.querySelectorAll('button')].filter(e=>['取り消し','確定'].includes(e.textContent.trim()));const proof=[...g.querySelectorAll('button')].find(e=>e.textContent.includes('校正')).getBoundingClientRect();const [cancel,commit]=buttons.map(e=>e.getBoundingClientRect());return buttons.map(e=>e.textContent.trim()).join('|')==='取り消し|確定' && Math.abs(commit.right-area.right)<2 && cancel.right<commit.x && commit.y>proof.bottom-1})()`, '確定と取り消しは校正の下の段に右寄せで、確定が右端')
   await input(profileSelector, '未保存のプロフィール')
+  const SEND = `document.querySelector('button[aria-label="送信"]')`
+  const INPUT_BORDER = `getComputedStyle(document.querySelector('textarea[aria-label="制作への依頼"]')).borderColor`
+  await assert(`${SEND}.classList.contains('accent-action') && !!${SEND}.querySelector('svg') && ${SEND}.textContent.trim()==='' && !${INPUT_BORDER}.includes('245, 158, 11') && !document.body.textContent.includes('「制作を実行」を選択中')`, '相談のときの送信は紫の↑ボタンで、入力欄の枠は通常の色')
   await click('制作を実行')
+  await assert(`${SEND}.classList.contains('warn-action') && ${INPUT_BORDER}.includes('245, 158, 11') && document.body.textContent.includes('「制作を実行」を選択中') && getComputedStyle(document.querySelector('[aria-label="制作チャットの送信モード"] [aria-pressed="true"]')).color.includes('245, 158, 11')`, '制作を実行を選ぶと、切り替え・入力欄の枠・送信ボタンが注意色になり案内を出す')
+  writeFileSync(join(target, 'send-execute.png'), (await win.webContents.capturePage()).toPNG())
   await click('送信')
   await assert(`document.body.textContent.includes('未保存の資料があります')`, '未保存の資料がある場合は制作の実行を拒否')
   await click('構造')
@@ -479,7 +489,7 @@ for mode in ['production', None]:
   await click('今回の変更をレビュー')
   await assert(`document.querySelector('textarea[aria-label="制作への依頼"]').value.includes('制作で作成した設定') && !window.workspaceSuggestionSent`, '候補は対象を含む依頼文を入力するだけで送信しない')
   await assert(`document.activeElement===document.querySelector('textarea[aria-label="制作への依頼"]') && [...document.querySelectorAll('[aria-label="制作の依頼候補"] button')].every(e=>e.disabled)`, '候補選択で入力欄にフォーカスし下書きの上書きを防ぐ')
-  await assert(`document.querySelector('[aria-label="制作チャットの送信モード"] [aria-pressed="true"]').textContent==='制作を実行'`, '候補選択で送信モードを変更しない')
+  await assert(`document.querySelector('[aria-label="制作チャットの送信モード"] [aria-pressed="true"]').textContent==='相談する'`, '制作の実行が終わると送信モードは相談に戻り、候補を選んでも変わらない')
   await input('textarea[aria-label="制作への依頼"]', '')
   await click('この案で進めて')
   await assert(`document.querySelector('textarea[aria-label="制作への依頼"]').value.includes('直前の回答で提示された案') && !window.workspaceSuggestionSent`, 'この案で進めては会話の案を対象に入力し自動送信しない')

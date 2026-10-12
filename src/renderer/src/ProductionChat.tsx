@@ -12,6 +12,7 @@ import { setProductionPreview } from './productionPreview'
 import { cancelTask, enqueueTask, notifyGraphChanged, setNodeBusy, useTask } from './tasks'
 import { frameSetter } from './frameSetter'
 import type { Group, Snapshot, StoryNode } from './types'
+import { Icon } from './icons'
 import ProductionMemoryPanel from './ProductionMemoryPanel'
 import ProductionPolicyPanel, { defaultProductionPolicy, policySummary } from './ProductionPolicyPanel'
 import ContextUsageRing, { type ContextUsage } from './ContextUsageRing'
@@ -155,6 +156,8 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
   const taskRef = useRef<string | null>(null)
   const composerRef = useRef<HTMLDivElement>(null)
   const suggestions = productionSuggestions(messages, selection, chapter)
+  // 次の送信が実行になる状態(入力欄の枠・送信ボタン・案内を注意色にする)。相談の処理中は切り替え自体が効かないので除く
+  const executeArmed = sendMode === 'execute' && (!busy || !!runId)
 
   useEffect(() => {
     // 隠れている間(相談タブ・鑑賞モード・チャットを閉じている)は問い合わせない。
@@ -394,6 +397,9 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
           setRunId(null)
           flush()
           setNodeBusy(activeNode, false)
+          // 実行は1回ごとに選び直す。終わったら(完了・停止・エラーのどれでも)相談へ戻し、
+          // 次の何気ない発言が実行として送られないようにする
+          if (execute) setSendMode('consult')
           // サーバー側の中断・保存が完了するまで、次のキューと手動編集を待たせる。
           try {
             while ((await productionApi.status()).active) {
@@ -483,6 +489,10 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
         {status && messageTime(statusAt) && <time dateTime={statusAt} className="mr-2 tabular-nums">{messageTime(statusAt)}</time>}
         {task?.status === 'pending' ? '待機しています…' : status || '全体の接続関係と資料庫のキャラクター・場所を参照できます。相談するだけでは作品を変更しません。'}
       </p>
+      {/* 実行を選んでいる間は、送信すると作品が書き換わることを入力欄のすぐ上に出す */}
+      {executeArmed && <p role="status" className="shrink-0 text-[11px]" style={{ color: 'var(--warn)' }}>
+        「制作を実行」を選択中: 送信すると、作業前の状態を保存してから作品を編集します。終わると「相談する」に戻ります。
+      </p>}
       <p className="shrink-0 text-[11px]" style={{ color: 'var(--text-dim)' }}
         data-tip="送信時の選択を依頼に添えます。送信後に選択を変えても対象は変わりません。変更範囲・AI保護は引き続き適用されます。本文は保存済みの内容を参照します。">
         選択中: {selection.length ? selection.map((node) => node.title).join('、') : 'なし'}
@@ -496,18 +506,21 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
         }}
         minRows={2} placeholder={runId ? "途中指示を入力（未確定の変更を見直してから続けます）" : "方針の相談、または作業の依頼を入力"}
         className="w-full shrink-0 rounded-md border px-2 py-0.5 text-[12px] outline-none disabled:opacity-50"
-        style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }} />
+        style={{ background: 'var(--bg-input)', borderColor: executeArmed ? 'var(--warn-border)' : 'var(--border)' }} />
       <div className="flex flex-wrap items-center justify-end gap-2">
-        <span className="mr-auto text-[11px]" style={{ color: 'var(--text-faint)' }}>Enterで送信・Shift＋Enterで改行</span>
+        {/* 幅が足りないときは案内を省略表示にして、送信ボタンを次の行へ落とさない */}
+        <span className="min-w-0 flex-1 basis-0 truncate text-[11px]" style={{ color: 'var(--text-faint)' }} data-tip="Enterで送信・Shift＋Enterで改行">Enterで送信・Shift＋Enterで改行</span>
         {usage && <ContextUsageRing usage={usage} />}
         <div role="group" aria-label="制作チャットの送信モード"
-          className="flex overflow-hidden rounded-md border" style={{ borderColor: 'var(--border-strong)' }}>
+          className="flex overflow-hidden rounded-md border" style={{ borderColor: sendMode === 'execute' ? 'var(--warn-border)' : 'var(--border-strong)' }}>
           {([['consult', '相談する'], ['execute', '制作を実行']] as const).map(([value, label]) => (
             <button key={value} type="button" aria-pressed={sendMode === value} disabled={busy}
               onClick={() => setSendMode(value)}
               className="whitespace-nowrap px-2.5 py-0.5 text-[12px] disabled:opacity-50"
-              style={sendMode === value ? { background: 'var(--accent-soft)', color: 'var(--text)' } : { color: 'var(--text-faint)' }}
-              data-tip={busy ? '処理が終わるか停止してから切り替えられます' : value === 'consult' ? '作品を変更せずに相談します' : '送信すると、依頼に応じて作品を編集します'}>
+              style={sendMode !== value ? { color: 'var(--text-faint)' }
+                : value === 'execute' ? { background: 'var(--warn-soft)', color: 'var(--warn)' }
+                  : { background: 'var(--accent-soft)', color: 'var(--text)' }}
+              data-tip={busy ? '処理が終わるか停止してから切り替えられます' : value === 'consult' ? '作品を変更せずに相談します' : 'この1回だけ、依頼に応じて作品を編集します。終わると「相談する」に戻ります'}>
               {label}
             </button>
           ))}
@@ -524,9 +537,11 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
         }}
           className="rounded-md border px-2 py-0.5 text-[11px]"
           style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }} data-tip="未確定の生成を止めます。確定済みの変更は残ります">停止</button> :
-          <button onClick={submit} disabled={!input.trim()}
-            className="accent-action inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium disabled:opacity-40"
-            data-tip={sendMode === 'execute' ? '作業前の状態を保存してから、依頼した編集を実行します' : '読み取りだけで回答します'}>送信</button>
+          <button onClick={submit} disabled={!input.trim()} aria-label="送信"
+            className={`${sendMode === 'execute' ? 'warn-action' : 'accent-action'} inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border disabled:opacity-40`}
+            data-tip={sendMode === 'execute' ? '制作を実行として送信(作業前の状態を保存してから、依頼した編集を実行します)' : '相談として送信(読み取りだけで回答します)'}>
+            <Icon name="arrowUp" size={15} strokeWidth={2.4} />
+          </button>
         }
       </div>
     </div>
