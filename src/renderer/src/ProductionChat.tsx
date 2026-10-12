@@ -174,7 +174,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
     void refreshHistory().catch((e) => setError(String(e)))
     return () => { setProductionPreview(null); if (taskRef.current) cancelTask(taskRef.current) }
   }, [])
-  useEffect(() => { endRef.current?.scrollIntoView({ block: 'nearest' }) }, [messages, live, status])
+  useEffect(() => { endRef.current?.scrollIntoView({ block: 'nearest' }) }, [messages, live, status, busy, error, suggestions.length])
 
   const load = async (id: string): Promise<void> => {
     if (busy) return
