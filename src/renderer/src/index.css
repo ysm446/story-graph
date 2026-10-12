@@ -611,6 +611,59 @@ input[type='range']:focus-visible {
   background: var(--bg);
 }
 
+/* 資料庫のキャラクター編集。上段(左=アイコン・名前・読み / 右=参照画像)を固定し、下段の文章欄だけをスクロールする
+   (長いプロフィールを書いているあいだも、顔と名前と立ち絵が見えているように。文章欄は全幅を使う)。
+   親(main)はスクロールさせず、高さいっぱいの中で 上=上段+文章欄 / 下=保存欄 に分ける。 */
+.character-editor {
+  container-type: size;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  height: 100%;
+}
+
+.character-editor-scroll {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+}
+
+.character-editor-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 24px;
+  border-bottom: 1px solid var(--border);
+}
+
+.character-editor-id,
+.character-editor-ref {
+  min-width: 0;
+}
+
+.character-editor-body {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 8px 0 0;
+}
+
+/* 狭い編集欄では上段の左右を縦に積む。 */
+@container (max-width: 599px) {
+  .character-editor-head {
+    display: block;
+  }
+}
+
+/* 上段を固定すると文章欄がつぶれる大きさ(狭い・低い)では、固定をやめて全体を一緒にスクロールする。 */
+@container (max-width: 599px) or (max-height: 639px) {
+  .character-editor-scroll {
+    display: block;
+    overflow-y: auto;
+  }
+  .character-editor-body {
+    overflow: visible;
+    padding-right: 0;
+  }
+}
+
 /* 下段のシーン詳細。本文と補助情報を別々にスクロールできるようにする。 */
 .scene-detail-layout {
   display: grid;

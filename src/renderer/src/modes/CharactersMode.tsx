@@ -448,7 +448,11 @@ function CharactersMode(): React.JSX.Element {
             />
           </div>
         ) : tab !== 'characters' ? null : selected ? (
-          <div className="mx-auto max-w-2xl">
+          <div className="character-editor mx-auto max-w-4xl">
+            {/* 上段(固定): 左にアイコン・名前・読み、右に参照画像。下段: 文章の項目と声(スクロール)。配置は index.css の character-editor */}
+            <div className="character-editor-scroll inspector-scrollbar">
+            <div className="character-editor-head">
+            <div className="character-editor-id">
             {/* 画像 → 画像操作 → 名前 の順に縦に積む(色は名前の隣に項目として置く) */}
             <div className="mb-4 flex flex-col items-start gap-1.5">
               {/* プロフィール画像(装飾専用。無くても成り立つ) */}
@@ -578,6 +582,8 @@ function CharactersMode(): React.JSX.Element {
                 ].join('\n')}
               />
             </label>
+            </div>
+            <div className="character-editor-ref">
             {/* 参照画像(全身の立ち絵)。外見の記述から生成するか、手持ちの画像を置く。
                 場面画像を作るときに編集モデルの入力として渡す(docs/design/image-gen.md) */}
             <RefImagePanel
@@ -593,6 +599,9 @@ function CharactersMode(): React.JSX.Element {
                 setCropTarget({ source: url, isNewFile: false, initial: null, sourcePath: path })
               }}
             />
+            </div>
+            </div>
+            <div className="character-editor-body inspector-scrollbar">
             {FIELD_DEFS.map((f) => (
               <label key={f.key} className="mb-4 block">
                 <span className="mb-1 block text-[12px]" style={{ color: 'var(--text-dim)' }}>
@@ -610,6 +619,8 @@ function CharactersMode(): React.JSX.Element {
             ))}
             {/* 読み上げの声(docs/design/voice.md §5)。選んだその場で保存する */}
             <CharacterVoicePanel character={selected} onChanged={reload} />
+            </div>
+            </div>
             <div className="library-save-bar">
               <button
                 onClick={() => void handleSave()}

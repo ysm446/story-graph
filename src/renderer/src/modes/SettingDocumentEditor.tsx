@@ -5,7 +5,10 @@ import UnsavedBadge from '../UnsavedBadge'
 import type { SettingDocument } from '../types'
 
 const fields = ['title', 'category', 'body', 'status', 'scope', 'ai_mode'] as const
-const inputClass = 'w-full rounded-md border px-2 py-0.5 text-[12px] outline-none'
+// 入力欄・ラベル・保存欄の大きさはキャラクター・場所の編集と揃える
+const inputClass = 'block w-full rounded-lg border px-3 py-1.5 text-[13px] outline-none'
+const labelClass = 'mb-1 block text-[12px]'
+const labelStyle = { color: 'var(--text-dim)' }
 const inputStyle = { background: 'var(--bg-input)', borderColor: 'var(--border)', color: 'var(--text)' }
 const buttonClass = 'rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-50'
 const buttonStyle = { borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }
@@ -59,33 +62,34 @@ export default function SettingDocumentEditor({ documents, selectedId, onChanged
     } catch (e) { setError(`削除できませんでした: ${String(e)}`) }
     finally { setBusy(false) }
   }
-  if (!document || !draft) return <p className="text-[12px]" style={{ color: 'var(--text-dim)' }}>左の一覧から設定資料を選択、または追加してください。</p>
+  if (!document || !draft) return <p className="py-16 text-center text-[13px]" style={{ color: 'var(--text-faint)' }}>左の一覧から設定資料を選択、または追加してください</p>
   const change = (key: typeof fields[number], value: string): void => {
     setDrafts((current) => ({ ...current, [document.id]: { ...(current[document.id] ?? document), [key]: value } }))
   }
   return <div className="mx-auto max-w-2xl" aria-label="設定資料の編集">
-    <fieldset disabled={busy} className="flex min-w-0 flex-col gap-3">
-      <label className="block text-[12px]" style={{ color: 'var(--text-dim)' }}>タイトル
-        <input aria-label="設定資料のタイトル" value={draft.title} maxLength={200} onChange={(e) => change('title', e.target.value)} className={inputClass} style={inputStyle} />
+    <fieldset disabled={busy} className="flex min-w-0 flex-col gap-4">
+      <label className="block"><span className={labelClass} style={labelStyle}>タイトル</span>
+        <input aria-label="設定資料のタイトル" value={draft.title} maxLength={200} onChange={(e) => change('title', e.target.value)}
+          className="block h-11 w-full rounded-lg border px-3 text-[18px] font-semibold outline-none" style={inputStyle} />
       </label>
-      <label className="block text-[12px]" style={{ color: 'var(--text-dim)' }}>分類（任意）
+      <label className="block"><span className={labelClass} style={labelStyle}>分類（任意）</span>
         <input aria-label="設定資料の分類" value={draft.category} maxLength={200} list="setting-document-categories" onChange={(e) => change('category', e.target.value)} className={inputClass} style={inputStyle} />
         <datalist id="setting-document-categories">{['社会情勢', '文化・風習', '制度', '歴史', '技術・魔法', '組織'].map((value) => <option key={value} value={value} />)}</datalist>
       </label>
       <div className="flex flex-wrap gap-3">
-        <label className="min-w-0 flex-1 text-[12px]" style={{ color: 'var(--text-dim)' }}>資料の扱い
+        <label className="min-w-0 flex-1"><span className={labelClass} style={labelStyle}>資料の扱い</span>
           <select aria-label="資料の扱い" value={draft.status} onChange={(e) => change('status', e.target.value)} className={inputClass} style={inputStyle}>
             <option value="draft">構想</option><option value="confirmed">確定設定</option><option value="reference">参考資料</option>
           </select>
         </label>
-        <label className="min-w-0 flex-1 text-[12px]" style={{ color: 'var(--text-dim)' }}>AIへの参照方法
+        <label className="min-w-0 flex-1"><span className={labelClass} style={labelStyle}>AIへの参照方法</span>
           <select aria-label="AIへの参照方法" value={draft.ai_mode} onChange={(e) => change('ai_mode', e.target.value)} className={inputClass} style={inputStyle}>
             <option value="search">必要に応じて検索</option><option value="always">常に参照</option><option value="never">参照しない</option>
           </select>
         </label>
       </div>
       <p className="text-[11px] leading-relaxed" style={{ color: 'var(--text-faint)' }}>相談・制作チャットが参照します。人物本人の会話には渡しません。「常に参照」は毎回全文を渡すため、重要な前提に絞ってください。</p>
-      <label className="block text-[12px]" style={{ color: 'var(--text-dim)' }}>適用範囲・時点（任意）
+      <label className="block"><span className={labelClass} style={labelStyle}>適用範囲・時点（任意）</span>
         <input aria-label="適用範囲・時点" value={draft.scope} maxLength={2000} onChange={(e) => change('scope', e.target.value)} className={inputClass} style={inputStyle} />
       </label>
       <p className="text-[11px]" style={{ color: 'var(--text-faint)' }}>地域や物語内の時点を記述できます。検索対象を時点で自動制限する項目ではありません。</p>
@@ -93,15 +97,16 @@ export default function SettingDocumentEditor({ documents, selectedId, onChanged
         <span className="text-[12px]" style={{ color: 'var(--text-dim)' }}>本文</span>
         <button onClick={() => setPreview((value) => !value)} className={buttonClass} style={buttonStyle} aria-pressed={preview} data-tip="本文の編集と表示を切り替えます">{preview ? '編集に戻る' : 'プレビュー'}</button>
       </div>
-      {preview ? <div className="rounded-lg border p-3 text-[12px]" style={{ borderColor: 'var(--border)' }}><Markdown text={draft.body} /></div>
-        : <textarea aria-label="設定資料の本文" value={draft.body} rows={16} maxLength={100000} onChange={(e) => change('body', e.target.value)} className={`${inputClass} leading-relaxed`} style={inputStyle} />}
+      {preview ? <div className="rounded-lg border px-3 py-2 text-[13px] leading-relaxed" style={{ borderColor: 'var(--border)' }}><Markdown text={draft.body} /></div>
+        : <textarea aria-label="設定資料の本文" value={draft.body} rows={16} maxLength={100000} onChange={(e) => change('body', e.target.value)}
+          className="block w-full rounded-lg border px-3 py-2 text-[13px] leading-relaxed outline-none" style={inputStyle} />}
       <p className="text-[11px]" style={{ color: 'var(--text-faint)' }}>作成: {new Date(document.created_at).toLocaleString('ja-JP')} ／ 更新: {new Date(document.updated_at).toLocaleString('ja-JP')}</p>
       <div className="library-save-bar">
         {error && <p role="alert" className="w-full text-[12px]" style={{ color: 'var(--danger)' }}>{error}</p>}
-        <button onClick={() => void save()} disabled={!dirty || !draft.title.trim()} className="rounded-md px-3 py-1 text-[12px] font-medium disabled:opacity-50" style={{ background: 'var(--accent)', color: 'var(--text)' }} data-tip="設定資料の変更を保存します">{busy ? '保存中…' : '保存'}</button>
+        <button onClick={() => void save()} disabled={!dirty || !draft.title.trim()} className="rounded-lg px-4 py-1.5 text-[13px] font-medium text-white disabled:opacity-40" style={{ background: busy ? 'var(--accent-hover)' : 'var(--accent)' }} data-tip={dirty ? '設定資料の変更を保存します' : '変更はありません'}>{busy ? '保存中…' : '保存'}</button>
         <button onClick={() => discard(document.id)} disabled={!dirty} className={buttonClass} style={buttonStyle} data-tip="この設定資料の未保存の変更を取り消します">元に戻す</button>
         {dirty && <UnsavedBadge />}
-        <button onClick={() => void remove()} className={`delete-action ml-auto ${buttonClass}`} data-tip="この設定資料を削除します">削除</button>
+        <button onClick={() => void remove()} className="delete-action ml-auto rounded-lg px-3 py-1.5 text-[13px]" data-tip="この設定資料を削除します">削除</button>
       </div>
     </fieldset>
   </div>
