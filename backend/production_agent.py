@@ -22,6 +22,7 @@ import snapshots
 import production_memory
 import production_library
 import production_continuity
+import production_guard
 from store import Store
 from generated_text import normalize_scene_text
 from production_policy import CONTENT_FIELDS, ProductionPolicy
@@ -257,7 +258,9 @@ def tools(allow_write: bool):
         ("branch_scene", "指定地点から新しい別ルートの先頭シーンを作る。after_idは分岐元のID。既存の後続・正史・結末を変更しない。枝の続きを作るときは返された新規IDの後ろにinsert_sceneで追加する。",
          {"after_id": {"type": "string"}, **scene}, ["after_id", "title", "beat", "cast"]),
         ("update_scene", "構成や文章全体の書き直しが必要な場合に本文を全文置換する。追記や一部の修正にはpatch_sceneを優先する。title/cast省略時は維持する。",
-         {"node_id": {"type": "string"}, **scene}, ["node_id", "beat"]),
+         {"node_id": {"type": "string"}, **scene,
+          "rewrite": {"type": "boolean", "description": "元の本文の大半を意図して書き直すときだけtrue。省略時は既存の内容を保つ修正として検証し、元の文の半分以上が失われる置換は保存されない"}},
+         ["node_id", "beat"]),
         ("patch_scene", "本文の指定箇所だけを編集し、他の文章・タイトル・登場人物・場所を保持する。appendは末尾にtextをそのまま追記。replaceは本文中に1か所だけ存在するold_textをtextに置換（textが空ならその箇所を削除）。先にget_beatsで原文を読み、置換元を正確にコピーする。",
          {"node_id": {"type": "string"}, "mode": {"type": "string", "enum": ["append", "replace"]},
           "old_text": {"type": "string", "description": "replaceで必須。本文の一意な連続部分。appendでは指定しない。"},
@@ -299,6 +302,8 @@ def _validate_args(store, name, args):
                 raise ValueError("castには既存のキャラクターIDを指定してください")
         if "title" in args and not isinstance(args["title"], str):
             raise ValueError("タイトルは文字列で指定してください")
+        if "rewrite" in args and not isinstance(args["rewrite"], bool):
+            raise ValueError("rewriteはtrue/falseで指定してください")
         if "location" in args and args["location"] is not None:
             if not isinstance(args["location"], str) or args["location"] not in store.known_place_ids():
                 raise ValueError("locationには登録済みの場所IDかnullを指定してください")
@@ -319,11 +324,15 @@ async def apply_edit(store: Store, base_url: str, name: str, args: dict, before_
     field = "text" if name == "patch_scene" else "beat"
     if isinstance(args.get(field), str):
         args = {**args, field: normalize_scene_text(args[field])}
-    if name == "patch_scene":
+    from_patch = name == "patch_scene"
+    if from_patch:
         args = _patch_args(store, args)
         # 確定・履歴・画面通知は既存の編集と共通。全文はサーバー側で組み立てる。
         name = "update_scene"
     original = _validate_args(store, name, args)
+    if name == "update_scene" and not from_patch and "beat" in args:
+        # 全文置換で既存の内容の大半が失われる編集は、明示の rewrite が無ければ保存しない。
+        production_guard.check_rewrite(original.get("beat") or "", args["beat"], bool(args.get("rewrite")))
     before = None
     if policy is not None:
         policy.check_target(original["id"])
@@ -440,7 +449,8 @@ def _patch_args(store, args):
     return {"node_id": args.get("node_id"), "beat": updated, "reason": args.get("reason")}
 
 
-def build_messages(store, history, message, execute, policy, previous_checkpoint, changes, recent_results, run_id=None, selection=None):
+def build_messages(store, history, message, execute, policy, previous_checkpoint, changes, recent_results, run_id=None, selection=None,
+                   cancelled_text="", notes=()):
     system = chat_agent.build_system(store, store.canon_path(), "all", production=execute) + "\n" + (
         "あなたは制作の担当です。今回の依頼の範囲だけを編集してください。"
         "現在は実行モードです。作者が対象と変更内容を指定して編集を依頼した場合、その範囲の実行は許可済みです。"
@@ -475,6 +485,7 @@ def build_messages(store, history, message, execute, policy, previous_checkpoint
         "派閥・画像・音声の編集には未対応です。マーカーは変更しません。"
         "ツール結果と最新の接続図を使い、同じ変更を繰り返さないでください。"
         "作者の途中指示は当初の依頼より優先し、変更済みの内容も踏まえて計画を調整してください。"
+        "同じ取得・同じエラー・適用済みの変更を繰り返すと作業は自動で停止します。保存済みの結果は実行記録とツール結果にあります。"
         "\n今回は編集が許可されています。"
     ) if execute else chat_agent.build_system(store, store.canon_path(), "all") + (
         "\n今回は相談のみです。ノード・資料・作業メモは変更しませんが、変更案は具体的に提案してください。"
@@ -491,6 +502,7 @@ def build_messages(store, history, message, execute, policy, previous_checkpoint
     system += chat_rules.prompt(store)
     system += production_memory.prompt(store, previous_checkpoint, allow_write=execute)
     system += "\n作者が画面で指定した変更条件（最優先）: " + policy.describe()
+    system += cancelled_text
     system += ("\n『今選択しているノード』『このシーン』は、その発言に添付された送信時の選択を参照します。"
                "選択は後から変わりません。本文はget_beatsで読み直し、選択だけを編集命令と見なさないでください。"
                "選択なしで対象が不明なら推測せず確認し、複数選択で単数の対象が曖昧な場合も確認してください。"
@@ -516,6 +528,8 @@ def build_messages(store, history, message, execute, policy, previous_checkpoint
             "未反映の明確な編集依頼だけをツールで実行し、再承認は求めません。"
             "対象や変更内容が不明、質問だけ、または作者が確認待ちを指定した場合は編集せず回答・確認してください。"
         )
+    if notes:
+        messages[-1]["content"] += "\n制作ハーネスからの注記（保存結果の点検）: " + json.dumps(list(notes), ensure_ascii=False)
     return messages
 
 
@@ -540,15 +554,25 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
     store.save_chat_messages(chat_id, history)
     run = ProductionRun(store, chat_id, history, execute)
     gate.run = run
+    monitor = production_guard.RunMonitor()
     recent_results = []
     changes = []
-    applied = set()
     consulted = set()
     snapshot = None
     completed = False
+    finished_outcome = None  # 判断ループを抜けた理由(completed / stalled / empty / truncated)。None のまま尽きたら limit
+    stop_detail = ""
+    steps_used = 0
     previous_checkpoint = production_memory.read(store)["checkpoint"]
     checkpoint_started = False
     outcome = "interrupted"
+
+    def tally_error(name, text):
+        """同じエラーの反復を数える。止めるべきなら (文面, 停止理由) の停止理由が入る。"""
+        try:
+            return monitor.note_error(name, text), None
+        except production_guard.StalledRun as stalled:
+            return text, str(stalled)
     def save_checkpoint(status, report=""):
         production_memory.checkpoint(store, run.id, chat_id, message_content(request_message), status, changes,
             [{"content": message_content(m), "status": m["instruction"]["status"]} for m in history
@@ -574,10 +598,32 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
             epoch = run.epoch
             previous_epoch = epoch
             versions = NodeVersions(store)
-            for item in run.take():
+            taken = run.take()
+            for item in taken:
                 yield _sse({"instruction": item})
+            if taken and execute:
+                # 途中指示で取りやめになった対象を構造化し、以後その対象への編集はサーバーで拒否する。
+                yield _sse({"stage": "途中指示と当初の依頼を照合しています…"})
+                reflected = [message_content(m) for m in history if m.get("instruction", {}).get("run_id") == run.id
+                             and m["instruction"]["status"] == "reflected"]
+                cancelled, remaining = await production_guard.reconcile_instructions(
+                    store, base_url, message_content(request_message), reflected, changes)
+                titles = {n["id"]: n.get("title") or "(無題)" for n in store.graph()["nodes"]}
+                monitor.set_cancelled(cancelled, titles, remaining)
+                if cancelled or remaining:
+                    notice = ("途中指示を照合しました。"
+                              + ("取りやめ: " + "、".join(f"「{titles[i]}」" for i in cancelled) + "。" if cancelled else "")
+                              + (f"残作業: {remaining}" if remaining else ""))
+                    history.append({"role": "assistant", "content": notice, "instruction_review": True})
+                    store.save_chat_messages(chat_id, history)
+                    yield _sse({"delta": notice})
+                    yield _sse({"response_end": True})
+                if run.pending or run.paused or run.epoch != epoch:
+                    continue
             messages = build_messages(store, history, message, execute, policy, previous_checkpoint,
-                                      changes, recent_results, run.id, selection=selection)
+                                      changes, recent_results, run.id, selection=selection,
+                                      cancelled_text=monitor.cancelled_prompt(), notes=monitor.take_notes())
+            steps_used = step + 1
             yield _sse({"usage": await context_usage(store, base_url, messages, execute)})
             yield _sse({"stage": f"確認しています… ({step + 1}/{MAX_STEPS})"})
             result: dict[str, Any] = {}
@@ -614,6 +660,26 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
                 continue
             calls = result.get("tool_calls") or []
             if not calls:
+                finish_reason = (result.get("stats") or {}).get("finish_reason")
+                if execute and not content.strip():
+                    # 空応答は完了ではない。1回だけ注記を添えて判断し直し、続くなら空応答として終える。
+                    monitor.empty_responses += 1
+                    if monitor.empty_responses < 2 and monitor.add_note(
+                            "empty", "前回の応答は空でした(生成上限の可能性)。作業が残っていればツールで1つずつ進め、"
+                                     "終わっていれば短い文章で完了を報告してください"):
+                        yield _sse({"stage": "応答が空だったため、もう一度判断します…"})
+                        continue
+                    finished_outcome = "empty"
+                    break
+                if execute and finish_reason == "length":
+                    # 報告が途中で切れている。未完了を完了として記録しない(作業メモの見直しもしない)。
+                    finished_outcome = "truncated"
+                    break
+                if execute:
+                    issues = production_guard.completion_issues(store, changes, production_library.references)
+                    if any(monitor.add_note(key, text) for key, text in issues):
+                        yield _sse({"stage": "保存結果と依頼を照合しています…"})
+                        continue
                 if execute:
                     yield _sse({"stage": "手動修正と作業結果を照合し、作業メモを見直しています…", "active_node": None})
                     try:
@@ -663,10 +729,12 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
                 break
             # 複数呼び出しを返しても1つずつ処理し、確定ごとに画面へ知らせる。
             truncated = (result.get("stats") or {}).get("finish_reason") == "length"
+            stalled = None
             for call in calls:
                 if run.pending:
                     break
                 name = call.get("function", {}).get("name", "")
+                args = {}
                 try:
                     run.check_epoch(epoch)
                     try:
@@ -689,6 +757,8 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
                             break
                         consulted.add(signature)
                     yield _sse({"stage": TOOL_LABELS.get(name, "操作を確認しています…"), "active_node": args.get("node_id") or args.get("after_id")})
+                    # 検証スクリプトと画面の記録用。本文は含めず、ツール名と対象だけを流す。
+                    yield _sse({"tool_call": {"name": name, "target": args.get("node_id") or args.get("after_id") or args.get("id")}})
                     if execute and name in {"update_character", "update_place", "update_setting_document"} and isinstance(args.get("id"), str):
                         kind = name.removeprefix("update_")
                         if getattr(store, f"get_{kind}")(args["id"]) is not None:
@@ -707,30 +777,44 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
                         store.save_chat_messages(chat_id, history)
                         yield _sse({"memory": payload})
                         payload = {"revision": payload["revision"], "saved": True}
+                        monitor.note_success()
                     elif name in WRITE_TOOLS:
                         if not execute:
                             raise ValueError("相談中は編集できません。「制作を実行」から依頼してください")
-                        signature = (name, json.dumps({k: v for k, v in args.items() if k != "reason"}, sort_keys=True))
-                        if signature in applied:
-                            raise ValueError("その変更は適用済みです。最新のシーンを読み直してください")
-                        payload = await apply_edit(store, base_url, name, args, before_commit=lambda: run.check_epoch(epoch), policy=policy, versions=versions)
-                        versions = NodeVersions(store)
-                        applied.add(signature)
-                        # 縮める前の本文(previous_beat)は次の判断のツール結果にだけ渡し、履歴・画面・引継ぎには残さない。
-                        operation = {k: v for k, v in payload.items() if k != "previous_beat"}
-                        changes.append({k: v for k, v in operation.items() if k != "scene"})
-                        # 変更前の本文が次の判断を引き戻さないよう、古い取得結果を捨てる。
-                        recent_results.clear()
-                        history.append({"role": "assistant", "content": args["reason"], "operation": operation})
-                        store.save_chat_messages(chat_id, history)
-                        if name == "delete_scene" or name in production_library.WRITE_TOOLS:
-                            on_delete()
-                        save_checkpoint("running")
-                        yield _sse({"changed": operation})
-                    elif name == "read_library":
-                        payload = production_library.read(store, args)
+                        repeated = monitor.already_applied(name, args)
+                        if repeated is not None:
+                            # 適用済みの操作はエラーにせず、保存済みの結果をそのまま返して次へ進ませる。
+                            payload = repeated
+                            yield _sse({"stage": "適用済みの変更の再実行を省きました"})
+                        else:
+                            monitor.check_cancelled(name, args)
+                            payload = await apply_edit(store, base_url, name, args, before_commit=lambda: run.check_epoch(epoch), policy=policy, versions=versions)
+                            versions = NodeVersions(store)
+                            # 縮める前の本文(previous_beat)は次の判断のツール結果にだけ渡し、履歴・画面・引継ぎには残さない。
+                            operation = {k: v for k, v in payload.items() if k != "previous_beat"}
+                            monitor.note_applied(name, args, operation)
+                            changes.append({k: v for k, v in operation.items() if k != "scene"})
+                            # 変更前の本文が次の判断を引き戻さないよう、古い取得結果を捨てる。
+                            recent_results.clear()
+                            history.append({"role": "assistant", "content": args["reason"], "operation": operation})
+                            store.save_chat_messages(chat_id, history)
+                            if name == "delete_scene" or name in production_library.WRITE_TOOLS:
+                                on_delete()
+                            save_checkpoint("running")
+                            yield _sse({"changed": operation})
                     else:
-                        payload = chat_agent.dispatch_tool(store, name, args, store.canon_path(), "all")
+                        # 読み取り。実行中の同じ取得は2回目に前回の結果を返し、3回目で止める。
+                        payload = monitor.repeated_read(name, args) if execute else None
+                        if payload is None:
+                            payload = (production_library.read(store, args) if name == "read_library"
+                                       else chat_agent.dispatch_tool(store, name, args, store.canon_path(), "all"))
+                            if execute:
+                                monitor.note_read(name, args, payload)
+                        if isinstance(payload, dict) and payload.get("error"):
+                            payload["error"], stalled = tally_error(name, str(payload["error"]))
+                            yield _sse({"tool_error": stalled or payload["error"]})
+                        else:
+                            monitor.note_success()
                 except ManualEditPending as e:
                     recent_results.clear()
                     history.append({"role": "assistant", "content": str(e)})
@@ -740,20 +824,37 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
                 except InstructionsPending as e:
                     yield _sse({"stage": str(e), "active_node": None})
                     break
+                except production_guard.StalledRun as e:
+                    stalled = str(e)
+                    yield _sse({"tool_error": stalled, "active_node": None})
+                    break
                 except (ValueError, KeyError, RuntimeError, TypeError) as e:
-                    payload = {"error": str(e)}
-                    yield _sse({"tool_error": str(e)})
+                    text, stalled = tally_error(name, str(e))
+                    payload = {"error": text}
+                    yield _sse({"tool_error": stalled or text})
                 recent_results.append({"tool": name, "result": payload})
                 recent_results = recent_results[-3:]
                 yield _sse({"active_node": None})
+                if stalled:
+                    break
+            if stalled:
+                finished_outcome, stop_detail = "stalled", stalled
+                break
             if completed:
                 break
-        if not completed:
-            history.append({"role": "assistant", "content": "作業の上限に達したため停止しました。確定済みの変更を確認し、必要なら続きを依頼してください。"})
-        outcome = "completed" if completed else "limit"
+        outcome = "completed" if completed else (finished_outcome or "limit")
+        if outcome != "completed":
+            notice = production_guard.OUTCOME_LABELS[outcome] + (f": {stop_detail}" if stop_detail else "。")
+            notice += f" 確定済みの変更 {len(changes)} 件は残しています。続きが必要なら、残りの作業を具体的に依頼してください。"
+            history.append({"role": "assistant", "content": notice, "outcome": outcome})
+            yield _sse({"delta": notice})
+            yield _sse({"response_end": True, "active_node": None})
         # doneを送った後に届く途中指示を受け付けないよう、通知の前に閉じる。
         run.close()
-        yield _sse({"done": True, "chat_id": chat_id})
+        summary = (production_guard.OUTCOME_LABELS[outcome] + f"（変更 {len(changes)} 件"
+                   + (f"・ツールエラー {monitor.tool_errors} 件" if monitor.tool_errors else "") + "）") if execute else None
+        yield _sse({"done": True, "chat_id": chat_id, "outcome": outcome, "summary": summary,
+                    "changes": len(changes), "tool_errors": monitor.tool_errors, "steps": steps_used})
     except (asyncio.CancelledError, GeneratorExit):
         # 停止ボタンや接続断は、LLM待ちの途中ならCancelledError、yieldで止まっていれば
         # 生成器の後始末(GeneratorExit)として届く。どちらでも停止の記録を残す。

@@ -19,6 +19,8 @@ import embed
 import llm
 from llama_manager import LlamaManager
 import production_agent
+sys.path.insert(0, str(ROOT / "scripts"))
+import production_metrics
 from store import Store
 
 
@@ -167,6 +169,9 @@ async def main():
         print("LIVE CHECK PASSED", flush=True)
     finally:
         (root / "events.json").write_text(json.dumps(events, ensure_ascii=False, indent=2), encoding="utf-8")
+        metrics = production_metrics.summarize(events)
+        (root / "metrics.json").write_text(json.dumps(metrics, ensure_ascii=False, indent=2), encoding="utf-8")
+        print("METRICS: " + production_metrics.describe(metrics), flush=True)
         (root / "prompts.json").write_text(json.dumps(list(llm.PROMPT_LOG), ensure_ascii=False, indent=2), encoding="utf-8")
         print(f"RESULT: {root}", flush=True)
         store.conn.close()

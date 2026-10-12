@@ -292,6 +292,8 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
         let text = ''
         let receivedAt: string | undefined
         let finished = false
+        // 終了理由(完了 / 上限 / 反復停止 / 空応答 / 報告の途切れ)と件数。サーバーの done が持つ
+        let summary: string | null = null
         const flush = (): void => {
           const content = text
           if (content) {
@@ -360,10 +362,10 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
             }
             if (event.tool_error) { setProductionPreview(null); setStatus(`変更を見直しています: ${event.tool_error}`); setStatusAt(created_at) }
             if (event.error) throw new Error(event.error)
-            if (event.done) finished = true
+            if (event.done) { finished = true; summary = event.summary ?? null }
           }, signal)
           if (!finished) throw new Error('接続が終了しました。確定済みの変更と履歴を確認してください。')
-          setStatus(`完了しました（経過時間 ${elapsedText(Date.now() - startedAt)}）`)
+          setStatus(`${summary ?? '完了しました'}（経過時間 ${elapsedText(Date.now() - startedAt)}）`)
         } catch (e) {
           if (isAbortError(e)) setStatus('停止しました。確定済みの変更は残しています。')
           else setError(String(e))

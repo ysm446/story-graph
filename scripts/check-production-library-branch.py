@@ -16,6 +16,8 @@ import llm
 import node_operations
 import production_agent as production
 import production_memory
+sys.path.insert(0, str(ROOT / "scripts"))
+import production_metrics
 from llama_manager import LlamaManager
 from store import Store
 
@@ -87,7 +89,9 @@ async def main():
             result["stages"].append({"label": label, "seconds": round(time.monotonic() - started, 1),
                 "changes": [e["changed"] for e in events if "changed" in e],
                 "errors": [e.get("error") or e.get("tool_error") for e in events if e.get("error") or e.get("tool_error")],
-                "usage": [e["usage"] for e in events if "usage" in e]})
+                "usage": [e["usage"] for e in events if "usage" in e],
+                "metrics": production_metrics.summarize(events)})
+        print(f"{label}: METRICS " + production_metrics.describe(result["stages"][-1]["metrics"]), flush=True)
         assert any(e.get("done") for e in events), f"{label}: 未完了"
         assert not any(e.get("error") for e in events), f"{label}: SSEエラー"
         if execute:

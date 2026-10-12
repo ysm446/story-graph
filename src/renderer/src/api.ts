@@ -1342,7 +1342,12 @@ export interface ProductionEvent {
   snapshot?: Snapshot
   error?: string
   tool_error?: string
+  /** 記録用。ツール名と対象 ID だけ(本文は含まない) */
+  tool_call?: { name: string; target?: string | null }
   done?: boolean
+  /** done に付く終了理由と要約(実行時のみ)。completed / limit / stalled / empty / truncated */
+  outcome?: string
+  summary?: string | null
 }
 
 export interface ProductionSelectedNode {

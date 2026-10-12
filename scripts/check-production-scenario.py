@@ -20,6 +20,8 @@ import llm
 import node_operations
 import production_agent as production
 import production_memory
+sys.path.insert(0, str(ROOT / "scripts"))
+import production_metrics
 from llama_manager import LlamaManager
 from store import Store
 
@@ -195,7 +197,9 @@ async def main():
                         "changes": [e["changed"] for e in events if "changed" in e],
                         "steps": sum(e.get("stage", "").startswith("確認しています") for e in events),
                         "memory_revision": production_memory.read(store)["revision"],
-                        "tool_errors": [e["tool_error"] for e in events if "tool_error" in e]})
+                        "tool_errors": [e["tool_error"] for e in events if "tool_error" in e],
+                        "metrics": production_metrics.summarize(events)})
+        print(f"{label}: METRICS " + production_metrics.describe(summary[-1]["metrics"]), flush=True)
         print(f"{label}: completed in {summary[-1]['seconds']}s", flush=True)
         return events
     try:
