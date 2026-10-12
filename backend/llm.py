@@ -49,8 +49,10 @@ def _log_prompt(
 
 
 async def health(base_url: str, timeout: float = 2.0) -> bool:
+    # 接続だけは短く待つ。Windows では閉じた localhost のポートへの接続が「拒否」になるまで約 2 秒
+    # かかり、右上のバーが数秒ごとに呼ぶ /llm/status がその分だけ遅くなる(tts.health と同じ理由)
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=0.5)) as client:
             res = await client.get(f"{base_url}/health")
             return res.status_code == 200
     except (httpx.HTTPError, OSError):
@@ -85,7 +87,8 @@ async def count_tokens(text: str, *, base_url: str, timeout: float = 10.0) -> in
     """llama-server の /tokenize でトークン数を数える(lm-chat と同方式)。
     サーバーが応答しないときは None(呼び出し側で概算に落とす)。"""
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        # サーバーが居ないときに 2 秒待たない(画面のコンテキスト量表示が入力のたびに呼ぶ)
+        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=0.5)) as client:
             res = await client.post(f"{base_url}/tokenize", json={"content": text})
             res.raise_for_status()
             return len(res.json().get("tokens", []))

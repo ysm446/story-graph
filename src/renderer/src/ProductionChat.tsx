@@ -4,12 +4,13 @@ import type { ProductionTarget } from './Workspace'
 import ChatRulesPanel from './ChatRulesPanel'
 import ProductionPreviewPanel from './ProductionPreviewPanel'
 import AutoTextarea from './AutoTextarea'
-import { memo, useCallback, useEffect, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { chatApi, isAbortError, productionApi, type ChatSummary, type ProductionInstruction, type ProductionPolicy, type ProductionOperation, type ProductionSelectedNode } from './api'
 import { Markdown } from './Markdown'
 import { showStatusNotice } from './statusNotice'
 import { setProductionPreview } from './productionPreview'
-import { cancelTask, enqueueTask, notifyGraphChanged, setNodeBusy, useTasks } from './tasks'
+import { cancelTask, enqueueTask, notifyGraphChanged, setNodeBusy, useTask } from './tasks'
+import { frameSetter } from './frameSetter'
 import type { Group, Snapshot, StoryNode } from './types'
 import ProductionMemoryPanel from './ProductionMemoryPanel'
 import ProductionPolicyPanel, { defaultProductionPolicy, policySummary } from './ProductionPolicyPanel'
@@ -96,8 +97,10 @@ const MessageList = memo(function MessageList({ messages, nodes, groups }: {
 })
 
 /** 制作専用チャット。相談履歴とは分け、選択した送信モードで書き込みの可否を決める。 */
-export default function ProductionChat({ beforeExecute, onChanged, onFollowTarget, onManualEdit, nodes, groups, policy, setPolicy, selectedNodeIds, chapterSelected }: {
+export default function ProductionChat({ beforeExecute, onChanged, onFollowTarget, onManualEdit, nodes, groups, policy, setPolicy, selectedNodeIds, chapterSelected, active = true }: {
   selectedNodeIds: string[]
+  /** 画面に出ているか。隠れている間はコンテキスト量の問い合わせ(サーバーで全文を組み立てる)を止める */
+  active?: boolean
   chapterSelected: boolean
   policy: ProductionPolicy
   setPolicy: React.Dispatch<React.SetStateAction<ProductionPolicy>>
@@ -118,7 +121,9 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
   const [input, setInput] = useState('')
   const [sendMode, setSendMode] = useState<'consult' | 'execute'>('consult')
   const [usage, setUsage] = useState<ContextUsage | null>(null)
-  const [live, setLive] = useState('')
+  const [live, setLiveState] = useState('')
+  // ストリーミング本文は 1 フレームに 1 回だけ反映する(トークンごとの描き直しを避ける)
+  const setLive = useMemo(() => frameSetter(setLiveState), [])
   const [status, setStatus] = useState('')
   const [statusAt, setStatusAt] = useState<string>()
   const [error, setError] = useState('')
@@ -139,8 +144,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
   const [follow, setFollow] = useState(true)
   const followRef = useRef(true)
   const followTargetRef = useRef<ProductionTarget | null>(null)
-  const tasks = useTasks()
-  const task = tasks.find((t) => t.id === taskId)
+  const task = useTask(taskId)
   const [historyBusy, setHistoryBusy] = useState(false)
   const busy = !!task || historyBusy
   const endRef = useRef<HTMLDivElement>(null)
@@ -149,7 +153,10 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
   const suggestions = productionSuggestions(messages, selection)
 
   useEffect(() => {
-    if (busy) return
+    // 隠れている間(相談タブ・鑑賞モード・チャットを閉じている)は問い合わせない。
+    // この部品は常にマウントされているので、止めないとシーンの選択やグラフの
+    // 読み直しのたびにサーバーがプロンプト全体を組み立ててトークン数を数える
+    if (busy || !active) return
     let stale = false
     const timer = window.setTimeout(() => {
       void productionApi.tokenUsage({ chat_id: chatId, message: input, execute: sendMode === 'execute', policy, selected_node_ids: selectedNodeIds })
@@ -157,7 +164,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
         .catch(() => { if (!stale) setUsage(null) })
     }, 400)
     return () => { stale = true; window.clearTimeout(timer) }
-  }, [busy, chatId, input, sendMode, policy, rulesRefresh, memoryRefresh, memoryDirty, messages, nodes, groups, selectionKey])
+  }, [busy, active, chatId, input, sendMode, policy, rulesRefresh, memoryRefresh, memoryDirty, messages, nodes, groups, selectionKey])
 
   const bumpMemoryRefresh = useCallback((): void => setMemoryRefresh((value) => value + 1), [])
   const refreshHistory = async (): Promise<void> => setHistory(await productionApi.list())

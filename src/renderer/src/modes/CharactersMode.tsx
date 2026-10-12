@@ -37,6 +37,12 @@ function CharactersMode(): React.JSX.Element {
   const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(null)
   const [documentEdits, setDocumentEdits] = useState<SettingDocumentEdits>({ ids: [], busy: false })
   const [documentQuery, setDocumentQuery] = useState('')
+  // 絞り込みは資料と検索語が変わったときだけ(本文全体を小文字化するので、毎レンダーは重い)
+  const filteredDocuments = useMemo(() => {
+    const query = documentQuery.toLocaleLowerCase()
+    if (!query) return documents
+    return documents.filter((document) => `${document.title}\n${document.category}\n${document.body}`.toLocaleLowerCase().includes(query))
+  }, [documents, documentQuery])
   const [createError, setCreateError] = useState('')
   const [creating, setCreating] = useState(false)
   const [libraryVersion, setLibraryVersion] = useState(0)
@@ -374,7 +380,7 @@ function CharactersMode(): React.JSX.Element {
                     <span className="min-w-0 flex-1 truncate">{place.name}</span>
                     {place.id === selectedPlaceId && placeUnsaved && <UnsavedBadge />}
                   </button>
-                )) : documents.filter((document) => `${document.title}\n${document.category}\n${document.body}`.toLocaleLowerCase().includes(documentQuery.toLocaleLowerCase())).map((document) => (
+                )) : filteredDocuments.map((document) => (
                   <button key={document.id} onClick={() => { setTab('settings'); setSelectedDocumentId(document.id) }}
                     className="mb-0.5 flex w-full min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12px]"
                     style={{ background: tab === 'settings' && document.id === selectedDocumentId ? 'var(--accent-soft)' : undefined, color: 'var(--text)' }} data-tip={document.title}>

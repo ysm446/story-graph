@@ -28,6 +28,16 @@ export interface ServiceStatus {
   external?: boolean
 }
 
+function sameStatus(a: ServiceStatus, b: ServiceStatus): boolean {
+  return (
+    a.healthy === b.healthy &&
+    a.loading === b.loading &&
+    a.installed === b.installed &&
+    a.base_url === b.base_url &&
+    a.external === b.external
+  )
+}
+
 /** ヘッダー右の外部サービス(ComfyUI / TTS)の状態バー。ModelBar と同じ見た目・同じ約束:
  *  稼働中はアクセント枠 + 停止ボタン、起動中はスピナー + 時計まわりのリング、停止中はクリックで起動。
  *  生成・読み上げの自動起動で始まった起動もポーリングで拾う。 */
@@ -62,19 +72,32 @@ export default function ServiceBar({
     let timer: ReturnType<typeof setTimeout> | null = null
     const poll = async (): Promise<void> => {
       let interval = 5000
+      // ウィンドウが隠れている間は問い合わせない(戻ったときに visibilitychange で再開)
+      if (document.visibilityState === 'hidden') {
+        timer = setTimeout(() => void poll(), interval)
+        return
+      }
       try {
         const s = await fetchStatus()
-        if (!cancelled) setStatus(s)
+        // 中身が同じなら state を触らない(毎回新しいオブジェクトを入れると 5 秒ごとに描き直す)
+        if (!cancelled) setStatus((prev) => (prev && sameStatus(prev, s) ? prev : s))
         if (s.loading) interval = 1500
       } catch {
         if (!cancelled) setStatus(null)
       }
       if (!cancelled) timer = setTimeout(() => void poll(), interval)
     }
+    const onVisible = (): void => {
+      if (document.visibilityState !== 'visible' || cancelled) return
+      if (timer) clearTimeout(timer)
+      void poll()
+    }
+    document.addEventListener('visibilitychange', onVisible)
     void poll()
     return () => {
       cancelled = true
       if (timer) clearTimeout(timer)
+      document.removeEventListener('visibilitychange', onVisible)
     }
   }, [fetchStatus])
 

@@ -169,7 +169,9 @@ export default function App(): React.JSX.Element {
   const [productionTarget, setProductionTarget] = useState<ProductionTarget | null>(null)
   const followTarget = useCallback((target: ProductionTarget | null) => {
     if (target && libraryDirty.current) return
-    setProductionTarget(target)
+    // 同じ対象なら前のオブジェクトを保つ。制作の進捗イベントごとに新しいオブジェクトを
+    // 入れると Context の値が変わり、全モードが描き直される
+    setProductionTarget((prev) => (prev && target && prev.kind === target.kind && prev.id === target.id ? prev : target))
     if (target) setMode(target.kind === 'scene' || target.kind === 'chapter' ? 'structure' : 'characters')
   }, [])
   const changed = useCallback(() => setRevision((value) => value + 1), [])

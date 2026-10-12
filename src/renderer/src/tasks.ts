@@ -139,6 +139,33 @@ export function useProductionLocked(): boolean {
   )
 }
 
+/** ID で 1 件のタスクを購読する(無ければ null)。
+ *
+ * 更新は patchTask が新しいオブジェクトを作るので、そのタスクが変わったときだけ
+ * 再レンダーされる(他のタスクの進捗では変わらない)。
+ */
+export function useTask(id: string | null | undefined): Task | null {
+  return useSyncExternalStore(
+    subscribe,
+    () => (id ? snapshot.find((t) => t.id === id) ?? null : null),
+    () => null
+  )
+}
+
+/** 条件に合うタスクがあるか(真偽だけを購読する)。
+ *
+ * `useTasks().some(...)` と違い、進捗の 1 件更新ごとに呼び出し元が再レンダーされない。
+ * predicate はモジュールレベルか useCallback で固定したものを渡す(毎レンダー新しい
+ * 関数でも動くが、購読の張り直しが毎回走る)。
+ */
+export function useAnyTask(predicate: (task: Task) => boolean): boolean {
+  return useSyncExternalStore(
+    subscribe,
+    () => snapshot.some(predicate),
+    () => false
+  )
+}
+
 /** 指定シーンに積まれている指定種類のタスク(無ければ null)。
  *
  * ボタンの「待機中…/処理中…」はローカル state ではなく**キューから引く**。

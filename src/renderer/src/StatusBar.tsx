@@ -12,6 +12,17 @@ interface SystemResources {
   vram_total: number | null
 }
 
+function sameResources(a: SystemResources, b: SystemResources): boolean {
+  return (
+    a.cpu_usage === b.cpu_usage &&
+    a.ram_used === b.ram_used &&
+    a.ram_total === b.ram_total &&
+    a.gpu_usage === b.gpu_usage &&
+    a.vram_used === b.vram_used &&
+    a.vram_total === b.vram_total
+  )
+}
+
 // lm-graph の SystemResourceMonitor と同じ見た目のミニバー
 function ResourceBar({ label, pct, detail }: { label: string; pct: number; detail: string }): React.JSX.Element {
   const clampedPct = Math.min(100, Math.max(0, pct))
@@ -72,18 +83,26 @@ export default function StatusBar({
     if (!backendReady) return
     let cancelled = false
     const pollResources = async (): Promise<void> => {
+      // ウィンドウが隠れている間は問い合わせない
+      if (document.visibilityState === 'hidden') return
       try {
         const r = await api.systemResources()
-        if (!cancelled) setRes(r)
+        // 値が同じなら state を触らない(2 秒ごとの描き直しを避ける)
+        if (!cancelled) setRes((prev) => (prev && sameResources(prev, r) ? prev : r))
       } catch {
         if (!cancelled) setRes(null)
       }
     }
     void pollResources()
     const resTimer = setInterval(() => void pollResources(), 2000)
+    const onVisible = (): void => {
+      if (document.visibilityState === 'visible') void pollResources()
+    }
+    document.addEventListener('visibilitychange', onVisible)
     return () => {
       cancelled = true
       clearInterval(resTimer)
+      document.removeEventListener('visibilitychange', onVisible)
     }
   }, [backendReady])
 

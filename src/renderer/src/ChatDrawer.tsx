@@ -1,6 +1,6 @@
 import ChatHistoryPanel from './ChatHistoryPanel'
 import ContextUsageRing from './ContextUsageRing'
-import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   chatApi,
   chatSendStream,
@@ -16,7 +16,8 @@ import { Icon } from './icons'
 import { Markdown } from './Markdown'
 import { useChatVoice } from './useChatVoice'
 import type { Character, StoryNode } from './types'
-import { useElapsedSeconds } from './useElapsed'
+import { ElapsedSeconds } from './ElapsedLabel'
+import { frameSetter } from './frameSetter'
 
 // 旧形式の会話履歴に保存された提案を文章として復元するための型。
 interface LegacyProposal {
@@ -241,7 +242,9 @@ export default function ChatDrawer({
   const [turns, setTurns] = useState(2) // 1 回「進める」で続けて話させる発言数
   const [liveSpeaker, setLiveSpeaker] = useState<string | null>(null) // 会話室でいま話している人
   const [items, setItems] = useState<DisplayItem[]>([])
-  const [liveText, setLiveText] = useState('') // ストリーミング中の回答(確定前)
+  const [liveText, setLiveTextState] = useState('') // ストリーミング中の回答(確定前)
+  // ストリーミング本文は 1 フレームに 1 回だけ反映する(トークンごとに Markdown 変換と全発言の描き直しをしない)
+  const setLiveText = useMemo(() => frameSetter(setLiveTextState), [])
   // 再生成中はこの項目の直後に書きかけの吹き出しを出す(null = 一番下)
   const [liveAfter, setLiveAfter] = useState<number | null>(null)
   const [input, setInput] = useState('')
@@ -268,7 +271,6 @@ export default function ChatDrawer({
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
   const panelRef = useRef<HTMLDivElement | null>(null) // 入力欄の高さの上限を決めるのに使う
   const usageSeqRef = useRef(0) // 使用量の取得は追い越しがあるので最後の応答だけ採用する
-  const busyElapsed = useElapsedSeconds(busy)
   // 返答の読み上げ(docs/design/voice.md §6.1)。キャラとの会話はキャラの声、相談は相談相手の声
   const voice = useChatVoice({ charId, mode: charId ? (roleplay ? 'roleplay' : 'interview') : null })
   const stopVoice = voice.stop
@@ -1325,7 +1327,7 @@ export default function ChatDrawer({
                 {status}
                 {busy && (
                   <span className="ml-1 tabular-nums" style={{ color: 'var(--text-faint)' }}>
-                    ({busyElapsed}s)
+                    (<ElapsedSeconds active={busy} />s)
                   </span>
                 )}
               </div>

@@ -263,6 +263,11 @@ export default function ModelBar({ refreshKey }: { refreshKey: number }): React.
     let timer: ReturnType<typeof setTimeout> | null = null
     const poll = async (): Promise<void> => {
       let interval = 4000
+      // ウィンドウが隠れている間は問い合わせない(戻ったときに visibilitychange で再開)
+      if (document.visibilityState === 'hidden') {
+        timer = setTimeout(() => void poll(), interval)
+        return
+      }
       try {
         const s = await api.llmStatus()
         if (!cancelled) {
@@ -282,10 +287,17 @@ export default function ModelBar({ refreshKey }: { refreshKey: number }): React.
       }
       if (!cancelled) timer = setTimeout(() => void poll(), interval)
     }
+    const onVisible = (): void => {
+      if (document.visibilityState !== 'visible' || cancelled) return
+      if (timer) clearTimeout(timer)
+      void poll()
+    }
+    document.addEventListener('visibilitychange', onVisible)
     void poll()
     return () => {
       cancelled = true
       if (timer) clearTimeout(timer)
+      document.removeEventListener('visibilitychange', onVisible)
     }
   }, [])
 

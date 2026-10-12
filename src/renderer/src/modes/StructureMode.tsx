@@ -13,15 +13,18 @@ import {
   ReactFlowProvider,
   SelectionMode,
   useReactFlow,
+  type Connection,
   type Edge,
   type Node,
   type NodeChange,
-  type NodeProps
+  type NodeProps,
+  type OnNodeDrag
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import {
   api,
   type NodeClipboard,
+  type ProductionOperation,
   assetUrl,
   generateBeatStream,
   isAbortError,
@@ -34,9 +37,9 @@ import {
 import AutoTextarea from '../AutoTextarea'
 import { showStatusNotice } from '../statusNotice'
 import CharAvatar from '../CharAvatar'
-import ChatDrawer from '../ChatDrawer'
+import ChatDrawerBase from '../ChatDrawer'
 import ContextMenu, { type ContextMenuItem } from '../ContextMenu'
-import ProductionChat from '../ProductionChat'
+import ProductionChatBase from '../ProductionChat'
 import { useProductionPreview } from '../productionPreview'
 import { defaultProductionPolicy } from '../ProductionPolicyPanel'
 import type { ProductionPolicy } from '../api'
@@ -60,6 +63,7 @@ import {
   cancelTask,
   enqueueTask,
   notifyGraphChanged,
+  useProductionLocked,
   useTasks,
   setNodeBusy,
   subscribeGraphChanged,
@@ -67,6 +71,8 @@ import {
   useTaskFor
 } from '../tasks'
 import { useElapsedSeconds } from '../useElapsed'
+import { useStableCallback } from '../useStableCallback'
+import { ElapsedLabel } from '../ElapsedLabel'
 import { backfillThumbs } from '../thumbs'
 import type {
   Character,
@@ -225,12 +231,12 @@ function NodeThumb({
   const thumb = assetUrl(node.thumb_path)
   if (isVideoAsset(node.image_path)) {
     return thumb ? (
-      <img src={thumb} className={className} style={style} />
+      <img src={thumb} decoding="async" className={className} style={style} />
     ) : (
       <video src={src} preload="metadata" muted playsInline className={className} style={style} />
     )
   }
-  return <img src={thumb ?? src} className={className} style={style} />
+  return <img src={thumb ?? src} decoding="async" className={className} style={style} />
 }
 
 type BeatNodeData = {
@@ -495,7 +501,17 @@ function ChapterNodeCard({ data, selected }: NodeProps<ChapterFlowNode>): React.
   )
 }
 
-const nodeTypes = { beatNode: BeatNodeCard, chapterNode: ChapterNodeCard }
+// カードは memo する。data の参照は再構築 effect 側で保っているので、変わった
+// カードだけが描き直される
+const nodeTypes = { beatNode: memo(BeatNodeCard), chapterNode: memo(ChapterNodeCard) }
+// React Flow に渡す定数。毎レンダー新しい配列・オブジェクトを渡すと内部の memo が外れる
+const PAN_ON_DRAG = [1]
+const SNAP_GRID: [number, number] = [GRID_SIZE, GRID_SIZE]
+const PRO_OPTIONS = { hideAttribution: true }
+// チャット部品は構造モードの再描画(ドラッグ・選択・進捗)に巻き込まない。
+// 渡す props は下で useMemo / useStableCallback により参照を保っている
+const ChatDrawer = memo(ChatDrawerBase)
+const ProductionChat = memo(ProductionChatBase)
 
 // ---- ビートタブ ------------------------------------------------------
 
@@ -2279,7 +2295,6 @@ function StructureModeInner({
   const [nodeClipboard, setNodeClipboard] = useState<NodeClipboard | null>(null)
   const pastingNodes = useRef(false)
   const pasteCount = useRef(0)
-  const genElapsed = useElapsedSeconds(generating)
   const genTaskIdRef = useRef<string | null>(null) // 実行中の生成タスクの ID(中止ボタン用)
   const [flowNodes, setFlowNodes] = useState<BeatFlowNode[]>([])
   // 保存座標へ焼き付け済みのノード(pinLayout の二重送信よけ)と、
@@ -2305,7 +2320,7 @@ function StructureModeInner({
   // LLM 処理中のノード(枠が時計まわりに光る)。生成・抽出・再抽出で共用。
   // モジュールレベル(tasks.ts)で持つので、モードを離れて戻っても復元される
   const busyNodeIds = useBusyNodeIds()
-  const productionLocked = useTasks().some((t) => t.kind === 'production')
+  const productionLocked = useProductionLocked()
   const [productionPolicy, setProductionPolicy] = useState<ProductionPolicy>(defaultProductionPolicy)
   const workspace = useWorkspace()
   const { chatHost, chatOpen, toggleChat, manual: productionManual, setManual: setProductionManual } = workspace
@@ -2409,6 +2424,10 @@ function StructureModeInner({
 
   // 矢印キーで次々に選択が変わると取得が複数走るので、古い応答は捨てる
   // (捨てないと、後から返ってきた前のシーンの結果が残り続ける)
+  const selectedNodeForValidation = useMemo(
+    () => (selectedId ? graphNodes.find((n) => n.id === selectedId) ?? null : null),
+    [graphNodes, selectedId]
+  )
   useEffect(() => {
     if (!selectedId) {
       setValidation([])
@@ -2427,7 +2446,10 @@ function StructureModeInner({
     return () => {
       ignore = true
     }
-  }, [selectedId, graphNodes])
+    // 依存は選択中のノードそのもの。graphNodes 全体にすると、別ノードの位置の
+    // 楽観更新などでも検証(サーバー側で fold)が走り直す
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId, selectedNodeForValidation])
 
   const charMap = useMemo(() => Object.fromEntries(characters.map((c) => [c.id, c])), [characters])
   const placeMap = useMemo(() => Object.fromEntries(places.map((p) => [p.id, p])), [places])
@@ -2565,10 +2587,35 @@ function StructureModeInner({
           n.pos_x != null && n.pos_y != null
             ? { x: n.pos_x, y: n.pos_y }
             : existing?.position ?? computed[n.id] ?? { x: 0, y: 0 }
+        const nextPosition = existing?.dragging ? existing.position : position
+        const eff = effectiveLocations[n.id]
+        const placeName = eff ? (placeMap[eff.placeId]?.name ?? eff.placeId) : undefined
+        const busy = busyNodeIds.has(n.id)
+        const connected = connectedIds.has(n.id)
+        // 中身が同じなら前のノードをそのまま使う(参照を保つ)。1 ノードの編集や
+        // busy の切り替えで全カードの data が作り直されると、memo した全カードが
+        // 描き直される
+        if (existing) {
+          const d = existing.data
+          const samePlace = eff
+            ? d.place?.name === placeName && d.place?.inherited === eff.inherited
+            : d.place === undefined
+          if (
+            d.storyNode === n &&
+            d.connected === connected &&
+            d.characters === charMap &&
+            d.busy === busy &&
+            samePlace &&
+            existing.position.x === nextPosition.x &&
+            existing.position.y === nextPosition.y
+          ) {
+            return existing
+          }
+        }
         return {
           id: n.id,
           type: 'beatNode' as const,
-          position: existing?.dragging ? existing.position : position,
+          position: nextPosition,
           selected: existing?.selected ?? false,
           dragging: existing?.dragging,
           // 実測サイズを引き継ぐ。落とすと再構築のたびに heightsSig が 0 に振れて
@@ -2577,15 +2624,10 @@ function StructureModeInner({
           measured: existing?.measured,
           data: {
             storyNode: n,
-            connected: connectedIds.has(n.id),
+            connected,
             characters: charMap,
-            place: (() => {
-              const eff = effectiveLocations[n.id]
-              if (!eff) return undefined
-              const place = placeMap[eff.placeId]
-              return { name: place?.name ?? eff.placeId, inherited: eff.inherited }
-            })(),
-            busy: busyNodeIds.has(n.id)
+            place: eff ? { name: placeName as string, inherited: eff.inherited } : undefined,
+            busy
           }
         }
       })
@@ -4418,6 +4460,144 @@ function StructureModeInner({
     })
   }
 
+  // チャット部品(memo)へ渡す props。参照を保たないと memo が効かない
+  const nodesById = useMemo(() => Object.fromEntries(graphNodes.map((n) => [n.id, n])), [graphNodes])
+  const productionSelectedNodeIds = useMemo(() => {
+    if (workspace.mode !== 'structure') return []
+    const ids = displayNodes.filter((n) => n.selected && n.type !== 'chapterNode').map((n) => n.id)
+    return ids
+  }, [workspace.mode, displayNodes])
+  // 選択の中身が同じなら前の配列を返す(displayNodes はドラッグ・位置更新でも変わるため)
+  const productionSelectedRef = useRef<string[]>([])
+  const productionSelectedStable = useMemo(() => {
+    const prev = productionSelectedRef.current
+    const same = prev.length === productionSelectedNodeIds.length && prev.every((id, i) => id === productionSelectedNodeIds[i])
+    if (!same) productionSelectedRef.current = productionSelectedNodeIds
+    return productionSelectedRef.current
+  }, [productionSelectedNodeIds])
+  const productionChapterSelected = workspace.mode === 'structure' && displayNodes.some((n) => n.selected && n.type === 'chapterNode')
+  const beforeProductionExecute = useStableCallback((): string | null =>
+    workspace.libraryDirty.current
+      ? '未保存の資料があります。保存してから制作を実行してください。'
+      : beatDraftCache.size > 0
+        ? '未保存のシーンがあります。保存してから制作を実行してください。'
+        : null
+  )
+  const onProductionChanged = useStableCallback(async (operation: ProductionOperation): Promise<void> => {
+    await reload(operation.node_id && (operation.action === 'insert_scene' || operation.action === 'branch_scene' || operation.connection?.mode === 'scene') ? await placeCreatedNode(operation.node_id) : undefined)
+    workspace.changed()
+    if (operation.action === 'delete_scene') setSelectedId((id) => id === operation.node_id ? null : id)
+  })
+
+  // React Flow へ渡すハンドラ。参照を固定し、中身だけ最新に追従させる(useStableCallback)
+  // ノードを選んだらエッジ選択は解く(残すと Delete がエッジ切断に化ける)
+  const onNodeClick = useStableCallback((): void => setSelectedEdgeId(null))
+  // 章ノードのダブルクリックで章の中へ(章ビューのドリルダウン)
+  const onNodeDoubleClick = useStableCallback((_: React.MouseEvent, node: Node): void => {
+    if (node.type === 'chapterNode') setChapterView((node.data as ChapterNodeData).group.id)
+  })
+  const onConnect = useStableCallback((connection: Connection): void => void handleConnect(connection))
+  const isValidConnectionStable = useStableCallback((connection: Edge | Connection): boolean =>
+    isValidConnection(connection as Connection)
+  )
+  // エッジ選択は自前で持つ(onEdgesChange を渡していないため)
+  const onEdgeClick = useStableCallback((_: React.MouseEvent, edge: Edge): void => setSelectedEdgeId(edge.id))
+  const onEdgeDoubleClick = useStableCallback((_: React.MouseEvent, edge: Edge): void => void detachEdge(edge.id))
+  const onPaneClick = useStableCallback((): void => {
+    setSelectedEdgeId(null)
+    setMenu(null)
+  })
+  // 右クリック: 選択中のノード群(右クリックしたノードを含む)に対する一括操作
+  const onNodeContextMenu = useStableCallback((event: React.MouseEvent, node: Node): void => {
+    event.preventDefault()
+    if (node.type === 'chapterNode') {
+      setMenu({
+        x: event.clientX,
+        y: event.clientY,
+        targets: [],
+        chapter: (node.data as ChapterNodeData).group.id
+      })
+      return
+    }
+    const kind = (node.data as BeatNodeData).storyNode.kind
+    if (kind === 'start') return // はじまりに操作は無い
+    // 章の入口 / 出口は配線するだけ(操作は章カードの右クリックにある)
+    if (kind === 'chapter_in' || kind === 'chapter_out') return
+    if (kind === 'ending') {
+      setMenu({ x: event.clientX, y: event.clientY, targets: [node.id], ending: true })
+      return
+    }
+    // マーカーは一括操作の対象にしない
+    const selected = flowNodes
+      .filter((n) => n.selected && !n.data.storyNode.kind)
+      .map((n) => n.id)
+    const targets = selected.includes(node.id) ? selected : [node.id]
+    setMenu({ x: event.clientX, y: event.clientY, targets })
+  })
+  const onSelectionContextMenu = useStableCallback((event: React.MouseEvent, nodes: Node[]): void => {
+    event.preventDefault()
+    // 章ノード(導出表示)とはじまり / 結末マーカーは一括操作の対象にしない
+    const targets = nodes
+      .filter((n) => n.type !== 'chapterNode' && !(n.data as BeatNodeData).storyNode?.kind)
+      .map((n) => n.id)
+    if (targets.length === 0) return
+    setMenu({ x: event.clientX, y: event.clientY, targets })
+  })
+  const onPaneContextMenu = useStableCallback((event: React.MouseEvent | MouseEvent): void => {
+    event.preventDefault()
+    // 何もないところの右クリック: 追加系のメニュー(置く場所はこの位置)
+    const flow = reactFlow.screenToFlowPosition({ x: event.clientX, y: event.clientY })
+    setMenu({ x: event.clientX, y: event.clientY, targets: [], pane: flow })
+  })
+  // 章カードの上へシーンを運んでいる間だけ、カードを光らせる
+  const onNodeDrag: OnNodeDrag<AppFlowNode> = useStableCallback((_, node, draggedNodes): void => {
+    setDropTargetGroupId(chapterDropTarget(node, draggedNodes))
+  })
+  const onNodeDragStop: OnNodeDrag<AppFlowNode> = useStableCallback((_, node, draggedNodes): void => {
+    // 章カードに落とした = その章に入れる(位置は保存しない。
+    // カードの下に置いた座標はフラット表示では意味がないため)
+    const dropGroupId = chapterDropTarget(node, draggedNodes)
+    setDropTargetGroupId(null)
+    if (dropGroupId) {
+      void dropIntoChapter(
+        dropGroupId,
+        draggedNodes.filter((n) => n.type !== 'chapterNode').map((n) => n.id)
+      )
+      return
+    }
+    // 章カードのドラッグ = 置いた場所にそのまま置く(groups.pos_x/pos_y に保存)。
+    // 章の並べ替えは右クリックの「← 前へ / → 後ろへ」で行う(ドラッグと
+    // 兼ねると位置が導出に戻ってしまうため。docs/design/chapters.md §6)
+    const chapters = draggedNodes.filter((n) => n.type === 'chapterNode')
+    for (const card of chapters) {
+      const groupId = (card.data as ChapterNodeData).group.id
+      const x = Math.round(card.position.x)
+      const y = Math.round(card.position.y)
+      // 再構築で導出位置へ戻らないよう groups にも先に反映しておく(楽観更新)
+      setGroups((prev) =>
+        prev.map((g) => (g.id === groupId ? { ...g, pos_x: x, pos_y: y } : g))
+      )
+      void api
+        .setGroupPosition(groupId, x, y)
+        .catch((e) => setGenStatus(`位置を保存できません: ${String(e)}`))
+    }
+    const beats = draggedNodes.filter((n) => n.type !== 'chapterNode')
+    if (beats.length === 0) return
+    // busyNodeIds の変化などでノード配列が再構築されても座標が戻らないよう、
+    // サーバー由来の graphNodes にも先に反映しておく(楽観更新)
+    const moved = new Map(beats.map((n) => [n.id, n.position]))
+    setGraphNodes((prev) =>
+      prev.map((n) => {
+        const p = moved.get(n.id)
+        return p ? { ...n, pos_x: p.x, pos_y: p.y } : n
+      })
+    )
+    // 複数ノードをまとめて動かしたときも保存は 1 リクエスト
+    void api
+      .setNodePositions(beats.map((n) => ({ id: n.id, x: n.position.x, y: n.position.y })))
+      .catch((e) => setGenStatus(`位置を保存できません: ${String(e)}`))
+  })
+
   return (
     <div className="flex h-full flex-col">
       <div ref={rowRef} className="flex min-h-0 flex-1 flex-col">
@@ -4439,113 +4619,22 @@ function StructureModeInner({
             // ノードを矢印で動かす a11y 操作)と衝突するので明示的に切る
             disableKeyboardA11y
             onNodesChange={handleNodesChange}
-            // ノードを選んだらエッジ選択は解く(残すと Delete がエッジ切断に化ける)
-            onNodeClick={() => setSelectedEdgeId(null)}
-            // 章ノードのダブルクリックで章の中へ(章ビューのドリルダウン)
-            onNodeDoubleClick={(_, node) => {
-              if (node.type === 'chapterNode') setChapterView((node.data as ChapterNodeData).group.id)
-            }}
+            // ハンドラは useStableCallback で参照を固定している(return の直前)。
+            // 毎レンダー新しい関数を渡すと React Flow 内部の memo が外れ、
+            // 画面に出ている全カード・全エッジが描き直される
+            onNodeClick={onNodeClick}
+            onNodeDoubleClick={onNodeDoubleClick}
             onSelectionChange={handleSelectionChange}
-            onConnect={(connection) => void handleConnect(connection)}
-            isValidConnection={(connection) => isValidConnection(connection)}
-            // エッジ選択は自前で持つ(onEdgesChange を渡していないため)
-            onEdgeClick={(_, edge) => setSelectedEdgeId(edge.id)}
-            onEdgeDoubleClick={(_, edge) => void detachEdge(edge.id)}
-            onPaneClick={() => {
-              setSelectedEdgeId(null)
-              setMenu(null)
-            }}
-            // 右クリック: 選択中のノード群(右クリックしたノードを含む)に対する一括操作
-            onNodeContextMenu={(event, node) => {
-              event.preventDefault()
-              if (node.type === 'chapterNode') {
-                setMenu({
-                  x: event.clientX,
-                  y: event.clientY,
-                  targets: [],
-                  chapter: (node.data as ChapterNodeData).group.id
-                })
-                return
-              }
-              const kind = (node.data as BeatNodeData).storyNode.kind
-              if (kind === 'start') return // はじまりに操作は無い
-              // 章の入口 / 出口は配線するだけ(操作は章カードの右クリックにある)
-              if (kind === 'chapter_in' || kind === 'chapter_out') return
-              if (kind === 'ending') {
-                setMenu({ x: event.clientX, y: event.clientY, targets: [node.id], ending: true })
-                return
-              }
-              // マーカーは一括操作の対象にしない
-              const selected = flowNodes
-                .filter((n) => n.selected && !n.data.storyNode.kind)
-                .map((n) => n.id)
-              const targets = selected.includes(node.id) ? selected : [node.id]
-              setMenu({ x: event.clientX, y: event.clientY, targets })
-            }}
-            onSelectionContextMenu={(event, nodes) => {
-              event.preventDefault()
-              // 章ノード(導出表示)とはじまり / 結末マーカーは一括操作の対象にしない
-              const targets = nodes
-                .filter((n) => n.type !== 'chapterNode' && !(n.data as BeatNodeData).storyNode?.kind)
-                .map((n) => n.id)
-              if (targets.length === 0) return
-              setMenu({ x: event.clientX, y: event.clientY, targets })
-            }}
-            onPaneContextMenu={(event) => {
-              event.preventDefault()
-              // 何もないところの右クリック: 追加系のメニュー(置く場所はこの位置)
-              const flow = reactFlow.screenToFlowPosition({ x: event.clientX, y: event.clientY })
-              setMenu({ x: event.clientX, y: event.clientY, targets: [], pane: flow })
-            }}
-            // 章カードの上へシーンを運んでいる間だけ、カードを光らせる
-            onNodeDrag={(_, node, draggedNodes) => {
-              setDropTargetGroupId(chapterDropTarget(node, draggedNodes))
-            }}
-            onNodeDragStop={(_, node, draggedNodes) => {
-              // 章カードに落とした = その章に入れる(位置は保存しない。
-              // カードの下に置いた座標はフラット表示では意味がないため)
-              const dropGroupId = chapterDropTarget(node, draggedNodes)
-              setDropTargetGroupId(null)
-              if (dropGroupId) {
-                void dropIntoChapter(
-                  dropGroupId,
-                  draggedNodes.filter((n) => n.type !== 'chapterNode').map((n) => n.id)
-                )
-                return
-              }
-              // 章カードのドラッグ = 置いた場所にそのまま置く(groups.pos_x/pos_y に保存)。
-              // 章の並べ替えは右クリックの「← 前へ / → 後ろへ」で行う(ドラッグと
-              // 兼ねると位置が導出に戻ってしまうため。docs/design/chapters.md §6)
-              const chapters = draggedNodes.filter((n) => n.type === 'chapterNode')
-              for (const card of chapters) {
-                const groupId = (card.data as ChapterNodeData).group.id
-                const x = Math.round(card.position.x)
-                const y = Math.round(card.position.y)
-                // 再構築で導出位置へ戻らないよう groups にも先に反映しておく(楽観更新)
-                setGroups((prev) =>
-                  prev.map((g) => (g.id === groupId ? { ...g, pos_x: x, pos_y: y } : g))
-                )
-                void api
-                  .setGroupPosition(groupId, x, y)
-                  .catch((e) => setGenStatus(`位置を保存できません: ${String(e)}`))
-              }
-              const beats = draggedNodes.filter((n) => n.type !== 'chapterNode')
-              if (beats.length === 0) return
-              // busyNodeIds の変化などでノード配列が再構築されても座標が戻らないよう、
-              // サーバー由来の graphNodes にも先に反映しておく(楽観更新)
-              const moved = new Map(beats.map((n) => [n.id, n.position]))
-              setGraphNodes((prev) =>
-                prev.map((n) => {
-                  const p = moved.get(n.id)
-                  return p ? { ...n, pos_x: p.x, pos_y: p.y } : n
-                })
-              )
-              for (const dragged of beats) {
-                void api
-                  .setNodePosition(dragged.id, dragged.position.x, dragged.position.y)
-                  .catch((e) => setGenStatus(`位置を保存できません: ${String(e)}`))
-              }
-            }}
+            onConnect={onConnect}
+            isValidConnection={isValidConnectionStable}
+            onEdgeClick={onEdgeClick}
+            onEdgeDoubleClick={onEdgeDoubleClick}
+            onPaneClick={onPaneClick}
+            onNodeContextMenu={onNodeContextMenu}
+            onSelectionContextMenu={onSelectionContextMenu}
+            onPaneContextMenu={onPaneContextMenu}
+            onNodeDrag={onNodeDrag}
+            onNodeDragStop={onNodeDragStop}
             minZoom={0.1}
             maxZoom={2}
             // ダブルクリックズームは章カードの「開く」と競合するので切る
@@ -4554,7 +4643,7 @@ function StructureModeInner({
             // 止める(描画が遅いと init の fitView が setCenter の後に走って、
             // 当てたフォーカスを全体表示で上書きすることがある)
             fitView={!pendingFocusId}
-            panOnDrag={[1]}
+            panOnDrag={PAN_ON_DRAG}
             selectionOnDrag
             selectionMode={SelectionMode.Partial}
             // ハンドルのドラッグで親子を繋げる(妥当性は isValidConnection で判定)。
@@ -4562,11 +4651,11 @@ function StructureModeInner({
             nodesConnectable
             // ドラッグを背景のドットと同じグリッドに合わせる(設定でオフにできる)
             snapToGrid={gridSnap}
-            snapGrid={[GRID_SIZE, GRID_SIZE]}
-            proOptions={{ hideAttribution: true }}
+            snapGrid={SNAP_GRID}
+            proOptions={PRO_OPTIONS}
           >
             <Background gap={GRID_SIZE} size={1.4} color="#394154" />
-            {minimapVisible && <MiniMap pannable zoomable nodeColor={() => '#2e3140'} />}
+            {minimapVisible && <MiniMap pannable zoomable nodeColor="#2e3140" />}
             <Panel position="top-left" style={{ maxWidth: 'calc(100% - 32px)' }}>
               {/* 幅は中身に合わせる(パネルの領域はキャンバスのクリックを奪うため)。
                   生成パネルとステータスの幅は各要素側で持たせ、ツールバーの並びを潰さない */}
@@ -4741,7 +4830,7 @@ function StructureModeInner({
                         {genStatus}
                         {generating && (
                           <span className="ml-1 tabular-nums" style={{ color: 'var(--text-faint)' }}>
-                            ({genElapsed}s)
+                            <ElapsedLabel active={generating} />
                           </span>
                         )}
                       </div>
@@ -4761,7 +4850,7 @@ function StructureModeInner({
                       {genStatus}
                       {generating && (
                         <span className="ml-1 tabular-nums" style={{ color: 'var(--text-faint)' }}>
-                          ({genElapsed}s)
+                          <ElapsedLabel active={generating} />
                         </span>
                       )}
                     </span>
@@ -5258,7 +5347,7 @@ function StructureModeInner({
                 onClose={toggleChat}
                 anchorCandidateId={chatAnchorId}
                 canonTailId={canonPath.length > 0 ? canonPath[canonPath.length - 1].id : null}
-                nodesById={Object.fromEntries(graphNodes.map((n) => [n.id, n]))}
+                nodesById={nodesById}
                 characters={characters}
                 dynamicSuggestions={chatDynamicSuggestions}
               />
@@ -5266,16 +5355,13 @@ function StructureModeInner({
               <div className="min-h-0 flex-1" style={{ display: chatKind === 'production' ? 'flex' : 'none' }}><ProductionChat
                 policy={productionPolicy} setPolicy={setProductionPolicy}
                 nodes={graphNodes} groups={groups}
-                selectedNodeIds={workspace.mode !== 'structure' ? [] : displayNodes.filter((n) => n.selected && n.type !== 'chapterNode').map((n) => n.id)}
-                chapterSelected={workspace.mode === 'structure' && displayNodes.some((n) => n.selected && n.type === 'chapterNode')}
-                beforeExecute={() => workspace.libraryDirty.current ? '未保存の資料があります。保存してから制作を実行してください。' : beatDraftCache.size > 0 ? '未保存のシーンがあります。保存してから制作を実行してください。' : null}
+                selectedNodeIds={productionSelectedStable}
+                chapterSelected={productionChapterSelected}
+                active={chatOpen && chatKind === 'production' && workspace.mode !== 'reader'}
+                beforeExecute={beforeProductionExecute}
                 onManualEdit={setProductionManual}
                 onFollowTarget={followProductionTarget}
-                onChanged={async (operation) => {
-                  await reload(operation.node_id && (operation.action === 'insert_scene' || operation.action === 'branch_scene' || operation.connection?.mode === 'scene') ? await placeCreatedNode(operation.node_id) : undefined)
-                  workspace.changed()
-                  if (operation.action === 'delete_scene') setSelectedId((id) => id === operation.node_id ? null : id)
-                }}
+                onChanged={onProductionChanged}
               /></div>
         </div>, chatHost)}
         {/* 詳細欄の分割線: 1pxの線と上下3pxの当たり判定 */}

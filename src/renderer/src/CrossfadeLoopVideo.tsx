@@ -41,8 +41,11 @@ export function CrossfadeLoopVideo({
 }): React.JSX.Element {
   const videoARef = useRef<HTMLVideoElement | null>(null)
   const videoBRef = useRef<HTMLVideoElement | null>(null)
+  const containerRef = useRef<HTMLDivElement | null>(null)
   const activeIndex = useRef(0)
   const switching = useRef(false)
+  // 画面外(縦読みで何枚も並ぶとき)は再生を止める。デコーダと通信を見えている分だけにする
+  const offscreen = useRef(false)
   // 切り替えの予約。src が変わったとき・外れたときにまとめて取り消す
   const pendingTimers = useRef<number[]>([])
   const pendingFrames = useRef<number[]>([])
@@ -76,14 +79,36 @@ export function CrossfadeLoopVideo({
       second.style.zIndex = '1'
       second.pause()
     }
-    // 見張り: 再生中のはずの 1 枚が止まっていたら再生し直す(隠れているタブでは何もしない)
+    // 見張り: 再生中のはずの 1 枚が止まっていたら再生し直す(隠れているタブ・画面外では何もしない)
     const watchdog = window.setInterval(() => {
-      if (document.visibilityState !== 'visible' || switching.current) return
+      if (document.visibilityState !== 'visible' || switching.current || offscreen.current) return
       const active = (activeIndex.current === 0 ? videoARef : videoBRef).current
       if (active && active.paused && !active.ended) void active.play().catch(() => undefined)
     }, WATCHDOG_MS)
+    // 画面外に出たら止め、戻ったら再生を続ける(切り替え中は触らず、見張りに任せる)
+    const container = containerRef.current
+    const observer =
+      container && typeof IntersectionObserver !== 'undefined'
+        ? new IntersectionObserver(
+            (entries) => {
+              const visible = entries.some((entry) => entry.isIntersecting)
+              offscreen.current = !visible
+              const active = (activeIndex.current === 0 ? videoARef : videoBRef).current
+              if (!active || switching.current) return
+              if (visible) {
+                if (active.paused && !active.ended) void active.play().catch(() => undefined)
+              } else {
+                active.pause()
+              }
+            },
+            { rootMargin: '200px' }
+          )
+        : null
+    observer?.observe(container as Element)
     return () => {
       window.clearInterval(watchdog)
+      observer?.disconnect()
+      offscreen.current = false
       cancelPending()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -145,7 +170,7 @@ export function CrossfadeLoopVideo({
   if (!crossfadeEnabled) {
     // クロスディゾルブ無効(0秒)は素のループ再生
     return (
-      <div className={`${fill ? 'relative h-full w-full' : 'relative max-w-full'} ${className}`}>
+      <div ref={containerRef} className={`${fill ? 'relative h-full w-full' : 'relative max-w-full'} ${className}`}>
         <video
           key={src}
           ref={videoARef}
@@ -162,7 +187,7 @@ export function CrossfadeLoopVideo({
 
   // isolate: 動画の z-index をこのコンテナ内に閉じ込める(本文・コントロールより上に出さない)
   return (
-    <div className={`isolate relative ${fill ? 'h-full w-full' : 'max-w-full'} ${className}`}>
+    <div ref={containerRef} className={`isolate relative ${fill ? 'h-full w-full' : 'max-w-full'} ${className}`}>
       {[0, 1].map((index) => (
         <video
           key={index}

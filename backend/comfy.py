@@ -29,8 +29,9 @@ DEFAULT_NEGATIVE = "text, watermark, signature, blurry, low quality, extra limbs
 
 
 async def health(base_url: str, timeout: float = 2.0) -> bool:
+    # 接続だけは短く待つ(llm.health / tts.health と同じ。停止中に 5 秒ごとの /comfy/status が 2 秒待たない)
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=0.5)) as client:
             res = await client.get(f"{base_url}/system_stats")
             return res.status_code == 200
     except (httpx.HTTPError, OSError):

@@ -22,6 +22,7 @@ export default function CharAvatar({
         src={src}
         alt={char.name}
         data-tip={char.name}
+        decoding="async"
         className="shrink-0 rounded-full object-cover"
         style={style}
       />

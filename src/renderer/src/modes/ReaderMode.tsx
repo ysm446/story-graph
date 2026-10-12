@@ -3,8 +3,8 @@ import { api, assetUrl, isAbortError, isVideoAsset, onRenderSaved, renderStream 
 import { CrossfadeLoopVideo, DEFAULT_VIDEO_CROSSFADE_SECONDS } from '../CrossfadeLoopVideo'
 import { Icon } from '../icons'
 import { FONT_OPTIONS, FONT_SIZES, RenderStyleControls, useRenderStyle } from '../RenderStyle'
-import { cancelTask, enqueueTask, useTasks } from '../tasks'
-import { useElapsedSeconds } from '../useElapsed'
+import { cancelTask, enqueueTask, useAnyTask, type Task } from '../tasks'
+import { ElapsedLabel } from '../ElapsedLabel'
 import { useReadAloud } from '../useReadAloud'
 import VoiceRateSelect from '../VoiceRateSelect'
 import VoiceScriptModal from '../VoiceScriptModal'
@@ -23,6 +23,8 @@ const VIEW_MODES: Array<{ id: ViewMode; label: string; title: string }> = [
 
 // ページモードで文字が流れる速さ(文字/秒)。cps=0 は演出なしで即座に全文表示
 const TYPING_TICK_MS = 16
+// 清書タスクがキューにあるか(useAnyTask 用。モジュールレベルで固定)
+const isRenderTask = (t: Task): boolean => t.label === '清書'
 const TYPING_SPEEDS = [
   { id: 'instant', label: '一気に表示', cps: 0 },
   { id: 'fast', label: '速い', cps: 500 },
@@ -87,7 +89,6 @@ function ReaderMode({
   // 読み上げ(docs/design/voice.md §6)。読んでいる行を本文の中で強調し、ページ・スクロールを追従させる
   const readAloud = useReadAloud()
   const reading = readAloud.state.nodeId !== null
-  const readElapsed = useElapsedSeconds(readAloud.state.phase === 'synth')
   // 自分でページをめくったとき(ボタン・スライダー・矢印キー・目次)。読み上げ中なら、読み上げも
   // そのページの頭から続ける。読み上げが自動でめくるときは setPageIndex を直接使うので、ここは通らない
   const seekToOffset = readAloud.seekToOffset
@@ -105,10 +106,9 @@ function ReaderMode({
     pageIndexRef.current = pageIndex
   }, [pageIndex])
 
-  const renderElapsed = useElapsedSeconds(rendering)
   // キューに清書タスクが残っている間は多重投入させない
   // (rendering は実行が始まるまで立たないので、待機中はキューから引く)
-  const renderQueued = useTasks().some((t) => t.label === '清書')
+  const renderQueued = useAnyTask(isRenderTask)
 
   // 表示設定の復元が済んだか(scroll / page が確定する前にフォーカスを当てると、
   // 直後のモード切替でフォーカスが失われる)
@@ -443,6 +443,19 @@ function ReaderMode({
         setRendering(true)
         setStatus('LLM 準備中…')
         let doneCount = 0
+        // ストリームの本文は 1 フレームに 1 回だけ state に反映する(トークンごとに
+        // setState すると鑑賞画面全体がその回数だけ描き直される)
+        let liveBuffer = ''
+        let liveFrame = 0
+        const flushLive = (): void => {
+          if (liveFrame) cancelAnimationFrame(liveFrame)
+          liveFrame = 0
+          if (liveBuffer) {
+            const chunk = liveBuffer
+            liveBuffer = ''
+            setLiveText((t) => t + chunk)
+          }
+        }
         try {
           await renderStream(
             scopedIds
@@ -453,14 +466,20 @@ function ReaderMode({
                 // 何シーン書くかはサーバー側で決まる(未清書のみ等の絞り込み後)
                 update({ total: e.total })
               } else if (e.scene_start) {
+                // 前のシーンの書きかけが残っていても持ち越さない
+                if (liveFrame) cancelAnimationFrame(liveFrame)
+                liveFrame = 0
+                liveBuffer = ''
                 setLiveNodeId(e.scene_start)
                 setLiveText('')
                 setStatus(`清書中: ${e.title || '(無題)'}`)
                 // 進捗は「いま何件目か」で数える(0/N から始まらないように)
                 update({ detail: e.title || '(無題)', done: doneCount + 1 })
               } else if (e.delta) {
-                setLiveText((t) => t + e.delta)
+                liveBuffer += e.delta
+                if (liveFrame === 0) liveFrame = requestAnimationFrame(flushLive)
               } else if (e.scene_done) {
+                flushLive()
                 setLiveNodeId(null)
                 setLiveText('')
                 doneCount += 1
@@ -744,7 +763,7 @@ function ReaderMode({
               {readAloud.state.lineCount > 0 && `${readAloud.state.lineIndex + 1} / ${readAloud.state.lineCount}`}
               {readAloud.state.paused
                 ? ' 一時停止中'
-                : readAloud.state.phase === 'synth' && ` 合成しています…(${readElapsed}s)`}
+                : readAloud.state.phase === 'synth' && <> 合成しています…<ElapsedLabel active /></>}
             </span>
             <button
               onClick={readAloud.prev}
@@ -908,7 +927,7 @@ function ReaderMode({
             {status}
             {rendering && (
               <span className="ml-1 tabular-nums" style={{ color: 'var(--text-faint)' }}>
-                ({renderElapsed}s)
+                <ElapsedLabel active={rendering} />
               </span>
             )}
           </span>
@@ -971,7 +990,7 @@ function ReaderMode({
                               {isVideoAsset(scene.node.image_path) ? (
                                 <CrossfadeLoopVideo src={img} fadeSeconds={videoFade} fill videoClassName="rounded-2xl" />
                               ) : (
-                                <img src={img} className="max-h-full max-w-full rounded-2xl object-contain" />
+                                <img src={img} decoding="async" className="max-h-full max-w-full rounded-2xl object-contain" />
                               )}
                             </div>
                           )}
@@ -1074,7 +1093,7 @@ function ReaderMode({
                               videoClassName="max-h-[70vh] rounded-2xl"
                             />
                           ) : (
-                            <img src={img!} className="mx-auto max-h-[70vh] max-w-full rounded-2xl md:sticky md:top-4" />
+                            <img src={img!} loading="lazy" decoding="async" className="mx-auto max-h-[70vh] max-w-full rounded-2xl md:sticky md:top-4" />
                           )}
                         </div>
                         <div>{renderProse(scene)}</div>
@@ -1090,7 +1109,7 @@ function ReaderMode({
                               videoClassName="max-h-96 rounded-2xl"
                             />
                           ) : (
-                            <img src={img} className="mx-auto mb-4 max-h-96 max-w-full rounded-2xl" />
+                            <img src={img} loading="lazy" decoding="async" className="mx-auto mb-4 max-h-96 max-w-full rounded-2xl" />
                           ))}
                         {renderProse(scene)}
                       </>
