@@ -244,16 +244,17 @@ class ProductionMiddleware:
                 gate.active = False
 
 
-def tools(allow_write: bool):
+def tools(allow_write: bool, memory: bool = True):
     result = chat_agent.build_tools() + production_library.tools(allow_write) + production_chapters.tools(allow_write)
     if not allow_write:
         return result
-    result.append({"type": "function", "function": {
-        "name": "update_work_memory", "description": "制作の引継ぎメモを全文更新する。方針・決定の根拠・未採用案・課題・次の作業を区別。最大6000文字。物語の本文や保護設定は変更しない。",
-        "parameters": {"type": "object", "properties": {
-            "content": {"type": "string"}, "reason": {"type": "string"}
-        }, "required": ["content", "reason"], "additionalProperties": False}
-    }})
+    if memory:
+        result.append({"type": "function", "function": {
+            "name": "update_work_memory", "description": "制作の引継ぎメモを全文更新する。方針・決定の根拠・未採用案・課題・次の作業を区別。最大6000文字。物語の本文や保護設定は変更しない。",
+            "parameters": {"type": "object", "properties": {
+                "content": {"type": "string"}, "reason": {"type": "string"}
+            }, "required": ["content", "reason"], "additionalProperties": False}
+        }})
     scene = {
         "title": {"type": "string"},
         "beat": {"type": "string", "description": "シーンの本文全文"},
@@ -552,7 +553,7 @@ def build_messages(store, history, message, execute, policy, previous_checkpoint
 
 async def context_usage(store, base_url, messages, execute):
     # 実際に組み立てたプロンプトとツール定義を数える。会話テンプレート分は含まない目安。
-    text = json.dumps(messages, ensure_ascii=False) + "\n" + json.dumps(tools(execute), ensure_ascii=False)
+    text = json.dumps(messages, ensure_ascii=False) + "\n" + json.dumps(tools(execute, production_memory.enabled(store)), ensure_ascii=False)
     counted = await llm.count_tokens(text, base_url=base_url)
     return {"token_count": counted if counted is not None else len(text) // chat_agent.CHAR_PER_TOKEN_FALLBACK,
             "estimated": counted is None, "ctx_size": int(store.get_settings().get("llm_ctx_size") or 16384)}
@@ -580,6 +581,8 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
     stop_detail = ""
     steps_used = 0
     previous_checkpoint = production_memory.read(store)["checkpoint"]
+    # 作業メモを使うかは開始時に決める。オフでは更新ツールを渡さず、終了時の見直しもしない。
+    memory_on = production_memory.enabled(store)
     checkpoint_started = False
     outcome = "interrupted"
 
@@ -645,7 +648,7 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
             result: dict[str, Any] = {}
             last_preview_at = 0.0
             async for kind, value in llm.chat_stream_tools(
-                messages, base_url=base_url, tools=tools(execute), temperature=0.5,
+                messages, base_url=base_url, tools=tools(execute, memory_on), temperature=0.5,
                 max_tokens=3072, label=f"制作チャット({step + 1})", emit_tool_progress=execute,
             ):
                 if kind == "content":
@@ -696,7 +699,10 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
                     if any(monitor.add_note(key, text) for key, text in issues):
                         yield _sse({"stage": "保存結果と依頼を照合しています…"})
                         continue
-                if execute:
+                if execute and not memory_on:
+                    # 通知のyield中に新しい指示を受け付けないよう、終了を確定する。
+                    run.close()
+                elif execute:
                     yield _sse({"stage": "手動修正と作業結果を照合し、作業メモを見直しています…", "active_node": None})
                     try:
                         run.check_epoch(epoch)
@@ -787,6 +793,8 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
                     if name == "update_work_memory":
                         if not execute:
                             raise ValueError("相談中は作業メモを変更できません")
+                        if not memory_on:
+                            raise ValueError("作業メモはオフです。メモは更新せず、依頼された作業を進めてください")
                         run.check_epoch(epoch)
                         payload = production_memory.write(store, args.get("content"), args.get("reason"), "llm", chat_id)
                         history.append({"role": "assistant", "content": "作業メモを更新しました: " + args["reason"],

@@ -1312,6 +1312,8 @@ export interface ProductionInstruction {
 }
 
 export interface ProductionMemory {
+  /** 作業メモを制作に使うか(作品ごとの設定 production_memory_enabled。既定はオフ) */
+  enabled?: boolean
   reviewed_at?: string | null
   review_error?: string | null
   needs_review?: boolean

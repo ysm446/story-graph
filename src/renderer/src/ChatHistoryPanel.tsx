@@ -1,10 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ChatSummary } from './api'
 import type { Character } from './types'
 import CharAvatar from './CharAvatar'
 import { Icon } from './icons'
 
-/** 相談・制作で共用する折りたたみ会話一覧。履歴の保存処理は呼び出し側が持つ。 */
+/** 相談・制作で共用する会話一覧。ボタンの真下にポップオーバーで出す。履歴の保存処理は呼び出し側が持つ。 */
 export default function ChatHistoryPanel({ history, chatId, busy, characters = [], production = false,
   chatLabel, startNewChat, loadChat, deleteChat, commitRename, newChatTip }: {
   history: ChatSummary[]
@@ -46,18 +46,40 @@ export default function ChatHistoryPanel({ history, chatId, busy, characters = [
       window.removeEventListener('keydown', onKey)
     }
   }, [menuOpenId])
+  // 一覧のポップオーバーは、外側のクリックと Escape で閉じる。行の ⋯ メニューや名前変更の
+  // 入力が開いている間の Escape はそちらを閉じるだけにする
+  const rootRef = useRef<HTMLDivElement>(null)
+  const innerOpen = !!menuOpenId || !!renamingId
+  useEffect(() => {
+    if (!historyOpen) return
+    const onDown = (ev: MouseEvent): void => {
+      if (!rootRef.current?.contains(ev.target as Node)) setHistoryOpen(false)
+    }
+    const onKey = (ev: KeyboardEvent): void => {
+      if (ev.key === 'Escape' && !innerOpen) setHistoryOpen(false)
+    }
+    window.addEventListener('mousedown', onDown)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('mousedown', onDown)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [historyOpen, innerOpen])
   return <>
-      <div className="flex min-w-0 shrink-0 items-center gap-2 border-b px-3 py-1" style={{ borderColor: 'var(--border)' }}>
-        <button onClick={() => setHistoryOpen(!historyOpen)} aria-expanded={historyOpen}
+      <div ref={rootRef} className="relative flex min-w-0 shrink-0 items-center gap-2 border-b px-3 py-1" style={{ borderColor: 'var(--border)' }}>
+        <button onClick={() => setHistoryOpen(!historyOpen)} aria-expanded={historyOpen} aria-haspopup="dialog"
           className="shrink-0 rounded-md border px-2 py-0.5 text-[11px]"
-          style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-          data-tip="会話一覧を開閉する">{historyOpen ? '会話一覧を閉じる' : '会話一覧'}</button>
+          style={historyOpen
+            ? { borderColor: 'var(--border-strong)', background: 'var(--accent-soft)', color: 'var(--text)' }
+            : { borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+          data-tip={historyOpen ? '会話一覧を閉じる' : '会話一覧を開く'}>会話一覧</button>
         <span className="min-w-0 flex-1 truncate text-[12px]" style={{ color: 'var(--text)' }}
           data-tip={activeChatLabel}>{activeChatLabel}</span>
-      </div>
-      <aside className="min-h-0 shrink-0 flex-col border-b" style={{ display: historyOpen ? 'flex' : 'none', height: 180, maxHeight: '35%', borderColor: 'var(--border)' }}>
+      {historyOpen && <aside role="dialog" aria-label="会話一覧"
+        className="absolute left-2 right-2 top-full z-50 mt-1 flex max-w-[360px] flex-col rounded-xl border shadow-lg shadow-black/40"
+        style={{ maxHeight: 'min(320px, 60vh)', background: 'var(--bg-card)', borderColor: 'var(--border-strong)' }}>
         <button
-          onClick={startNewChat}
+          onClick={() => { setHistoryOpen(false); startNewChat() }}
           disabled={busy}
           className="m-2 rounded-lg border px-2 py-1 text-[12px] disabled:opacity-50"
           style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
@@ -121,7 +143,7 @@ export default function ChatHistoryPanel({ history, chatId, busy, characters = [
                 ) : (
                   <>
                     <button
-                      onClick={() => void loadChat(h.id)}
+                      onClick={() => { setHistoryOpen(false); void loadChat(h.id) }}
                       disabled={busy}
                       className="flex min-w-0 flex-1 items-center gap-1.5 px-1.5 py-1 text-left disabled:opacity-50"
                       data-tip={production ? chatLabel(h) : `${isRoom ? subLabel + ' / ' : h.char_name ? h.char_name + ' / ' : ''}${production ? '制作' : h.anchor_title || '(シーンなし)'} まで`}
@@ -203,6 +225,7 @@ export default function ChatHistoryPanel({ history, chatId, busy, characters = [
             )
           })}
         </div>
-      </aside>
+      </aside>}
+      </div>
   </>
 }

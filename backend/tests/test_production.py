@@ -31,6 +31,8 @@ def store(tmp_path, monkeypatch):
     root = tmp_path / "library"
     root.mkdir()
     s = Store(db.connect(root / "story-graph.db"), root=str(root))
+    # 既定はオフ。ここのテストは作業メモを使う経路を確かめる(オフは個別のテストで指定)
+    s.set_settings({production_memory.KEY: "1"})
     s.create_character({"id": "aya", "name": "アヤ"})
     s.append_node({"id": "first", "title": "出発", "beat": "村を出る", "cast": ["aya"]})
     s.append_node({"id": "last", "title": "帰還", "beat": "村に戻る", "cast": ["aya"]})
@@ -1187,6 +1189,43 @@ def test_memory_tool_checkpoint_and_new_chat_resume(store, monkeypatch):
     assert "帰還の見直しは次回" in prompts[0][0]["content"]
     assert production_memory.read(store) == memory  # 相談は記録を上書きしない
     assert not any(e["type"] == "memory_add" and "故郷" in str(e) for e in store.list_events("first"))
+
+
+def test_memory_off_skips_note_tool_and_review_but_keeps_checkpoint(store, monkeypatch):
+    import production_memory
+    production_memory.write(store, "## 決定事項\n故郷には戻らない", "初期方針", "user")
+    store.set_settings({production_memory.KEY: "0"})
+    assert production_memory.read(store)["enabled"] is False
+    assert "update_work_memory" not in [t["function"]["name"] for t in production.tools(True, False)]
+    async def no_review(*args, **kwargs):
+        raise AssertionError("オフでは終了時の見直しを呼ばない")
+    monkeypatch.setattr(production_memory, "review", no_review)
+    fake_extraction(monkeypatch)
+    fake_llm(monkeypatch, [
+        call("update_work_memory", {"content": "書き換え", "reason": "オフなのに更新"}),
+        call("update_scene", {"node_id": "first", "beat": "和解を目指して旅立つ", "reason": "動機を補強"}),
+        {"content": "出発を修正しました。"},
+    ])
+    events = run(collect(store, True))
+    memory = production_memory.read(store)
+    assert memory["revision"] == 1 and memory["content"].endswith("故郷には戻らない")  # メモは残り、書き換わらない
+    assert memory["checkpoint"]["status"] == "completed" and len(memory["checkpoint"]["changes"]) == 1
+    assert store.get_node("first")["beat"] == "和解を目指して旅立つ"
+    assert not any("作業メモを見直し" in e.get("stage", "") + e.get("delta", "") for e in events)
+    prompts = []
+    async def model(messages, **kwargs):
+        prompts.append(messages)
+        yield "done", {"content": "続きを確認しました"}
+    monkeypatch.setattr(llm, "chat_stream_tools", model)
+    run(collect(store, False))
+    system = prompts[0][0]["content"]
+    assert "故郷には戻らない" not in system and "未反映の現在との差分" not in system
+    assert "出発を修正しました。" in system  # 前回の作業記録は引き継ぐ
+    # オンに戻すと保存済みのメモを続きから使う
+    store.set_settings({production_memory.KEY: "1"})
+    prompts.clear()
+    run(collect(store, False))
+    assert "故郷には戻らない" in prompts[0][0]["content"]
 
 
 def test_readonly_cannot_update_work_memory(store, monkeypatch):

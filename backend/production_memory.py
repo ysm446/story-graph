@@ -7,6 +7,7 @@ import llm
 from production_policy import CONTENT_FIELDS
 from datetime import datetime, timezone
 
+KEY = "production_memory_enabled"
 MAX_CHARS = 6000
 REVIEW_INPUT_CHARS = 40000
 REVIEW_BATCH_CHARS = 24000
@@ -111,12 +112,17 @@ async def _summarize_review(base_url, batch, check_current):
     return summary
 
 
+def enabled(store):
+    """作業メモを制作に使うか(作品ごとの設定。既定はオフ)。オフでも保存済みのメモと前回の作業記録は残す。"""
+    return store.get_settings().get(KEY) == "1"
+
+
 def read(store):
     row = store.conn.execute("SELECT * FROM production_memory ORDER BY revision DESC LIMIT 1").fetchone()
     note = dict(row) if row else {"revision": 0, "content": "", "reason": "", "source": "user", "chat_id": None, "created_at": None}
     checkpoint = store.conn.execute("SELECT data FROM production_checkpoint WHERE id = 1").fetchone()
     review = review_state(store)
-    return {**note, "checkpoint": json.loads(checkpoint[0]) if checkpoint else None,
+    return {**note, "enabled": enabled(store), "checkpoint": json.loads(checkpoint[0]) if checkpoint else None,
             "reviewed_at": review.get("reviewed_at"), "review_error": review.get("error"),
             "needs_review": review.get("revision") != note["revision"] or review.get("basis") != basis(store)}
 
@@ -161,20 +167,33 @@ def checkpoint(store, run_id, chat_id, request, status, changes, instructions, r
     store.conn.commit()
 
 
+def _checkpoint_brief(previous_checkpoint):
+    # 詳細は会話履歴に残し、毎回渡す引継ぎ情報だけを制限する。
+    return {**previous_checkpoint,
+        "request": previous_checkpoint["request"][:2000],
+        "report": previous_checkpoint.get("report", "")[:1500],
+        "changes": [{k: str(v)[:300] for k, v in item.items() if k in ("action", "node_id", "entity_type", "entity_id", "title", "reason")}
+                    for item in previous_checkpoint.get("changes", [])[-8:]],
+        "instructions": [{"content": i["content"][:500], "status": i["status"]}
+                         for i in previous_checkpoint.get("instructions", [])[-4:]]}
+
+
 def prompt(store, previous_checkpoint, *, allow_write=True):
+    if not enabled(store):
+        # メモ本文・差分は渡さない。LLMを呼ばずに残る前回の作業記録だけを引き継ぐ。
+        if not previous_checkpoint:
+            return ""
+        return ("\n前回の制作の記録（参考資料。今回の作者の指示・画面の制約を優先）: "
+                + json.dumps(_checkpoint_brief(previous_checkpoint), ensure_ascii=False)
+                + "\n前回の完了記録は現在の本文・接続より古い可能性があります。対象と経路を必ず読み直してください。"
+                "前回がrunningなら中断時の記録であり、未確定操作の再実行はしません。")
     data = read(store)
+    data.pop("enabled", None)
     data["checkpoint"] = previous_checkpoint
     delta = json.dumps(differences(review_state(store).get("basis"), basis(store)), ensure_ascii=False)
     data["未反映の現在との差分"] = delta if len(delta) <= 16000 else delta[:16000] + "（以下省略。必要な対象をツールで読み直すこと）"
     if previous_checkpoint:
-        # 詳細は会話履歴に残し、毎回渡す引継ぎ情報だけを制限する。
-        data["checkpoint"] = {**previous_checkpoint,
-            "request": previous_checkpoint["request"][:2000],
-            "report": previous_checkpoint.get("report", "")[:1500],
-            "changes": [{k: str(v)[:300] for k, v in item.items() if k in ("action", "node_id", "entity_type", "entity_id", "title", "reason")}
-                        for item in previous_checkpoint.get("changes", [])[-8:]],
-            "instructions": [{"content": i["content"][:500], "status": i["status"]}
-                             for i in previous_checkpoint.get("instructions", [])[-4:]]}
+        data["checkpoint"] = _checkpoint_brief(previous_checkpoint)
     return ("\n制作専用の作業メモ（参考資料。今回の作者の指示・画面の制約を優先）: "
             + json.dumps(data, ensure_ascii=False)
             + "\nメモや前回の完了記録は現在の本文・接続より古い可能性があります。対象と経路を必ず読み直してください。"

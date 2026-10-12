@@ -34,6 +34,8 @@ def store(tmp_path, monkeypatch):
     root = tmp_path / "library"
     root.mkdir()
     s = Store(db.connect(root / "story-graph.db"), root=str(root))
+    # 既定はオフ。終了時の見直しを含む経路を確かめるためオンにする
+    s.set_settings({production_memory.KEY: "1"})
     s.create_character({"id": "aya", "name": "アヤ"})
     s.append_node({"id": "first", "title": "出発", "beat": "村を出る。", "cast": ["aya"]})
     s.append_node({"id": "last", "title": "帰還", "beat": "村に戻る。", "cast": ["aya"]})

@@ -39,6 +39,7 @@ async def main():
     root = ROOT / "data" / ("production-check-" + uuid.uuid4().hex[:8])
     root.mkdir(parents=True)
     store = Store(db.connect(root / "story-graph.db"), root=str(root))
+    store.set_settings({"production_memory_enabled": "1"})  # 既定はオフ。検証は作業メモを使う経路で行う
     # 小さい物語なのでFTSだけで確認し、埋め込みモデルの初回取得を避ける。
     embed.available = lambda: False
     embed.is_ready = lambda: False
@@ -104,6 +105,7 @@ async def main():
             assert production_memory.read(store)["revision"] > 0
             store.conn.close()
             store = Store(db.connect(root / "story-graph.db"), root=str(root))
+            store.set_settings({"production_memory_enabled": "1"})  # 既定はオフ。検証は作業メモを使う経路で行う
             previous_chat = events[0]["chat_id"]
             following = []
             async for raw in production_agent.stream(store, args.base_url, None,

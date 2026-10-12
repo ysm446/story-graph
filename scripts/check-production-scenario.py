@@ -130,6 +130,7 @@ async def main():
     root = ROOT / "data" / ("production-scenario-" + uuid.uuid4().hex[:8])
     root.mkdir(parents=True)
     store = Store(db.connect(root / "story-graph.db"), root=str(root))
+    store.set_settings({"production_memory_enabled": "1"})  # 既定はオフ。検証は作業メモを使う経路で行う
     embed.available = lambda: False
     embed.is_ready = lambda: False
     seed(store)
@@ -396,6 +397,7 @@ async def main():
         node_operations.update(store, "d01", {"beat": store.get_node("d01")["beat"] + "手紙は燃やさず保管する。"})
         store.conn.close()
         store = Store(db.connect(root / "story-graph.db"), root=str(root))
+        store.set_settings({"production_memory_enabled": "1"})  # 既定はオフ。検証は作業メモを使う経路で行う
         before = bodies(store)
         await turn("04-resume", "作業メモにある次の作業を進めてください。現在の本文の内容は残してください。", policy=production.ProductionPolicy(store, allowed_ids=["d01"], protected_ids=["n34"]))
         assert {nid for nid in before if before[nid] != bodies(store)[nid]} == {"d01"}

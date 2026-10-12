@@ -44,6 +44,7 @@ async def main():
     root = ROOT / "data" / ("production-library-branch-" + uuid.uuid4().hex[:8])
     root.mkdir(parents=True)
     store = Store(db.connect(root / "story-graph.db"), root=str(root))
+    store.set_settings({"production_memory_enabled": "1"})  # 既定はオフ。検証は作業メモを使う経路で行う
     embed.available = lambda: False
     embed.is_ready = lambda: False
     seed(store)

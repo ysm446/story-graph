@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef, useState } from 'react'
-import { productionApi, type ProductionMemory } from './api'
+import { api, productionApi, type ProductionMemory } from './api'
 import { Markdown } from './Markdown'
 
 const memoryDate = (value: string): string => new Date(value).toLocaleString('ja-JP', { hour12: false })
@@ -53,22 +53,45 @@ function ProductionMemoryPanel({ busy, refresh, onDirty, onChanged }: {
     } catch (e) { setError(String(e)) }
     finally { setSaving(false) }
   }
+  const enabled = !!memory?.enabled
+  // 作品ごとの設定。オフでも保存済みのメモと前回の作業記録は残す。
+  const toggle = async (): Promise<void> => {
+    if (busy || saving || editing || !memory) return
+    setSaving(true); setError(''); setNotice('')
+    try {
+      await api.putSettings({ production_memory_enabled: enabled ? '0' : '1' })
+      setMemory(await productionApi.memory())
+      onChanged()
+    } catch (e) { setError(String(e)) }
+    finally { setSaving(false) }
+  }
   const button = 'rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-50'
   const style = { borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }
   return <details onToggle={(event) => {
     if (event.currentTarget.open) void productionApi.memory().then(setMemory).catch((e) => setError(String(e)))
   }} className="rounded-lg border px-3 py-1.5 text-[12px]" style={{ borderColor: 'var(--border)', background: 'var(--bg-elevated)' }}>
-    <summary className="cursor-pointer" data-tip="新しい制作の会話でも引き継ぐ方針と、前回の作業記録です">作業メモ{memory?.revision ? ` · 第${memory.revision}版` : ''}</summary>
+    <summary className="cursor-pointer" data-tip="新しい制作の会話でも引き継ぐ方針と、前回の作業記録です">作業メモ{memory && !enabled ? ' · オフ' : memory?.revision ? ` · 第${memory.revision}版` : ''}</summary>
     <div className="inspector-scrollbar mt-2 flex max-h-72 flex-col gap-2 overflow-y-auto">
-      <p className="text-[11px]" style={{ color: 'var(--text-dim)' }}>この作品の制作だけで共有します。現在のシーンと接続を優先し、キャラクターの記憶には含めません。</p>
-      <p className="text-[11px]" style={{ color: 'var(--text-dim)' }}>制作の終了時に、手動修正を含む差分と照合します。相談中や手動編集直後には自動更新しません。</p>
+      <div>
+        <button type="button" aria-pressed={enabled} disabled={busy || saving || editing || !memory} onClick={() => void toggle()}
+          className="rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-50"
+          style={enabled
+            ? { borderColor: 'var(--border-strong)', background: 'var(--accent-soft)', color: 'var(--text)' }
+            : { borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }}
+          data-tip={busy ? '制作が終わるか停止してから切り替えられます' : editing ? 'メモの編集を終えてから切り替えられます' : 'オンにすると、メモを制作に渡し、制作中の更新と終了時の見直しを行います。この作品だけの設定です'}>
+          {enabled ? '☑' : '☐'} 作業メモを使う</button>
+      </div>
+      {enabled ? <>
+        <p className="text-[11px]" style={{ color: 'var(--text-dim)' }}>この作品の制作だけで共有します。現在のシーンと接続を優先し、キャラクターの記憶には含めません。</p>
+        <p className="text-[11px]" style={{ color: 'var(--text-dim)' }}>制作の終了時に、手動修正を含む差分と照合します。相談中や手動編集直後には自動更新しません。</p>
+      </> : <p className="text-[11px]" style={{ color: 'var(--text-dim)' }}>オフのあいだは、メモを制作に渡さず、制作中の更新と終了時の見直しも行いません。保存済みのメモは残り、前回の作業記録は引き続き使います。</p>}
       {memory?.created_at && <p className="text-[11px]" style={{ color: 'var(--text-faint)' }}>内容更新: {memoryDate(memory.created_at)}</p>}
       {memory?.reviewed_at && <p className="text-[11px]" style={{ color: 'var(--text-faint)' }}>最終照合: {memoryDate(memory.reviewed_at)}</p>}
-      {memory?.needs_review && <p className="text-[11px]" style={{ color: 'var(--text-dim)' }}>現在の内容との照合が必要です。次の制作で作業メモを見直します。</p>}
+      {enabled && memory?.needs_review && <p className="text-[11px]" style={{ color: 'var(--text-dim)' }}>現在の内容との照合が必要です。次の制作で作業メモを見直します。</p>}
       {memory?.review_error && <p role="alert" className="text-[11px]" style={{ color: 'var(--danger)' }}>{memory.review_error}</p>}
       {editing ? <textarea aria-label="制作の作業メモ" value={draft} disabled={busy || saving} maxLength={6000} rows={9}
         onChange={(e) => setDraft(e.target.value)} className="inspector-scrollbar w-full rounded-md border px-2 py-0.5 text-[12px] outline-none"
-        style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }} /> : <Markdown text={memory?.content || 'まだ作業メモはありません。制作中に方針や次の作業を記録します。'} />}
+        style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }} /> : <Markdown text={memory?.content || (enabled ? 'まだ作業メモはありません。制作中に方針や次の作業を記録します。' : 'まだ作業メモはありません。')} />}
       <div className="flex flex-wrap gap-2">
         {editing ? <>
           <button className={button} style={style} disabled={busy || saving} onClick={() => void save()} data-tip="作業メモを保存します">メモを保存</button>
