@@ -72,6 +72,58 @@ def selected_nodes(store, node_ids):
     return result
 
 
+READ_STEP_LABELS = {
+    "get_beats": "シーン本文を読む",
+    "get_state": "人物の状態を読む",
+    "search_memories": "記憶を検索",
+    "read_library": "資料庫を読む",
+    "read_chapters": "章の構成を読む",
+    "search_setting_documents": "設定資料を検索",
+    "read_setting_document": "設定資料を読む",
+}
+
+
+def read_step(store, name, args, *, repeated=False, error=None):
+    """読み取りの手順を、画面の時系列に出す1行にまとめる。本文は含めず、何を読んだかだけ残す。
+
+    履歴に保存するが、LLM へ渡す会話には入れない(build_messages で除く)。
+    """
+    def title(node_id):
+        node = store.get_node(node_id) if isinstance(node_id, str) else None
+        return (node or {}).get("title") or "(無題)"
+    detail = ""
+    try:
+        if name == "get_beats":
+            ids = [i for i in (args.get("node_ids") or []) if isinstance(i, str)]
+            if ids:
+                detail = "、".join(title(i) for i in ids[:4]) + (f" ほか{len(ids) - 4}件" if len(ids) > 4 else "")
+            elif args.get("from_index") or args.get("to_index"):
+                detail = f"{args.get('from_index') or 1}〜{args.get('to_index') or '末尾'}番"
+            else:
+                detail = "全体"
+        elif name == "get_state":
+            detail = title(args["node_id"]) + " の時点" if args.get("node_id") else "正史の末尾の時点"
+        elif name == "read_library":
+            kind = "場所" if args.get("kind") == "place" else "キャラクター"
+            item = (store.get_place(args["id"]) if args.get("kind") == "place" else store.get_character(args["id"])) if args.get("id") else None
+            detail = f"{kind}「{item['name']}」" if item else f"{kind}の一覧" if not args.get("id") else f"{kind}({args['id']})"
+        elif name in ("search_memories", "search_setting_documents"):
+            detail = f"「{args.get('query') or ''}」"
+        elif name == "read_setting_document":
+            item = store.conn.execute("SELECT title FROM setting_documents WHERE id = ?", (args.get("id"),)).fetchone() if args.get("id") else None
+            detail = f"「{item[0]}」" if item else str(args.get("id") or "")
+    except Exception:
+        detail = ""
+    if not detail and name not in READ_STEP_LABELS:
+        detail = json.dumps(args, ensure_ascii=False)[:80]
+    step = {"name": name, "label": READ_STEP_LABELS.get(name, name), "detail": detail}
+    if repeated:
+        step["repeated"] = True
+    if error:
+        step["error"] = str(error)[:300]
+    return step
+
+
 def selection_context(selection):
     return "\nこの発言の送信時に選択していたノード（参照対象。編集許可ではありません）: " + json.dumps(selection, ensure_ascii=False)
 
@@ -532,8 +584,10 @@ def build_messages(store, history, message, execute, policy, previous_checkpoint
                "選択なしで対象が不明なら推測せず確認し、複数選択で単数の対象が曖昧な場合も確認してください。"
                "過去の発言の選択を今回の選択として扱わないでください。変更範囲・保護指定は選択より優先です。")
     # 各ステップで最新図を作り、本文を含むツール結果は直近だけ保持する。
+    # step は読み取りの手順の記録(画面の時系列用)。LLM へ渡す会話には入れない。
     conversation = [{"role": m["role"], "content": message_content(m)} for m in history
                     if m.get("role") in ("user", "assistant") and not m.get("operation") and not m.get("snapshot")
+                    and not m.get("step")
                     and m.get("instruction", {}).get("status") != "unapplied"][-12:]
     messages = [{"role": "system", "content": system}, *conversation]
     messages.append({"role": "user", "content": "今回の依頼: " + message + selection_context(selection or []) + "\n今回の実行記録: "
@@ -840,12 +894,19 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
                     else:
                         # 読み取り。同じ取得は2回目に前回の結果を返し、3回目で止める(相談・実行とも)。
                         payload = monitor.repeated_read(name, args)
+                        repeated_read = payload is not None
                         if payload is None:
                             payload = (production_library.read(store, args) if name == "read_library"
                                        else production_chapters.read(store) if name == "read_chapters"
                                        else chat_agent.dispatch_tool(store, name, args, store.canon_path(), "all"))
                             monitor.note_read(name, args, payload)
-                        if isinstance(payload, dict) and payload.get("error"):
+                        read_error = payload.get("error") if isinstance(payload, dict) else None
+                        # 何を読んだかを時系列に残す(作者が LLM の動きを追えるように)。本文は残さない。
+                        step = read_step(store, name, args, repeated=repeated_read, error=read_error)
+                        history.append({"role": "assistant", "content": "", "step": step})
+                        store.save_chat_messages(chat_id, history)
+                        yield _sse({"step": step})
+                        if read_error:
                             payload["error"], stalled = tally_error(name, str(payload["error"]))
                             yield _sse({"tool_error": stalled or payload["error"]})
                         else:
@@ -934,7 +995,7 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
     finally:
         run.close()  # 未反映の指示を「未反映のまま終了」にしてから記録する。
         if checkpoint_started:
-            report = next((m["content"] for m in reversed(history) if m.get("role") == "assistant" and not m.get("operation") and not m.get("snapshot") and not m.get("memory_revision") and not m.get("memory_review")), "")
+            report = next((m["content"] for m in reversed(history) if m.get("role") == "assistant" and not m.get("step") and not m.get("operation") and not m.get("snapshot") and not m.get("memory_revision") and not m.get("memory_review")), "")
             save_checkpoint(outcome, report)
         request_message["policy_after"] = policy.spec()
         if gate.run is run:

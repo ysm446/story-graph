@@ -1349,10 +1349,20 @@ export interface ProductionEvent {
   tool_error?: string
   /** 記録用。ツール名と対象 ID だけ(本文は含まない) */
   tool_call?: { name: string; target?: string | null }
+  step?: ProductionStep
   done?: boolean
   /** done に付く終了理由と要約(実行時のみ)。completed / limit / stalled / empty / truncated */
   outcome?: string
   summary?: string | null
+}
+
+/** 読み取りの手順の記録(制作チャットの時系列に出す)。本文は含まない */
+export interface ProductionStep {
+  name: string
+  label: string
+  detail: string
+  repeated?: boolean
+  error?: string
 }
 
 export interface ProductionSelectedNode {

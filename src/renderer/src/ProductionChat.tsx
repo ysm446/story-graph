@@ -5,7 +5,7 @@ import ChatRulesPanel from './ChatRulesPanel'
 import ProductionPreviewPanel from './ProductionPreviewPanel'
 import AutoTextarea from './AutoTextarea'
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { chatApi, isAbortError, productionApi, type ChatSummary, type ProductionInstruction, type ProductionPolicy, type ProductionOperation, type ProductionSelectedNode } from './api'
+import { chatApi, isAbortError, productionApi, type ChatSummary, type ProductionInstruction, type ProductionPolicy, type ProductionOperation, type ProductionSelectedNode, type ProductionStep } from './api'
 import { Markdown } from './Markdown'
 import { showStatusNotice } from './statusNotice'
 import { setProductionPreview } from './productionPreview'
@@ -30,6 +30,12 @@ interface Message {
   operation?: ProductionOperation
   snapshot?: Snapshot
   instruction?: ProductionInstruction['instruction']
+  /** 読み取りの手順(何を読んだか)。LLM には渡らない、時系列の表示用の記録 */
+  step?: ProductionStep
+  /** 途中指示の照合・作業メモの更新や見直しの通知 */
+  instruction_review?: boolean
+  memory_review?: boolean
+  memory_revision?: number
 }
 
 const operationLabels = { insert_scene: '追加', branch_scene: '分岐を追加', update_scene: '編集', delete_scene: '削除', reconnect_scene: 'つなぎ替え',
@@ -58,48 +64,92 @@ function elapsedText(ms: number): string {
   return minutes ? `${minutes}分${seconds}秒` : `${seconds}秒`
 }
 
-/** 発言の一覧。入力や進捗表示のたびに全発言を描き直さないよう、発言が変わったときだけ更新する。 */
+/** 時系列の1項目(左の線と丸 + 見出し + 中身)。丸の色で種類を示す。配置は index.css の timeline-item */
+function TimelineItem({ color, label, time, children, pulse = false }: {
+  color: string; label: React.ReactNode; time?: string; children?: React.ReactNode; pulse?: boolean
+}): React.JSX.Element {
+  return (
+    <div className="timeline-item">
+      <span className={`timeline-dot${pulse ? ' animate-pulse' : ''}`} style={{ background: color }} />
+      <div className="text-[11px]" style={{ color: 'var(--text-faint)' }}>
+        {label}
+        {messageTime(time) && <time dateTime={time} className="ml-2 tabular-nums" data-tip={new Date(time!).toLocaleString('ja-JP')}>{messageTime(time)}</time>}
+      </div>
+      {children}
+    </div>
+  )
+}
+
+/** 発言の一覧。入力や進捗表示のたびに全発言を描き直さないよう、発言が変わったときだけ更新する。
+ *  作者の発言は右寄せの吹き出し、制作側(読み取り・操作・報告)は時系列の線と丸で並べる。 */
 const MessageList = memo(function MessageList({ messages, nodes, groups }: {
   messages: Message[]; nodes: StoryNode[]; groups: Group[]
 }): React.JSX.Element {
   return (
     <>
-      {messages.map((m, i) => (
-        <div key={i} className={`mb-2 rounded-lg border px-3 py-1.5 ${m.role === 'user' ? 'ml-auto w-fit max-w-[85%] [overflow-wrap:anywhere]' : ''}`} style={{
-          background: m.role === 'user' ? 'var(--accent-soft)' : 'var(--bg-elevated)', borderColor: 'var(--border)'
-        }}>
-          <div className="mb-1 text-[11px]" style={{ color: 'var(--text-faint)' }}>
-            {m.instruction ? `途中指示・${({ accepted: '受け付けました', reflected: '次の判断に反映しました', unapplied: '未反映のまま終了しました' })[m.instruction.status]}` : m.operation ? `${operationLabels[m.operation.action]}: ${m.operation.title || '(無題)'}` : m.role === 'user' ? 'あなた' : '制作'}
-            {/* 相談と実行の発言が混ざるので、作品を書き換えた依頼には印を付ける */}
-            {m.role === 'user' && m.execute === true && !m.instruction && <span className="ml-2" style={{ color: 'var(--execute)' }}>制作を実行</span>}
-            {messageTime(m.created_at) && <time dateTime={m.created_at} className="ml-2 tabular-nums" data-tip={new Date(m.created_at!).toLocaleString('ja-JP')}>{messageTime(m.created_at)}</time>}
+      {messages.map((m, i) => {
+        if (m.role === 'user') return (
+          <div key={i} className="mb-2 ml-auto w-fit max-w-[85%] rounded-lg border px-3 py-1.5 [overflow-wrap:anywhere]" style={{
+            background: 'var(--accent-soft)', borderColor: 'var(--border)'
+          }}>
+            <div className="mb-1 text-[11px]" style={{ color: 'var(--text-faint)' }}>
+              {m.instruction ? `途中指示・${({ accepted: '受け付けました', reflected: '次の判断に反映しました', unapplied: '未反映のまま終了しました' })[m.instruction.status]}` : 'あなた'}
+              {/* 相談と実行の発言が混ざるので、作品を書き換えた依頼には印を付ける */}
+              {m.execute === true && !m.instruction && <span className="ml-2" style={{ color: 'var(--execute)' }}>制作を実行</span>}
+              {messageTime(m.created_at) && <time dateTime={m.created_at} className="ml-2 tabular-nums" data-tip={new Date(m.created_at!).toLocaleString('ja-JP')}>{messageTime(m.created_at)}</time>}
+            </div>
+            {/* 送信時の条件は、既定でないときだけ出す(全体・保護なし・選択なしを毎回出すと本文が読みにくい)。
+                変更範囲と保護は相談では使われないので、相談の発言には出さない */}
+            {m.policy && m.execute !== false && (m.policy.allowed_ids !== null || m.policy.group_id !== null || m.policy.protected_ids.length > 0) &&
+              <p className="mb-1 text-[11px]" style={{ color: 'var(--text-dim)' }}>{m.policy_label || policySummary(m.policy, nodes, groups)}</p>}
+            {!!m.selected_nodes?.length && <p className="mb-1 text-[11px]" style={{ color: 'var(--text-dim)' }}>
+              送信時の選択: {m.selected_nodes.map((node) => node.title).join('、')}
+            </p>}
+            <Markdown text={m.content} />
           </div>
-          {/* 送信時の条件は、既定でないときだけ出す(全体・保護なし・選択なしを毎回出すと本文が読みにくい)。
-              変更範囲と保護は相談では使われないので、相談の発言には出さない */}
-          {m.policy && m.execute !== false && (m.policy.allowed_ids !== null || m.policy.group_id !== null || m.policy.protected_ids.length > 0) &&
-            <p className="mb-1 text-[11px]" style={{ color: 'var(--text-dim)' }}>{m.policy_label || policySummary(m.policy, nodes, groups)}</p>}
-          {!!m.selected_nodes?.length && <p className="mb-1 text-[11px]" style={{ color: 'var(--text-dim)' }}>
-            送信時の選択: {m.selected_nodes.map((node) => node.title).join('、')}
-          </p>}
-          {m.operation && 'entity_id' in m.operation && <details className="mb-1 text-[11px]" style={{ color: 'var(--text-dim)' }}>
-            <summary className="cursor-pointer">{m.operation.entity_type === 'chapter' ? '章の変更内容' : '資料庫の変更内容'}</summary>
-            {Object.keys(m.operation.after ?? m.operation.before ?? {}).filter((field) =>
-              m.operation && 'entity_id' in m.operation && m.operation.before?.[field] !== m.operation.after?.[field]
-            ).map((field) => {
-              const operation = m.operation
-              if (!operation || !('entity_id' in operation)) return null
-              return <p key={field} className="whitespace-pre-wrap break-words">{libraryFieldLabels[field] ?? field}: {operation.before?.[field] || '（未設定）'} → {operation.after?.[field] || '（未設定）'}</p>
-            })}
-          </details>}
-          {m.operation?.connection && <p className="mb-1 text-[11px]" style={{ color: 'var(--text-dim)' }}>
-            {m.operation.connection.mode === 'scene' ? '1シーンを移動' : '枝ごと親を変更'}: {m.operation.connection.old_parent_title || '接続なし'} → {m.operation.connection.parent_title || m.operation.connection.parent_id} の後
-          </p>}
-          <Markdown text={m.content} />
-          {m.snapshot && <p className="mt-1 text-[11px]" style={{ color: 'var(--text-dim)' }}>
-            保存名: {m.snapshot.label}。設定のスナップショット一覧から戻せます（ライブラリ全体の復元）。
-          </p>}
-        </div>
-      ))}
+        )
+        // 読み取りの手順: 何を読んだかを1行で。本文は出さない
+        if (m.step) return (
+          <TimelineItem key={i} time={m.created_at} color={m.step.error ? 'var(--danger)' : 'var(--text-faint)'}
+            label={<span data-step={m.step.name} style={{ color: 'var(--text-dim)' }}>{m.step.label}{m.step.detail ? `: ${m.step.detail}` : ''}{m.step.repeated ? '(前回の結果を再利用)' : ''}</span>}>
+            {m.step.error && <p className="text-[11px] [overflow-wrap:anywhere]" style={{ color: 'var(--danger)' }}>{m.step.error}</p>}
+          </TimelineItem>
+        )
+        // 確定した操作: 作品が実際に変わった印として緑の丸。変更内容は折りたたむ
+        if (m.operation) {
+          const operation = m.operation
+          return (
+            <TimelineItem key={i} time={m.created_at} color="var(--ok)"
+              label={<span style={{ color: 'var(--text)' }}>{operationLabels[operation.action]}: {operation.title || '(無題)'}</span>}>
+              {'entity_id' in operation && <details className="mb-1 text-[11px]" style={{ color: 'var(--text-dim)' }}>
+                <summary className="cursor-pointer">{operation.entity_type === 'chapter' ? '章の変更内容' : '資料庫の変更内容'}</summary>
+                {Object.keys(operation.after ?? operation.before ?? {}).filter((field) => operation.before?.[field] !== operation.after?.[field]).map((field) =>
+                  <p key={field} className="whitespace-pre-wrap break-words">{libraryFieldLabels[field] ?? field}: {operation.before?.[field] || '（未設定）'} → {operation.after?.[field] || '（未設定）'}</p>)}
+              </details>}
+              {operation.connection && <p className="mb-1 text-[11px]" style={{ color: 'var(--text-dim)' }}>
+                {operation.connection.mode === 'scene' ? '1シーンを移動' : '枝ごと親を変更'}: {operation.connection.old_parent_title || '接続なし'} → {operation.connection.parent_title || operation.connection.parent_id} の後
+              </p>}
+              <Markdown text={m.content} />
+            </TimelineItem>
+          )
+        }
+        if (m.snapshot) return (
+          <TimelineItem key={i} time={m.created_at} color="var(--text-faint)" label="スナップショット">
+            <Markdown text={m.content} />
+            <p className="mt-1 text-[11px]" style={{ color: 'var(--text-dim)' }}>
+              保存名: {m.snapshot.label}。設定のスナップショット一覧から戻せます（ライブラリ全体の復元）。
+            </p>
+          </TimelineItem>
+        )
+        // 途中指示の照合・作業メモの通知はアクセント色、LLM の文章(回答・報告)は灰色
+        const notice = m.instruction_review || m.memory_review || m.memory_revision !== undefined
+        return (
+          <TimelineItem key={i} time={m.created_at} color={notice ? 'var(--accent)' : 'var(--text-dim)'}
+            label={m.instruction_review ? '途中指示の照合' : m.memory_review || m.memory_revision !== undefined ? '作業メモ' : '制作'}>
+            <Markdown text={m.content} />
+          </TimelineItem>
+        )
+      })}
     </>
   )
 })
@@ -343,6 +393,10 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
               setMessages((prev) => [...prev, { role: 'assistant', content: `作業メモを更新しました: ${event.memory!.reason}`, created_at }])
             }
             if (event.instruction) recordInstruction(event.instruction)
+            if (event.step) {
+              const step = event.step
+              setMessages((prev) => [...prev, { role: 'assistant', content: '', step, created_at }])
+            }
             if (event.delta) { text += event.delta; setLive(text) }
             if (event.response_end) { setProductionPreview(null); flush() }
             if (event.stage) { setStatus(event.stage); setStatusAt(created_at); update({ detail: event.stage }) }
@@ -477,7 +531,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
           スクロールの有無にかかわらず発言の右端は上のパネルや入力欄と揃う(16 = バー10 + 余白6) */}
       <div className="inspector-scrollbar -mr-4 min-h-0 flex-1 overflow-y-auto pr-1.5 [scrollbar-gutter:stable]" aria-live="polite">
         <MessageList messages={messages} nodes={nodes} groups={groups} />
-        {live && <Markdown text={live} />}
+        {live && <TimelineItem color="var(--text-dim)" label="制作" pulse><Markdown text={live} /></TimelineItem>}
         {!busy && !error && suggestions.length > 0 && <div aria-label="制作の依頼候補" className="my-2 flex flex-wrap gap-1.5">
           {suggestions.map((suggestion) => <button key={suggestion.label} type="button" disabled={!!input.trim()}
             onClick={() => {

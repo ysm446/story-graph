@@ -342,6 +342,39 @@ async def collect(store, execute):
     )]
 
 
+def test_read_steps_are_recorded_for_the_timeline_but_not_sent_to_llm(store, monkeypatch):
+    prompts = []
+    responses = iter([
+        call("get_beats", {"node_ids": ["first"]}),
+        call("read_library", {"kind": "character", "id": "aya"}),
+        {"content": "確認しました"},
+    ])
+    async def stream(messages, **kwargs):
+        prompts.append(messages)
+        item = next(responses)
+        if item.get("content"):
+            yield "content", item["content"]
+        yield "done", item
+    monkeypatch.setattr(llm, "chat_stream_tools", stream)
+    events = run(collect(store, False))
+    steps = [e["step"] for e in events if "step" in e]
+    assert [(s["name"], s["label"], s["detail"]) for s in steps] == [
+        ("get_beats", "シーン本文を読む", "出発"), ("read_library", "資料庫を読む", "キャラクター「アヤ」")]
+    saved = store.get_chat(events[0]["chat_id"])["messages"]
+    assert [m["step"]["name"] for m in saved if m.get("step")] == ["get_beats", "read_library"]
+    assert all(m["content"] == "" and m.get("created_at") for m in saved if m.get("step"))
+    # 手順の記録は LLM へ渡す会話に入れない(空の発言として紛れ込ませない)
+    assert all(m["content"] for m in prompts[-1])
+    assert "シーン本文を読む" not in json.dumps(prompts[-1], ensure_ascii=False)
+    monkeypatch.setattr(llm, "chat_stream_tools", stream)
+    responses = iter([{"content": "続きを確認しました"}])
+    async def follow_up():
+        return [json.loads(s.removeprefix("data: ")) async for s in production.stream(
+            store, "fake", events[0]["chat_id"], "続けて", False, lambda: None)]
+    run(follow_up())
+    assert all(m["content"] for m in prompts[-1]) and "確認しました" in json.dumps(prompts[-1], ensure_ascii=False)
+
+
 def test_production_timestamps_persist_and_old_history_is_not_dated(store, monkeypatch):
     from datetime import datetime
     fake_llm(monkeypatch, [{"content": "確認しました"}])
