@@ -28,6 +28,7 @@ import chat_rules
 import db
 import embed
 import generation
+import importer
 import llm
 import node_operations
 import node_clipboard
@@ -2091,6 +2092,33 @@ async def suggest_scene_setting(node_id: str, body: SuggestSettingIn) -> dict[st
         raise HTTPException(400, str(e))
     except RuntimeError as e:
         raise HTTPException(500, str(e))
+
+
+class ImportIn(BaseModel):
+    data: Any  # 取り込み JSON の中身(形は importer.validate が確かめる)
+
+
+@app.post("/import/validate")
+async def import_validate(body: ImportIn) -> dict[str, Any]:
+    """取り込み JSON を検査する(書き込まない)。このライブラリへ取り込めるかも合わせて返す。"""
+    result = importer.validate(body.data)
+    result["blocked"] = importer.check_target(store, body.data) if isinstance(body.data, dict) else []
+    return result
+
+
+@app.post("/import/apply")
+async def import_apply(body: ImportIn) -> dict[str, Any]:
+    """取り込み JSON を一括登録する。誤りがあれば 400 で理由の一覧を返し、何も書き込まない。"""
+    checked = importer.validate(body.data)
+    problems = checked["errors"] or importer.check_target(store, body.data)
+    if problems:
+        raise HTTPException(400, {"errors": problems})
+    title = checked["summary"]["title"] or "(名前なし)"
+    await snapshots.create_async(store, "取り込みの前: " + title[:60], kind="auto")
+    try:
+        return importer.apply(store, body.data)
+    except importer.ImportError_ as error:
+        raise HTTPException(400, {"errors": error.errors})
 
 
 @app.get("/embedding/status")

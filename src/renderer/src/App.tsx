@@ -7,6 +7,10 @@ import ModelBar from './ModelBar'
 import StatusBar from './StatusBar'
 import TooltipHost from './Tooltip'
 import { useProductionLocked } from './tasks'
+import { showStatusNotice } from './statusNotice'
+
+// 画面を読み直す前に預けておく、読み直した後に出す通知(取り込みの結果)
+const PENDING_NOTICE_KEY = 'pendingStatusNotice'
 import { installWriteLockGuard } from './writeLock'
 import StructureMode from './modes/StructureMode'
 import ReaderMode from './modes/ReaderMode'
@@ -204,6 +208,15 @@ export default function App(): React.JSX.Element {
   // 右下の通知。path があるとクリックで保存先を開ける
   const [toast, setToast] = useState<{ title: string; detail?: string; path?: string } | null>(null)
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // 読み直す前に預けた通知があれば出す(ステータスバーが購読を始めてから)
+  useEffect(() => {
+    const message = sessionStorage.getItem(PENDING_NOTICE_KEY)
+    if (!message) return
+    sessionStorage.removeItem(PENDING_NOTICE_KEY)
+    const timer = window.setTimeout(() => showStatusNotice(message), 600)
+    return () => window.clearTimeout(timer)
+  }, [])
 
   // 設定ポップアップを閉じるとき、設定を読んでいる画面(モデルバー・構造モード)を同期させる
   const closeSettings = (): void => {
@@ -440,7 +453,15 @@ export default function App(): React.JSX.Element {
               </button>
             </div>
             <div className="min-h-0 flex-1">
-              <SettingsMode />
+              <SettingsMode
+                onImported={(message) => {
+                  // 取り込んだ作品を見せるために、画面ごと読み直す。データだけを読み直すと、構造の画面が
+                  // 空のときの配置(「結末」が先頭の近く)を持ち続けて、取り込んだ章と並びが食い違う。
+                  // 空のライブラリへの取り込みなので、失う編集中の内容は無い。結果は読み直した後に知らせる
+                  sessionStorage.setItem(PENDING_NOTICE_KEY, message)
+                  window.location.reload()
+                }}
+              />
             </div>
           </div>
         </div>

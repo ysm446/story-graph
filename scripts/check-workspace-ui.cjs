@@ -28,7 +28,7 @@ async function main() {
     await pause(200)
   }
   if (!ready) throw new Error('検証用バックエンドを起動できませんでした')
-  for (const [path, value] of [['/characters', { name: '検証キャラ', profile: '保存済みプロフィール' }], ['/nodes', { title: '検証シーン', beat: '保存済みの本文。' }]]) {
+  for (const [path, value] of process.argv.includes('--import') ? [] : [['/characters', { name: '検証キャラ', profile: '保存済みプロフィール' }], ['/nodes', { title: '検証シーン', beat: '保存済みの本文。' }]]) {
     const response = await fetch(base + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(value) })
     if (!response.ok) throw new Error(await response.text())
   }
@@ -101,6 +101,54 @@ for mode in ['production', None]:
   }
   await click('チャット')
   await click('制作')
+  if (process.argv.includes('--import')) {
+    // 設定の「取り込み」: 完成例(docs/reference/import-example.json)を、空のライブラリへ取り込む
+    const { readFileSync } = require('node:fs')
+    const example = JSON.parse(readFileSync(join(root, 'docs/reference/import-example.json'), 'utf8'))
+    const choose = (data) => js(`(() => {const input=document.querySelector('input[aria-label="取り込み JSON のファイル"]');const dt=new DataTransfer();dt.items.add(new File([${JSON.stringify(JSON.stringify(data))}],'work.json',{type:'application/json'}));input.files=dt.files;input.dispatchEvent(new Event('change',{bubbles:true}))})()`)
+    const result = `document.querySelector('[data-import-result]')`
+    const waitResult = async () => { for (let i = 0; i < 40; i++) { if (await js(`!!${result}`)) return; await pause(100) } }
+    await js(`document.querySelector('button[aria-label="設定"]').click()`)
+    await pause(400)
+    await click('取り込み')
+    await pause(400)
+    await assert(`document.body.textContent.includes('import-format.md') && !${result} && document.body.textContent.includes('今開いているライブラリ(作品)に保存します')`, '取り込みのページに説明があり、ファイルを選ぶまでは結果を出さない')
+    // 誤りのあるファイル: 取り込むボタンは出さず、誤りの一覧と、貼り返すためのコピーを出す
+    const broken = JSON.parse(JSON.stringify(example))
+    broken.scenes[1].location = '山の上'
+    broken.scenes[2].cast.push('田中')
+    await choose(broken)
+    await waitResult()
+    await assert(`(() => {const r=${result};const items=[...r.querySelectorAll('li')].map(e=>e.textContent);return r.dataset.importResult==='errors' && items.length===2 && items.some(t=>t.includes('「橋のひび」') && t.includes('「山の上」が places にありません')) && items.some(t=>t.includes('「田中」が characters にありません')) && r.textContent.includes('誤りが 2 件あります') && [...r.querySelectorAll('button')].map(e=>e.textContent.trim()).join('|')==='誤りをコピー'})()`, '誤りのあるファイルでは、場所と直し方の分かる誤りの一覧を出し、取り込むボタンは出さない')
+    writeFileSync(join(target, 'import-errors.png'), (await win.webContents.capturePage()).toPNG())
+    if ((await (await fetch(base + '/graph')).json()).nodes.some((n) => !n.kind)) errors.push('検査だけでシーンが書き込まれた')
+    else console.log('PASS 検査だけでは何も書き込まない')
+    // 正しいファイル: 件数を確かめてから取り込む
+    await choose(example)
+    for (let i = 0; i < 40; i++) { if (await js(`${result}?.dataset.importResult==='ok'`)) break; await pause(100) }
+    await assert(`(() => {const r=${result};return r.dataset.importResult==='ok' && r.textContent.includes('「北の橋(完成例)」') && r.textContent.includes('キャラクター 3 / 場所 2 / 設定資料 1 / 章 3 / シーン 4 / イベント 17') && !r.querySelector('li') && [...r.querySelectorAll('button')].some(e=>e.textContent.trim()==='取り込む')})()`, '正しいファイルでは件数の要約と「取り込む」を出す')
+    writeFileSync(join(target, 'import-ready.png'), (await win.webContents.capturePage()).toPNG())
+    await js(`[...${result}.querySelectorAll('button')].find(e=>e.textContent.trim()==='取り込む').click()`)
+    for (let i = 0; i < 80; i++) { if (await js(`[...document.querySelectorAll('.react-flow__node')].some(e=>e.textContent.includes('第一幕'))`)) break; await pause(150) }
+    await pause(500)
+    for (let i = 0; i < 40; i++) { if (await js(`document.body.textContent.includes('取り込みました(キャラクター 3')`)) break; await pause(150) }
+    await assert(`!document.querySelector('input[aria-label="取り込み JSON のファイル"]') && !!document.querySelector('.react-flow').getClientRects().length && [...document.querySelectorAll('.react-flow__node')].filter(e=>/第.幕/.test(e.textContent)).length===3 && document.body.textContent.includes('取り込みました(キャラクター 3')`, '取り込むと画面を読み直して構造の画面に戻り、取り込んだ章が並び、結果を知らせる')
+    await assert(`(() => {const x=(t)=>{const e=[...document.querySelectorAll('.react-flow__node')].find(n=>n.textContent.includes(t));return e?e.getBoundingClientRect().x:NaN};const xs=[x('はじまり'),x('第一幕'),x('第二幕'),x('第三幕'),x('結末')];return xs.every((v,i)=>i===0 || v>xs[i-1])})()`, 'キャンバスは はじまり → 第一幕 → 第二幕 → 第三幕 → 結末 の順に並ぶ')
+    writeFileSync(join(target, 'import-done.png'), (await win.webContents.capturePage()).toPNG())
+    const graph = await (await fetch(base + '/graph')).json()
+    const scenes = graph.nodes.filter((n) => !n.kind)
+    const characters = await (await fetch(base + '/characters')).json()
+    const snapshots = (await (await fetch(base + '/snapshots')).json()).snapshots
+    if (!(scenes.length === 4 && characters.length === 3 && scenes.reduce((sum, n) => sum + n.events.length, 0) === 17 && snapshots.some((x) => x.label.startsWith('取り込みの前: 北の橋')))) errors.push('取り込んだ内容が期待と違う: ' + JSON.stringify({ scenes: scenes.length, characters: characters.length, snapshots: snapshots.map((x) => x.label) }))
+    else console.log('PASS シーン4・キャラクター3・イベント17が登録され、取り込みの前のスナップショットがある')
+    await click('資料庫')
+    await pause(500)
+    await assert(`['アヤ','ケン','老技師','港','北の橋','測量組合'].every(name => document.body.textContent.includes(name))`, '資料庫に、取り込んだキャラクター・場所・設定資料が出る')
+    if (errors.length) throw new Error(errors.join('\n'))
+    console.log('Screenshots: ' + target)
+    win.destroy()
+    return
+  }
   if (process.argv.includes('--composer')) {
     // 制作チャットの空の状態: 使い方の説明は会話欄の中に出し、入力の箱の上には説明文を常設しない
     await pause(400)

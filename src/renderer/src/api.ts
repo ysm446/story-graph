@@ -47,6 +47,23 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json() as Promise<T>
 }
 
+/** 取り込み JSON の件数(docs/design/import-json.md) */
+export interface ImportSummary {
+  title: string | null
+  characters: number
+  places: number
+  documents: number
+  chapters: number
+  scenes: number
+  events: number
+}
+
+export interface ImportCheck {
+  errors: string[]
+  warnings: string[]
+  summary: ImportSummary
+}
+
 export const api = {
   listSettingDocuments: () => request<SettingDocument[]>('/setting-documents'),
   createSettingDocument: (title: string) => request<SettingDocument>('/setting-documents', {
@@ -235,6 +252,12 @@ export const api = {
     request<Group>(`/groups/${groupId}/digest`, { method: 'DELETE' }),
 
   getSettings: () => request<Record<string, string>>('/settings'),
+  /** 取り込み JSON を検査する(書き込まない)。blocked は、このライブラリへ取り込めない理由 */
+  importValidate: (data: unknown) =>
+    request<ImportCheck & { blocked: string[] }>('/import/validate', { method: 'POST', body: JSON.stringify({ data }) }),
+  /** 取り込み JSON を一括登録する。誤りがあれば何も書き込まずに失敗する */
+  importApply: (data: unknown) =>
+    request<ImportSummary & { warnings: string[] }>('/import/apply', { method: 'POST', body: JSON.stringify({ data }) }),
   /** 埋め込みモデル(記憶・設定資料のベクトル検索)の状態。読み込みは始めない */
   embeddingStatus: () => request<{ state: 'ready' | 'loading' | 'failed' | 'idle'; model: string }>('/embedding/status'),
   putSettings: (values: Record<string, string>) =>

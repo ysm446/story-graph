@@ -22,6 +22,14 @@ class _DeferredCommit:
     def commit(self):
         pass
 
+    # `with conn:` で書く処理(設定資料の保存など)も、この区間では確定を保留する。
+    # 例外はそのまま外へ出し、外側の SAVEPOINT がまとめて巻き戻す
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
 
 @contextmanager
 def atomic_store(store: Store):
