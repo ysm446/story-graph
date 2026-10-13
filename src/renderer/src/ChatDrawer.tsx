@@ -909,7 +909,7 @@ export default function ChatDrawer({
         deleteChat={deleteChat} commitRename={commitRename}
         newChatTip="選択中のシーンをアンカーに新しい会話を始める" />
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <div ref={panelRef} className="inspector-scrollbar flex min-h-0 flex-1 flex-col overflow-y-auto px-4 pb-3 pt-2">
+        <div ref={panelRef} className="inspector-scrollbar flex min-h-0 flex-1 flex-col overflow-y-auto px-6 pb-3 pt-2">
           {/* ヘッダー: 相手 / アンカー / スコープ */}
           <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px]" style={{ color: 'var(--text-faint)' }}>
             {/* 話す相手: 相談(編集者) or キャラ本人。切替は新規チャット扱い */}

@@ -5364,7 +5364,7 @@ function StructureModeInner({
         </main>
         </div>
         {chatHost && createPortal(<div className="flex h-full min-h-0 flex-col" style={{ background: 'var(--bg-chat)' }}>
-              <div className="flex shrink-0 items-center gap-2 border-b px-4 py-1" style={{ background: 'var(--bg-chat)', borderColor: 'var(--border)' }}>
+              <div className="flex shrink-0 items-center gap-2 border-b px-6 py-1" style={{ background: 'var(--bg-chat)', borderColor: 'var(--border)' }}>
                 <div className="flex overflow-hidden rounded-md border" style={{ borderColor: 'var(--border-strong)' }}>
                   {([['consult', '相談'], ['production', '制作']] as const).map(([value, label]) => (
                     <button key={value} disabled={productionLocked} onClick={() => setChatKind(value)}

@@ -92,7 +92,7 @@ export default function ChatHistoryPanel({ history, chatId, busy, characters = [
     }
   }, [historyOpen, innerOpen])
   return <>
-      <div ref={rootRef} className="relative flex min-w-0 shrink-0 items-center gap-2 border-b px-3 py-1" style={{ borderColor: 'var(--border)' }}>
+      <div ref={rootRef} className="relative flex min-w-0 shrink-0 items-center gap-2 border-b px-6 py-1" style={{ borderColor: 'var(--border)' }}>
         {/* 左に今の会話名(この行でいちばん見たいもの)、右端に操作のアイコン(一覧・新しい会話) */}
         <span className="min-w-0 flex-1 truncate text-[12px]" style={{ color: 'var(--text)' }}
           data-tip={activeChatLabel}>{activeChatLabel}</span>

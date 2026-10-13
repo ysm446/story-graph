@@ -562,7 +562,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
         }}
         loadChat={load} deleteChat={deleteConversation} commitRename={renameConversation}
         newChatTip="新しい制作の会話を始める" />
-    <div className="inspector-scrollbar flex flex-1 min-h-0 min-w-0 w-full flex-col gap-2 overflow-y-auto px-4 py-2 text-[12px]" style={{ background: 'var(--bg-chat)', color: 'var(--text)' }}>
+    <div className="inspector-scrollbar flex flex-1 min-h-0 min-w-0 w-full flex-col gap-2 overflow-y-auto px-6 py-2 text-[12px]" style={{ background: 'var(--bg-chat)', color: 'var(--text)' }}>
       <div className="flex flex-wrap items-center gap-2">
         <span className="shrink-0 text-[11px]" style={{ color: 'var(--text-faint)' }}>制作</span>
         <button onClick={() => { followRef.current = !follow; setFollow(!follow); onFollowTarget(!follow && !manualRef.current ? followTargetRef.current : null) }}
@@ -579,9 +579,9 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
       <ChatRulesPanel busy={busy} onDirty={setRulesDirty} onSaved={() => setRulesRefresh((v) => v + 1)} />
       <ProductionMemoryPanel busy={busy} refresh={memoryRefresh} onDirty={setMemoryDirty} onChanged={bumpMemoryRefresh} />
       <ProductionPolicyPanel value={policy} onChange={setPolicy} nodes={nodes} groups={groups} busy={busy} />
-      {/* スクロールバーは親の右の余白(16px)へ出し、発言との間を 6px 空ける。溝を常に確保するので、
-          スクロールの有無にかかわらず発言の右端は上のパネルや入力欄と揃う(16 = バー10 + 余白6) */}
-      <div className="inspector-scrollbar -mr-4 min-h-0 flex-1 overflow-y-auto pr-1.5 [scrollbar-gutter:stable]" aria-live="polite">
+      {/* スクロールバーは親の右の余白(24px)へ出し、発言との間を 14px 空ける。溝を常に確保するので、
+          スクロールの有無にかかわらず発言の右端は上のパネルや入力欄と揃う(24 = バー10 + 余白14) */}
+      <div className="inspector-scrollbar -mr-6 min-h-0 flex-1 overflow-y-auto pr-3.5 [scrollbar-gutter:stable]" aria-live="polite">
         <MessageList messages={messages} nodes={nodes} groups={groups} />
         {live && <TimelineItem color="var(--text-dim)" label="制作" pulse><Markdown text={live} /></TimelineItem>}
         {/* 書いている途中の本文(未確定)。確定すると消え、同じ場所に操作の項目が入る */}
