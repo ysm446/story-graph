@@ -342,6 +342,42 @@ for mode in ['production', None]:
       if (!(prevented && (await titles()).includes('キーで保存'))) errors.push('Ctrl+S でシーンが保存されていない: ' + JSON.stringify({ prevented, titles: await titles() }))
       else console.log('PASS Ctrl+S で、入力欄にフォーカスがあってもシーンを保存できる')
       await assert(`[...document.querySelectorAll('.scene-detail button')].find(e=>e.textContent.trim()==='保存').disabled && document.body.textContent.includes('シーンを保存しました')`, 'Ctrl+S の後は未保存の変更が無く、保存したことを知らせる')
+      // 別のタブを開いていても保存できる(下書きはシーンごとに残っている)
+      const typeTitle = (text) => js(`(() => {const i=document.querySelector('.scene-detail-main input');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(i,${JSON.stringify(text)});i.dispatchEvent(new Event('input',{bubbles:true}))})()`)
+      const pressCtrlS = () => js(`document.body.dispatchEvent(new KeyboardEvent('keydown',{key:'s',ctrlKey:true,bubbles:true,cancelable:true}))`)
+      const clickNode = (text) => js(`(() => {const node=[...document.querySelectorAll('.react-flow__node')].find(e=>e.textContent.includes(${JSON.stringify(text)}));node.dispatchEvent(new MouseEvent('click',{bubbles:true}))})()`)
+      await typeTitle('別タブから保存')
+      await pause(150)
+      await click('キャラ')
+      await pause(250)
+      await pressCtrlS()
+      await pause(600)
+      if (!(await titles()).includes('別タブから保存')) errors.push('シーンタブ以外で Ctrl+S が保存していない: ' + JSON.stringify(await titles()))
+      else console.log('PASS シーンタブ以外を開いていても Ctrl+S で保存できる')
+      await click('シーン')
+      await pause(250)
+      // 選択したシーンの下書きだけを保存し、選択していないシーンの下書きは残す
+      // (複数選択そのものは、ここからキー操作を模擬しても選択が増えないので確かめていない)
+      for (const title of ['二つ目', '三つ目']) await fetch(base + '/nodes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title, beat: title + 'の本文。' }) })
+      await click('資料庫')
+      await pause(300)
+      await click('構造')
+      for (let i = 0; i < 40; i++) {
+        if (await js(`[...document.querySelectorAll('.react-flow__node')].some(e=>e.textContent.includes('三つ目'))`)) break
+        await pause(100)
+      }
+      for (const [from, to] of [['三つ目', '選択外の下書き'], ['二つ目', '選択中の下書き']]) {
+        await clickNode(from)
+        await pause(300)
+        await typeTitle(to)
+        await pause(200)
+      }
+      await pressCtrlS()
+      await pause(900)
+      const after = await titles()
+      if (!(after.includes('選択中の下書き') && after.includes('三つ目') && !after.includes('選択外の下書き'))) errors.push('Ctrl+S が選択外の下書きまで保存した、または選択中を保存していない: ' + JSON.stringify(after))
+      else console.log('PASS Ctrl+S は選択中のシーンだけを保存し、選択していないシーンの下書きは残す')
+      await assert(`[...document.querySelectorAll('.react-flow__node')].some(e=>e.textContent.includes('三つ目') && e.textContent.includes('未保存')) && ![...document.querySelectorAll('.react-flow__node')].some(e=>e.textContent.includes('選択中の下書き') && e.textContent.includes('未保存'))`, '選択していないシーンのカードには未保存の印が残る')
       if (errors.length) throw new Error(errors.join('\n'))
     }
     writeFileSync(join(target, 'details-wide.png'), (await win.webContents.capturePage()).toPNG())

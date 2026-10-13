@@ -575,7 +575,8 @@ async function latestEventInputs(nodeId: string, fallback: StoryEvent[]): Promis
   return events.map((e) => ({ id: e.id, type: e.type, payload: e.payload, source: e.source }))
 }
 
-/** Ctrl+S(mac は ⌘S)で、渡した保存ボタンと同じ保存を行う(シーンと章のまとめ)。
+/** Ctrl+S(mac は ⌘S)で、渡した保存ボタンと同じ保存を行う(章のまとめ)。
+ *  シーンは下書きがシーンごとに残るので、StructureModeInner がまとめて保存する(saveSelectedDrafts)。
  *
  * 判断は保存ボタンに合わせる: ボタンが押せないとき(変更なし・保存中)と、制作中で書き換えを
  * 止めているときは何もしない。構造モードは資料庫・鑑賞の間も裏に残っているので、ボタンが
@@ -816,8 +817,6 @@ function BeatTab({
       setSaving(false)
     }
   }
-  const saveButtonRef = useRef<HTMLButtonElement | null>(null)
-  useSaveShortcut(saveButtonRef, handleSave, 'シーンを保存しました')
 
   const resetDraft = (): void => {
     if (saving || suggesting || draftNodeId !== node.id) return
@@ -1363,12 +1362,11 @@ function BeatTab({
               data-tip={saving || suggesting !== null ? '保存・自動生成が終わるまでお待ちください' : dirty ? 'このシーンの未保存の変更を取り消します' : '変更はありません'}
             >元に戻す</button>
           <button
-            ref={saveButtonRef}
             onClick={() => void handleSave()}
             disabled={!dirty || saving}
             className="shrink-0 rounded-md px-3 py-1 text-[12px] font-medium disabled:opacity-50"
             style={{ background: 'var(--accent)', color: 'var(--text)' }}
-            data-tip={dirty ? 'シーンの変更を保存します(Ctrl+S)' : '変更はありません'}
+            data-tip={dirty ? 'シーンの変更を保存します(Ctrl+S。複数のシーンを選択していれば、未保存のものをまとめて保存します)' : '変更はありません'}
           >
             保存
           </button>
@@ -4176,6 +4174,52 @@ function StructureModeInner({
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [workspace.mode, reactFlow, displayNodes, selectedId, selectedEdgeId, detachEdge, deleteNodeById, deleteNodes, navigateSelection, productionEditingLocked, copyNodes, pasteNodes, nodeClipboard])
+
+  // Ctrl+S: 選択中のシーンのうち、未保存の下書きが残っているものをまとめて保存する。
+  // 下書きはシーンタブを離れてもシーンごとに残る(beatDraftCache)ので、どのタブを開いていても、
+  // 複数選択でも同じに動く。選択していないシーンの下書きには触らない(忘れていた下書きを確定しない)。
+  const savingDrafts = useRef(false)
+  const saveSelectedDrafts = useStableCallback(async (): Promise<void> => {
+    if (savingDrafts.current || productionEditingLocked) return
+    const selected = displayNodes.filter((n) => n.selected).map((n) => n.id)
+    const ids = [...new Set(selectedId ? [...selected, selectedId] : selected)].filter((id) => beatDraftCache.has(id))
+    if (ids.length === 0) return
+    savingDrafts.current = true
+    let saved = 0
+    const failed: string[] = []
+    try {
+      for (const id of ids) {
+        const draft = beatDraftCache.get(id)
+        if (!draft) continue
+        try {
+          await api.updateNode(id, draft)
+          deleteBeatDraft(id)
+          saved += 1
+        } catch {
+          // 1つ失敗しても残りは保存する。失敗したシーンの下書きは残る
+          failed.push(draft.title || '(無題)')
+        }
+      }
+      if (saved > 0) await reload()
+    } finally {
+      savingDrafts.current = false
+    }
+    const done = saved === 0 ? '' : saved === 1 && failed.length === 0 ? 'シーンを保存しました' : `${saved} シーンを保存しました`
+    const trouble = failed.length ? `保存できませんでした: ${failed.join('、')}` : ''
+    showStatusNotice([done, trouble].filter(Boolean).join(' / '))
+  })
+  useEffect(() => {
+    // 構造モードは資料庫・鑑賞の間も裏に残るので、表に出ているときだけ受ける
+    if (workspace.mode !== 'structure') return
+    const onKey = (event: KeyboardEvent): void => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return
+      if (event.key.toLowerCase() !== 's' || event.isComposing) return
+      event.preventDefault()
+      if (!event.repeat) void saveSelectedDrafts()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [workspace.mode, saveSelectedDrafts])
 
   // ---- 章の操作 -------------------------------------------------------
   // Electron は window.prompt を使えない(呼ぶと例外)ので、名前の入力は
