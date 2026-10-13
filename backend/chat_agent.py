@@ -41,7 +41,7 @@ def build_tools() -> list[dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "get_beats",
-                "description": "シーン本文を取得する。全体スコープでは枝・未接続シーンも含む。index は一覧の1始まりで、全体では時系列ではない。流れは接続図の edges を参照する。node_ids で対象を指定できる。省略すると全件(見えている範囲)。",
+                "description": "シーン本文を取得する。全体スコープでは枝・未接続シーンも含み、正史 → 枝(1本ずつ) → 未接続の順に並べる。各シーンの prev が直前のシーン、next が直後のシーン(複数なら分岐)。index は一覧の1始まりで、枝をまたぐと時系列ではない。前後は並びや index ではなく prev / next で判断する。node_ids で対象を指定できる(返す順は指定順ではなく流れの順)。省略すると全件(見えている範囲)。",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -136,11 +136,70 @@ def _story_graph(store: Store) -> dict[str, Any]:
     }
 
 
+def _scene_flow(store: Store) -> tuple[list[str], dict[str, dict[str, Any]]]:
+    """全シーンを流れの順に並べ、シーン単位の前後(マーカーは飛ばす)を引く。
+
+    作成順のまま返すと、後から途中へ挿入・つなぎ替えたシーンが末尾に並び、LLM が本文の並びを
+    物語の順と読み違える(2026-10-13 ユーザー報告: 章のレビューでつながりを取り違える)。
+    並びは「正史 → 分岐元が早い枝から順に → 未接続」。枝は1本ずつ末尾まで続けて並べる。
+    """
+    nodes = {r["id"]: r for r in store.conn.execute("SELECT id, title, kind FROM nodes ORDER BY created_at, rowid")}
+    parents: dict[str, str] = {}
+    children: dict[str, list[str]] = {}
+    for e in store.conn.execute("SELECT from_node, to_node FROM edges ORDER BY rowid"):
+        parents.setdefault(e["to_node"], e["from_node"])
+        children.setdefault(e["from_node"], []).append(e["to_node"])
+    ending = store.active_ending()
+    route = set(store.path_to(ending, parents) if ending and store._ending_is_rooted(ending, parents)
+                else store._canon_chain_from_start())
+    order: list[str] = []
+    seen: set[str] = set()
+    roots = sorted((nid for nid in nodes if nid not in parents), key=lambda nid: nodes[nid]["kind"] != "start")
+    for root in roots:
+        queue = [root]
+        while queue:
+            current: str | None = queue.pop(0)
+            while current is not None and current in nodes and current not in seen:
+                seen.add(current)
+                if nodes[current]["kind"] is None:
+                    order.append(current)
+                kids = sorted(children.get(current, []), key=lambda nid: nid not in route)
+                queue.extend(kids[1:])
+                current = kids[0] if kids else None
+    order += [nid for nid, n in nodes.items() if nid not in seen and n["kind"] is None]  # 循環の防御
+
+    def ref(nid: str) -> dict[str, Any]:
+        return {"node_id": nid, "title": nodes[nid]["title"]}
+
+    links: dict[str, dict[str, Any]] = {}
+    for nid in order:
+        prev = parents.get(nid)
+        guard = {nid}
+        while prev is not None and prev in nodes and nodes[prev]["kind"] is not None and prev not in guard:
+            guard.add(prev)
+            prev = parents.get(prev)
+        following: list[str] = []
+        pending = list(children.get(nid, []))
+        while pending:
+            child = pending.pop(0)
+            if child in guard or child not in nodes:
+                continue
+            guard.add(child)
+            if nodes[child]["kind"] is None:
+                following.append(child)
+            else:
+                pending = list(children.get(child, [])) + pending
+        links[nid] = {
+            "prev": ref(prev) if prev is not None and prev in nodes and nodes[prev]["kind"] is None else None,
+            "next": [ref(child) for child in following],
+        }
+    return order, links
+
+
 def _tool_get_beats(store: Store, path: list[str], args: dict[str, Any], scope: str = "upto") -> dict[str, Any]:
+    links: dict[str, dict[str, Any]] = {}
     if scope == "all":
-        path = [r["id"] for r in store.conn.execute(
-            "SELECT id FROM nodes WHERE kind IS NULL ORDER BY created_at, rowid"
-        )]
+        path, links = _scene_flow(store)
     requested = args.get("node_ids")
     if requested is not None and (not isinstance(requested, list) or any(nid not in path for nid in requested)):
         return {"error": "node_ids に参照範囲外またはシーン以外のIDが含まれています"}
@@ -162,6 +221,7 @@ def _tool_get_beats(store: Store, path: list[str], args: dict[str, Any], scope: 
                 "cast": node["cast"],
                 "location": store.place_name(store.effective_location(path[i])[0]),
                 "story_time": node["story_time"],
+                **links.get(path[i], {}),
             }
         )
     return {"total": len(path), "beats": beats}

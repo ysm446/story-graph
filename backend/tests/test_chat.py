@@ -105,6 +105,40 @@ def test_all_scope_includes_branches_islands_and_connections(store):
     assert "error" in chat_agent.dispatch_tool(store, "get_beats", {"node_ids": [branch["id"]]}, limited, "upto")
 
 
+def test_all_scope_beats_follow_the_flow_not_creation_order(store):
+    """後から途中へ挿入したシーンも、流れの位置に並べて前後を添える。"""
+    canon = store.canon_path()
+    inserted = store.insert_node_after(canon[0], {"beat": "間の出来事", "title": "第一話半"})
+    branch = store.append_node({"beat": "別の道", "title": "枝の話"}, parent_id=canon[0])
+    island = store.append_node({"beat": "独立した草案", "title": "島の話"}, detached=True)
+    group = store.create_group("序章", [canon[0], inserted["id"]])
+    result = chat_agent.dispatch_tool(store, "get_beats", {}, canon, "all")
+    beats = {b["node_id"]: b for b in result["beats"]}
+    # 正史 → 枝 → 未接続。作成順(第一話半が末尾側)にはならない
+    assert [b["node_id"] for b in result["beats"]] == [canon[0], inserted["id"], canon[1], canon[2], branch["id"], island["id"]]
+    assert beats[inserted["id"]]["prev"]["node_id"] == canon[0]
+    assert {n["node_id"] for n in beats[canon[0]]["next"]} == {inserted["id"], branch["id"]}
+    # 章の出口・入口マーカーは飛ばして、シーン同士の前後を返す
+    assert beats[canon[1]]["prev"] == {"node_id": inserted["id"], "title": "第一話半"}
+    assert [n["node_id"] for n in beats[inserted["id"]]["next"]] == [canon[1]]
+    assert beats[island["id"]]["prev"] is None and beats[island["id"]]["next"] == []
+    # node_ids を逆順で指定しても、流れの順で返す
+    picked = chat_agent.dispatch_tool(store, "get_beats", {"node_ids": [inserted["id"], canon[0]]}, canon, "all")
+    assert [b["node_id"] for b in picked["beats"]] == [canon[0], inserted["id"]]
+    import production_chapters
+    chapter = next(c for c in production_chapters.read(store)["chapters"] if c["id"] == group["id"])
+    assert [(s["id"], s["on_route"], s["prev_id"]) for s in chapter["scenes"]] == [
+        (canon[0], True, None), (inserted["id"], True, canon[0])]
+
+
+def test_recent_reads_keep_the_chapter_structure():
+    import production_agent
+    chapters = {"tool": "read_chapters", "result": {"chapters": []}}
+    beats = [{"tool": "get_beats", "result": {"beats": [i]}} for i in range(4)]
+    assert production_agent.recent_reads([chapters, *beats]) == [chapters, *beats[1:]]
+    assert production_agent.recent_reads(beats) == beats[1:]
+
+
 def test_branch_state_and_memory_origins_stay_separate(store):
     canon = store.canon_path()
     branch = store.append_node({"beat": "枝だけの秘密", "cast": ["aya"]}, [

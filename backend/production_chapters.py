@@ -1,11 +1,12 @@
 """制作から章の器と所属を編集する。本文・イベントは変更しない。"""
+import chat_agent
 from node_operations import atomic_store
 
 WRITE_TOOLS = {"create_chapter", "rename_chapter", "add_scenes_to_chapter"}
 
 
 def tools(allow_write):
-    definitions = [("read_chapters", "章のID・名前・所属シーン・入口と出口を読む。編集前に確認する。", {}, [])]
+    definitions = [("read_chapters", "章のID・名前・所属シーン・入口と出口を読む。編集前に確認する。routeが章の読む順。scenesのprev_idが直前のシーン（章の外のこともある）。on_routeがfalseのシーンは章の中の分岐や未接続で、読む順の続きではない。", {}, [])]
     if allow_write:
         ids = {"type": "array", "items": {"type": "string"}, "description": "対象シーンID。別の章に所属するシーンとマーカーは指定不可"}
         definitions += [
@@ -27,8 +28,19 @@ def tools(allow_write):
 
 
 def read(store):
-    return {"chapters": [{key: group.get(key) for key in ("id", "title", "node_ids", "in_id", "out_id", "route", "warning")}
-                         for group in store.list_groups()]}
+    # node_ids は「読む道 + それ以外」を1列に並べるので、そのままだと章の中の分岐が本筋の続きに見える。
+    # シーンごとに、読む道の上か(on_route)と直前のシーン(prev_id)を添える。
+    _, links = chat_agent._scene_flow(store)
+    titles = {row["id"]: row["title"] for row in store.conn.execute("SELECT id, title FROM nodes")}
+    chapters = []
+    for group in store.list_groups():
+        chapter = {key: group.get(key) for key in ("id", "title", "node_ids", "in_id", "out_id", "route", "warning")}
+        route = set(group["route"])
+        chapter["scenes"] = [{"id": nid, "title": titles.get(nid), "on_route": nid in route,
+                              "prev_id": ((links.get(nid) or {}).get("prev") or {}).get("node_id")}
+                             for nid in group["node_ids"]]
+        chapters.append(chapter)
+    return {"chapters": chapters}
 
 
 def apply(store, name, args, policy=None, before_commit=None):

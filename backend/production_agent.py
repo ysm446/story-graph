@@ -568,6 +568,19 @@ CONSULT_RULES = (
 )
 
 
+def recent_reads(results):
+    """次の判断に渡す取得結果。直近3件に加えて、最後に読んだ章の構成を残す。
+
+    章の本文を数回に分けて読むと、最初に読んだ章の構成(読む順)が3件の枠から落ち、
+    本文だけを頼りに順番を推測することになる。構成は小さいので枠の外に保持する。
+    編集が確定すると呼び出し側が全部捨てるので、古い構成が残ることはない。
+    """
+    chapters = next((item for item in reversed(results)
+                     if item.get("tool") == "read_chapters" and "error" not in (item.get("result") or {})), None)
+    kept = [item for item in results if item is not chapters][-3:]
+    return [item for item in results if item is chapters or any(item is k for k in kept)]
+
+
 def build_messages(store, history, message, execute, policy, previous_checkpoint, changes, recent_results, run_id=None, selection=None,
                    cancelled_text="", notes=()):
     system = (chat_agent.build_system(store, store.canon_path(), "all", production=True) + "\n" + EXECUTE_RULES
@@ -597,7 +610,7 @@ def build_messages(store, history, message, execute, policy, previous_checkpoint
                                    if m.get("instruction") and m["instruction"].get("run_id") == run_id
                                    and m["instruction"]["status"] == "reflected"], ensure_ascii=False)
                      + "\n直近の取得結果: "
-                     + json.dumps(recent_results[-3:], ensure_ascii=False)})
+                     + json.dumps(recent_reads(recent_results), ensure_ascii=False)})
     if execute:
         messages[-1]["content"] += (
             "\n次の判断: まず最新の本文・保存結果と途中指示を照合してください。"
@@ -929,7 +942,7 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
                     payload = {"error": text}
                     yield _sse({"tool_error": stalled or text})
                 recent_results.append({"tool": name, "result": payload})
-                recent_results = recent_results[-3:]
+                recent_results = recent_reads(recent_results)
                 yield _sse({"active_node": None})
                 if stalled:
                     break

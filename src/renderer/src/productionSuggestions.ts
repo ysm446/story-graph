@@ -30,7 +30,7 @@ export function productionSuggestions(messages: ContextMessage[], selection: Pro
     result.push({ label, text: `次の選択対象をレビューしてください。対象はこの一覧に固定し、送信時の選択が変わっていても変更しないでください。\n${selection.map((node) => `・${node.title}（ID: ${node.id}）`).join('\n')}\n${review}` })
   } else if (chapter) {
     const title = chapter.title || '無題'
-    result.push({ label: `章「${title}」をレビュー`, text: `次の章をレビューしてください。対象はこの章に固定し、送信時の画面や選択が変わっていても変更しないでください。\n・${title}（章ID: ${chapter.id}）\n章に含まれるシーンを確認して本文を読み、章全体の流れも見たうえで、${review}` })
+    result.push({ label: `章「${title}」をレビュー`, text: `次の章をレビューしてください。対象はこの章に固定し、送信時の画面や選択が変わっていても変更しないでください。\n・${title}（章ID: ${chapter.id}）\nまず章の構成で読む順と分岐を確認し、その順に本文を読んでください。シーンの前後は本文の並びではなく接続（prev / next）で判断し、章全体の流れも見たうえで、${review}` })
   }
   if (changes.length) {
     const targets = [...new Set(changes.map((operation) => `${operation.title || '無題'}（${'entity_id' in operation ? operation.entity_type + ': ' + operation.entity_id : 'scene: ' + operation.node_id}）`))]
