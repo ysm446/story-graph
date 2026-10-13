@@ -90,7 +90,7 @@ export default function ChatHistoryPanel({ history, chatId, busy, characters = [
         <span className="min-w-0 flex-1 truncate text-[12px]" style={{ color: 'var(--text)' }}
           data-tip={activeChatLabel}>{activeChatLabel}</span>
       {historyOpen && <aside role="dialog" aria-label="会話一覧"
-        className="absolute left-2 right-2 top-full z-50 mt-1 flex max-w-[360px] flex-col rounded-xl border shadow-lg shadow-black/40"
+        className="absolute left-2 right-2 top-full z-50 mt-1 flex flex-col rounded-xl border shadow-lg shadow-black/40"
         style={{ maxHeight: 'min(320px, 60vh)', background: 'var(--bg-card)', borderColor: 'var(--border-strong)' }}>
         <button
           onClick={() => { setHistoryOpen(false); startNewChat() }}
