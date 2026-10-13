@@ -925,7 +925,7 @@ export default function ChatDrawer({
             </span>
             {room ? (
               // 参加者。会話が始まるまでは出し入れでき、始まったら固定(chats.participants)
-              <div className="flex flex-wrap items-center gap-1">
+              <div className="flex flex-wrap items-center gap-1.5">
                 {(chatId ? roomChars : characters).map((c) => {
                   const on = participants.includes(c.id)
                   return (
@@ -933,7 +933,8 @@ export default function ChatDrawer({
                       key={c.id}
                       onClick={() => toggleParticipant(c.id)}
                       disabled={!!chatId || busy}
-                      className="inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] disabled:cursor-not-allowed"
+                      // 話す相手のボタン(IconPicker)と同じ大きさに揃える: アイコン 20px、左だけ詰めた余白
+                      className="inline-flex items-center gap-1.5 rounded-md border py-0.5 pl-1 pr-2 text-[11px] disabled:cursor-not-allowed"
                       style={
                         on
                           ? { borderColor: c.color || 'var(--border-strong)', background: 'var(--accent-soft)', color: 'var(--text)' }
@@ -947,7 +948,7 @@ export default function ChatDrawer({
                             : `${c.name} を会話に加える`
                       }
                     >
-                      <CharAvatar char={c} size={14} />
+                      <CharAvatar char={c} size={20} />
                       {c.name}
                     </button>
                   )
