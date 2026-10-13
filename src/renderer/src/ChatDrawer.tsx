@@ -12,7 +12,7 @@ import {
 } from './api'
 import CharAvatar from './CharAvatar'
 import { MsgActionButton, StatsLine, SystemPromptModal } from './GenMeta'
-import ChatTargetPicker from './ChatTargetPicker'
+import ChatTargetPicker, { IconPicker } from './ChatTargetPicker'
 import { Icon } from './icons'
 import { Markdown } from './Markdown'
 import { useChatVoice } from './useChatVoice'
@@ -1377,21 +1377,19 @@ export default function ChatDrawer({
             {room && (
               <>
                 {/* 次に話す人の指名(1 回きり)と、続けて話させる発言数 */}
-                <select
+                <IconPicker
+                  name="次に話す人"
+                  tall
                   value={nextSpeaker ?? ''}
-                  onChange={(e) => setNextSpeaker(e.target.value || null)}
+                  onChange={(next) => setNextSpeaker(next || null)}
                   disabled={busy || !roomReady}
-                  className="shrink-0 rounded-md border px-1.5 py-1 text-[11px] disabled:opacity-50"
-                  style={{ background: 'var(--bg-input)', borderColor: 'var(--border)', color: 'var(--text-dim)' }}
-                  data-tip="次に話す人。「順に」は前に話した人の次"
-                >
-                  <option value="">順に</option>
-                  {roomChars.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}から
-                    </option>
-                  ))}
-                </select>
+                  tip="次に話す人。「順に」は前に話した人の次"
+                  disabledTip={busy ? '発言が終わるか停止してから選べます' : '参加者を2人以上選ぶと指名できます'}
+                  items={[
+                    { value: '', label: '順に', icon: 'list' },
+                    ...roomChars.map((c) => ({ value: c.id, label: c.name, buttonLabel: `${c.name}から`, char: c }))
+                  ]}
+                />
                 <select
                   value={turns}
                   onChange={(e) => setTurns(Number(e.target.value))}
