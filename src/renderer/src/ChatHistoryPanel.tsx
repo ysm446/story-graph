@@ -1,8 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { ChatSummary } from './api'
 import type { Character } from './types'
 import CharAvatar from './CharAvatar'
 import { Icon } from './icons'
+
+/** 行の ⋯ メニューのおおよその高さ(2項目)。下に入りきるかの判定に使う */
+const MENU_HEIGHT = 76
 
 /** 最後に更新してからの経過(「3日前」など)。30日を過ぎたら日付にする。一覧を開くたびに描き直すので、開いた時点の値でよい */
 function updatedAgo(value: string): string {
@@ -35,13 +39,19 @@ export default function ChatHistoryPanel({ history, chatId, busy, characters = [
 }): React.JSX.Element {
   const [historyOpen, setHistoryOpen] = useState(false)
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null)
+  const [menuPos, setMenuPos] = useState<{ right: number; top?: number; bottom?: number } | null>(null)
+  const menuChat = menuOpenId ? history.find((chat) => chat.id === menuOpenId) : undefined
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameText, setRenameText] = useState('')
+  const renameInitial = useRef('')
   const activeChat = history.find((chat) => chat.id === chatId)
   const activeChatLabel = activeChat ? chatLabel(activeChat) : chatId ? '会話を読み込み中…' : '新しい会話'
   const finishRename = async (id: string): Promise<void> => {
     if (busy || renamingId !== id) return
     setRenamingId(null)
+    // 入力欄には今の表示名を入れて始める。変えずに確定したときは保存しない
+    // (既定の見出しが、付けた名前として固定されないようにする)
+    if (renameText === renameInitial.current) return
     await commitRename(id, renameText.trim())
   }
   useEffect(() => { if (busy) { setMenuOpenId(null); setRenamingId(null) } }, [busy])
@@ -67,6 +77,8 @@ export default function ChatHistoryPanel({ history, chatId, busy, characters = [
   useEffect(() => {
     if (!historyOpen) return
     const onDown = (ev: MouseEvent): void => {
+      // 行の ⋯ メニューは body へ出しているので、その中のクリックは外側として扱わない
+      if ((ev.target as Element).closest?.('[data-chat-row-menu]')) return
       if (!rootRef.current?.contains(ev.target as Node)) setHistoryOpen(false)
     }
     const onKey = (ev: KeyboardEvent): void => {
@@ -99,6 +111,7 @@ export default function ChatHistoryPanel({ history, chatId, busy, characters = [
         style={{ maxHeight: 'min(320px, 60vh)', background: 'var(--bg-card)', borderColor: 'var(--border-strong)' }}>
         <div
           className="inspector-scrollbar min-h-0 flex-1 overflow-y-auto p-2"
+          onScroll={() => setMenuOpenId(null)} // メニューは固定位置なので、行が動いたら閉じる
           onKeyDown={(e) => {
             // 会話一覧にフォーカスがあるときの Delete は選択中の会話の削除。
             // stopPropagation で構造モードの Delete(ノード削除)に届かせない
@@ -136,6 +149,7 @@ export default function ChatHistoryPanel({ history, chatId, busy, characters = [
                 {renamingId === h.id ? (
                   <input
                     autoFocus
+                    onFocus={(e) => e.currentTarget.select()}
                     value={renameText}
                     onChange={(e) => setRenameText(e.target.value)}
                     onBlur={() => void finishRename(h.id)}
@@ -200,6 +214,12 @@ export default function ChatHistoryPanel({ history, chatId, busy, characters = [
                     <button
                       onClick={(e) => {
                         e.stopPropagation() // window の click(外側クリックで閉じる)より先に処理する
+                        // ボタンの右端に揃えて真下へ出す。下に入りきらないときは上へ出す
+                        const rect = e.currentTarget.getBoundingClientRect()
+                        const right = window.innerWidth - rect.right
+                        setMenuPos(rect.bottom + MENU_HEIGHT > window.innerHeight
+                          ? { right, bottom: window.innerHeight - rect.top }
+                          : { right, top: rect.bottom })
                         setMenuOpenId((v) => (v === h.id ? null : h.id))
                       }}
                       className="shrink-0 rounded px-1 text-[13px] opacity-0 group-hover:opacity-100 focus:opacity-100 disabled:opacity-50"
@@ -212,37 +232,39 @@ export default function ChatHistoryPanel({ history, chatId, busy, characters = [
                     </button>
                   </>
                 )}
-                {menuOpenId === h.id && (
-                  <div
-                    className="absolute right-1 top-full z-20 w-36 overflow-hidden rounded-lg border py-1 shadow-xl shadow-black/40"
-                    style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)' }}
-                  >
-                    <button
-                      disabled={busy}
-                      onClick={() => {
-                        setMenuOpenId(null)
-                        setRenameText(h.title ?? '')
-                        setRenamingId(h.id)
-                      }}
-                      className="block w-full px-3 py-1.5 text-left text-[12px] hover:bg-[var(--accent-soft)]"
-                      style={{ color: 'var(--text-dim)' }}
-                    >
-                      名前を変更
-                    </button>
-                    <button
-                      disabled={busy}
-                      onClick={() => { setMenuOpenId(null); void deleteChat(h.id) }}
-                      className="delete-action block w-full px-3 py-1.5 text-left text-[12px]"
-                    >
-                      削除
-                    </button>
-                  </div>
-                )}
               </div>
             )
           })}
         </div>
       </aside>}
       </div>
+      {/* 行の ⋯ メニュー。一覧のスクロール領域の中に置くと切り取られて見えないので、body へ出して
+          ボタンの位置に固定で置く */}
+      {menuChat && menuPos && createPortal(
+        <div data-chat-row-menu
+          className="fixed z-50 w-36 overflow-hidden rounded-lg border py-1 shadow-xl shadow-black/40"
+          style={{ ...menuPos, background: 'var(--bg-card)', borderColor: 'var(--border-strong)' }}
+        >
+          <button
+            disabled={busy}
+            onClick={() => {
+              setMenuOpenId(null)
+              renameInitial.current = chatLabel(menuChat)
+              setRenameText(renameInitial.current)
+              setRenamingId(menuChat.id)
+            }}
+            className="block w-full px-3 py-1.5 text-left text-[12px] hover:bg-[var(--accent-soft)]"
+            style={{ color: 'var(--text-dim)' }}
+          >
+            名前を変更
+          </button>
+          <button
+            disabled={busy}
+            onClick={() => { setMenuOpenId(null); void deleteChat(menuChat.id) }}
+            className="delete-action block w-full px-3 py-1.5 text-left text-[12px]"
+          >
+            削除
+          </button>
+        </div>, document.body)}
   </>
 }
