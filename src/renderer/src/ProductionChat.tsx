@@ -51,7 +51,7 @@ const libraryFieldLabels: Record<string, string> = {
 function messageTime(value?: string): string {
   if (!value) return ''
   const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString('ja-JP', { hour12: false })
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
 }
 
 /** 完了時に添える経過時間(「45秒」「3分05秒」「1時間02分05秒」)。 */
