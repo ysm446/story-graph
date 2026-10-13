@@ -14,7 +14,7 @@
   --bg-elevated: rgba(32, 35, 48, 0.5);
   --border: #252830;
   --border-strong: #2e3140;
-  --text: #e2e4ef;
+  --text: #d0d3e1;
   --text-dim: #9499b0;
   --text-faint: #5c6078;
   --accent: #7c5af7;
@@ -237,7 +237,9 @@ input[type='range']:focus-visible {
    線は項目ごとに引き、項目が続けば1本につながる(作者の発言を挟むとそこで切れる)。 */
 .timeline-item {
   position: relative;
-  padding: 0 0 10px 18px;
+  /* 下の余白が、次の丸のブロックとの間隔になる(線は余白の中も通る)。10px だと詰まって、
+     どこからが次の項目か分かりにくかったので 24px に広げた(2026-10-14) */
+  padding: 0 0 24px 18px;
 }
 
 .timeline-item::before {

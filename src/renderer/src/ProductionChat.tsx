@@ -90,7 +90,7 @@ const MessageList = memo(function MessageList({ messages, nodes, groups }: {
     <>
       {messages.map((m, i) => {
         if (m.role === 'user') return (
-          <div key={i} className="mb-2 ml-auto w-fit max-w-[85%] rounded-lg border px-3 py-1.5 [overflow-wrap:anywhere]" style={{
+          <div key={i} className="mb-6 ml-auto w-fit max-w-[85%] rounded-lg border px-3 py-1.5 [overflow-wrap:anywhere]" style={{
             background: 'var(--accent-soft)', borderColor: 'var(--border)'
           }}>
             <div className="mb-1 flex items-baseline gap-2 text-[11px]" style={{ color: 'var(--text-faint)' }}>
