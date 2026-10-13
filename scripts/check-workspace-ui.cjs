@@ -481,7 +481,7 @@ for mode in ['production', None]:
   await assert(`!document.querySelector('aside[aria-label="会話一覧"]')`, '会話一覧は外側のクリックで閉じる')
   await js(`window.workspaceEmit({preview:{node_id:null,beat:'生成中の本文プレビュー'}})`)
   await pause(150)
-  await assert(`(() => {const preview=document.querySelector('[aria-label="AI編集中の本文プレビュー"]'); const input=document.querySelector(${JSON.stringify(productionInput)}); return preview?.getClientRects().length && input.parentElement.contains(preview) && preview.textContent.includes('生成中の本文プレビュー');})()`, '資料庫でも制作チャット内に本文プレビューを表示')
+  await assert(`(() => {const preview=document.querySelector('[aria-label="AI編集中の本文プレビュー"]'); const input=document.querySelector(${JSON.stringify(productionInput)}); const list=document.querySelector('[aria-live="polite"]'); return preview?.getClientRects().length && input.parentElement.contains(preview) && preview.textContent.includes('生成中の本文プレビュー') && list.contains(preview) && preview.classList.contains('timeline-item') && !!preview.querySelector('.timeline-dot.animate-pulse') && preview.textContent.includes('編集案を作成中(対象を確認中)') && !preview.nextElementSibling?.classList.contains('timeline-item');})()`, '資料庫でも制作チャットの時系列の末尾に、書いている途中の本文を出す')
   await click('構造')
   await assert(`(() => {const preview=document.querySelector('[aria-label="AI編集中の本文プレビュー"]'); const detail=[...document.querySelectorAll('aside')].find(e=>e.textContent.includes('清書'));return preview?.getClientRects().length && !detail.contains(preview);})()`, '構造に戻ってもプレビューは詳細欄に入らない')
   const characters = await (await fetch(base + '/characters')).json()

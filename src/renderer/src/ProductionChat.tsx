@@ -535,6 +535,8 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
       <div className="inspector-scrollbar -mr-4 min-h-0 flex-1 overflow-y-auto pr-1.5 [scrollbar-gutter:stable]" aria-live="polite">
         <MessageList messages={messages} nodes={nodes} groups={groups} />
         {live && <TimelineItem color="var(--text-dim)" label="制作" pulse><Markdown text={live} /></TimelineItem>}
+        {/* 書いている途中の本文(未確定)。確定すると消え、同じ場所に操作の項目が入る */}
+        <ProductionPreviewPanel nodes={nodes} />
         {!busy && !error && suggestions.length > 0 && <div aria-label="制作の依頼候補" className="my-2 flex flex-wrap gap-1.5">
           {suggestions.map((suggestion) => <button key={suggestion.label} type="button" disabled={!!input.trim()}
             onClick={() => {
@@ -549,7 +551,6 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
         </div>}
         <div ref={endRef} />
       </div>
-      <ProductionPreviewPanel />
       {error && <p role="alert" className="text-[12px]" style={{ color: 'var(--danger)' }}>{error}</p>}
       <p className="text-[11px]" style={{ color: 'var(--text-faint)' }}>
         {status && messageTime(statusAt) && <time dateTime={statusAt} className="mr-2 tabular-nums">{messageTime(statusAt)}</time>}
