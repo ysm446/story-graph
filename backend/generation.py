@@ -225,13 +225,14 @@ def _format_retrieved_memories(store: Store, path: list[str], instruction: str |
     if not query:
         return ""
     current_order = len(path) - 1
+    decay = retrieval.decay_enabled(store.get_settings())
     lines: list[str] = []
     for char_id in tail["cast"]:
         char_state = state["chars"].get(char_id)
         if not char_state or not char_state["memories"]:
             continue
         hits = retrieval.search_memories(
-            store.conn, query, set(char_state["memories"]), current_order, top_k=5
+            store.conn, query, set(char_state["memories"]), current_order, top_k=5, decay=decay
         )
         for hit in hits:
             lines.append(f"- {char_id}: {hit['content']}")

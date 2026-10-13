@@ -59,12 +59,21 @@ def ensure_vectors(conn: sqlite3.Connection) -> None:
         conn.commit()
 
 
-def _decayed_score(base: float, row: sqlite3.Row, current_order: int) -> float:
+# 設定「記憶の検索で古さを点数に反映する(検証用)」。'0' で時間減衰を掛けない(既定は掛ける)。
+# 古い記憶が出てこない原因が、減衰なのか検索の言葉なのかを切り分けるための切り替え
+DECAY_KEY = "memory_search_decay"
+
+
+def decay_enabled(settings: dict[str, str]) -> bool:
+    return settings.get(DECAY_KEY) != "0"
+
+
+def _decayed_score(base: float, row: sqlite3.Row, current_order: int, decay: bool = True) -> float:
     importance = row["importance"] if row["importance"] is not None else 0.5
     story_order = row["story_order"]
     distance = 0 if story_order is None or story_order < 0 else max(0, current_order - story_order)
-    decay = math.pow(0.5, distance / HALF_LIFE_BEATS)
-    return base * max(importance, 0.1) * decay
+    factor = math.pow(0.5, distance / HALF_LIFE_BEATS) if decay else 1.0
+    return base * max(importance, 0.1) * factor
 
 
 def search_memories(
@@ -73,8 +82,11 @@ def search_memories(
     candidate_ids: set[str],
     current_order: int,
     top_k: int = 5,
+    decay: bool = True,
 ) -> list[dict[str, Any]]:
-    """candidate_ids(fold 済み state の記憶参照)の中から上位 top_k 件を返す。"""
+    """candidate_ids(fold 済み state の記憶参照)の中から上位 top_k 件を返す。
+
+    decay=False で物語内時間の減衰を掛けない(点数は RRF × 重要度だけ)。"""
     if not candidate_ids:
         return []
     ensure_vectors(conn)
@@ -124,6 +136,6 @@ def search_memories(
         row = conn.execute("SELECT * FROM memories WHERE id = ?", (memory_id,)).fetchone()
         if row is None:
             continue
-        results.append((_decayed_score(base, row, current_order), dict(row)))
+        results.append((_decayed_score(base, row, current_order, decay), dict(row)))
     results.sort(key=lambda pair: pair[0], reverse=True)
     return [row for _, row in results[:top_k]]

@@ -33,6 +33,8 @@ APP_KEYS = frozenset({
     "chat_dynamic_suggestions",
     # 埋め込みモデルを起動時に読み込むか(メモリと起動の重さは PC の事情)
     "embedding_load_on_startup",
+    # 記憶の検索で古さを点数に反映するか(検証用の切り替え。作品の内容ではない)
+    "memory_search_decay",
 })
 # ComfyUI は接続先・モデル・生成パラメータ・ネガティブプロンプトまで、すべてアプリ単位
 APP_PREFIXES = ("comfy_",)

@@ -1950,6 +1950,7 @@ export default function SettingsMode(): React.JSX.Element {
   const gridSnap = values.grid_snap !== '0' // 既定はスナップする
   const chatDynamicSuggestions = values.chat_dynamic_suggestions !== '0' // 既定は生成する
   const embeddingOnStartup = values.embedding_load_on_startup !== '0' // 既定は起動時に読み込む
+  const memorySearchDecay = values.memory_search_decay !== '0' // 既定は古さを反映する
 
   const refreshStatus = async (): Promise<void> => {
     try {
@@ -2566,6 +2567,42 @@ export default function SettingsMode(): React.JSX.Element {
                 </p>
               </div>
               <EmbeddingStatusLine />
+              <div className="settings-field">
+                <div className="settings-field-header">
+                  <span className="settings-field-label">記憶の検索で古さを点数に反映する(検証用)</span>
+                  <div className="settings-field-controls">
+                    <div className="flex overflow-hidden rounded-md border" style={{ borderColor: 'var(--border-strong)' }}>
+                      {(
+                        [
+                          ['1', 'オン'],
+                          ['0', 'オフ']
+                        ] as const
+                      ).map(([value, label]) => (
+                        <button
+                          key={value}
+                          aria-pressed={memorySearchDecay === (value === '1')}
+                          onClick={() => void save({ memory_search_decay: value })}
+                          className="px-2.5 py-0.5 text-[12px]"
+                          style={
+                            memorySearchDecay === (value === '1')
+                              ? { background: 'var(--accent-soft)', color: 'var(--text)' }
+                              : { color: 'var(--text-faint)' }
+                          }
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                <p className="settings-field-hint">
+                  オン(既定)では、記憶の検索で古い記憶ほど点数を下げます(20 シーン前で半分。何シーン前かで測ります)。
+                  オフにすると古さでは下げず、言葉の近さと重要度だけで順位を決めます。
+                  古い記憶が出てこない原因を切り分けるための切り替えで、ふだんはオンのままにします。
+                  登場人物の recall、相談・制作チャットの記憶の検索、シーン生成で各キャラが思い出す記憶に効きます。
+                  会話の最初に渡す記憶の選び方と、章のまとめには効きません。切り替えは次の検索から反映されます。
+                </p>
+              </div>
             </div>
           </Section>
 

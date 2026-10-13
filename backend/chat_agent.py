@@ -379,7 +379,10 @@ def _tool_search_memories(store: Store, path: list[str], scope: str, args: dict[
                 continue
             candidates.update(cs["memories"])
         current_order = len(path) - 1
-    hits = retrieval.search_memories(store.conn, query, candidates, current_order, top_k=MEMORY_TOP_K)
+    hits = retrieval.search_memories(
+        store.conn, query, candidates, current_order, top_k=MEMORY_TOP_K,
+        decay=retrieval.decay_enabled(store.get_settings()),
+    )
     origins = {
         h["id"]: store.conn.execute("SELECT node_id FROM events WHERE id = ?", (h["event_id"],)).fetchone()
         for h in hits

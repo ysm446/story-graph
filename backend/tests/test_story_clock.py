@@ -232,3 +232,26 @@ def test_embedding_startup_setting_is_per_pc_and_status_does_not_trigger_loading
     assert embed.status() == "failed" and started == [True]  # 失敗後は読み込み直さない
     monkeypatch.setattr(embed, "_model", object())
     assert embed.status() == "ready"
+
+
+def test_memory_search_decay_can_be_switched_off(store):
+    """検証用の設定で、記憶の検索の時間減衰を外せる(古い記憶が出ない原因の切り分け用)。"""
+    import retrieval
+
+    store.append_node({"id": "old", "beat": "一", "cast": ["aya"]}, [memory("港で指輪を拾った")])
+    for i in range(40):
+        store.append_node({"id": f"n{i}", "beat": "x", "cast": ["aya"]})
+    store.append_node({"id": "new", "beat": "二", "cast": ["aya"]}, [memory("港で指輪を落とした")])
+    path = store.canon_path()
+    search = lambda: [m["content"] for m in chat_agent._tool_search_memories(
+        store, path, "upto", {"query": "港で指輪", "char_id": "aya"})["memories"]]
+    # 既定: 41 シーン前の記憶は点数が 4 分の 1 以下になり、同じ近さの新しい記憶より下に来る
+    assert search() == ["港で指輪を落とした", "港で指輪を拾った"]
+    row = lambda order: {"importance": 0.5, "story_order": order}
+    assert retrieval._decayed_score(1.0, row(0), 40) == pytest.approx(0.125)
+    assert retrieval._decayed_score(1.0, row(0), 40, decay=False) == pytest.approx(0.5)
+    store.set_settings({"memory_search_decay": "0"})
+    assert retrieval.decay_enabled(store.get_settings()) is False
+    assert set(search()) == {"港で指輪を落とした", "港で指輪を拾った"}
+    import app_settings
+    assert app_settings.is_app_key("memory_search_decay")
