@@ -23,7 +23,8 @@ class CopiedNode(BaseModel):
     emotional_core: str | None = None
     cast: list[str] = Field(default_factory=list)
     location: str | None = None
-    story_time: str | None = None
+    elapsed_unit: str | None = None
+    elapsed_count: int | None = None
     events: list[CopiedEvent] = Field(default_factory=list)
     pos_x: FiniteFloat = 0
     pos_y: FiniteFloat = 0
@@ -63,7 +64,7 @@ def paste(store, body: PasteIn):
                 raise ValueError("コピーしたシーンの登場人物が削除されています")
             if n.location and tx.get_place(n.location) is None:
                 raise ValueError("コピーしたシーンの場所が削除されています")
-            data = n.model_dump(include={"title", "beat", "emotional_core", "cast", "location", "story_time"})
+            data = n.model_dump(include={"title", "beat", "emotional_core", "cast", "location", "elapsed_unit", "elapsed_count"})
             tx.append_node({**data, "id": ids[n.id]}, detached=True)
             tx.conn.execute(
                 "UPDATE nodes SET group_id=?, pos_x=?, pos_y=?, image_path=?, thumb_path=?, target_chars=? WHERE id=?",

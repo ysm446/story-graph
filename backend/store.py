@@ -17,6 +17,7 @@ import app_settings
 import db as db_mod
 import embed
 import setting_documents
+import story_clock
 import fold as fold_mod
 from validation import validate_node
 
@@ -701,9 +702,9 @@ class Store:
         node_id = data.get("id") or _new_id()
         now = _now()
         self.conn.execute(
-            """INSERT INTO nodes(id, title, beat, emotional_core, cast, location, story_time,
-                                 status, group_id, created_at, updated_at)
-               VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+            """INSERT INTO nodes(id, title, beat, emotional_core, cast, location,
+                                 elapsed_unit, elapsed_count, status, group_id, created_at, updated_at)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 node_id,
                 data.get("title"),
@@ -711,7 +712,7 @@ class Store:
                 data.get("emotional_core"),
                 json.dumps(data.get("cast", []), ensure_ascii=False),
                 data.get("location"),
-                data.get("story_time"),
+                *story_clock.normalize(data.get("elapsed_unit"), data.get("elapsed_count")),
                 "canon" if on_canon_path else "draft",
                 group_id,
                 now,
@@ -793,9 +794,9 @@ class Store:
         parent_group = neighbor_groups.get(parent_id)
         group_id = parent_group if parent_group and parent_group == neighbor_groups.get(chain_edge["to_node"]) else None
         self.conn.execute(
-            """INSERT INTO nodes(id, title, beat, emotional_core, cast, location, story_time,
-                                 status, group_id, created_at, updated_at)
-               VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+            """INSERT INTO nodes(id, title, beat, emotional_core, cast, location,
+                                 elapsed_unit, elapsed_count, status, group_id, created_at, updated_at)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 node_id,
                 data.get("title"),
@@ -803,7 +804,7 @@ class Store:
                 data.get("emotional_core"),
                 json.dumps(data.get("cast", []), ensure_ascii=False),
                 data.get("location"),
-                data.get("story_time"),
+                *story_clock.normalize(data.get("elapsed_unit"), data.get("elapsed_count")),
                 "canon" if on_canon_path else "draft",
                 group_id,
                 now,
@@ -1196,7 +1197,7 @@ class Store:
     # 編集しても自ノードの清書が古くなるだけで、下流の状態・清書には影響しない。
     # status / target_chars はどちらにも効かない(status は canon 導出の表示、
     # target_chars は set_node_target_chars と同じ扱い)
-    _PROMPT_ONLY_FIELDS = ("title", "beat", "emotional_core", "location", "story_time")
+    _PROMPT_ONLY_FIELDS = ("title", "beat", "emotional_core", "location", "elapsed_unit", "elapsed_count")
 
     def update_node(self, node_id: str, data: dict[str, Any]) -> dict[str, Any] | None:
         row = self.conn.execute("SELECT * FROM nodes WHERE id = ?", (node_id,)).fetchone()
@@ -1206,6 +1207,11 @@ class Store:
         cast = data.get("cast")
         new_cast = json.dumps(cast, ensure_ascii=False) if cast is not None else current["cast"]
         cast_changed = new_cast != current["cast"]
+        if "elapsed_unit" in data or "elapsed_count" in data:
+            # 単位だけ・数だけの更新でも、組として正しい形に揃える(単位を変えたら数は持ち越さない)
+            unit = data.get("elapsed_unit", current["elapsed_unit"])
+            count = data.get("elapsed_count", current["elapsed_count"] if "elapsed_unit" not in data else None)
+            data = {**data, **dict(zip(("elapsed_unit", "elapsed_count"), story_clock.normalize(unit, count)))}
         prompt_changed = any(
             data.get(f, current[f]) != current[f] for f in self._PROMPT_ONLY_FIELDS
         )
@@ -1213,7 +1219,7 @@ class Store:
         old_hash = fold_mod.state_hash(self.get_state(node_id)) if cast_changed else None
         self.conn.execute(
             """UPDATE nodes SET title = ?, beat = ?, emotional_core = ?, cast = ?,
-               location = ?, story_time = ?, status = ?, target_chars = ?, updated_at = ?
+               location = ?, elapsed_unit = ?, elapsed_count = ?, status = ?, target_chars = ?, updated_at = ?
                WHERE id = ?""",
             (
                 data.get("title", current["title"]),
@@ -1221,7 +1227,8 @@ class Store:
                 data.get("emotional_core", current["emotional_core"]),
                 new_cast,
                 data.get("location", current["location"]),
-                data.get("story_time", current["story_time"]),
+                data.get("elapsed_unit", current["elapsed_unit"]),
+                data.get("elapsed_count", current["elapsed_count"]),
                 data.get("status", current["status"]),
                 data.get("target_chars", current["target_chars"]),
                 _now(),

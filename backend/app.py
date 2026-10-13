@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import os
 import zipfile
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.exception_handlers import http_exception_handler
@@ -34,6 +34,7 @@ import production_suggest
 import rendering
 import setting_documents
 import snapshots
+import story_clock
 from comfy_manager import ComfyManager
 from llama_manager import LlamaManager
 from store import Store
@@ -250,13 +251,18 @@ class EventIn(BaseModel):
     source: str = "user"
 
 
+ElapsedUnit = Literal["immediate", "same_day", "day", "week", "month", "year"]
+
+
 class NodeIn(BaseModel):
     title: str | None = None
     beat: str
     emotional_core: str | None = None
     cast: list[str] = Field(default_factory=list)
     location: str | None = None
-    story_time: str | None = None
+    # 前のシーンからの経過(story_clock.py)。None = 未設定
+    elapsed_unit: ElapsedUnit | None = None
+    elapsed_count: int | None = Field(default=None, ge=1, le=story_clock.MAX_COUNT)
     parent_id: str | None = None
     draft: bool = False  # True で常に draft ブランチとして挿入(提案カード用)
     detached: bool = False  # True でどこにも繋がない独立シーン(島の起点)
@@ -269,7 +275,8 @@ class NodePatch(BaseModel):
     emotional_core: str | None = None
     cast: list[str] | None = None
     location: str | None = None
-    story_time: str | None = None
+    elapsed_unit: ElapsedUnit | None = None
+    elapsed_count: int | None = Field(default=None, ge=1, le=story_clock.MAX_COUNT)
     status: str | None = None
 
 

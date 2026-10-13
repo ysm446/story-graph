@@ -17,6 +17,7 @@ from typing import Any, AsyncIterator
 import llm
 import retrieval
 import setting_documents
+import story_clock
 from store import Store, _is_turn_start
 
 
@@ -241,7 +242,8 @@ def _tool_get_beats(store: Store, path: list[str], args: dict[str, Any], scope: 
                 "beat": node["beat"],
                 "cast": node["cast"],
                 "location": store.place_name(store.effective_location(path[i])[0]),
-                "story_time": node["story_time"],
+                # 前のシーンからの経過(「3日後」など)。null は未設定で、直後とは限らない
+                "elapsed": story_clock.label(node.get("elapsed_unit"), node.get("elapsed_count")),
                 **links.get(path[i], {}),
             }
         )
@@ -466,7 +468,7 @@ def _select_memories(
     placeholders = ",".join("?" for _ in memory_ids)
     # 新しい順。分岐ノード上の記憶(story_order < 0)は retrieval と同じく「いま」扱い
     rows = store.conn.execute(
-        f"SELECT id, content, importance FROM memories WHERE id IN ({placeholders})"
+        f"SELECT id, content, importance, event_id FROM memories WHERE id IN ({placeholders})"
         " ORDER BY (story_order IS NULL OR story_order < 0) DESC, story_order DESC",
         memory_ids,
     ).fetchall()
@@ -482,11 +484,39 @@ def _select_memories(
     return important, list(reversed(recent)), len(rows)
 
 
+def _memory_ages(store: Store, path: list[str], rows: list[Any]) -> dict[str, str]:
+    """記憶 ID → いまから見ていつのことか(「3日前」など。story_clock.py)。
+
+    記憶が生まれたシーンと会話の時点(道の末尾)の間で、経過が全部設定されているものだけ返す。
+    経過を 1 つも設定していない作品では空になり、記憶の見え方は変わらない(末尾のシーンの
+    記憶だけに「今日」と付くのを避ける)。章のまとめの要約記憶はシーンを持たないので付かない。
+    """
+    steps = story_clock.steps_for(store, path)
+    if not rows or not any(unit is not None for unit, _ in steps[1:]):
+        return {}
+    marks = ",".join("?" for _ in rows)
+    node_of = {
+        r["id"]: r["node_id"]
+        for r in store.conn.execute(
+            f"SELECT id, node_id FROM events WHERE id IN ({marks})", [r["event_id"] for r in rows]
+        )
+    }
+    points = dict(zip(path, story_clock.points(steps)))
+    now = points[path[-1]]
+    ages: dict[str, str] = {}
+    for r in rows:
+        point = points.get(node_of.get(r["event_id"]))
+        age = story_clock.ago(point, now) if point is not None else None
+        if age is not None:
+            ages[r["id"]] = age
+    return ages
+
+
 def build_character_system(store: Store, path: list[str], char_id: str, mode: str) -> str:
     char = store.get_character(char_id)
     if char is None:
         raise ValueError(f"キャラが見つかりません: {char_id}")
-    state = store.get_state(path[-1]) if path else {"world": {"time": None, "facts": {}}, "chars": {}}
+    state = store.get_state(path[-1]) if path else {"world": {"facts": {}}, "chars": {}}
     cs = state["chars"].get(char_id) or {"facts": {}, "relationships": {}, "memories": []}
 
     lines: list[str] = [f"あなたは「{char['name']}」という人物です。"]
@@ -498,10 +528,8 @@ def build_character_system(store: Store, path: list[str], char_id: str, mode: st
         lines.append(f"口調: {char['voice']}")
 
     facts = cs.get("facts") or {}
-    if facts or state["world"]["facts"] or state["world"]["time"] is not None:
+    if facts or state["world"]["facts"]:
         lines += ["", "## 現在のあなたの状況"]
-        if state["world"]["time"] is not None:
-            lines.append(f"- 時間: {state['world']['time']}")
         for k, v in facts.items():
             lines.append(f"- {k}: {v}")
         # world facts は「誰もが知っている公のこと」という規約(2026-07-29)なので
@@ -521,14 +549,22 @@ def build_character_system(store: Store, path: list[str], char_id: str, mode: st
     memory_ids = list(cs.get("memories") or [])
     if memory_ids:
         important, recent, total = _select_memories(store, memory_ids)
+        when = _memory_ages(store, path, [*important, *recent])
+        dated = bool(when)
+
+        def line(r: Any) -> str:
+            return f"- ({when[r['id']]}){r['content']}" if r["id"] in when else f"- {r['content']}"
+
         if not important:
             lines += ["", "## あなたの記憶"]
-            lines += [f"- {r['content']}" for r in recent]
+            lines += [line(r) for r in recent]
         else:
             lines += ["", "## 強く残っている記憶"]
-            lines += [f"- {r['content']}" for r in important]
+            lines += [line(r) for r in important]
             lines += ["", "## 最近の出来事"]
-            lines += [f"- {r['content']}" for r in recent]
+            lines += [line(r) for r in recent]
+        if dated:
+            lines.append("(先頭の( )は、いまから見ていつのことか。付いていない記憶は時期が分からない)")
         rest = total - len(important) - len(recent)
         if rest > 0:
             lines.append(

@@ -76,6 +76,7 @@ import { ElapsedLabel } from '../ElapsedLabel'
 import { backfillThumbs } from '../thumbs'
 import type {
   Character,
+  ElapsedUnit,
   EventInput,
   GraphEdge,
   Group,
@@ -536,6 +537,18 @@ function deleteBeatDraft(nodeId: string): void {
   if (beatDraftCache.delete(nodeId)) beatDraftListeners.forEach((listener) => listener())
 }
 
+// 前のシーンからの経過の選択肢(backend/story_clock.py の単位と同じ並び)。空 = 未設定
+const ELAPSED_OPTIONS: [string, string][] = [
+  ['', '未設定'],
+  ['immediate', '直後'],
+  ['same_day', '同じ日'],
+  ['day', '日後'],
+  ['week', '週間後'],
+  ['month', 'か月後'],
+  ['year', '年後']
+]
+const COUNTED_ELAPSED = ['day', 'week', 'month', 'year']
+
 function savedBeatDraft(node: StoryNode): Partial<StoryNode> {
   return {
     title: node.title,
@@ -543,7 +556,8 @@ function savedBeatDraft(node: StoryNode): Partial<StoryNode> {
     emotional_core: node.emotional_core,
     cast: [...node.cast],
     location: node.location,
-    story_time: node.story_time
+    elapsed_unit: node.elapsed_unit,
+    elapsed_count: node.elapsed_count
   }
 }
 
@@ -764,7 +778,8 @@ function BeatTab({
       (draft.beat ?? '') !== (node.beat ?? '') ||
       (draft.emotional_core ?? '') !== (node.emotional_core ?? '') ||
       (draft.location ?? '') !== (node.location ?? '') ||
-      (draft.story_time ?? '') !== (node.story_time ?? '') ||
+      (draft.elapsed_unit ?? null) !== (node.elapsed_unit ?? null) ||
+      (draft.elapsed_count ?? null) !== (node.elapsed_count ?? null) ||
       JSON.stringify(draft.cast ?? []) !== JSON.stringify(node.cast ?? []))
 
   // 未保存の変更があればノード ID ごとに退避、変更が無ければ退避を掃除する。
@@ -1115,7 +1130,8 @@ function BeatTab({
               </p>
             )}
           </div>
-          <div className="grid grid-cols-2 gap-2">
+          {/* 縦に積む: 左の列は 200px まで狭くなり、横に並べると経過の単位(「か月後」)が切れる */}
+          <div className="grid gap-3">
             <label className="block">
               <span className={labelClass} style={{ color: 'var(--text-faint)' }}>
                 Location
@@ -1145,17 +1161,50 @@ function BeatTab({
                 </span>
               )}
             </label>
-            <label className="block">
-              <span className={labelClass} style={{ color: 'var(--text-faint)' }}>
-                Story time
+            <div>
+              <span className={labelClass} style={{ color: 'var(--text-faint)' }}
+                data-tip={['前のシーンからどれだけ時間が経ったか。清書と登場人物との会話に渡ります。',
+                  '・未設定 — 決めていない(直後とは限らないものとして扱う)',
+                  '・直後 — 前のシーンからひとつながり',
+                  '・同じ日 — 場面は変わるが、日はまたがない'].join('\n')}>
+                Elapsed
               </span>
-              <input
-                value={draft.story_time ?? ''}
-                onChange={(e) => setDraft((d) => ({ ...d, story_time: e.target.value }))}
-                className="w-full rounded-lg border px-3 py-1.5 text-[13px] outline-none"
-                style={inputStyle}
-              />
-            </label>
+              {/* 数は「日後」以降だけが持つ。単位を選ぶと左に数の欄が出る(「3」「日後」と読める並び) */}
+              <div className="flex gap-1.5">
+                {COUNTED_ELAPSED.includes(draft.elapsed_unit ?? '') && (
+                  <input
+                    type="number" min={1} max={9999} aria-label="経過の数"
+                    value={draft.elapsed_count ?? 1}
+                    onChange={(e) => {
+                      const count = Math.min(9999, Math.max(1, Math.floor(Number(e.target.value)) || 1))
+                      setDraft((d) => ({ ...d, elapsed_count: count }))
+                    }}
+                    className="w-16 shrink-0 rounded-lg border px-2 py-1.5 text-[13px] tabular-nums outline-none"
+                    style={inputStyle}
+                  />
+                )}
+                <select
+                  aria-label="前のシーンからの経過"
+                  value={draft.elapsed_unit ?? ''}
+                  onChange={(e) => {
+                    const unit = (e.target.value || null) as ElapsedUnit | null
+                    setDraft((d) => ({
+                      ...d,
+                      elapsed_unit: unit,
+                      elapsed_count: COUNTED_ELAPSED.includes(unit ?? '') ? (d.elapsed_count ?? 1) : null
+                    }))
+                  }}
+                  className="min-w-0 flex-1 rounded-lg border px-3 py-1.5 text-[13px] outline-none"
+                  style={{ ...inputStyle, color: draft.elapsed_unit ? 'var(--text)' : 'var(--text-faint)' }}
+                >
+                  {ELAPSED_OPTIONS.map(([value, text]) => (
+                    <option key={value} value={value}>
+                      {text}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <button onClick={() => void handleDelete()} className="delete-action ml-auto text-[12px]">

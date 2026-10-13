@@ -1,7 +1,7 @@
 # 場所(places)— 登録して、時系列で変化させる
 
 作成日時: 2026-07-27 01:03
-更新日時: 2026-07-27 01:40
+更新日時: 2026-10-13 23:09
 
 キャラクターと同じように**場所を登録制の第一級エンティティにする**設計メモ。
 2026-07-27 のユーザー発案。未完了タスクの「[location の引き継ぎ](../plan/progress.md)」を含む。
@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS places(
 
 ```
 state = {
-  world:  { time, facts },
+  world:  { facts },
   chars:  { id: { status, retire_reason, facts, relationships, memories } },
   places: { id: { facts } },          ← 追加
 }

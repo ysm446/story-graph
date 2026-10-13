@@ -11,6 +11,7 @@ import json
 from typing import Any, AsyncIterator
 
 import llm
+import story_clock
 from store import Store
 
 RENDER_TEMPERATURE = 0.9
@@ -85,8 +86,6 @@ def _state_summary(store: Store, node_id: str, cast: list[str], pov_char: str | 
     """
     state = store.get_state(node_id)
     lines: list[str] = []
-    if state["world"]["time"] is not None:
-        lines.append(f"時間: {state['world']['time']}")
     for key, value in state["world"]["facts"].items():
         lines.append(f"世界: {key} = {value}")
     target_chars = [pov_char] if pov_char else cast
@@ -147,7 +146,8 @@ def fixed_rules(pov: bool) -> list[str]:
         "- 許されるのは描写・内面・会話の肉付けのみ",
         "- 「状態」にない情報を登場人物に知らせない"
         + ("(視点キャラが知らないことは地の文にも書かない)" if pov else ""),
-        "- 直前シーンの末尾から自然に接続する(あらすじの繰り返しをしない)",
+        "- 直前シーンの末尾から自然に接続する(あらすじの繰り返しをしない)。"
+        "ただし「前のシーンからの経過」に時間が経っていると書かれているときは、直前の続きにせず、その時間が経ったところから書き始める",
         "- 見出し・注釈・メタ情報は書かず、本文のみを出力する",
     ]
 
@@ -186,6 +186,7 @@ def build_render_messages(
         ]
     )
     place_name = store.place_name(store.effective_location(node["id"])[0])
+    move = story_clock.transition(store, node)
     user_parts = [
         "## 登場人物",
         _cast_profiles(store, node["cast"]),
@@ -196,12 +197,18 @@ def build_render_messages(
         "",
         "## このシーンのビート",
         f"タイトル: {node['title'] or '(無題)'}",
-        f"場所: {place_name or '不明'}" + (f" / 時間: {node['story_time']}" if node["story_time"] else ""),
+        f"場所: {place_name or '不明'}",
+        *([f"前のシーンからの経過: {move['note']}"] if move else []),
         f"感情の核: {node['emotional_core'] or '-'}",
         node["beat"],
     ]
     if prev_tail:
-        user_parts += ["", "## 直前シーンの末尾(この続きから書く)", prev_tail]
+        heading = (
+            "## 直前シーンの末尾(この続きから書く)"
+            if move is None or move["continuous"]
+            else "## 直前シーンの末尾(参考。続きとは限らない。「前のシーンからの経過」に従って書き始める)"
+        )
+        user_parts += ["", heading, prev_tail]
     user_parts += ["", "このビートを散文化してください。"]
     return [
         {"role": "system", "content": system},

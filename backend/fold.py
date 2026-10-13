@@ -4,7 +4,7 @@
 StateSnapshot は plain dict:
 
 {
-  "world": { "time": ..., "facts": {key: value} },
+  "world": { "facts": {key: value} },
   "chars": {
     char_id: {
       "status": "introduced" | "retired",
@@ -41,7 +41,7 @@ EVENT_TYPES = frozenset(
 
 
 def empty_state() -> dict[str, Any]:
-    return {"world": {"time": None, "facts": {}}, "chars": {}}
+    return {"world": {"facts": {}}, "chars": {}}
 
 
 def _clamp(value: float) -> float:
@@ -100,11 +100,7 @@ def apply_event(state: dict[str, Any], event: dict[str, Any]) -> None:
             rel["label"] = payload["label"]
     elif etype == "fact_set":
         if payload["scope"] == "world":
-            key = payload["key"]
-            if key == "time":
-                state["world"]["time"] = payload["value"]
-            else:
-                state["world"]["facts"][key] = payload["value"]
+            state["world"]["facts"][payload["key"]] = payload["value"]
         else:
             char_id = payload.get("char")
             if not char_id:

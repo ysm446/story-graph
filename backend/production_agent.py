@@ -19,6 +19,7 @@ import generation
 import llm
 import node_operations
 import snapshots
+import story_clock
 import production_memory
 import production_library
 import production_chapters
@@ -312,6 +313,10 @@ def tools(allow_write: bool, memory: bool = True):
         "beat": {"type": "string", "description": "シーンの本文全文"},
         "cast": {"type": "array", "items": {"type": "string"}, "description": "既存キャラID"},
         "location": {"type": ["string", "null"], "description": "登録済み場所ID。nullで親から引継ぐ。省略時は維持"},
+        "elapsed_unit": {"type": "string", "enum": [*story_clock.UNITS, "unset"],
+                         "description": "前のシーンからの経過。" + story_clock.UNIT_HELP + "。unsetで未設定に戻す。省略時は維持(新規は未設定)。"
+                                        "本文や依頼から経過が分かるときだけ指定し、推測では入れない"},
+        "elapsed_count": {"type": "integer", "description": "elapsed_unitがday/week/month/yearのときの数(1以上。省略時は1)"},
     }
     for name, description, properties, required in [
         ("insert_scene", "既存ルートの途中への挿入、または枝の末尾を延長する。後続があればその間に入り、正史上では正史が変わる。別ルート・分岐の新規作成には使わずbranch_sceneを使う。",
@@ -341,6 +346,15 @@ def tools(allow_write: bool, memory: bool = True):
     return result
 
 
+def _elapsed_args(args):
+    """ツール引数の経過を保存する形にする。指定が無ければ空(= 維持)。unset は未設定に戻す。"""
+    if "elapsed_unit" not in args:
+        return {}
+    unit = args["elapsed_unit"]
+    unit, count = story_clock.normalize(None if unit == "unset" else unit, args.get("elapsed_count"))
+    return {"elapsed_unit": unit, "elapsed_count": count}
+
+
 def _validate_args(store, name, args):
     if not isinstance(args, dict):
         raise ValueError("引数はオブジェクトで指定してください")
@@ -368,6 +382,9 @@ def _validate_args(store, name, args):
         if "location" in args and args["location"] is not None:
             if not isinstance(args["location"], str) or args["location"] not in store.known_place_ids():
                 raise ValueError("locationには登録済みの場所IDかnullを指定してください")
+        if "elapsed_count" in args and "elapsed_unit" not in args:
+            raise ValueError("elapsed_countはelapsed_unitと一緒に指定してください")
+        _elapsed_args(args)
         if name in CREATE_SCENE_TOOLS and not all(k in args for k in ("title", "cast")):
             raise ValueError("シーン作成にはtitleとcastが必要です")
     return node
@@ -405,13 +422,15 @@ async def apply_edit(store: Store, base_url: str, name: str, args: dict, before_
     if policy is not None:
         policy.check_target(original["id"])
         before = store.graph()
-    if name == "update_scene" and all(args[k] == original.get(k) for k in ("title", "beat", "cast", "location") if k in args):
+    elapsed = _elapsed_args(args)
+    if name == "update_scene" and all(args[k] == original.get(k) for k in ("title", "beat", "cast", "location") if k in args) \
+            and all(value == original.get(k) for k, value in elapsed.items()):
         raise ValueError("その本文はすでに反映済みです。次の作業へ進んでください")
     candidate_conn = db.connect(":memory:")
     try:
         store.conn.backup(candidate_conn)
         candidate = Store(candidate_conn)
-        data = {k: args[k] for k in ("title", "beat", "cast", "location") if k in args}
+        data = {**{k: args[k] for k in ("title", "beat", "cast", "location") if k in args}, **elapsed}
         node_id = original["id"]
         if name in CREATE_SCENE_TOOLS:
             node_id = uuid.uuid4().hex[:12]

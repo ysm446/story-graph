@@ -19,6 +19,7 @@ from typing import Any, AsyncIterator
 
 import llm
 import retrieval
+import story_clock
 from generated_text import normalize_scene_text
 from store import Store
 from validation import validate_node
@@ -111,10 +112,21 @@ def beat_schema(char_ids: list[str], place_ids: list[str] | None = None) -> dict
     if place_ids:
         properties["location"] = {"type": "string", "enum": place_ids}
         required.append("location")
-    properties["story_time"] = {"type": "string"}
+    # 前のシーンからの経過(story_clock.py)。任意。出さなければ未設定のまま
+    properties["elapsed_unit"] = {"type": "string", "enum": list(story_clock.UNITS)}
+    properties["elapsed_count"] = {"type": "integer"}
     properties["events"] = {"type": "array", "items": {"anyOf": _event_schemas(char_ids)}}
     required.append("events")
     return {"type": "object", "properties": properties, "required": required}
+
+
+def _elapsed_from(result: dict[str, Any]) -> dict[str, Any]:
+    """LLM の出力から経過を取り出す。形が崩れていたら未設定にする(経過のせいで生成を落とさない)。"""
+    try:
+        unit, count = story_clock.normalize(result.get("elapsed_unit"), result.get("elapsed_count"))
+    except ValueError:
+        unit, count = None, None
+    return {"elapsed_unit": unit, "elapsed_count": count}
 
 
 def events_schema(char_ids: list[str]) -> dict[str, Any]:
@@ -146,8 +158,6 @@ def _format_state(store: Store, node_id: str | None) -> str:
         return "(物語はまだ始まっていない)"
     state = store.get_state(node_id)
     lines = []
-    if state["world"]["time"] is not None:
-        lines.append(f"時間: {state['world']['time']}")
     for key, value in state["world"]["facts"].items():
         lines.append(f"世界: {key} = {value}")
     for char_id, cs in state["chars"].items():
@@ -171,7 +181,10 @@ def _format_recent_beats(store: Store, path: list[str]) -> str:
             continue
         cast = ", ".join(node["cast"])
         place = store.place_name(store.effective_location(nid)[0])
-        lines.append(f"[{node['title'] or '無題'}] ({cast} @ {place or '?'})\n{node['beat']}")
+        # 経過は設定されているものだけ出す(未設定を毎回書くと、時間が飛んだ場面が埋もれる)
+        elapsed = story_clock.label(node.get("elapsed_unit"), node.get("elapsed_count"))
+        when = f" / 前のシーンから{elapsed}" if elapsed and nid != path[0] else ""
+        lines.append(f"[{node['title'] or '無題'}] ({cast} @ {place or '?'}{when})\n{node['beat']}")
     return "\n\n".join(lines) or "(まだビートがない)"
 
 
@@ -252,6 +265,8 @@ GENERATION_RULES = f"""出力は必ず指定の JSON 形式に従ってくださ
 - cast はそのシーンに登場するキャラ ID のみ
 - 退場済みキャラは登場させない
 - location は「場所一覧」にある ID から選ぶ(場所が変わらないなら直前と同じ ID)
+- elapsed_unit は直前のビートからの経過({story_clock.UNIT_HELP})。
+  day 以降は elapsed_count に数を入れる。指示やビートから経過が分かるときだけ出し、分からなければ省略する
 
 {EVENT_RULES}"""
 
@@ -489,7 +504,7 @@ async def _generate_beat_impl(
             {"type": e["type"], "payload": e["payload"]} for e in result.get("events", [])
         ]
         errors = validate_node(
-            state_before if state_before is not None else {"chars": {}, "world": {"time": None, "facts": {}}},
+            state_before if state_before is not None else {"chars": {}, "world": {"facts": {}}},
             result.get("cast", []),
             candidate_events,
             set(char_ids),
@@ -514,7 +529,7 @@ async def _generate_beat_impl(
         "emotional_core": result.get("emotional_core"),
         "cast": result.get("cast", []),
         "location": result.get("location"),
-        "story_time": result.get("story_time"),
+        **_elapsed_from(result),
     }
     events = [
         {"type": e["type"], "payload": e["payload"], "source": "llm"} for e in result.get("events", [])

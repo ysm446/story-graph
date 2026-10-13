@@ -124,7 +124,6 @@ export const api = {
     emotional_core?: string
     cast?: string[]
     location?: string
-    story_time?: string
     parent_id?: string
     draft?: boolean
     detached?: boolean // どこにも繋がない独立シーン(島の起点)

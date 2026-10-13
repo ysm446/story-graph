@@ -1,7 +1,7 @@
 # 画像生成(ComfyUI 連携)— キャラクターの参照画像と場面の挿絵
 
 作成日時: 2026-08-26 15:15
-更新日時: 2026-10-12 04:08
+更新日時: 2026-10-13 23:09
 
 ローカルの ComfyUI で挿絵を作る仕組みの設計メモ。2026-08-26 のユーザー発案
 ([progress.md](../plan/progress.md) の「場面の画像生成」)。画像は**装飾専用**で、
@@ -117,7 +117,7 @@ API 形式の JSON テンプレート `workflows/ref_t2i.json` を `comfy.build_
 ## 6. 場面の挿絵
 
 1. `POST /nodes/{id}/image/prompt` `{char_ids | null, instructions}` — ビート・感情の核・場所(実効ロケーションの
-   description / atmosphere)・story_time・cast(外見つき)を LLM に渡し、**1 つの瞬間**を英語で描写させる
+   description / atmosphere)・cast(外見つき)を LLM に渡し、**1 つの瞬間**を英語で描写させる
    (`SCENE_PROMPT_SYSTEM`)。参照画像を渡すキャラは `image1..3` のラベルで、名前は使わせない。
    SSE: 冒頭の `{meta:{suffix, refs, cast}}` で「誰が image1.. か」を返し、続けて `{delta}` を流す。
    `char_ids` 省略時は cast 順に参照画像のあるキャラを最大 3 人自動選択(`select_scene_refs`)。

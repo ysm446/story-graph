@@ -2,7 +2,7 @@
 
 # 編集内容として比較する項目。座標・派生キャッシュ・更新時刻は含めず、イベントと章所属は含める。
 # 保護判定(check_candidate)と競合検出(production_agent.NodeVersions)で共用する。
-CONTENT_FIELDS = ("title", "beat", "cast", "emotional_core", "location", "story_time", "group_id", "kind", "events")
+CONTENT_FIELDS = ("title", "beat", "cast", "emotional_core", "location", "elapsed_unit", "elapsed_count", "group_id", "kind", "events")
 
 
 class ProductionPolicy:

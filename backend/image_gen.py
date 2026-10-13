@@ -202,8 +202,6 @@ def _scene_notes(
     if place:
         desc = " ".join(x for x in [place.get("description") or "", place.get("atmosphere") or ""] if x)
         lines.append(f"Place: {place.get('name')}" + (f" — {desc}" if desc else ""))
-    if node.get("story_time"):
-        lines.append(f"Time: {node['story_time']}")
     cast_lines = []
     for c in cast_chars:
         label = f"image{ref_ids[c['id']]} (has reference image)" if c["id"] in ref_ids else "no reference image"

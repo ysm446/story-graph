@@ -79,7 +79,6 @@ CREATE TABLE IF NOT EXISTS nodes(
   emotional_core TEXT,
   cast TEXT NOT NULL,
   location TEXT,
-  story_time TEXT,
   status TEXT DEFAULT 'canon',
   created_at TEXT, updated_at TEXT
 );
@@ -329,6 +328,10 @@ def init_schema(conn: sqlite3.Connection) -> None:
         # キャラ同士の会話室(mode='room')の参加者(JSON 配列の char_id。docs/design/chat.md §8)。
         # 会話室は char_id NULL のまま participants で見分ける
         "ALTER TABLE chats ADD COLUMN participants TEXT",
+        # 前のシーンからの経過(backend/story_clock.py)。NULL = 未設定(「直後」とは区別する)。
+        # 単位は immediate / same_day / day / week / month / year、数は day 以降だけが持つ
+        "ALTER TABLE nodes ADD COLUMN elapsed_unit TEXT",
+        "ALTER TABLE nodes ADD COLUMN elapsed_count INTEGER",
     ):
         try:
             conn.execute(ddl)

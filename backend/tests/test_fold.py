@@ -63,7 +63,8 @@ def test_fact_set_world_and_char_last_wins():
 
 def test_fact_set_world_time():
     state = fold(empty_state(), [ev("e1", "fact_set", scope="world", key="time", value="3日目の夜")])
-    assert state["world"]["time"] == "3日目の夜"
+    # time は特別扱いしない(時間はシーンの「前のシーンからの経過」で持つ。story_clock.py)
+    assert state["world"]["facts"]["time"] == "3日目の夜"
 
 
 def test_char_retire_and_reintroduce():

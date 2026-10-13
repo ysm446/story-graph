@@ -122,12 +122,12 @@ def test_select_scene_refs_keeps_cast_order_and_limit():
 
 
 def test_scene_notes_label_refs_and_place():
-    node = {"title": "T", "beat": "本文", "cast": ["a", "b"], "story_time": "夜"}
+    node = {"title": "T", "beat": "本文", "cast": ["a", "b"]}
     chars = [{"id": "a", "name": "A", "ref_image_path": "a.png", "appearance": "赤髪"}, {"id": "b", "name": "B"}]
     notes = image_gen._scene_notes(node, chars, image_gen.select_scene_refs(chars), {"name": "港", "description": "古い"})
     assert "- A: image1 (has reference image); appearance: 赤髪" in notes
     assert "- B: no reference image" in notes
-    assert "Place: 港 — 古い" in notes and "Time: 夜" in notes
+    assert "Place: 港 — 古い" in notes
 
 
 def test_instructions_are_appended_to_notes():

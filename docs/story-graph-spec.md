@@ -1,7 +1,7 @@
 # story-graph — spec.md
 
 作成日時: 2026-07-24 22:59
-更新日時: 2026-10-03 10:26
+更新日時: 2026-10-13 23:09
 
 ノードベース・ストーリー構築アプリ
 
@@ -58,7 +58,8 @@ nodes(
   emotional_core TEXT,       -- このシーンの感情的な核(1行)
   cast TEXT NOT NULL,        -- JSON array of char_id
   location TEXT,
-  story_time TEXT,           -- 物語内時間(自由形式 or 日数)
+  elapsed_unit TEXT,         -- 前のシーンからの経過の単位(NULL = 未設定。docs/design/node-inheritance.md §8)
+  elapsed_count INTEGER,     -- 日後・週間後・か月後・年後のときの数
   status TEXT DEFAULT 'canon',  -- canon | draft
   created_at TEXT, updated_at TEXT
 )
@@ -159,7 +160,7 @@ settings(key TEXT PRIMARY KEY, value TEXT)
 
 ```
 StateSnapshot = {
-  world: { time, facts: {key: value} },
+  world: { facts: {key: value} },
   chars: {
     [char_id]: {
       facts: {key: value},          -- location, alive, goal, items...
