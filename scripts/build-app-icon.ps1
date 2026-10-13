@@ -1,4 +1,4 @@
-param([string]$Source = 'assets/story-graph-concentric-arcs-blue-purple-v3.png')
+param([string]$Source = 'assets/story-graph-concentric-arcs-blue-purple-v4.png')
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
 $root = Split-Path $PSScriptRoot -Parent
