@@ -86,6 +86,25 @@ select:focus-visible,
   outline-offset: -2px;
 }
 
+/* チャットの入力の箱(入力欄 + 下の操作の行)。枠は箱が持つので、中の入力欄には
+   フォーカスの枠を出さず、入力中は箱の枠で示す。「制作を実行」を選んでいる間は実行の色 */
+.chat-composer textarea:focus-visible {
+  outline: none;
+}
+/* 入力の案内(プレースホルダ)は控えめにする。箱の中に実際の文字(選択中・送信モード)が並ぶので、
+   既定の色だと入力済みの文章のように見える */
+.chat-composer textarea::placeholder {
+  color: var(--text-faint);
+  opacity: 1;
+}
+.chat-composer:has(textarea:focus-visible) {
+  outline: 2px solid var(--accent-border-bright);
+  outline-offset: -2px;
+}
+.chat-composer[data-armed='true']:has(textarea:focus-visible) {
+  outline-color: var(--execute);
+}
+
 /* スライダーはつまみの色(.settings-slider:focus)で示すので枠は出さない */
 input[type='range']:focus-visible {
   outline: none;

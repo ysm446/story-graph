@@ -101,6 +101,18 @@ for mode in ['production', None]:
   }
   await click('チャット')
   await click('制作')
+  if (process.argv.includes('--composer')) {
+    // 制作チャットの空の状態: 使い方の説明は会話欄の中に出し、入力の箱の上には説明文を常設しない
+    await pause(400)
+    await assert(`(() => {const list=document.querySelector('[aria-live="polite"]');const box=document.querySelector('.chat-composer');const help=[...list.querySelectorAll('p')].find(e=>e.textContent.includes('相談するだけでは作品を変更しません'));const between=[...box.parentElement.children].filter(e=>e!==box && e.getBoundingClientRect().top>=list.getBoundingClientRect().bottom-1 && e.getClientRects().length);return !!help && getComputedStyle(help).textAlign==='center' && between.every(e=>!e.textContent.includes('参照できます')) && between.length===0})()`, '使い方の説明は空の会話欄の中に出し、入力の箱の上には何も常設しない')
+    await assert(`(() => {const area=document.querySelector('.chat-composer textarea');return getComputedStyle(area,'::placeholder').color==='rgb(92, 96, 120)' && area.placeholder.includes('方針の相談')})()`, '入力欄のプレースホルダは控えめな色(--text-faint)')
+    await assert(`(() => {const box=document.querySelector('.chat-composer').getBoundingClientRect();const panel=document.querySelector('.chat-composer').parentElement.getBoundingClientRect();return Math.round(panel.bottom-box.bottom)===16})()`, '入力の箱とチャット欄の下端の間は16px')
+    writeFileSync(join(target, 'composer-empty.png'), (await win.webContents.capturePage()).toPNG())
+    if (errors.length) throw new Error(errors.join('\n'))
+    console.log('Screenshots: ' + target)
+    win.destroy()
+    return
+  }
   if (process.argv.includes('--embedding')) {
     // 設定の Embedding のページ: 起動時に読み込むかのオン・オフ(既定オン)と、いまの状態
     await js(`document.querySelector('button[aria-label="設定"]').click()`)
@@ -232,7 +244,7 @@ for mode in ['production', None]:
     for (const width of [440, 320]) {
       await js(`document.querySelector('[aria-label="チャットの幅"]').parentElement.style.width='${width}px'`)
       await pause(200)
-      await assert(`(() => {const input=document.querySelector('textarea[aria-label="制作への依頼"]');const panel=document.querySelector('[aria-label="チャットの幅"]').parentElement.getBoundingClientRect();const root=input.parentElement.parentElement;return root.getBoundingClientRect().right<=panel.right+1 && root.scrollWidth<=root.clientWidth+1;})()`, width + 'pxで制作チャットが右端に収まる')
+      await assert(`(() => {const input=document.querySelector('textarea[aria-label="制作への依頼"]');const panel=document.querySelector('[aria-label="チャットの幅"]').parentElement.getBoundingClientRect();const root=input.closest('.chat-composer').parentElement.parentElement;const box=input.closest('.chat-composer');const send=box.querySelector('button[aria-label="送信"]').getBoundingClientRect();return root.getBoundingClientRect().right<=panel.right+1 && root.scrollWidth<=root.clientWidth+1 && send.right<=box.getBoundingClientRect().right && send.bottom<=box.getBoundingClientRect().bottom;})()`, width + 'pxで制作チャットが右端に収まり、送信ボタンは入力の箱の中に残る')
       await click('会話一覧')
       await assert(`document.querySelector('[aria-label="チャットの幅"]').parentElement.scrollWidth<=${width+1}`, width + 'pxで会話一覧を開いても横にはみ出さない')
       writeFileSync(join(target, 'chat-width-' + width + '.png'), (await win.webContents.capturePage()).toPNG())
@@ -496,19 +508,21 @@ for mode in ['production', None]:
   await assert(`(() => {const g=document.querySelector('[data-edit-group="profile"]');const area=g.querySelector('textarea').getBoundingClientRect();const buttons=[...g.querySelectorAll('button')].filter(e=>['取り消し','確定'].includes(e.textContent.trim()));const proof=[...g.querySelectorAll('button')].find(e=>e.textContent.includes('校正')).getBoundingClientRect();const [cancel,commit]=buttons.map(e=>e.getBoundingClientRect());return buttons.map(e=>e.textContent.trim()).join('|')==='取り消し|確定' && Math.abs(commit.right-area.right)<2 && cancel.right<commit.x && commit.y>area.bottom-1 && proof.bottom<=area.y+1 && Math.abs(proof.right-area.right)<2 && g.textContent.includes('プロフィール')})()`, '校正は見出しの行の右端、確定と取り消しは欄の下に右寄せで、確定が右端')
   await input(profileSelector, '未保存のプロフィール')
   const SEND = `document.querySelector('button[aria-label="送信"]')`
-  const INPUT_BORDER = `getComputedStyle(document.querySelector('textarea[aria-label="制作への依頼"]')).borderColor`
+  // 入力欄の枠は、入力欄と下の操作の行をまとめた箱が持つ
+  const INPUT_BORDER = `getComputedStyle(document.querySelector('.chat-composer')).borderColor`
+  await assert(`(() => {const box=document.querySelector('.chat-composer');const area=box.querySelector('textarea[aria-label="制作への依頼"]');const b=box.getBoundingClientRect(),a=area.getBoundingClientRect();const inside=(e)=>{const r=e.getBoundingClientRect();return r.left>=b.left && r.right<=b.right && r.top>=a.bottom-1 && r.bottom<=b.bottom};const picked=[...box.querySelectorAll('span')].find(e=>e.textContent.trim().startsWith('選択中:'));return getComputedStyle(area).borderTopWidth==='0px' && !!picked && inside(picked) && inside(box.querySelector('[aria-label="制作チャットの送信モード"]')) && inside(box.querySelector('button[aria-label="送信"]')) && picked.getBoundingClientRect().right<=box.querySelector('[aria-label="制作チャットの送信モード"]').getBoundingClientRect().left && !document.body.textContent.includes('Enterで送信')})()`, '入力欄と下の行は1つの箱で、下の行の左に選択中、右に送信モードと送信。Enter の案内文は無い')
   await assert(`${SEND}.classList.contains('accent-action') && !!${SEND}.querySelector('svg') && ${SEND}.textContent.trim()==='' && !${INPUT_BORDER}.includes('221, 136, 181') && !document.body.textContent.includes('「制作を実行」を選択中')`, '相談のときの送信は紫の↑ボタンで、入力欄の枠は通常の色')
   await assert(`(() => {const visible=(q)=>[...document.querySelectorAll(q)].find(e=>e.getClientRects().length);const list=visible('button[aria-label="会話一覧"]'),add=visible('button[aria-label="新しい会話"]');const row=list.parentElement;const title=row.querySelector('span');const r=(e)=>e.getBoundingClientRect();const rr=row.getBoundingClientRect();return !!list.querySelector('svg') && !!add.querySelector('svg') && list.textContent.trim()==='' && title.textContent==='新しい会話' && Math.abs(r(title).x-rr.x-24)<1 && r(list).x>=r(title).right-1 && r(add).x>=r(list).right && Math.abs(rr.right-r(add).right-24)<1})()`, '会話名は左端、会話一覧と新しい会話のアイコンは右端に並ぶ')
   // 画面の右端にある部品のツールチップが、細く縦長にならないこと。
   await js(`(() => {const r=${SEND}.getBoundingClientRect();document.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,clientX:r.x+r.width/2,clientY:r.y+r.height/2}))})()`)
   for (let i = 0; i < 30; i++) { if (await js(`!!document.querySelector('[role="tooltip"]') && getComputedStyle(document.querySelector('[role="tooltip"]')).opacity!=='0'`)) break; await pause(100) }
   const tip = await js(`(() => {const t=document.querySelector('[role="tooltip"]');if(!t) return null;const r=t.getBoundingClientRect();return {width:r.width,height:r.height,right:r.right,text:t.textContent,inner:window.innerWidth}})()`)
-  if (!(tip && tip.text.includes('相談として送信') && tip.width >= 200 && tip.height <= 48 && tip.right <= tip.inner - 7)) errors.push('右端のツールチップが縦長になっている: ' + JSON.stringify(tip))
+  if (!(tip && tip.text.includes('相談として送信') && tip.text.includes('Enter で送信') && tip.width >= 200 && tip.height <= 64 && tip.right <= tip.inner - 7)) errors.push('右端のツールチップが縦長になっている: ' + JSON.stringify(tip))
   else console.log('PASS 画面の右端にある部品のツールチップも横長のまま画面内に収まる')
   await js(`document.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}))`)
   for (let i = 0; i < 40; i++) { if (await js(`[...document.querySelectorAll('[role="img"] svg')].some(e=>e.getClientRects().length)`)) break; await pause(100) }
   await assert(`(() => {const h=(e)=>Math.round(e.getBoundingClientRect().height);const group=document.querySelector('[aria-label="制作チャットの送信モード"]');const ring=[...document.querySelectorAll('[role="img"] svg')].find(e=>e.getClientRects().length);const send=${SEND};const cy=(e)=>{const r=e.getBoundingClientRect();return r.y+r.height/2};return h(group)===26 && h(ring)===26 && h(send)===26 && Math.abs(cy(group)-cy(ring))<1 && Math.abs(cy(group)-cy(send))<1})()`, '送信モードの切り替え・使用量リング・送信ボタンの高さと位置が揃う')
-  await assert(`(() => {const list=document.querySelector('[aria-live="polite"]');const area=document.querySelector('textarea[aria-label="制作への依頼"]').getBoundingClientRect();const l=list.getBoundingClientRect();const cs=getComputedStyle(list);return cs.scrollbarGutter==='stable' && Math.round(l.right-area.right)===24 && Math.round(l.right-10-parseFloat(cs.paddingRight)-area.right)===0})()`, '制作の発言欄はスクロールバーとの間を空け、発言の右端を入力欄と揃える')
+  await assert(`(() => {const list=document.querySelector('[aria-live="polite"]');const area=document.querySelector('.chat-composer').getBoundingClientRect();const l=list.getBoundingClientRect();const cs=getComputedStyle(list);return cs.scrollbarGutter==='stable' && Math.round(l.right-area.right)===24 && Math.round(l.right-10-parseFloat(cs.paddingRight)-area.right)===0})()`, '制作の発言欄はスクロールバーとの間を空け、発言の右端を入力欄と揃える')
   await click('制作を実行')
   await assert(`${SEND}.classList.contains('execute-action') && ${INPUT_BORDER}.includes('221, 136, 181') && document.body.textContent.includes('「制作を実行」を選択中') && getComputedStyle(document.querySelector('[aria-label="制作チャットの送信モード"] [aria-pressed="true"]')).color.includes('221, 136, 181')`, '制作を実行を選ぶと、切り替え・入力欄の枠・送信ボタンが実行の色(ピンク)になり案内を出す')
   writeFileSync(join(target, 'send-execute.png'), (await win.webContents.capturePage()).toPNG())
@@ -631,7 +645,7 @@ for mode in ['production', None]:
   await assert(`!document.querySelector('aside[aria-label="会話一覧"]')`, '会話一覧は外側のクリックで閉じる')
   await js(`window.workspaceEmit({preview:{node_id:null,beat:'生成中の本文プレビュー'}})`)
   await pause(150)
-  await assert(`(() => {const preview=document.querySelector('[aria-label="AI編集中の本文プレビュー"]'); const input=document.querySelector(${JSON.stringify(productionInput)}); const list=document.querySelector('[aria-live="polite"]'); return preview?.getClientRects().length && input.parentElement.contains(preview) && preview.textContent.includes('生成中の本文プレビュー') && list.contains(preview) && preview.classList.contains('timeline-item') && !!preview.querySelector('.timeline-dot.animate-pulse') && preview.textContent.includes('編集案を作成中(対象を確認中)') && !preview.nextElementSibling?.classList.contains('timeline-item');})()`, '資料庫でも制作チャットの時系列の末尾に、書いている途中の本文を出す')
+  await assert(`(() => {const preview=document.querySelector('[aria-label="AI編集中の本文プレビュー"]'); const input=document.querySelector(${JSON.stringify(productionInput)}); const list=document.querySelector('[aria-live="polite"]'); return preview?.getClientRects().length && input.closest('.chat-composer').parentElement.contains(preview) && preview.textContent.includes('生成中の本文プレビュー') && list.contains(preview) && preview.classList.contains('timeline-item') && !!preview.querySelector('.timeline-dot.animate-pulse') && preview.textContent.includes('編集案を作成中(対象を確認中)') && !preview.nextElementSibling?.classList.contains('timeline-item');})()`, '資料庫でも制作チャットの時系列の末尾に、書いている途中の本文を出す')
   await click('構造')
   await assert(`(() => {const preview=document.querySelector('[aria-label="AI編集中の本文プレビュー"]'); const detail=[...document.querySelectorAll('aside')].find(e=>e.textContent.includes('清書'));return preview?.getClientRects().length && !detail.contains(preview);})()`, '構造に戻ってもプレビューは詳細欄に入らない')
   const characters = await (await fetch(base + '/characters')).json()

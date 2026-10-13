@@ -562,7 +562,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
         }}
         loadChat={load} deleteChat={deleteConversation} commitRename={renameConversation}
         newChatTip="新しい制作の会話を始める" />
-    <div className="inspector-scrollbar flex flex-1 min-h-0 min-w-0 w-full flex-col gap-2 overflow-y-auto px-6 py-2 text-[12px]" style={{ background: 'var(--bg-chat)', color: 'var(--text)' }}>
+    <div className="inspector-scrollbar flex flex-1 min-h-0 min-w-0 w-full flex-col gap-2 overflow-y-auto px-6 pb-4 pt-2 text-[12px]" style={{ background: 'var(--bg-chat)', color: 'var(--text)' }}>
       <div className="flex flex-wrap items-center gap-2">
         <span className="shrink-0 text-[11px]" style={{ color: 'var(--text-faint)' }}>制作</span>
         <button onClick={() => { followRef.current = !follow; setFollow(!follow); onFollowTarget(!follow && !manualRef.current ? followTargetRef.current : null) }}
@@ -582,6 +582,10 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
       {/* スクロールバーは親の右の余白(24px)へ出し、発言との間を 14px 空ける。溝を常に確保するので、
           スクロールの有無にかかわらず発言の右端は上のパネルや入力欄と揃う(24 = バー10 + 余白14) */}
       <div className="inspector-scrollbar -mr-6 min-h-0 flex-1 overflow-y-auto pr-3.5 [scrollbar-gutter:stable]" aria-live="polite">
+        {/* 使い方の説明は、会話が空のときだけ出す(常に出すと、入力欄の上の1〜2行をずっと占める) */}
+        {messages.length === 0 && !live && !busy && <p className="px-2 pb-2 pt-6 text-center text-[12px] leading-relaxed" style={{ color: 'var(--text-faint)' }}>
+          全体の接続関係と資料庫のキャラクター・場所を参照できます。<br />相談するだけでは作品を変更しません。
+        </p>}
         <MessageList messages={messages} nodes={nodes} groups={groups} />
         {live && <TimelineItem color="var(--text-dim)" label="制作" pulse><Markdown text={live} /></TimelineItem>}
         {/* 書いている途中の本文(未確定)。確定すると消え、同じ場所に操作の項目が入る */}
@@ -610,19 +614,19 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
         <div ref={endRef} />
       </div>
       {error && <p role="alert" className="text-[12px]" style={{ color: 'var(--danger)' }}>{error}</p>}
-      <p className="text-[11px]" style={{ color: 'var(--text-faint)' }}>
+      {/* 進行状況。出すものがあるときだけ行を取る(使い方の説明は、会話が空のときに会話欄の中へ出す) */}
+      {(status || task?.status === 'pending') && <p className="text-[11px]" style={{ color: 'var(--text-faint)' }}>
         {status && messageTime(statusAt) && <time dateTime={statusAt} className="mr-2 tabular-nums">{messageTime(statusAt)}</time>}
-        {task?.status === 'pending' ? '待機しています…' : status || '全体の接続関係と資料庫のキャラクター・場所を参照できます。相談するだけでは作品を変更しません。'}
-      </p>
+        {task?.status === 'pending' ? '待機しています…' : status}
+      </p>}
       {/* 実行を選んでいる間は、送信すると作品が書き換わることを入力欄のすぐ上に出す */}
       {executeArmed && <p role="status" className="shrink-0 text-[11px]" style={{ color: 'var(--execute)' }}>
         「制作を実行」を選択中: 送信すると、作業前の状態を保存してから作品を編集します。終わると「相談する」に戻ります。
       </p>}
-      <p className="shrink-0 text-[11px]" style={{ color: 'var(--text-dim)' }}
-        data-tip="送信時の選択を依頼に添えます。送信後に選択を変えても対象は変わりません。変更範囲・AI保護は引き続き適用されます。本文は保存済みの内容を参照します。">
-        選択中: {selection.length ? selection.map((node) => node.title).join('、') : 'なし'}
-        {chapterSelected && '（章カードは添付されません。章全体は候補の章レビューから、本文はシーンを選んで依頼できます）'}
-      </p>
+      {/* 入力欄と下の操作の行を1つの箱にまとめる(枠は箱が持つ。入力欄そのものには枠を付けない)。
+          上の段 = 入力欄、下の段 = 左に送信時の選択、右に使用量・送信モード・送信 */}
+      <div className="chat-composer shrink-0 rounded-lg border" data-armed={executeArmed ? 'true' : undefined}
+        style={{ background: 'var(--bg-input)', borderColor: executeArmed ? 'var(--execute-border)' : 'var(--border)' }}>
       <AutoTextarea ariaLabel="制作への依頼" value={input} onChange={setInput} disabled={sendingInstruction || (busy && !runId)}
         onKeyDown={(e) => {
           if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return
@@ -630,11 +634,19 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
           if (!e.repeat) submit()
         }}
         minRows={2} placeholder={runId ? "途中指示を入力（未確定の変更を見直してから続けます）" : "方針の相談、または作業の依頼を入力"}
-        className="w-full shrink-0 rounded-md border px-2 py-0.5 text-[12px] outline-none disabled:opacity-50"
-        style={{ background: 'var(--bg-input)', borderColor: executeArmed ? 'var(--execute-border)' : 'var(--border)' }} />
-      <div className="flex flex-wrap items-center justify-end gap-2">
-        {/* 幅が足りないときは案内を省略表示にして、送信ボタンを次の行へ落とさない */}
-        <span className="min-w-0 flex-1 basis-0 truncate text-[11px]" style={{ color: 'var(--text-faint)' }} data-tip="Enterで送信・Shift＋Enterで改行">Enterで送信・Shift＋Enterで改行</span>
+        className="block w-full resize-none px-3 pb-1 pt-2 text-[12px] outline-none disabled:opacity-50"
+        style={{ background: 'transparent' }} />
+      <div className="flex items-center gap-2 px-2 pb-2 pt-1">
+        {/* 送信時に添える選択。長い名前は1行で省略して、送信ボタンを次の行へ落とさない(全文はツールチップ) */}
+        <span className="min-w-0 flex-1 basis-0 truncate pl-1 text-[11px]" style={{ color: selection.length ? 'var(--text-dim)' : 'var(--text-faint)' }}
+          data-tip={[
+            `選択中: ${selection.length ? selection.map((node) => node.title).join('、') : 'なし'}`,
+            ...(chapterSelected ? ['章カードは添付されません。章全体は候補の章レビューから、本文はシーンを選んで依頼できます。'] : []),
+            '送信時の選択を依頼に添えます。送信後に選択を変えても対象は変わりません。変更範囲・AI保護は引き続き適用されます。本文は保存済みの内容を参照します。'
+          ].join('\n')}>
+          選択中: {selection.length ? selection.map((node) => node.title).join('、') : 'なし'}
+          {chapterSelected && '(章カードは添付されません)'}
+        </span>
         {usage && <ContextUsageRing usage={usage} />}
         <div role="group" aria-label="制作チャットの送信モード"
           className="flex h-[26px] shrink-0 overflow-hidden rounded-md border" style={{ borderColor: sendMode === 'execute' ? 'var(--execute-border)' : 'var(--border-strong)' }}>
@@ -654,7 +666,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
             相談の処理中は途中指示を受け付けないので、常に停止 */}
         {busy && runId && input.trim() ? <button onClick={submit} disabled={sendingInstruction} aria-label="途中指示を送る"
           className="execute-action inline-flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full border disabled:opacity-40"
-          data-tip="途中指示を送る(次の判断に取り込みます。確定済みの変更は自動では戻りません)。入力を空にすると停止ボタンに戻ります">
+          data-tip={'途中指示を送る(次の判断に取り込みます。確定済みの変更は自動では戻りません)。入力を空にすると停止ボタンに戻ります\nEnter で送信、Shift＋Enter で改行'}>
           <Icon name="arrowUp" size={14} strokeWidth={2.4} />
         </button> : busy ? <button onClick={() => {
           runRef.current = null; setRunId(null); if (taskId) cancelTask(taskId)
@@ -670,10 +682,11 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
         </button> :
           <button onClick={submit} disabled={!input.trim()} aria-label="送信"
             className={`${sendMode === 'execute' ? 'execute-action' : 'accent-action'} inline-flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full border disabled:opacity-40`}
-            data-tip={sendMode === 'execute' ? '制作を実行として送信(作業前の状態を保存してから、依頼した編集を実行します)' : '相談として送信(読み取りだけで回答します)'}>
+            data-tip={`${sendMode === 'execute' ? '制作を実行として送信(作業前の状態を保存してから、依頼した編集を実行します)' : '相談として送信(読み取りだけで回答します)'}\nEnter で送信、Shift＋Enter で改行`}>
             <Icon name="arrowUp" size={14} strokeWidth={2.4} />
           </button>
         }
+      </div>
       </div>
     </div>
     </div>
