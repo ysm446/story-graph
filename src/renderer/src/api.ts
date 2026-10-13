@@ -1390,6 +1390,10 @@ export const productionApi = {
   ),
   list: () => request<ChatSummary[]>('/production/chats'),
   status: () => request<{ active: boolean }>('/production/status'),
+  /** 直前の応答に合わせた依頼候補(LLM が作る)。設定オフ・未起動・失敗・打ち切りは空配列で generated が false */
+  suggest: (chat_id: string, signal?: AbortSignal) => request<{ suggestions: { label: string; text: string; execute: boolean }[]; generated: boolean }>(
+    '/production/suggest', { method: 'POST', body: JSON.stringify({ chat_id }), signal }
+  ),
   send: (
     body: { chat_id: string | null; message: string; execute: boolean; policy: ProductionPolicy; selected_node_ids?: string[] },
     onEvent: (event: ProductionEvent) => void | Promise<void>,

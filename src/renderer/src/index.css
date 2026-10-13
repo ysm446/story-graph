@@ -639,6 +639,12 @@ input[type='range']:focus-visible {
   color: var(--accent);
 }
 
+/* 制作チャットの依頼候補。押すとその場で送るので、色は送り方で分ける
+   (相談 = accent-action、制作を実行 = execute-action を併記する)。ここは出るときの動きだけ */
+.production-suggest-chip {
+  animation: chip-in 0.2s ease;
+}
+
 /* ツールチップ(Tooltip.tsx)。出るときだけ短く animate する */
 @keyframes tip-in {
   from { opacity: 0; transform: translateY(-2px); }

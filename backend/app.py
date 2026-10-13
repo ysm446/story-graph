@@ -30,6 +30,7 @@ import llm
 import node_operations
 import node_clipboard
 import production_agent
+import production_suggest
 import rendering
 import setting_documents
 import snapshots
@@ -2506,6 +2507,49 @@ async def production_instruction(body: ProductionInstructionIn) -> dict[str, Any
         raise HTTPException(409, str(e))
 
 
+class ProductionSuggestIn(BaseModel):
+    chat_id: str = Field(min_length=1, max_length=64)
+
+
+_production_suggest_task: asyncio.Task | None = None
+
+
+def _cancel_production_suggest() -> None:
+    task = _production_suggest_task
+    if task is not None and not task.done():
+        task.cancel()
+
+
+@app.post("/production/suggest")
+async def production_suggest_post(body: ProductionSuggestIn) -> dict[str, Any]:
+    """直前の応答に合わせた依頼候補。設定が無効、LLM 未起動、生成失敗、送信による打ち切りは空を返す
+    (画面は固定の候補を出したままにするので、失敗をエラーとして扱わない)。
+
+    generated は LLM が判断できたか。false のとき、画面は固定の「この案で進めて」を代わりに出す
+    (true で空なら「進める案が無い」という判断なので出さない)。"""
+    global _production_suggest_task
+    settings = store.get_settings()
+    unavailable: dict[str, Any] = {"suggestions": [], "generated": False}
+    if settings.get("chat_dynamic_suggestions") == "0":
+        return unavailable
+    base_url = settings.get("llm_base_url") or llm.DEFAULT_BASE_URL
+    if not await llm.health(base_url):
+        return unavailable
+    _cancel_production_suggest()
+    task = asyncio.create_task(production_suggest.suggest(store, base_url, body.chat_id))
+    _production_suggest_task = task
+    try:
+        return {"suggestions": await task, "generated": True}
+    except asyncio.CancelledError:
+        task.cancel()
+        return unavailable
+    except Exception:  # noqa: BLE001
+        return unavailable
+    finally:
+        if _production_suggest_task is task:
+            _production_suggest_task = None
+
+
 @app.post("/production/send")
 async def production_send(body: ProductionIn) -> StreamingResponse:
     if not body.message.strip():
@@ -2516,6 +2560,8 @@ async def production_send(body: ProductionIn) -> StreamingResponse:
         selection = production_agent.selected_nodes(store, body.selected_node_ids)
     except ValueError as e:
         raise HTTPException(400, str(e))
+    # 依頼候補の生成が残っていると、開始待ち(gate.begin)とモデルの順番待ちが延びる。送信を優先して打ち切る
+    _cancel_production_suggest()
     try:
         await production_agent.gate.begin()
     except (RuntimeError, TimeoutError) as e:

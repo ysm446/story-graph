@@ -1,5 +1,5 @@
 import ChatHistoryPanel from './ChatHistoryPanel'
-import { productionSuggestions } from './productionSuggestions'
+import { productionSuggestions, type ProductionSuggestion } from './productionSuggestions'
 import type { ProductionTarget } from './Workspace'
 import ChatRulesPanel from './ChatRulesPanel'
 import ProductionPreviewPanel from './ProductionPreviewPanel'
@@ -215,7 +215,25 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
   const endRef = useRef<HTMLDivElement>(null)
   const taskRef = useRef<string | null>(null)
   const composerRef = useRef<HTMLDivElement>(null)
-  const suggestions = productionSuggestions(messages, selection, chapter)
+  // LLM が直前の応答から作る候補(「橋で再会する案で進めて」など、対象を指すもの)。
+  // 制作・相談が完了するたびに取り直し、次の送信や会話の切り替えで捨てる。
+  // dynamicState: none = 取っていない / loading = 取得中 / done = LLM が判断した / unavailable = 使えなかった
+  const [dynamic, setDynamic] = useState<ProductionSuggestion[]>([])
+  const [dynamicState, setDynamicState] = useState<'none' | 'loading' | 'done' | 'unavailable'>('none')
+  const suggesting = dynamicState === 'loading'
+  // 固定の「この案で進めて」は、LLM の候補が無いときの代わり。取得中に出すと、押す瞬間に LLM の候補と
+  // 入れ替わって別の実行を押しかねないので、結果が出るまで出さない
+  const suggestions = productionSuggestions(messages, selection, chapter, dynamicState === 'none' || dynamicState === 'unavailable')
+  const [suggestTick, setSuggestTick] = useState(0)
+  const suggestHandled = useRef(0)
+  const suggestAbort = useRef<AbortController | null>(null)
+  const clearDynamic = (): void => {
+    suggestAbort.current?.abort()
+    suggestAbort.current = null
+    setDynamic([])
+    setDynamicState('none')
+  }
+  const chips = [...suggestions, ...dynamic.filter((item) => !suggestions.some((fixed) => fixed.label === item.label))]
   // 次の送信が実行になる状態(入力欄の枠・送信ボタン・案内を実行の色にする)。相談の処理中は切り替え自体が効かないので除く
   const executeArmed = sendMode === 'execute' && (!busy || !!runId)
 
@@ -237,12 +255,31 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
   const refreshHistory = async (): Promise<void> => setHistory(await productionApi.list())
   useEffect(() => {
     void refreshHistory().catch((e) => setError(String(e)))
-    return () => { setProductionPreview(null); if (taskRef.current) cancelTask(taskRef.current) }
+    return () => { setProductionPreview(null); suggestAbort.current?.abort(); if (taskRef.current) cancelTask(taskRef.current) }
   }, [])
-  useEffect(() => { endRef.current?.scrollIntoView({ block: 'nearest' }) }, [messages, live, status, busy, error, suggestions.length])
+  useEffect(() => {
+    // 完了の後始末(履歴の読み直し)が終わって busy が下りてから取りに行く
+    if (busy || !chatId || suggestTick === suggestHandled.current) return
+    suggestHandled.current = suggestTick
+    const controller = new AbortController()
+    suggestAbort.current?.abort()
+    suggestAbort.current = controller
+    setDynamicState('loading')
+    const finish = (state: 'done' | 'unavailable', items: ProductionSuggestion[]): void => {
+      if (controller.signal.aborted || suggestAbort.current !== controller) return
+      suggestAbort.current = null
+      setDynamic(items)
+      setDynamicState(state)
+    }
+    void productionApi.suggest(chatId, controller.signal)
+      .then((result) => finish(result.generated ? 'done' : 'unavailable', result.suggestions))
+      .catch(() => finish('unavailable', [])) // 候補は無くても困らない。固定の候補に戻す
+  }, [busy, chatId, suggestTick])
+  useEffect(() => { endRef.current?.scrollIntoView({ block: 'nearest' }) }, [messages, live, status, busy, error, chips.length, suggesting])
 
   const load = async (id: string): Promise<void> => {
     if (busy) return
+    clearDynamic()
     setHistoryBusy(true)
     setUsage(null)
     try {
@@ -271,6 +308,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
       await chatApi.delete(targetId)
       setHistory((previous) => previous.filter((item) => item.id !== targetId))
       if (targetId === chatId) {
+        clearDynamic()
         setChatId(null)
         setMessages([])
         setUsage(null)
@@ -337,8 +375,9 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
     } finally { setSwitching(false) }
   }
 
-  const send = (execute: boolean): void => {
-    const message = input.trim()
+  /** text を渡すと入力欄の代わりにその文面を送る(候補のボタン用) */
+  const send = (execute: boolean, text = input): void => {
+    const message = text.trim()
     if (!message || busy) return
     if (rulesDirty) { setError('制作エージェントへの指示を保存するか、元に戻してから送信してください。'); return }
     if (memoryDirty) { setError('作業メモを保存するか、編集をキャンセルしてから送信してください。'); return }
@@ -347,6 +386,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
     if (execute && policy.allowed_ids?.length === 0) { setError('変更できるシーンを1つ以上選んでください'); return }
     const selectedIds = [...selectedNodeIds]
     const selectedNodes = selection.map((node) => ({ ...node }))
+    clearDynamic()
     setError('')
     setStatus('')
     setRunId(null)
@@ -369,6 +409,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
         let text = ''
         let receivedAt: string | undefined
         let finished = false
+        let completed = false // 停止・エラーでなく最後まで終わった(依頼候補を取り直す)
         // 終了理由(完了 / 上限 / 反復停止 / 空応答 / 報告の途切れ)と件数。サーバーの done が持つ
         let summary: string | null = null
         const flush = (): void => {
@@ -447,6 +488,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
           }, signal)
           if (!finished) throw new Error('接続が終了しました。確定済みの変更と履歴を確認してください。')
           setStatus(`${summary ?? '完了しました'}（経過時間 ${elapsedText(Date.now() - startedAt)}）`)
+          completed = true
         } catch (e) {
           if (isAbortError(e)) setStatus('停止しました。確定済みの変更は残しています。')
           else setError(String(e))
@@ -475,6 +517,8 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
             }
             await refreshHistory()
           } catch { /* サーバー終了時は画面に残っている経過を保つ */ }
+          // busy が下りる前に取得中にしておく(固定の「この案で進めて」が一瞬出るのを防ぐ)
+          if (completed) { setDynamicState('loading'); setSuggestTick((value) => value + 1) }
           notifyGraphChanged()
           taskRef.current = null
         }
@@ -508,6 +552,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
         chatLabel={(item) => item.title || item.snippet || '制作'}
         startNewChat={() => {
           if (busy) return
+          clearDynamic()
           setChatId(null); setMessages([]); setUsage(null); setPolicy(defaultProductionPolicy()); setStatus(''); setError('')
           followTargetRef.current = null; onFollowTarget(null)
         }}
@@ -537,17 +582,25 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
         {live && <TimelineItem color="var(--text-dim)" label="制作" pulse><Markdown text={live} /></TimelineItem>}
         {/* 書いている途中の本文(未確定)。確定すると消え、同じ場所に操作の項目が入る */}
         <ProductionPreviewPanel nodes={nodes} />
-        {!busy && !error && suggestions.length > 0 && <div aria-label="制作の依頼候補" className="my-2 flex flex-wrap gap-1.5">
-          {suggestions.map((suggestion) => <button key={suggestion.label} type="button" disabled={!!input.trim()}
-            onClick={() => {
-              setInput(suggestion.text)
-              composerRef.current?.querySelector<HTMLTextAreaElement>('textarea[aria-label="制作への依頼"]')?.focus()
+        {/* 押すとその場で送る。送り方を色で分ける(相談=アクセント、実行=--execute) */}
+        {!busy && !error && (chips.length > 0 || suggesting) && <div aria-label="制作の依頼候補" className="my-2 flex flex-wrap items-center gap-1.5">
+          {chips.map((suggestion) => <button key={suggestion.label} type="button" disabled={!!input.trim()}
+            onClick={(e) => {
+              // Shift を押しながらだと送らず、入力欄へ入れる(文面を直してから送れる)
+              if (e.shiftKey) {
+                setInput(suggestion.text)
+                setSendMode(suggestion.execute ? 'execute' : 'consult')
+                composerRef.current?.querySelector<HTMLTextAreaElement>('textarea[aria-label="制作への依頼"]')?.focus()
+                return
+              }
+              send(suggestion.execute, suggestion.text)
             }}
-            className="chat-suggest-chip max-w-full rounded-full border px-3 py-1 text-left text-[11px] [overflow-wrap:anywhere] disabled:opacity-40"
-            style={{ borderColor: 'var(--accent-border)', color: 'var(--text-dim)', background: 'var(--accent-soft)' }}
-            data-tip={input.trim() ? '入力中の文章を送信するか空にすると選べます' : `${suggestion.text}\nクリックで入力欄に入ります。送信モードを確認して送信してください。`}>
+            className={`production-suggest-chip ${suggestion.execute ? 'execute-action' : 'accent-action'} max-w-full rounded-full border px-3 py-1 text-left text-[11px] [overflow-wrap:anywhere] disabled:opacity-40`}
+            data-tip={input.trim() ? '入力中の文章を送信するか空にすると選べます'
+              : `${suggestion.text}\n${suggestion.execute ? 'クリックで「制作を実行」として送信します(作業前の状態を保存してから、作品を編集します)。' : 'クリックで相談として送信します(作品は変更しません)。'}\nShift＋クリックで、送らずに入力欄へ入れます。`}>
             {suggestion.label}
           </button>)}
+          {suggesting && <span className="text-[11px]" style={{ color: 'var(--text-faint)' }}>ほかの候補を考えています…</span>}
         </div>}
         <div ref={endRef} />
       </div>
