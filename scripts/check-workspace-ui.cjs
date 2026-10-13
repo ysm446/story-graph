@@ -332,6 +332,16 @@ for mode in ['production', None]:
       const sameDay = await saved()
       if (!(sameDay.elapsed_unit === 'same_day' && sameDay.elapsed_count === null)) errors.push('経過(同じ日)で数が残っている: ' + JSON.stringify([sameDay.elapsed_unit, sameDay.elapsed_count]))
       else console.log('PASS 経過を「同じ日」に変えると数は消える')
+      // Ctrl+S: 入力欄にフォーカスがあっても、保存ボタンと同じ保存をする。変更が無ければ何もしない。
+      const titles = async () => (await (await fetch(base + '/graph')).json()).nodes.map((n) => n.title)
+      const ctrlS = `(() => {const i=document.querySelector('.scene-detail-main input');i.focus();return i.dispatchEvent(new KeyboardEvent('keydown',{key:'s',ctrlKey:true,bubbles:true,cancelable:true}))})()`
+      await js(`(() => {const i=document.querySelector('.scene-detail-main input');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(i,'キーで保存');i.dispatchEvent(new Event('input',{bubbles:true}))})()`)
+      await pause(150)
+      const prevented = !(await js(ctrlS))
+      await pause(600)
+      if (!(prevented && (await titles()).includes('キーで保存'))) errors.push('Ctrl+S でシーンが保存されていない: ' + JSON.stringify({ prevented, titles: await titles() }))
+      else console.log('PASS Ctrl+S で、入力欄にフォーカスがあってもシーンを保存できる')
+      await assert(`[...document.querySelectorAll('.scene-detail button')].find(e=>e.textContent.trim()==='保存').disabled && document.body.textContent.includes('シーンを保存しました')`, 'Ctrl+S の後は未保存の変更が無く、保存したことを知らせる')
       if (errors.length) throw new Error(errors.join('\n'))
     }
     writeFileSync(join(target, 'details-wide.png'), (await win.webContents.capturePage()).toPNG())

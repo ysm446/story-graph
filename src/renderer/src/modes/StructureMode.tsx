@@ -72,6 +72,7 @@ import {
 } from '../tasks'
 import { useElapsedSeconds } from '../useElapsed'
 import { useStableCallback } from '../useStableCallback'
+import { isWriteLocked } from '../writeLock'
 import { ElapsedLabel } from '../ElapsedLabel'
 import { backfillThumbs } from '../thumbs'
 import type {
@@ -574,6 +575,36 @@ async function latestEventInputs(nodeId: string, fallback: StoryEvent[]): Promis
   return events.map((e) => ({ id: e.id, type: e.type, payload: e.payload, source: e.source }))
 }
 
+/** Ctrl+S(mac は ⌘S)で、渡した保存ボタンと同じ保存を行う(シーンと章のまとめ)。
+ *
+ * 判断は保存ボタンに合わせる: ボタンが押せないとき(変更なし・保存中)と、制作中で書き換えを
+ * 止めているときは何もしない。構造モードは資料庫・鑑賞の間も裏に残っているので、ボタンが
+ * 画面に無い間は反応しない(詳細欄を畳んでいるだけなら保存する)。
+ * 入力欄にフォーカスがあっても効く。run は保存できたら true を返す。
+ */
+function useSaveShortcut(
+  buttonRef: React.RefObject<HTMLButtonElement | null>,
+  run: () => Promise<boolean>,
+  savedNotice: string
+): void {
+  const save = useStableCallback(run)
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return
+      if (event.key.toLowerCase() !== 's' || event.isComposing) return
+      const button = buttonRef.current
+      if (!button || button.getClientRects().length === 0) return
+      event.preventDefault()
+      if (event.repeat || button.disabled || isWriteLocked(button)) return
+      void save().then((ok) => {
+        if (ok) showStatusNotice(savedNotice)
+      })
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [buttonRef, save, savedNotice])
+}
+
 function BeatTab({
   node,
   characters,
@@ -770,19 +801,23 @@ function BeatTab({
     }
   }
 
-  const handleSave = async (): Promise<void> => {
-    if (saving) return
+  const handleSave = async (): Promise<boolean> => {
+    if (saving) return false
     setSaving(true)
     try {
       await api.updateNode(node.id, draft)
       deleteBeatDraft(node.id) // 保存できたら退避を破棄
       onSaved()
+      return true
     } catch (e) {
       setError(String(e))
+      return false
     } finally {
       setSaving(false)
     }
   }
+  const saveButtonRef = useRef<HTMLButtonElement | null>(null)
+  useSaveShortcut(saveButtonRef, handleSave, 'シーンを保存しました')
 
   const resetDraft = (): void => {
     if (saving || suggesting || draftNodeId !== node.id) return
@@ -1328,11 +1363,12 @@ function BeatTab({
               data-tip={saving || suggesting !== null ? '保存・自動生成が終わるまでお待ちください' : dirty ? 'このシーンの未保存の変更を取り消します' : '変更はありません'}
             >元に戻す</button>
           <button
+            ref={saveButtonRef}
             onClick={() => void handleSave()}
             disabled={!dirty || saving}
             className="shrink-0 rounded-md px-3 py-1 text-[12px] font-medium disabled:opacity-50"
             style={{ background: 'var(--accent)', color: 'var(--text)' }}
-            data-tip={dirty ? 'シーンの変更を保存します' : '変更はありません'}
+            data-tip={dirty ? 'シーンの変更を保存します(Ctrl+S)' : '変更はありません'}
           >
             保存
           </button>
@@ -1811,19 +1847,23 @@ function ChapterTab({
     })
   }
 
-  const save = async (): Promise<void> => {
+  const save = async (): Promise<boolean> => {
     setBusy(true)
     setError(null)
     try {
       await api.putGroupDigest(group.id, digest)
       await refetch()
       onChanged()
+      return true
     } catch (e) {
       setError(String(e))
+      return false
     } finally {
       setBusy(false)
     }
   }
+  const saveButtonRef = useRef<HTMLButtonElement | null>(null)
+  useSaveShortcut(saveButtonRef, save, '章のまとめを保存しました')
 
   const removeDigest = async (): Promise<void> => {
     if (!window.confirm('まとめを削除しますか?(次の章からは生の記憶に戻ります)')) return
@@ -2088,10 +2128,10 @@ function ChapterTab({
       </>} />
       <div className="flex shrink-0 items-center justify-end gap-2 border-t px-5 py-2" style={{ borderColor: 'var(--border)' }}>
         {dirty && <span className="mr-auto text-[11px]" style={{ color: 'var(--text-dim)' }}>未保存の変更があります</span>}
-        <button onClick={() => void save()} disabled={busy || !dirty}
+        <button ref={saveButtonRef} onClick={() => void save()} disabled={busy || !dirty}
           className="rounded-md px-3 py-1 text-[12px] font-medium disabled:opacity-50"
           style={{ background: 'var(--accent)', color: 'var(--text)' }}
-          data-tip={dirty ? '章のまとめの変更を保存します' : '変更はありません'}>まとめを保存</button>
+          data-tip={dirty ? '章のまとめの変更を保存します(Ctrl+S)' : '変更はありません'}>まとめを保存</button>
       </div>
     </div>
   )
