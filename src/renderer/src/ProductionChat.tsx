@@ -71,9 +71,10 @@ function TimelineItem({ color, label, time, children, pulse = false }: {
   return (
     <div className="timeline-item">
       <span className={`timeline-dot${pulse ? ' animate-pulse' : ''}`} style={{ background: color }} />
-      <div className="text-[11px]" style={{ color: 'var(--text-faint)' }}>
-        {label}
-        {messageTime(time) && <time dateTime={time} className="ml-2 tabular-nums" data-tip={new Date(time!).toLocaleString('ja-JP')}>{messageTime(time)}</time>}
+      {/* 時刻は右端に揃える(見出しの長さで位置がばらつくと、時刻だけを縦に追えない) */}
+      <div className="flex items-baseline gap-2 text-[11px]" style={{ color: 'var(--text-faint)' }}>
+        <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{label}</span>
+        {messageTime(time) && <time dateTime={time} className="shrink-0 tabular-nums" data-tip={new Date(time!).toLocaleString('ja-JP')}>{messageTime(time)}</time>}
       </div>
       {children}
     </div>
@@ -92,11 +93,13 @@ const MessageList = memo(function MessageList({ messages, nodes, groups }: {
           <div key={i} className="mb-2 ml-auto w-fit max-w-[85%] rounded-lg border px-3 py-1.5 [overflow-wrap:anywhere]" style={{
             background: 'var(--accent-soft)', borderColor: 'var(--border)'
           }}>
-            <div className="mb-1 text-[11px]" style={{ color: 'var(--text-faint)' }}>
-              {m.instruction ? `途中指示・${({ accepted: '受け付けました', reflected: '次の判断に反映しました', unapplied: '未反映のまま終了しました' })[m.instruction.status]}` : 'あなた'}
-              {/* 相談と実行の発言が混ざるので、作品を書き換えた依頼には印を付ける */}
-              {m.execute === true && !m.instruction && <span className="ml-2" style={{ color: 'var(--execute)' }}>制作を実行</span>}
-              {messageTime(m.created_at) && <time dateTime={m.created_at} className="ml-2 tabular-nums" data-tip={new Date(m.created_at!).toLocaleString('ja-JP')}>{messageTime(m.created_at)}</time>}
+            <div className="mb-1 flex items-baseline gap-2 text-[11px]" style={{ color: 'var(--text-faint)' }}>
+              <span className="min-w-0 flex-1">
+                {m.instruction ? `途中指示・${({ accepted: '受け付けました', reflected: '次の判断に反映しました', unapplied: '未反映のまま終了しました' })[m.instruction.status]}` : 'あなた'}
+                {/* 相談と実行の発言が混ざるので、作品を書き換えた依頼には印を付ける */}
+                {m.execute === true && !m.instruction && <span className="ml-2" style={{ color: 'var(--execute)' }}>制作を実行</span>}
+              </span>
+              {messageTime(m.created_at) && <time dateTime={m.created_at} className="shrink-0 tabular-nums" data-tip={new Date(m.created_at!).toLocaleString('ja-JP')}>{messageTime(m.created_at)}</time>}
             </div>
             {/* 送信時の条件は、既定でないときだけ出す(全体・保護なし・選択なしを毎回出すと本文が読みにくい)。
                 変更範囲と保護は相談では使われないので、相談の発言には出さない */}

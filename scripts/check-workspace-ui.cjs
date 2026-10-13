@@ -469,7 +469,7 @@ for mode in ['production', None]:
   await click('資料庫')
   await pause(300)
   await assert(`(() => {const stop=document.querySelector('button[aria-label="停止"]');const r=stop.getBoundingClientRect();return !!stop.querySelector('svg') && stop.textContent.trim()==='' && Math.round(r.width)===26 && Math.round(r.height)===26 && !document.querySelector('button[aria-label="送信"]')})()`, '制作中は送信の位置に同じ丸い形の停止ボタンを出す')
-  await assert(`(() => {const list=document.querySelector('[aria-live="polite"]');const tags=[...list.querySelectorAll('span')].filter(e=>e.textContent==='制作を実行');return tags.length===1 && tags[0].parentElement.textContent.startsWith('あなた') && !list.textContent.includes('変更範囲: 全体') && !list.textContent.includes('送信時の選択: なし')})()`, '実行として送った発言に印を付け、既定の変更範囲・選択なしは表示しない')
+  await assert(`(() => {const list=document.querySelector('[aria-live="polite"]');const tags=[...list.querySelectorAll('span')].filter(e=>e.textContent==='制作を実行');return tags.length===1 && tags[0].parentElement.textContent.startsWith('あなた') && (() => {const head=tags[0].closest('.flex');const t=head.querySelector('time');return !!t && Math.abs(head.getBoundingClientRect().right-t.getBoundingClientRect().right)<1})() && !list.textContent.includes('変更範囲: 全体') && !list.textContent.includes('送信時の選択: なし')})()`, '実行として送った発言に印を付け、既定の変更範囲・選択なしは表示しない')
   // 制作側は時系列(線と丸)で並べ、読み取りの手順も1行ずつ出す。
   await js(`window.workspaceEmit({step:{name:'get_beats',label:'シーン本文を読む',detail:'検証シーン'}}); window.workspaceEmit({step:{name:'read_library',label:'資料庫を読む',detail:'キャラクターの一覧',error:'読み取りに失敗'}})`)
   await pause(250)
@@ -535,6 +535,7 @@ for mode in ['production', None]:
   await pause(500)
   await assert(`document.querySelector('.react-flow__node[data-id="chapter:${chapter.id}"]').textContent.includes('制作で改名した章') && document.body.textContent.includes('章名を変更: 制作で改名した章')`, '章の改名がカードと制作履歴に反映')
   await assert(`(() => {const item=[...document.querySelectorAll('[aria-live="polite"] .timeline-item')].find(e=>e.textContent.includes('章名を変更: 制作で改名した章'));return !!item && getComputedStyle(item.querySelector('.timeline-dot')).backgroundColor==='rgb(62, 207, 142)' && !!item.querySelector('details')})()`, '確定した操作は緑の丸で、変更内容を折りたたんで出す')
+  await assert(`(() => {const items=[...document.querySelectorAll('[aria-live="polite"] .timeline-item')].filter(e=>e.querySelector('time'));const rights=items.map(e=>Math.round(e.querySelector('time').getBoundingClientRect().right));const edge=Math.round(items[0].getBoundingClientRect().right);return items.length>=3 && rights.every(r=>Math.abs(r-edge)<=1)})()`, '時系列の時刻は右端に揃う')
   writeFileSync(join(target, 'timeline.png'), (await win.webContents.capturePage()).toPNG())
   await js(`window.workspaceEmit(${JSON.stringify({active_node:followGraph.nodes.find(n=>!n.kind).id})})`)
   await pause(250)
