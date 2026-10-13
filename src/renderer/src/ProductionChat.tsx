@@ -233,7 +233,11 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
     setDynamic([])
     setDynamicState('none')
   }
-  const chips = [...suggestions, ...dynamic.filter((item) => !suggestions.some((fixed) => fixed.label === item.label))]
+  // generated は LLM が作った候補(相談チャットと同じ sparkle のアイコンを付けて、固定の候補と見分ける)
+  const chips = [
+    ...suggestions.map((item) => ({ ...item, generated: false })),
+    ...dynamic.filter((item) => !suggestions.some((fixed) => fixed.label === item.label)).map((item) => ({ ...item, generated: true }))
+  ]
   // 次の送信が実行になる状態(入力欄の枠・送信ボタン・案内を実行の色にする)。相談の処理中は切り替え自体が効かないので除く
   const executeArmed = sendMode === 'execute' && (!busy || !!runId)
 
@@ -595,10 +599,11 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
               }
               send(suggestion.execute, suggestion.text)
             }}
-            className={`production-suggest-chip ${suggestion.execute ? 'execute-action' : 'accent-action'} max-w-full rounded-full border px-3 py-1 text-left text-[11px] [overflow-wrap:anywhere] disabled:opacity-40`}
+            className={`production-suggest-chip ${suggestion.execute ? 'execute-action' : 'accent-action'} inline-flex max-w-full items-center gap-1 rounded-full border px-3 py-1 text-left text-[11px] [overflow-wrap:anywhere] disabled:opacity-40`}
             data-tip={input.trim() ? '入力中の文章を送信するか空にすると選べます'
-              : `${suggestion.text}\n${suggestion.execute ? 'クリックで「制作を実行」として送信します(作業前の状態を保存してから、作品を編集します)。' : 'クリックで相談として送信します(作品は変更しません)。'}\nShift＋クリックで、送らずに入力欄へ入れます。`}>
-            {suggestion.label}
+              : `${suggestion.text}\n${suggestion.execute ? 'クリックで「制作を実行」として送信します(作業前の状態を保存してから、作品を編集します)。' : 'クリックで相談として送信します(作品は変更しません)。'}\nShift＋クリックで、送らずに入力欄へ入れます。${suggestion.generated ? '\n(直前の回答から AI が作った候補)' : ''}`}>
+            {suggestion.generated && <Icon name="sparkle" size={11} className="shrink-0" />}
+            <span className="min-w-0">{suggestion.label}</span>
           </button>)}
           {suggesting && <span className="text-[11px]" style={{ color: 'var(--text-faint)' }}>ほかの候補を考えています…</span>}
         </div>}
