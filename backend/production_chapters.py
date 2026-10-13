@@ -6,7 +6,7 @@ WRITE_TOOLS = {"create_chapter", "rename_chapter", "add_scenes_to_chapter"}
 
 
 def tools(allow_write):
-    definitions = [("read_chapters", "章のID・名前・所属シーン・入口と出口を読む。編集前に確認する。routeが章の読む順。scenesのprev_idが直前のシーン（章の外のこともある）。on_routeがfalseのシーンは章の中の分岐や未接続で、読む順の続きではない。", {}, [])]
+    definitions = [("read_chapters", "章のID・名前・所属シーン・入口と出口を読む。編集前に確認する。routeが章の読む順。scenesのprev_idが直前のシーン（章の外のこともある）。on_routeがfalseのシーンは章の中の分岐や未接続で、読む順の続きではない。in_id・out_idは章の入口・出口のマーカーで本文はない。get_beatsにはシーンのIDだけを渡す。", {}, [])]
     if allow_write:
         ids = {"type": "array", "items": {"type": "string"}, "description": "対象シーンID。別の章に所属するシーンとマーカーは指定不可"}
         definitions += [

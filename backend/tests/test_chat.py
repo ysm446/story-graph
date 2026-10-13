@@ -131,6 +131,22 @@ def test_all_scope_beats_follow_the_flow_not_creation_order(store):
         (canon[0], True, None), (inserted["id"], True, canon[0])]
 
 
+def test_get_beats_skips_markers_and_names_unknown_ids(store):
+    """章の入口・出口が混ざっても本文は返す。存在しないIDは、どれが問題かを添えて断る。"""
+    canon = store.canon_path()
+    group = store.create_group("序章", [canon[0]])
+    result = chat_agent.dispatch_tool(
+        store, "get_beats", {"node_ids": [group["in_id"], canon[0], group["out_id"]]}, canon, "all")
+    assert [b["node_id"] for b in result["beats"]] == [canon[0]]
+    assert [(s["node_id"], s["kind"]) for s in result["skipped"]] == [
+        (group["in_id"], "chapter_in"), (group["out_id"], "chapter_out")]
+    assert "章の入口" in result["skipped"][0]["reason"]
+    assert "skipped" not in chat_agent.dispatch_tool(store, "get_beats", {"node_ids": [canon[0]]}, canon, "all")
+    missing = chat_agent.dispatch_tool(store, "get_beats", {"node_ids": [canon[0], "missing"]}, canon, "all")
+    assert "missing" in missing["error"] and canon[0] not in missing["error"]
+    assert "error" in chat_agent.dispatch_tool(store, "get_beats", {"node_ids": "x"}, canon, "all")
+
+
 def test_recent_reads_keep_the_chapter_structure():
     import production_agent
     chapters = {"tool": "read_chapters", "result": {"chapters": []}}

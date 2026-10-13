@@ -196,13 +196,34 @@ def _scene_flow(store: Store) -> tuple[list[str], dict[str, dict[str, Any]]]:
     return order, links
 
 
+MARKER_LABELS = {"start": "はじまり", "ending": "結末", "chapter_in": "章の入口", "chapter_out": "章の出口"}
+
+
 def _tool_get_beats(store: Store, path: list[str], args: dict[str, Any], scope: str = "upto") -> dict[str, Any]:
     links: dict[str, dict[str, Any]] = {}
     if scope == "all":
         path, links = _scene_flow(store)
     requested = args.get("node_ids")
-    if requested is not None and (not isinstance(requested, list) or any(nid not in path for nid in requested)):
-        return {"error": "node_ids に参照範囲外またはシーン以外のIDが含まれています"}
+    skipped: list[dict[str, Any]] = []
+    if requested is not None:
+        if not isinstance(requested, list):
+            return {"error": "node_ids はシーンIDの配列で指定してください"}
+        # 章の入口・出口などのマーカーは本文を持たない。章の構成(read_chapters)には in_id / out_id が
+        # シーンの一覧と並んで載るので、LLM がまとめて渡すことがある。全体を拒否すると読めないまま
+        # 同じ失敗を繰り返して止まるので、マーカーは飛ばして残りを返す(2026-10-13 ユーザー報告)。
+        scenes = set(path)
+        unknown = []
+        for nid in requested:
+            if isinstance(nid, str) and nid in scenes:
+                continue
+            kind = store._node_kind(nid) if isinstance(nid, str) and store.get_node(nid) is not None else None
+            if kind is None:
+                unknown.append(nid)
+            else:
+                skipped.append({"node_id": nid, "kind": kind, "reason": f"{MARKER_LABELS.get(kind, 'マーカー')}で、本文はありません"})
+        if unknown:
+            return {"error": "node_ids に、存在しないIDまたは参照範囲外のシーンが含まれています: "
+                             + ", ".join(str(nid) for nid in unknown) + "。これらを除いて指定し直してください"}
     from_i = max(int(args.get("from_index") or 1), 1)
     to_i = min(int(args.get("to_index") or len(path)), len(path))
     beats = []
@@ -224,7 +245,7 @@ def _tool_get_beats(store: Store, path: list[str], args: dict[str, Any], scope: 
                 **links.get(path[i], {}),
             }
         )
-    return {"total": len(path), "beats": beats}
+    return {"total": len(path), "beats": beats, **({"skipped": skipped} if skipped else {})}
 
 
 # fold の state(fold.py の StateSnapshot)は memories / reasons を event_id、キャラや
