@@ -369,6 +369,8 @@ for mode in ['production', None]:
         }
         if (label === '関係図') {
           await assert(`document.querySelector('.scene-detail-main svg').querySelectorAll('g[transform]').length===2`, '関係図に登場人物を表示')
+          // 好意の矢印は水色(--rel-positive)。成功の緑やエラーの赤を借りない
+          await assert(`(() => {const line=[...document.querySelectorAll('.scene-detail-main svg polyline')].find(e=>e.getAttribute('stroke')!=='transparent');const head=line.parentElement.querySelector('polygon');return getComputedStyle(line).stroke==='rgb(77, 179, 247)' && getComputedStyle(head).fill==='rgb(77, 179, 247)'})()`, '関係図の好意の矢印は水色')
           await js(`document.querySelector('.scene-detail-main svg polyline[stroke="transparent"]').dispatchEvent(new MouseEvent('click',{bubbles:true}))`)
           await pause(100)
           await assert(`document.querySelector('.scene-detail-meta').textContent.includes('検証用の関係')`, '関係線のクリックで右欄に履歴を表示')

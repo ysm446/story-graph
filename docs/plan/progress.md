@@ -1,9 +1,11 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-07-24 22:38
-更新日時: 2026-10-14 02:47
+更新日時: 2026-10-14 02:49
 
 ## 現在の状態
+
+- 2026-10-14 02:49 人物関係図の矢印の色を、緑・赤から水色・ピンクへ(ユーザー依頼「どぎつい」)。関係の向きのための色 `--rel-positive`(#4db3f7)・`--rel-negative`(#f570a0)を `index.css` に新設し(最初は #6db8e8・#e88aa8 にしたが、ユーザーが見て「もっと彩度が高くてよい」とのことで上げた)、`RelationGraph.tsx` の `edgeColor`(矢印・矢じり・履歴の数値)と、キャラタブの関係のバー(`StructureMode.tsx`)に当てた。それまでは成功の緑(#3ecf8e)とエラーの赤(#ef4444)を借りていた。ほぼ中立の色は直値 #5c6078 から `--text-faint` に変えた(同じ値)。スタイルガイドの「意味のある色」の表を更新。build成功、隔離Electronの `--tabs` 18項目(好意の矢印と矢じりが水色であることを1項目追加)成功、関係図のスクリーンショット目視。**未確認**: 反感(ピンク)の矢印の見た目(検証のデータに反感の関係が無い)、好意と反感の矢印が並んだときの見分けやすさ、キャラタブの関係のバー。
 
 - 2026-10-14 02:45 `data/` の検証の残りを削除(ユーザー依頼・確認済み)。約 2.0GB から 230MB になった。消したもの: `workspace-check-*` 173個(画面の検証の使い捨てライブラリ、約1.3GB)、`production-check-*` 135個、`production-scenario-*` 36個、`production-library-branch-*` 13個、`*-ui-check` 5個、`thumbs-check-*` 1個、`pytest-*` のうち中身のある3個。残したもの: 既定のライブラリ(`story-graph.db`・`assets/`・`snapshots/`・`backups/`)、`sample-locked-room/`、モデル検証のログ `*.log` 157個(3MB)。**消せなかったもの**: 空の `pytest-*` フォルダ6個(`pytest-chapter-tools` など)は、アクセスが拒否されて削除できなかった(権限の変更はしていない)。**注意**: `docs/reference/` のモデル検証の記録が根拠として挙げている `data/production-scenario-*`・`data/production-library-branch-*` のフォルダは、もう存在しない(結果は記録の本文にあり、実行ログは残っている)。あわせて、検証スクリプト(`scripts/check-workspace-ui.cjs`・`check-thumbs.cjs`)の先頭に、10分より古い自分の検証フォルダを消す処理を入れた。実行のたびに1つ作って消さなかったため、ためこんでいた。直前の1回分は残るので、スクリーンショットは従来どおり見られる。古いフォルダが消え、新しいものは残ることを確かめた。続けて、**検証の出力先を `data/test/` に変更**(ユーザー指示「削除していいフォルダとして配置したい」)。`data/` の直下には既定のライブラリがあるので、検証の使い捨てデータは `data/test/` にまとめ、ここは丸ごと消してよい場所とする。対象は検証スクリプト5本(`check-workspace-ui.cjs`・`check-thumbs.cjs`・`check-production-live.py`・`check-production-scenario.py`・`check-production-library-branch.py`)。画面の検証を1回動かして、出力が `data/test/workspace-check-…` にできることを確かめた(Python の3本は構文の確認だけで、実行はしていない)。既存のモデル検証のログ(`data/*.log`)は、`docs/reference/` から参照されているので動かしていない。今後、pytest の `--basetemp` やログのリダイレクト先も `data/test/` にする。
 

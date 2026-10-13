@@ -31,9 +31,10 @@ interface ReasonEntry {
   nodeTitle: string
 }
 
+// 関係の向きの色(index.css)。ほぼ中立は補足の色、好意は水色、反感はピンク
 function edgeColor(score: number): string {
-  if (Math.abs(score) < 0.15) return '#5c6078'
-  return score > 0 ? '#3ecf8e' : '#ef4444'
+  if (Math.abs(score) < 0.15) return 'var(--text-faint)'
+  return score > 0 ? 'var(--rel-positive)' : 'var(--rel-negative)'
 }
 
 // ---- 直角エッジのルーティング(グリッド A*)---------------------------

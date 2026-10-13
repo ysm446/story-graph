@@ -1672,7 +1672,7 @@ function CharTab({
                     style={{
                       width: `${Math.abs(rel.score) * 50}%`,
                       [rel.score >= 0 ? 'left' : 'right']: '50%',
-                      background: rel.score >= 0 ? '#3ecf8e' : 'var(--danger)'
+                      background: rel.score >= 0 ? 'var(--rel-positive)' : 'var(--rel-negative)'
                     }}
                   />
                 </div>
