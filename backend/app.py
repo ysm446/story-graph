@@ -2062,6 +2062,27 @@ async def suggest_scene_meta(body: SuggestFieldIn) -> dict[str, str]:
     return {"value": value}
 
 
+class SuggestSettingIn(BaseModel):
+    field: Literal["elapsed", "location"]
+    beat: str  # 画面の本文(未保存の下書きでも、いま見えている文章で推測する)
+
+
+@app.post("/nodes/{node_id}/suggest_setting")
+async def suggest_scene_setting(node_id: str, body: SuggestSettingIn) -> dict[str, Any]:
+    """シーンの経過 / 場所を本文から推測する。保存はしない(画面が下書きに入れる)。"""
+    if not body.beat.strip():
+        raise HTTPException(400, "シーン本文が空です")
+    try:
+        base_url = await llama.ensure_running(store.get_settings())
+        return await generation.suggest_scene_setting(store, base_url, node_id, body.beat, body.field)
+    except KeyError:
+        raise HTTPException(404, "node not found")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except RuntimeError as e:
+        raise HTTPException(500, str(e))
+
+
 @app.post("/nodes/{node_id}/extract_events")
 async def extract_events(node_id: str) -> dict[str, Any]:
     if store.get_node(node_id) is None:

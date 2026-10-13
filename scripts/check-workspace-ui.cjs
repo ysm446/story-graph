@@ -309,6 +309,7 @@ for mode in ['production', None]:
       const pick = (unit) => js(`(() => {const s=document.querySelector('select[aria-label="前のシーンからの経過"]');Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(s,${JSON.stringify(unit)});s.dispatchEvent(new Event('change',{bubbles:true}))})()`)
       const saved = async () => (await (await fetch(base + '/graph')).json()).nodes.find((n) => n.title === '検証シーン')
       await assert(`document.querySelector('select[aria-label="前のシーンからの経過"]').value==='' && !document.querySelector('input[aria-label="経過の数"]') && !document.body.textContent.includes('Story time')`, '経過の既定は未設定で、数の欄と Story time の欄は無い')
+      await assert(`['Location','Elapsed'].every(name => {const head=[...document.querySelectorAll('.scene-detail-aside span')].find(e=>e.children.length===0 && e.textContent.trim()===name);const b=head.parentElement.querySelector('button');return !!b && b.textContent.trim()==='推測' && b.disabled===(name==='Location') && b.classList.contains('accent-action')})`, '場所と経過の見出しの横に「推測」ボタンがある(場所が未登録のあいだ、場所の推測は無効)')
       await pick('day')
       await pause(150)
       await assert(`document.querySelector('input[aria-label="経過の数"]').value==='1'`, '「日後」を選ぶと数の欄が出る')

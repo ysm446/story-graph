@@ -620,6 +620,124 @@ async def suggest_field(base_url: str, beat: str, field: str) -> str:
     raise last_error or RuntimeError("提案を生成できませんでした(空の応答)")
 
 
+# ---- シーンの設定の推測(前のシーンからの経過 / 場所) ----------------
+#
+# 本文に書いてあることを読み取るだけで、新しく作らない。手がかりが無ければ「分からない」と
+# 返させ、画面の値は変えない(経過を推測で「直後」にすると、未設定と区別した意味が無くなる)。
+# 根拠(evidence)を先に書かせ、空なら値が出ていても採用しない。
+
+_SETTING_LABELS = {"elapsed": "経過の推測", "location": "場所の推測"}
+PREV_BEAT_CHARS = 1200  # 前のシーンは末尾だけ渡す(つながり方は終わり際に出る)
+
+ELAPSED_SUGGEST_PROMPT = f"""あなたは物語の構成を点検する編集者です。
+「前のシーン」の終わりから「このシーン」の始まりまでに、物語の中でどれだけ時間が経ったかを、本文から読み取ってください。
+出力は必ず指定の JSON 形式に従ってください。
+
+- evidence: 判断の根拠にした本文の言葉を短く抜き出す(例: 「三日後の朝」「そのまま廊下へ出た」)。根拠が無ければ空文字
+- elapsed_unit: {story_clock.UNIT_HELP} / unknown=本文からは分からない
+- elapsed_count: day・week・month・year のときの数(それ以外は 1)
+
+ルール:
+- 本文に書かれていることだけで判断する。雰囲気や一般的な流れから推測しない
+- 根拠が見つからなければ必ず unknown にする。分からないものを immediate や same_day にしない
+- immediate は、同じ場面・同じやりとりがそのまま続いていると本文から分かるときだけ
+- 「数日後」のように数がはっきりしないときは、もっとも近い数にする(数日=3、数週間=3、数か月=3、数年=3)"""
+
+LOCATION_SUGGEST_PROMPT = """あなたは物語の構成を点検する編集者です。
+「このシーン」の舞台が、登録済みの「場所一覧」のどれに当たるかを、本文から読み取ってください。
+出力は必ず指定の JSON 形式に従ってください。
+
+- evidence: 判断の根拠にした本文の言葉を短く抜き出す。根拠が無ければ空文字
+- location: 場所一覧の ID。一覧のどれにも当たらない、または本文からは分からないときは unknown
+
+ルール:
+- 本文に書かれていることだけで判断する。一覧に無い場所を、似ている場所に当てはめない
+- シーンの途中で移動するときは、シーンの大半を過ごす場所を選ぶ
+- 本文に場所の手がかりが無いときは unknown にする(前のシーンの場所をそのまま答えない)"""
+
+
+async def suggest_scene_setting(
+    store: Store, base_url: str, node_id: str, beat: str, field: str
+) -> dict[str, Any]:
+    """シーンの経過 / 場所を本文から推測する。保存はしない(画面の下書きに入れるだけ)。
+
+    返り値は {found, evidence} に、経過なら elapsed_unit / elapsed_count、場所なら location を足したもの。
+    found=False は「本文からは分からない」で、値は None。
+    """
+    if field not in _SETTING_LABELS:
+        raise ValueError(f"unknown field: {field}")
+    node = store.get_node(node_id)
+    if node is None:
+        raise KeyError(node_id)
+    if field == "elapsed":
+        prev_id = story_clock.previous_scene(store, node_id)
+        prev = store.get_node(prev_id) if prev_id else None
+        if prev is None:
+            raise ValueError("前のシーンがありません(最初のシーンには経過を設定しません)")
+        system = ELAPSED_SUGGEST_PROMPT
+        user = "\n".join([
+            f"## 前のシーン「{prev['title'] or '無題'}」の終わり",
+            (prev["beat"] or "")[-PREV_BEAT_CHARS:],
+            "",
+            f"## このシーン「{node['title'] or '無題'}」",
+            beat,
+        ])
+        schema = {
+            "type": "object",
+            "properties": {
+                "evidence": {"type": "string", "maxLength": 120},
+                "elapsed_unit": {"type": "string", "enum": [*story_clock.UNITS, "unknown"]},
+                "elapsed_count": {"type": "integer"},
+            },
+            "required": ["evidence", "elapsed_unit", "elapsed_count"],
+        }
+    else:
+        places = store.list_places()
+        if not places:
+            raise ValueError("場所が登録されていません。資料庫で場所を登録してから推測できます")
+        system = LOCATION_SUGGEST_PROMPT
+        user = "\n".join([
+            "## 場所一覧",
+            _format_places(store),
+            "",
+            f"## このシーン「{node['title'] or '無題'}」",
+            beat,
+        ])
+        schema = {
+            "type": "object",
+            "properties": {
+                "evidence": {"type": "string", "maxLength": 120},
+                "location": {"type": "string", "enum": [*sorted(p["id"] for p in places), "unknown"]},
+            },
+            "required": ["evidence", "location"],
+        }
+    result = await llm.chat_json(
+        [{"role": "system", "content": system}, {"role": "user", "content": user}],
+        base_url=base_url,
+        schema=schema,
+        temperature=0.2,
+        max_tokens=256,
+        label=_SETTING_LABELS[field],
+    )
+    evidence = str(result.get("evidence") or "").strip()
+    if field == "elapsed":
+        elapsed = _elapsed_from({
+            "elapsed_unit": None if result.get("elapsed_unit") == "unknown" else result.get("elapsed_unit"),
+            # llama.cpp のグラマーは minimum を見ないので、0 以下は 1 に寄せる
+            "elapsed_count": max(1, min(story_clock.MAX_COUNT, result["elapsed_count"]))
+            if isinstance(result.get("elapsed_count"), int) and not isinstance(result.get("elapsed_count"), bool) else None,
+        })
+        if not evidence:
+            elapsed = {"elapsed_unit": None, "elapsed_count": None}
+        return {"found": elapsed["elapsed_unit"] is not None, "evidence": evidence, **elapsed,
+                "label": story_clock.label(elapsed["elapsed_unit"], elapsed["elapsed_count"])}
+    location = result.get("location")
+    if not evidence or location not in store.known_place_ids():
+        location = None
+    return {"found": location is not None, "evidence": evidence, "location": location,
+            "label": store.place_name(location) if location else None}
+
+
 # ---- 校正(シーン本文。lm-graph の 3 段階プリセットを踏襲) -----------
 
 PROOFREAD_PRESETS = [

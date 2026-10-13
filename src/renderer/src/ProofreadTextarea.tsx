@@ -323,7 +323,7 @@ export default function ProofreadTextarea({
             onClick={run}
             disabled={busy || !value.trim()}
             // 色は index.css の .accent-action(LLM を走らせるボタン共通)
-            className="accent-action inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[12px] font-medium disabled:opacity-40"
+            className="accent-action inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium disabled:opacity-40"
             data-tip={
               !value.trim()
                 ? '文章を入力すると校正できます'
@@ -336,7 +336,7 @@ export default function ProofreadTextarea({
               `校正中… (${elapsed}s)`
             ) : (
               <>
-                <Icon name="pen" size={12} />
+                <Icon name="pen" size={11} />
                 {selection ? '選択した部分を校正' : '全文を校正'}
               </>
             )}

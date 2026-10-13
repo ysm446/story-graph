@@ -3,6 +3,7 @@ import type {
   BackupInfo,
   BackupResult,
   Character,
+  ElapsedUnit,
   EventInput,
   GraphEdge,
   Group,
@@ -271,6 +272,16 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ beat, field })
     }),
+  /** シーンの経過 / 場所を本文から推測する(保存はしない)。found=false は「本文からは分からない」 */
+  suggestSceneSetting: (nodeId: string, field: 'elapsed' | 'location', beat: string) =>
+    request<{
+      found: boolean
+      evidence: string
+      label: string | null
+      elapsed_unit?: ElapsedUnit | null
+      elapsed_count?: number | null
+      location?: string | null
+    }>(`/nodes/${nodeId}/suggest_setting`, { method: 'POST', body: JSON.stringify({ field, beat }) }),
   // スナップショット(ライブラリ全体のバックアップ。docs/design/snapshots.md)
   listSnapshots: () => request<{ snapshots: Snapshot[] }>('/snapshots'),
   createSnapshot: (label: string) =>

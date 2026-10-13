@@ -607,7 +607,7 @@ function BeatTab({
   const [saving, setSaving] = useState(false)
   const [draftReset, setDraftReset] = useState(0)
   const [error, setError] = useState<string | null>(null)
-  const [suggesting, setSuggesting] = useState<'title' | 'emotional_core' | null>(null)
+  const [suggesting, setSuggesting] = useState<'title' | 'emotional_core' | 'elapsed' | 'location' | null>(null)
   // 退場の入力中(理由をインラインで入力する。Electron は window.prompt が使えない)
   const [retireTarget, setRetireTarget] = useState<string | null>(null)
   const [retireReason, setRetireReason] = useState('death')
@@ -675,6 +675,42 @@ function BeatTab({
       .suggestSceneMeta(beat, field)
       .then(({ value }) => {
         if (value && shownNodeId.current === targetId) setDraft((d) => ({ ...d, [field]: value }))
+      })
+      .catch((e) => {
+        if (shownNodeId.current === targetId) setError(String(e))
+      })
+      .finally(() => {
+        if (shownNodeId.current === targetId) setSuggesting(null)
+      })
+  }
+
+  // 経過 / 場所を本文から読み取って下書きに入れる(保存はしない)。本文に手がかりが無ければ何も変えない
+  const suggestSetting = (field: 'elapsed' | 'location'): void => {
+    const beat = (draft.beat ?? '').trim()
+    if (!beat || suggesting) return
+    const targetId = node.id // 応答が返るまでに別のシーンへ移っていたら捨てる
+    const name = field === 'elapsed' ? '経過' : '場所'
+    setSuggesting(field)
+    setError(null)
+    api
+      .suggestSceneSetting(targetId, field, beat)
+      .then((result) => {
+        if (shownNodeId.current !== targetId) return
+        if (!result.found) {
+          showStatusNotice(`本文からは${name}を判断できませんでした(値は変えていません)`)
+          return
+        }
+        const basis = result.evidence ? `(根拠: ${result.evidence})` : ''
+        if (field === 'elapsed') {
+          setDraft((d) => ({ ...d, elapsed_unit: result.elapsed_unit ?? null, elapsed_count: result.elapsed_count ?? null }))
+        } else if (!draft.location && result.label === inheritedPlaceName) {
+          // 前のシーンから引き継いでいる場所と同じなら、引き継ぎのままにする(場所が変わらない限り書かない)
+          showStatusNotice(`場所は前のシーンと同じ「${result.label}」です(引き継ぎのまま)${basis}`)
+          return
+        } else {
+          setDraft((d) => ({ ...d, location: result.location ?? null }))
+        }
+        showStatusNotice(`${name}を「${result.label}」と推測しました。保存すると確定します${basis}`)
       })
       .catch((e) => {
         if (shownNodeId.current === targetId) setError(String(e))
@@ -1133,8 +1169,30 @@ function BeatTab({
           {/* 縦に積む: 左の列は 200px まで狭くなり、横に並べると経過の単位(「か月後」)が切れる */}
           <div className="grid gap-3">
             <label className="block">
-              <span className={labelClass} style={{ color: 'var(--text-faint)' }}>
+              <span className="mb-1 flex items-center justify-between">
+              <span className={labelClass.replace('mb-1 block ', '')} style={{ color: 'var(--text-faint)' }}>
                 Location
+              </span>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault()
+                  suggestSetting('location')
+                }}
+                disabled={suggesting !== null || !(draft.beat ?? '').trim() || places.length === 0}
+                className="accent-action inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium disabled:opacity-40"
+                data-tip={places.length === 0 ? '場所が登録されていません。資料庫で場所を登録すると推測できます'
+                  : 'シーン本文から、登録済みの場所のどれに当たるかを推測(保存するまで確定しません。本文に手がかりが無ければ変えません)'}
+              >
+                {suggesting === 'location' ? (
+                  `推測中… (${suggestElapsed}s)`
+                ) : (
+                  <>
+                    <Icon name="sparkle" size={11} />
+                    推測
+                  </>
+                )}
+              </button>
               </span>
               {/* 場所は登録制。未指定なら親から引き継ぐ(docs/design/places.md) */}
               <select
@@ -1162,12 +1220,33 @@ function BeatTab({
               )}
             </label>
             <div>
-              <span className={labelClass} style={{ color: 'var(--text-faint)' }}
+              <span className="mb-1 flex items-center justify-between">
+              <span className={labelClass.replace('mb-1 block ', '')} style={{ color: 'var(--text-faint)' }}
                 data-tip={['前のシーンからどれだけ時間が経ったか。清書と登場人物との会話に渡ります。',
                   '・未設定 — 決めていない(直後とは限らないものとして扱う)',
                   '・直後 — 前のシーンからひとつながり',
                   '・同じ日 — 場面は変わるが、日はまたがない'].join('\n')}>
                 Elapsed
+              </span>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault()
+                  suggestSetting('elapsed')
+                }}
+                disabled={suggesting !== null || !(draft.beat ?? '').trim()}
+                className="accent-action inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium disabled:opacity-40"
+                data-tip="前のシーンの終わりとこのシーンの本文から、経過を推測(保存するまで確定しません。本文に手がかりが無ければ未設定のままにします)"
+              >
+                {suggesting === 'elapsed' ? (
+                  `推測中… (${suggestElapsed}s)`
+                ) : (
+                  <>
+                    <Icon name="sparkle" size={11} />
+                    推測
+                  </>
+                )}
+              </button>
               </span>
               {/* 数は「日後」以降だけが持つ。単位を選ぶと左に数の欄が出る(「3」「日後」と読める並び) */}
               <div className="flex gap-1.5">

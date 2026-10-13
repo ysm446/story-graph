@@ -144,3 +144,45 @@ def test_tools_and_generation_carry_elapsed(store, monkeypatch):
     with pytest.raises(ValueError):
         asyncio.run(production.apply_edit(store, "fake", "update_scene", {
             "node_id": added["id"], "beat": added["beat"], "elapsed_count": 2, "reason": "数だけ"}))
+
+
+def test_suggest_setting_reads_text_and_refuses_to_guess(store, monkeypatch):
+    import llm
+
+    store.append_node({"id": "a", "title": "出発", "beat": "アヤは村を出た。", "cast": ["aya"]})
+    store.append_node({"id": "b", "title": "帰還", "beat": "保存済みの本文。", "cast": ["aya"]})
+    place = store.create_place({"name": "港"})
+    answers = []
+
+    async def fake_chat_json(messages, **kwargs):
+        answers.append((messages[1]["content"], kwargs["schema"]))
+        return reply
+
+    monkeypatch.setattr(llm, "chat_json", fake_chat_json)
+    suggest = lambda node, field, beat="三日後の朝、アヤは港に戻った。": asyncio.run(
+        generation.suggest_scene_setting(store, "http://fake", node, beat, field))
+
+    reply = {"evidence": "三日後の朝", "elapsed_unit": "day", "elapsed_count": 3}
+    result = suggest("b", "elapsed")
+    assert (result["found"], result["elapsed_unit"], result["elapsed_count"], result["label"]) == (True, "day", 3, "3日後")
+    # 前のシーンの本文と、画面から渡した(未保存の)本文で判断する
+    assert "アヤは村を出た。" in answers[-1][0] and "三日後の朝" in answers[-1][0] and "保存済みの本文" not in answers[-1][0]
+    # 分からない / 根拠が無いものは値を出さない(推測で「直後」にしない)
+    reply = {"evidence": "", "elapsed_unit": "unknown", "elapsed_count": 1}
+    assert suggest("b", "elapsed") == {"found": False, "evidence": "", "elapsed_unit": None, "elapsed_count": None, "label": None}
+    reply = {"evidence": "", "elapsed_unit": "immediate", "elapsed_count": 1}
+    assert suggest("b", "elapsed")["found"] is False
+    reply = {"evidence": "数日後", "elapsed_unit": "day", "elapsed_count": 0}
+    assert suggest("b", "elapsed")["elapsed_count"] == 1
+    with pytest.raises(ValueError):
+        suggest("a", "elapsed")  # 最初のシーンには前のシーンが無い
+
+    reply = {"evidence": "港に戻った", "location": place["id"]}
+    result = suggest("b", "location")
+    assert (result["found"], result["location"], result["label"]) == (True, place["id"], "港")
+    assert answers[-1][1]["properties"]["location"]["enum"] == [place["id"], "unknown"]
+    reply = {"evidence": "どこか", "location": "unknown"}
+    assert suggest("b", "location")["location"] is None
+    store.delete_place(place["id"])
+    with pytest.raises(ValueError):
+        suggest("b", "location")  # 場所が1つも登録されていない
