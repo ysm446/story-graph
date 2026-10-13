@@ -344,11 +344,11 @@ for mode in ['production', None]:
   await input(profileSelector, '未保存のプロフィール')
   const SEND = `document.querySelector('button[aria-label="送信"]')`
   const INPUT_BORDER = `getComputedStyle(document.querySelector('textarea[aria-label="制作への依頼"]')).borderColor`
-  await assert(`${SEND}.classList.contains('accent-action') && !!${SEND}.querySelector('svg') && ${SEND}.textContent.trim()==='' && !${INPUT_BORDER}.includes('245, 158, 11') && !document.body.textContent.includes('「制作を実行」を選択中')`, '相談のときの送信は紫の↑ボタンで、入力欄の枠は通常の色')
+  await assert(`${SEND}.classList.contains('accent-action') && !!${SEND}.querySelector('svg') && ${SEND}.textContent.trim()==='' && !${INPUT_BORDER}.includes('221, 136, 181') && !document.body.textContent.includes('「制作を実行」を選択中')`, '相談のときの送信は紫の↑ボタンで、入力欄の枠は通常の色')
   await assert(`(() => {const h=(e)=>Math.round(e.getBoundingClientRect().height);const group=document.querySelector('[aria-label="制作チャットの送信モード"]');const ring=[...document.querySelectorAll('[role="img"] svg')].find(e=>e.getClientRects().length);const send=${SEND};const cy=(e)=>{const r=e.getBoundingClientRect();return r.y+r.height/2};return h(group)===26 && h(ring)===26 && h(send)===26 && Math.abs(cy(group)-cy(ring))<1 && Math.abs(cy(group)-cy(send))<1})()`, '送信モードの切り替え・使用量リング・送信ボタンの高さと位置が揃う')
   await assert(`(() => {const list=document.querySelector('[aria-live="polite"]');const area=document.querySelector('textarea[aria-label="制作への依頼"]').getBoundingClientRect();const l=list.getBoundingClientRect();const cs=getComputedStyle(list);return cs.scrollbarGutter==='stable' && Math.round(l.right-area.right)===16 && Math.round(l.right-10-parseFloat(cs.paddingRight)-area.right)===0})()`, '制作の発言欄はスクロールバーとの間を空け、発言の右端を入力欄と揃える')
   await click('制作を実行')
-  await assert(`${SEND}.classList.contains('warn-action') && ${INPUT_BORDER}.includes('245, 158, 11') && document.body.textContent.includes('「制作を実行」を選択中') && getComputedStyle(document.querySelector('[aria-label="制作チャットの送信モード"] [aria-pressed="true"]')).color.includes('245, 158, 11')`, '制作を実行を選ぶと、切り替え・入力欄の枠・送信ボタンが注意色になり案内を出す')
+  await assert(`${SEND}.classList.contains('execute-action') && ${INPUT_BORDER}.includes('221, 136, 181') && document.body.textContent.includes('「制作を実行」を選択中') && getComputedStyle(document.querySelector('[aria-label="制作チャットの送信モード"] [aria-pressed="true"]')).color.includes('221, 136, 181')`, '制作を実行を選ぶと、切り替え・入力欄の枠・送信ボタンが実行の色(ピンク)になり案内を出す')
   writeFileSync(join(target, 'send-execute.png'), (await win.webContents.capturePage()).toPNG())
   await click('送信')
   await assert(`document.body.textContent.includes('未保存の資料があります')`, '未保存の資料がある場合は制作の実行を拒否')

@@ -26,11 +26,14 @@
   --danger: #ef4444;
   --delete-hover: #cf9393;
   --delete-border: rgba(207, 147, 147, 0.4);
-  /* 注意して進む操作(作品を書き換える「制作を実行」など)。エラー・中止の --danger、削除の --delete-* とは別の用途 */
+  /* 警告(しきい値を超えた、など)。エラー・中止の --danger、削除の --delete-* とは別の用途 */
   --warn: #f59e0b;
-  --warn-soft: rgba(245, 158, 11, 0.14);
-  --warn-border: rgba(245, 158, 11, 0.55);
   --context-warning: var(--warn);
+  /* 「制作を実行」の色。警告ではなく、相談より一段重い操作であることを示す。
+     アクセントの紫となじむ紫寄りのピンクにし、エラーの赤とは離す。目立ちすぎないよう彩度を抑える */
+  --execute: #dd88b5;
+  --execute-soft: rgba(221, 136, 181, 0.13);
+  --execute-border: rgba(221, 136, 181, 0.5);
   font-family: "Inter", "Segoe UI", "Noto Sans JP", system-ui, sans-serif;
 }
 
@@ -196,18 +199,18 @@ input[type='range']:focus-visible {
   color: #fff;
 }
 
-/* accent-action の注意色版。作品を書き換える送信など、押す前に気づいてほしい主操作に使う */
-.warn-action {
-  border-color: var(--warn-border);
-  background: var(--warn-soft);
-  color: var(--warn);
+/* accent-action の「制作を実行」版。作品を書き換える送信に使う */
+.execute-action {
+  border-color: var(--execute-border);
+  background: var(--execute-soft);
+  color: var(--execute);
   transition:
     background-color 0.15s,
     color 0.15s;
 }
 
-.warn-action:hover:not(:disabled) {
-  background: var(--warn);
+.execute-action:hover:not(:disabled) {
+  background: var(--execute);
   color: var(--bg);
 }
 
