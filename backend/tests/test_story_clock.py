@@ -103,6 +103,7 @@ def test_character_memories_are_dated_only_when_elapsed_is_set(store):
     store.append_node({"id": "c", "beat": "三", "cast": ["aya"]}, [memory("駅で再会した")])
     path = store.canon_path()
     plain = chat_agent.build_character_system(store, path, "aya", "interview")
+    assert "when" not in chat_agent._tool_search_memories(store, path, "upto", {"query": "街を出た", "char_id": "aya"})["memories"][0]
     assert "- 街を出た" in plain and "日前" not in plain and "今日" not in plain
     store.update_node("b", {"elapsed_unit": "year", "elapsed_count": 2})
     store.update_node("c", {"elapsed_unit": "day", "elapsed_count": 3})
@@ -110,11 +111,17 @@ def test_character_memories_are_dated_only_when_elapsed_is_set(store):
     assert "- (約2年前)街を出た" in text
     assert "- (3日前)手紙が届いた" in text
     assert "- (今日)駅で再会した" in text
+    # recall(記憶の検索)の結果にも、同じ基準の距離が付く
+    recall = lambda query: chat_agent._tool_search_memories(store, path, "upto", {"query": query, "char_id": "aya"})["memories"]
+    assert [(m["content"], m.get("when")) for m in recall("手紙が届いた")] == [("手紙が届いた", "3日前")]
+    assert recall("街を出た")[0]["when"] == "約2年前"
     # 途中に未設定があると、その前の記憶は時期が分からない
     store.update_node("c", {"elapsed_unit": None})
     store.append_node({"id": "d", "beat": "四", "cast": ["aya"], "elapsed_unit": "same_day"}, [memory("話し込んだ")])
     text = chat_agent.build_character_system(store, store.canon_path(), "aya", "interview")
     assert "- 街を出た" in text and "- (今日)駅で再会した" in text
+    found = chat_agent._tool_search_memories(store, store.canon_path(), "upto", {"query": "街を出た", "char_id": "aya"})["memories"]
+    assert found[0]["content"] == "街を出た" and "when" not in found[0]
 
 
 def test_tools_and_generation_carry_elapsed(store, monkeypatch):

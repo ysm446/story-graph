@@ -384,12 +384,19 @@ def _tool_search_memories(store: Store, path: list[str], scope: str, args: dict[
         h["id"]: store.conn.execute("SELECT node_id FROM events WHERE id = ?", (h["event_id"],)).fetchone()
         for h in hits
     }
+    # いまから見ていつのことか(「3日前」など)。本文に載せた記憶と同じ基準で、分かるものだけ添える。
+    # all は複数の枝をまたぐので、1 本の道の上の距離としては出せない
+    ages = _ages_by_node(store, path) if scope != "all" else {}
+
+    def item(h: Any) -> dict[str, Any]:
+        node_id = origins[h["id"]]["node_id"] if origins[h["id"]] else None
+        row = {"node_id": node_id, "char_id": h["char_id"], "content": h["content"], "importance": h["importance"]}
+        if node_id in ages:
+            row["when"] = ages[node_id]
+        return row
+
     return {
-        "memories": [
-            {"node_id": origins[h["id"]]["node_id"] if origins[h["id"]] else None,
-             "char_id": h["char_id"], "content": h["content"], "importance": h["importance"]}
-            for h in hits
-        ]
+        "memories": [item(h) for h in hits]
     }
 
 
@@ -423,7 +430,8 @@ def build_character_tools() -> list[dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "recall",
-                "description": "自分の記憶を思い出す(意味検索)。会話で聞かれたことが手元の記憶にないときに使う。",
+                "description": "自分の記憶を思い出す(意味検索)。会話で聞かれたことが手元の記憶にないときに使う。"
+                               "結果の when は、いまから見ていつのことか(無ければ時期は分からない)。",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -484,6 +492,19 @@ def _select_memories(
     return important, list(reversed(recent)), len(rows)
 
 
+def _ages_by_node(store: Store, path: list[str]) -> dict[str, str]:
+    """道の上のシーン ID → 道の末尾(いま)から見ていつのことか。距離が分かるシーンだけ返す。
+
+    経過を 1 つも設定していない道では空を返す(末尾のシーンだけに「今日」と付くのを避ける)。
+    """
+    steps = story_clock.steps_for(store, path)
+    if not any(unit is not None for unit, _ in steps[1:]):
+        return {}
+    points = story_clock.points(steps)
+    ages = {nid: story_clock.ago(point, points[-1]) for nid, point in zip(path, points)}
+    return {nid: age for nid, age in ages.items() if age is not None}
+
+
 def _memory_ages(store: Store, path: list[str], rows: list[Any]) -> dict[str, str]:
     """記憶 ID → いまから見ていつのことか(「3日前」など。story_clock.py)。
 
@@ -491,8 +512,8 @@ def _memory_ages(store: Store, path: list[str], rows: list[Any]) -> dict[str, st
     経過を 1 つも設定していない作品では空になり、記憶の見え方は変わらない(末尾のシーンの
     記憶だけに「今日」と付くのを避ける)。章のまとめの要約記憶はシーンを持たないので付かない。
     """
-    steps = story_clock.steps_for(store, path)
-    if not rows or not any(unit is not None for unit, _ in steps[1:]):
+    by_node = _ages_by_node(store, path)
+    if not rows or not by_node:
         return {}
     marks = ",".join("?" for _ in rows)
     node_of = {
@@ -501,15 +522,7 @@ def _memory_ages(store: Store, path: list[str], rows: list[Any]) -> dict[str, st
             f"SELECT id, node_id FROM events WHERE id IN ({marks})", [r["event_id"] for r in rows]
         )
     }
-    points = dict(zip(path, story_clock.points(steps)))
-    now = points[path[-1]]
-    ages: dict[str, str] = {}
-    for r in rows:
-        point = points.get(node_of.get(r["event_id"]))
-        age = story_clock.ago(point, now) if point is not None else None
-        if age is not None:
-            ages[r["id"]] = age
-    return ages
+    return {r["id"]: by_node[node_of[r["event_id"]]] for r in rows if node_of.get(r["event_id"]) in by_node}
 
 
 def build_character_system(store: Store, path: list[str], char_id: str, mode: str) -> str:
