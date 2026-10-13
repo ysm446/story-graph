@@ -6,7 +6,8 @@ import { useElapsedSeconds } from './useElapsed'
 /** 校正つきテキストエリア(アプリ共通)。
  *
  * - 内容に合わせて高さが伸びる(rows は最小の高さとして効く)
- * - 校正ボタンは**テキストエリアの下に常に出す**。選択していれば選択範囲、
+ * - 校正ボタンは**見出しの行の右端に常に出す**(2026-10-13 にテキストエリアの下から移動。長い本文でも
+ *   欄の先頭にあり、「自動生成」「推測」と同じ位置に揃う)。選択していれば選択範囲、
  *   していなければ全文が対象で、それがボタンの文言に出る
  *   (以前は選択中しかボタンが出ず、全文校正できることに気付けなかった)
  * - 結果はポップアップにストリーミング表示し、「置換」で本文に反映する
@@ -23,7 +24,8 @@ export default function ProofreadTextarea({
   className = '',
   style,
   withContext = false,
-  disabled = false
+  disabled = false,
+  label
 }: {
   value: string
   onChange: (next: string) => void
@@ -34,6 +36,8 @@ export default function ProofreadTextarea({
   /** 選択範囲の前後を文脈として LLM に渡す(長文の一部を直すときに使う) */
   withContext?: boolean
   disabled?: boolean
+  /** 欄の見出し。渡すと、見出しの行の右端に校正ボタンを並べる(渡さなければボタンだけを右寄せで出す) */
+  label?: React.ReactNode
 }): React.JSX.Element {
   const areaRef = useRef<HTMLTextAreaElement | null>(null)
   const abortRef = useRef<AbortController | null>(null)
@@ -282,146 +286,154 @@ export default function ProofreadTextarea({
   }, [result, popupHeight])
 
   return (
-    <span className="relative block">
-      <textarea
-        ref={areaRef}
-        rows={rows}
-        value={value}
-        placeholder={placeholder}
-        disabled={disabled}
-        onChange={(e) => onChange(e.target.value)}
-        onSelect={syncSelection}
-        onKeyUp={syncSelection}
-        onMouseUp={syncSelection}
-        // 別の欄へ移ったら選択は消えて見えるので、ボタンの文言も全文に戻す
-        // (校正ボタンは onMouseDown で既定動作を止めているため blur しない)
-        onBlur={() => setSelection(null)}
-        className={`w-full resize-none overflow-hidden rounded-lg border px-3 py-2 text-[13px] leading-relaxed outline-none ${className}`}
-        style={style}
-      />
-      {/* 校正の操作列。本文に重ねると読めなくなるので、テキストエリアの下に置く。
+    <span className="block">
+      {/* 見出しと校正の操作を1行に並べる(校正は右端。「自動生成」「推測」と同じ位置)。
           ボタンは常に出し、いま何を校正するのか(選択範囲 / 全文)を文言で示す */}
-      {!disabled && (
-        <span className="mt-1 flex items-center justify-end gap-2">
-          {backup !== null && !result && (
-            <button
-              type="button"
-              onClick={() => {
-                onChange(backup)
-                setBackup(null)
-              }}
-              className="rounded-md border px-1.5 py-px text-[10px]"
-              style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }}
-              data-tip="校正前の文章に戻す"
-            >
-              ↩ 元に戻す
-            </button>
+      {(label || !disabled) && (
+        <span className="mb-1 flex items-center justify-between gap-2">
+          <span className="min-w-0">{label}</span>
+          {!disabled && (
+            <span className="flex shrink-0 items-center gap-2">
+              {backup !== null && !result && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onChange(backup)
+                    setBackup(null)
+                  }}
+                  className="rounded-md border px-1.5 py-px text-[10px]"
+                  style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }}
+                  data-tip="校正前の文章に戻す"
+                >
+                  ↩ 元に戻す
+                </button>
+              )}
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()} // 選択を保ったまま押せるように
+                onClick={run}
+                disabled={busy || !value.trim()}
+                // 色は index.css の .accent-action(LLM を走らせるボタン共通)
+                className="accent-action inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium disabled:opacity-40"
+                data-tip={
+                  !value.trim()
+                    ? '文章を入力すると校正できます'
+                    : selection
+                      ? '選択した部分だけを校正します(選択を外すと全文が対象になります)'
+                      : '全文を校正します(直したい部分を選んでから押すと、その部分だけを校正します)'
+                }
+              >
+                {busy ? (
+                  `校正中… (${elapsed}s)`
+                ) : (
+                  <>
+                    <Icon name="pen" size={11} />
+                    {selection ? '選択した部分を校正' : '全文を校正'}
+                  </>
+                )}
+              </button>
+            </span>
           )}
-          <button
-            type="button"
-            onMouseDown={(e) => e.preventDefault()} // 選択を保ったまま押せるように
-            onClick={run}
-            disabled={busy || !value.trim()}
-            // 色は index.css の .accent-action(LLM を走らせるボタン共通)
-            className="accent-action inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium disabled:opacity-40"
-            data-tip={
-              !value.trim()
-                ? '文章を入力すると校正できます'
-                : selection
-                  ? '選択した部分だけを校正します(選択を外すと全文が対象になります)'
-                  : '全文を校正します(直したい部分を選んでから押すと、その部分だけを校正します)'
-            }
-          >
-            {busy ? (
-              `校正中… (${elapsed}s)`
-            ) : (
-              <>
-                <Icon name="pen" size={11} />
-                {selection ? '選択した部分を校正' : '全文を校正'}
-              </>
-            )}
-          </button>
         </span>
       )}
+      {/* ポップアップの位置はテキストエリア基準(見出しの行を含めない) */}
+      <span className="relative block">
+        <textarea
+          ref={areaRef}
+          rows={rows}
+          value={value}
+          placeholder={placeholder}
+          disabled={disabled}
+          onChange={(e) => onChange(e.target.value)}
+          onSelect={syncSelection}
+          onKeyUp={syncSelection}
+          onMouseUp={syncSelection}
+          // 別の欄へ移ったら選択は消えて見えるので、ボタンの文言も全文に戻す
+          // (校正ボタンは onMouseDown で既定動作を止めているため blur しない)
+          onBlur={() => setSelection(null)}
+          className={`w-full resize-none overflow-hidden rounded-lg border px-3 py-2 text-[13px] leading-relaxed outline-none ${className}`}
+          style={style}
+        />
+        {/* 校正結果のポップアップ */}
+        {result && (
+          <span
+            ref={popupRef}
+            className="absolute inset-x-0 z-20 block rounded-lg border p-2 shadow-xl shadow-black/50"
+            style={{ top: popupTop, background: 'var(--bg-card)', borderColor: 'var(--accent-border)' }}
+          >
+            <span className="mb-1 flex items-center justify-between text-[10px]" style={{ color: 'var(--text-faint)' }}>
+              <span>校正結果({partialLabel})</span>
+              <select
+                value={presetId}
+                onChange={(e) => {
+                  setPresetId(e.target.value)
+                  localStorage.setItem('proofreadPreset', e.target.value)
+                }}
+                disabled={busy}
+                className="rounded-md border px-1 py-px text-[10px]"
+                style={{ background: 'var(--bg-input)', borderColor: 'var(--border)', color: 'var(--text-dim)' }}
+                data-tip="校正のプリセット(変更後にもう一度校正すると反映されます)"
+              >
+                {presets.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            </span>
+            <span
+              className="inspector-scrollbar block max-h-56 overflow-y-auto whitespace-pre-wrap text-[12px] leading-relaxed"
+              style={{ color: 'var(--text)' }}
+            >
+              {result.value}
+              {!busy && !result.done && '…'}
+              {busy && (
+                <span
+                  className="ml-0.5 inline-block h-3 w-1 align-middle"
+                  style={{ background: 'var(--accent)' }}
+                />
+              )}
+            </span>
+            <span className="mt-1.5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={close}
+                className="rounded-md px-2 py-0.5 text-[11px]"
+                style={{ color: 'var(--text-dim)' }}
+              >
+                {busy ? `■ 中止 (${elapsed}s)` : '閉じる'}
+              </button>
+              {/* 校正の種類(プリセット)を変えて同じ範囲をやり直すためのボタン。
+                  いちど閉じて選び直さずに済むよう、中止と置換の間に置く */}
+              <button
+                type="button"
+                onClick={rerun}
+                disabled={busy}
+                className="accent-action rounded-md border px-2 py-0.5 text-[11px] font-medium disabled:opacity-40"
+                data-tip={
+                  busy
+                    ? '校正が終わってから、もう一度校正できます'
+                    : '上のプリセットを変えてから押すと、同じ範囲を校正し直します'
+                }
+              >
+                もう一度
+              </button>
+              <button
+                type="button"
+                onClick={apply}
+                disabled={!result.done}
+                className="rounded-md px-3 py-0.5 text-[11px] font-medium text-white disabled:opacity-50"
+                style={{ background: 'var(--accent)' }}
+              >
+                置換
+              </button>
+            </span>
+          </span>
+        )}
+      </span>
       {error && (
         <span className="mt-1 block text-[11px]" style={{ color: 'var(--text-faint)' }}>
           {error}
-        </span>
-      )}
-      {/* 校正結果のポップアップ */}
-      {result && (
-        <span
-          ref={popupRef}
-          className="absolute inset-x-0 z-20 block rounded-lg border p-2 shadow-xl shadow-black/50"
-          style={{ top: popupTop, background: 'var(--bg-card)', borderColor: 'var(--accent-border)' }}
-        >
-          <span className="mb-1 flex items-center justify-between text-[10px]" style={{ color: 'var(--text-faint)' }}>
-            <span>校正結果({partialLabel})</span>
-            <select
-              value={presetId}
-              onChange={(e) => {
-                setPresetId(e.target.value)
-                localStorage.setItem('proofreadPreset', e.target.value)
-              }}
-              disabled={busy}
-              className="rounded-md border px-1 py-px text-[10px]"
-              style={{ background: 'var(--bg-input)', borderColor: 'var(--border)', color: 'var(--text-dim)' }}
-              data-tip="校正のプリセット(変更後にもう一度校正すると反映されます)"
-            >
-              {presets.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-          </span>
-          <span
-            className="inspector-scrollbar block max-h-56 overflow-y-auto whitespace-pre-wrap text-[12px] leading-relaxed"
-            style={{ color: 'var(--text)' }}
-          >
-            {result.value}
-            {!busy && !result.done && '…'}
-            {busy && (
-              <span
-                className="ml-0.5 inline-block h-3 w-1 align-middle"
-                style={{ background: 'var(--accent)' }}
-              />
-            )}
-          </span>
-          <span className="mt-1.5 flex justify-end gap-2">
-            <button
-              type="button"
-              onClick={close}
-              className="rounded-md px-2 py-0.5 text-[11px]"
-              style={{ color: 'var(--text-dim)' }}
-            >
-              {busy ? `■ 中止 (${elapsed}s)` : '閉じる'}
-            </button>
-            {/* 校正の種類(プリセット)を変えて同じ範囲をやり直すためのボタン。
-                いちど閉じて選び直さずに済むよう、中止と置換の間に置く */}
-            <button
-              type="button"
-              onClick={rerun}
-              disabled={busy}
-              className="accent-action rounded-md border px-2 py-0.5 text-[11px] font-medium disabled:opacity-40"
-              data-tip={
-                busy
-                  ? '校正が終わってから、もう一度校正できます'
-                  : '上のプリセットを変えてから押すと、同じ範囲を校正し直します'
-              }
-            >
-              もう一度
-            </button>
-            <button
-              type="button"
-              onClick={apply}
-              disabled={!result.done}
-              className="rounded-md px-3 py-0.5 text-[11px] font-medium text-white disabled:opacity-50"
-              style={{ background: 'var(--accent)' }}
-            >
-              置換
-            </button>
-          </span>
         </span>
       )}
     </span>

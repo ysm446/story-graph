@@ -711,16 +711,19 @@ function CharactersMode(): React.JSX.Element {
               const saved = selected[f.key] ?? ''
               return (
                 <section key={f.key} className="mb-5" data-edit-group={f.key} onKeyDown={editKeys(f.key)}>
-                  <div className="mb-1 flex items-center gap-1.5">
-                    <span className="text-[12px]" style={{ color: 'var(--text-dim)' }}>
-                      {f.label}
-                    </span>
-                    {!editing.has(f.key) && editButton(f.key, f.short)}
-                  </div>
+                  {!editing.has(f.key) && (
+                    <div className="mb-1 flex items-center gap-1.5">
+                      <span className="text-[12px]" style={{ color: 'var(--text-dim)' }}>
+                        {f.label}
+                      </span>
+                      {editButton(f.key, f.short)}
+                    </div>
+                  )}
                   {editing.has(f.key) ? (
                     <>
-                      {/* 高さの自動調整と校正ボタン(本文の下に常に出る)は共通コンポーネントに任せる */}
+                      {/* 高さの自動調整と校正ボタン(見出しの右端に常に出る)は共通コンポーネントに任せる */}
                       <ProofreadTextarea
+                        label={<span className="text-[12px]" style={{ color: 'var(--text-dim)' }}>{f.label}</span>}
                         key={`${selected.id}:${f.key}:${draftReset}`}
                         rows={f.rows}
                         value={(draft[f.key] as string | null) ?? ''}

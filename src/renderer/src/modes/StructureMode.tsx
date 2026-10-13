@@ -881,12 +881,14 @@ function BeatTab({
             />
           </label>
           <label className="block">
-            <span className={labelClass} style={{ color: 'var(--text-faint)' }}>
-              シーン(出来事の仕様書)
-            </span>
-            {/* 高さの自動調整と校正ボタンは共通コンポーネント側で行う(ボタンは本文の下に常に出る)。
+            {/* 高さの自動調整と校正ボタンは共通コンポーネント側で行う(ボタンは見出しの右端に常に出る)。
                 長いシーン本文の一部を直すことがあるので、前後を文脈として渡す */}
             <ProofreadTextarea
+              label={
+                <span className={labelClass.replace('mb-1 block ', '')} style={{ color: 'var(--text-faint)' }}>
+                  シーン(出来事の仕様書)
+                </span>
+              }
               key={`${node.id}:${draftReset}`}
               rows={4}
               value={draft.beat ?? ''}

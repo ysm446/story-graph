@@ -305,15 +305,18 @@ export default function PlaceEditor({
       </div>
       {FIELD_DEFS.map((f) => (
         <section key={f.key} className="mb-5" data-edit-group={groupName(f.key)} onKeyDown={keys(f.key)}>
-          <div className="mb-1 flex items-center gap-1.5">
-            <span className="text-[12px]" style={{ color: 'var(--text-dim)' }}>
-              {f.label}
-            </span>
-            {!editing.has(f.key) && <EditPencil label={f.short} onClick={() => startEdit(f.key)} />}
-          </div>
+          {!editing.has(f.key) && (
+            <div className="mb-1 flex items-center gap-1.5">
+              <span className="text-[12px]" style={{ color: 'var(--text-dim)' }}>
+                {f.label}
+              </span>
+              <EditPencil label={f.short} onClick={() => startEdit(f.key)} />
+            </div>
+          )}
           {editing.has(f.key) ? (
             <>
               <ProofreadTextarea
+                label={<span className="text-[12px]" style={{ color: 'var(--text-dim)' }}>{f.label}</span>}
                 key={`${place.id}:${f.key}:${draftReset}`}
                 rows={f.rows}
                 value={(draft[f.key] as string | null) ?? ''}
