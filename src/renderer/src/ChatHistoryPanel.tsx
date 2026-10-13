@@ -4,6 +4,20 @@ import type { Character } from './types'
 import CharAvatar from './CharAvatar'
 import { Icon } from './icons'
 
+/** 最後に更新してからの経過(「3日前」など)。30日を過ぎたら日付にする。一覧を開くたびに描き直すので、開いた時点の値でよい */
+function updatedAgo(value: string): string {
+  const time = new Date(value).getTime()
+  if (Number.isNaN(time)) return ''
+  const minutes = Math.floor((Date.now() - time) / 60000)
+  if (minutes < 1) return 'たった今'
+  if (minutes < 60) return `${minutes}分前`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}時間前`
+  const days = Math.floor(hours / 24)
+  if (days <= 30) return `${days}日前`
+  return new Date(time).toLocaleDateString('ja-JP')
+}
+
 /** 相談・制作で共用する会話一覧。ボタンの真下にポップオーバーで出す。履歴の保存処理は呼び出し側が持つ。 */
 export default function ChatHistoryPanel({ history, chatId, busy, characters = [], production = false,
   chatLabel, startNewChat, loadChat, deleteChat, commitRename, newChatTip }: {
@@ -146,7 +160,8 @@ export default function ChatHistoryPanel({ history, chatId, busy, characters = [
                       onClick={() => { setHistoryOpen(false); void loadChat(h.id) }}
                       disabled={busy}
                       className="flex min-w-0 flex-1 items-center gap-1.5 px-1.5 py-1 text-left disabled:opacity-50"
-                      data-tip={production ? chatLabel(h) : `${isRoom ? subLabel + ' / ' : h.char_name ? h.char_name + ' / ' : ''}${production ? '制作' : h.anchor_title || '(シーンなし)'} まで`}
+                      data-tip={`${production ? chatLabel(h) : `${isRoom ? subLabel + ' / ' : h.char_name ? h.char_name + ' / ' : ''}${h.anchor_title || '(シーンなし)'} まで`}
+最終更新: ${new Date(h.updated_at).toLocaleString('ja-JP')}`}
                     >
                       {/* 相手の目印。キャラ会話はアバター、会話室は二人のアイコン、相談チャットは吹き出し。
                           幅を揃えて見出しの開始位置がずれないようにする */}
@@ -179,6 +194,12 @@ export default function ChatHistoryPanel({ history, chatId, busy, characters = [
                           {production ? '制作' : h.anchor_title || '(シーンなし)'}
                         </span>
                       </span>
+                      {/* 最後に更新してからの経過。どの会話が新しいかを右端で見比べられるようにする */}
+                      {updatedAgo(h.updated_at) && (
+                        <time dateTime={h.updated_at} data-chat-updated className="shrink-0 pl-1 text-[10px] tabular-nums" style={{ color: 'var(--text-faint)' }}>
+                          {updatedAgo(h.updated_at)}
+                        </time>
+                      )}
                     </button>
                     <button
                       onClick={(e) => {
