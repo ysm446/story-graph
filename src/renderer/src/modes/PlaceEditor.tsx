@@ -198,6 +198,7 @@ export default function PlaceEditor({
             setImageDragOver(false)
             void acceptImageFile(e.dataTransfer.files?.[0])
           }}
+          data-write-action
           onClick={() => {
             if (!draft.image_path) fileInputRef.current?.click()
           }}

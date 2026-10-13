@@ -78,11 +78,11 @@ export function ReadText({ value, emptyLabel, onEdit, markdown = false }: {
     if (!window.getSelection()?.toString()) onEdit()
   }
   return markdown ? (
-    <div onClick={open} className="cursor-text text-[13px] leading-relaxed" style={{ color: 'var(--text)' }}>
+    <div data-write-action onClick={open} className="cursor-text text-[13px] leading-relaxed" style={{ color: 'var(--text)' }}>
       <Markdown text={value} />
     </div>
   ) : (
-    <p onClick={open} className="cursor-text whitespace-pre-wrap text-[13px] leading-relaxed" style={{ color: 'var(--text)' }}>
+    <p data-write-action onClick={open} className="cursor-text whitespace-pre-wrap text-[13px] leading-relaxed" style={{ color: 'var(--text)' }}>
       {value}
     </p>
   )

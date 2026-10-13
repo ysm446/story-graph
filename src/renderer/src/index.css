@@ -199,6 +199,19 @@ input[type='range']:focus-visible {
   color: #fff;
 }
 
+/* 制作中の「書き換えだけを止める」ロック(writeLock.ts)。止めている操作部品を薄くして、押せないと分かるようにする。
+   入力を捨てるのはスクリプト側。ここは見た目だけで、読むためのスクロールや選択は妨げない */
+[data-write-locked="true"] :is(button, input, textarea, select):not([data-view-ok], [data-view-ok] *) {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+[data-write-locked="true"] [data-view-ok] [data-write-action],
+[data-write-locked="true"] div[data-write-action] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* accent-action の「制作を実行」版。作品を書き換える送信に使う */
 .execute-action {
   border-color: var(--execute-border);

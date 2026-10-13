@@ -562,7 +562,7 @@ export default function RelationGraph({
     if (placedNew.length > 0) {
       void Promise.all(
         placedNew.map((id) => api.updateCharacter(id, { graph_x: next[id].x, graph_y: next[id].y }))
-      ).then(() => onCharactersChanged())
+      ).then(() => onCharactersChanged()).catch(() => undefined) // 制作中は保存できない(次に開いたとき配置し直す)
     }
   }, [visibleChars.join(','), edges.length])
 
@@ -657,7 +657,8 @@ export default function RelationGraph({
     if (!drag) return
     if (drag.moved) {
       const p = positions[drag.id]
-      if (p) void api.updateCharacter(drag.id, { graph_x: p.x, graph_y: p.y }).then(() => onCharactersChanged())
+      // 制作中は保存が拒否される。動かした位置は画面に残るだけで、保存はされない
+      if (p) void api.updateCharacter(drag.id, { graph_x: p.x, graph_y: p.y }).then(() => onCharactersChanged()).catch(() => undefined)
     } else {
       // クリック = エゴネットワーク切替
       setEgo(egoCharId === drag.id ? null : drag.id)

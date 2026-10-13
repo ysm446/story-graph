@@ -86,7 +86,7 @@ export default function FactTimeline({
   const gridWidth = Math.max(path.length, 1) * COLUMN_WIDTH
 
   return (
-    <div className="char-detail flex min-h-0 flex-1 flex-col">
+    <div data-view-ok className="char-detail flex min-h-0 flex-1 flex-col">
       {/* 左に対象の一覧(キャラタブと同じ行: アイコン + 名前)、右に事実の帯。対象は人物の全員と、
           人物に属さない「世界」。狭いときは上の横並びに戻す(index.css の char-detail) */}
       <div className="char-detail-layout">

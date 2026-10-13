@@ -409,7 +409,7 @@ function CharactersMode(): React.JSX.Element {
       >
         <div className="px-3 py-2 text-[13px] font-medium" style={{ color: 'var(--text)' }}>資料庫</div>
         {createError && <p role="alert" className="px-3 text-[11px]" style={{ color: 'var(--danger)' }}>{createError}</p>}
-        <nav aria-label="資料の種類と一覧" className="inspector-scrollbar min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+        <nav aria-label="資料の種類と一覧" data-view-ok className="inspector-scrollbar min-h-0 flex-1 overflow-y-auto px-2 pb-2">
           {([['characters', 'キャラクター'], ['places', '場所'], ['settings', '設定資料']] as const).map(([kind, label]) => (
             <section key={kind} className="mb-2">
               <div className="flex flex-wrap items-center gap-1">
@@ -426,7 +426,7 @@ function CharactersMode(): React.JSX.Element {
                   className="shrink-0 rounded-md px-1.5 py-0.5 text-[11px] hover:bg-[var(--accent-soft)]"
                   style={{ color: relationsView ? 'var(--text)' : 'var(--text-dim)', background: relationsView ? 'var(--accent-soft)' : undefined }}
                   data-tip={relationsView ? 'キャラクターの編集に戻す' : 'キャラクターどうしの関係図を開く'}>関係図</button>}
-                <button onClick={() => void handleCreate(kind)} aria-label={`${label}を追加`}
+                <button data-write-action onClick={() => void handleCreate(kind)} aria-label={`${label}を追加`}
                   disabled={creating}
                   className="shrink-0 rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-50"
                   style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}

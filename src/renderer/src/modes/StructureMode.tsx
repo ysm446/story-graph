@@ -1014,6 +1014,7 @@ function BeatTab({
                 </>
               ) : (
                 <div
+                  data-write-action
                   className="cursor-pointer rounded-xl border border-dashed px-3 py-2 text-center text-[12px]"
                   style={{
                     borderColor: imageDragOver ? 'var(--accent)' : 'var(--border-strong)',
@@ -1309,7 +1310,7 @@ function CharTab({
       {/* 左に登場人物の一覧(資料庫の一覧と同じ行: アイコン + 名前)、右に選んだ人物の状態。
           下段は横に広く縦に短いので、選択を上の行ではなく左の列に置く。狭いときは上の横並びに戻す(index.css の char-detail) */}
       <div className="char-detail-layout">
-      <div className="char-detail-list inspector-scrollbar" role="group" aria-label="このシーンの登場人物">
+      <div data-view-ok className="char-detail-list inspector-scrollbar" role="group" aria-label="このシーンの登場人物">
         {node.cast.map((id) => {
           const character = characters.find((c) => c.id === id)
           return (
@@ -1910,6 +1911,7 @@ function ChapterTab({
           {group.node_ids.map((id, i) => (
             <div key={id} className="group/scene flex items-center rounded-md hover:bg-[var(--accent-soft)]">
               <button
+                data-view-ok
                 onClick={() => onSelectScene(id)}
                 className="min-w-0 flex-1 truncate px-2 py-1 text-left text-[12px]"
                 style={{ color: 'var(--text-dim)' }}
@@ -2348,6 +2350,8 @@ function StructureModeInner({
   const workspace = useWorkspace()
   const { chatHost, chatOpen, toggleChat, manual: productionManual, setManual: setProductionManual } = workspace
   const productionEditingLocked = productionLocked && !productionManual
+  // 制作中に React Flow へ渡す右クリックのハンドラ(メニューを出さず、ブラウザ既定のメニューも出さない)
+  const suppressContextMenu = useCallback((event: React.MouseEvent | MouseEvent): void => event.preventDefault(), [])
   const [chatKind, setChatKind] = useState<'consult' | 'production'>('consult')
   const markNodeBusy = setNodeBusy
   const [inspectorOpen, setInspectorOpen] = useState(() => localStorage.getItem('inspectorOpen') !== '0')
@@ -3906,7 +3910,6 @@ function StructureModeInner({
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent): void => {
       if (workspace.mode !== 'structure') return
-      if (productionEditingLocked) return
       if (event.isComposing || event.defaultPrevented) return
       const target = event.target as HTMLElement | null
       if (
@@ -3924,12 +3927,14 @@ function StructureModeInner({
           return
         }
         if (key === 'v' && nodeClipboard) {
+          if (productionEditingLocked) return // 制作中は貼り付けない(書き換え)
           event.preventDefault()
           if (!event.repeat) void pasteNodes()
           return
         }
       }
       if (event.key === 'Delete') {
+        if (productionEditingLocked) return // 制作中は削除・切断しない(書き換え)
         if (event.repeat || deletingNodes.current) return
         // エッジを選択中なら「削除」ではなく「切断」(ノードは残す)
         if (selectedEdgeId) {
@@ -4640,7 +4645,8 @@ function StructureModeInner({
       <div ref={rowRef} className="flex min-h-0 flex-1 flex-col">
         {/* 中央のキャンバス。詳細欄はこの下、共通チャットはAppの右ペインへ表示する */}
         <div ref={canvasColumnRef} className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <main ref={canvasRef} inert={productionEditingLocked} className="relative min-h-0 flex-1" style={{ background: 'var(--bg-canvas)' }}>
+        {/* 制作中は書き換えだけを止める(writeLock.ts)。キャンバスの移動・拡大縮小・選択はできる */}
+        <main ref={canvasRef} data-write-locked={productionEditingLocked ? 'true' : undefined} className="relative min-h-0 flex-1" style={{ background: 'var(--bg-canvas)' }}>
           <ReactFlow
             nodes={displayNodes}
             edges={displayEdges}
@@ -4662,14 +4668,16 @@ function StructureModeInner({
             onNodeClick={onNodeClick}
             onNodeDoubleClick={onNodeDoubleClick}
             onSelectionChange={handleSelectionChange}
-            onConnect={onConnect}
+            // 制作中は、接続・切断・移動・右クリックの操作(どれも書き換え)を受け付けない
+            onConnect={productionEditingLocked ? undefined : onConnect}
             isValidConnection={isValidConnectionStable}
             onEdgeClick={onEdgeClick}
-            onEdgeDoubleClick={onEdgeDoubleClick}
+            onEdgeDoubleClick={productionEditingLocked ? undefined : onEdgeDoubleClick}
             onPaneClick={onPaneClick}
-            onNodeContextMenu={onNodeContextMenu}
-            onSelectionContextMenu={onSelectionContextMenu}
-            onPaneContextMenu={onPaneContextMenu}
+            onNodeContextMenu={productionEditingLocked ? suppressContextMenu : onNodeContextMenu}
+            onSelectionContextMenu={productionEditingLocked ? suppressContextMenu : onSelectionContextMenu}
+            onPaneContextMenu={productionEditingLocked ? suppressContextMenu : onPaneContextMenu}
+            nodesDraggable={!productionEditingLocked}
             onNodeDrag={onNodeDrag}
             onNodeDragStop={onNodeDragStop}
             minZoom={0.1}
@@ -4685,7 +4693,7 @@ function StructureModeInner({
             selectionMode={SelectionMode.Partial}
             // ハンドルのドラッグで親子を繋げる(妥当性は isValidConnection で判定)。
             // 章カードのピンは章の先頭 / 末尾シーンに読み替える(resolveEndpoint)
-            nodesConnectable
+            nodesConnectable={!productionEditingLocked}
             // ドラッグを背景のドットと同じグリッドに合わせる(設定でオフにできる)
             snapToGrid={gridSnap}
             snapGrid={SNAP_GRID}
@@ -4703,7 +4711,7 @@ function StructureModeInner({
                     className="flex w-fit max-w-full items-center gap-1.5 rounded-xl border px-2 py-1.5 text-[12px] shadow-lg shadow-black/30"
                     style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)' }}
                   >
-                    <nav aria-label="現在の階層" className="flex min-w-0 items-center gap-1.5">
+                    <nav aria-label="現在の階層" data-view-ok className="flex min-w-0 items-center gap-1.5">
                       <button
                         onClick={() => setChapterView('chapters')}
                         className="shrink-0 rounded-md px-1.5 py-0.5 hover:bg-[var(--accent-soft)]"
@@ -4726,6 +4734,7 @@ function StructureModeInner({
                   {/* 章がある間だけ、章ビュー ⇄ 全シーンの切替を出す */}
                   {groups.length > 0 && effectiveView !== 'focused' && (
                     <button
+                      data-view-ok
                       onClick={() => setChapterView((v) => (v === 'chapters' ? 'flat' : 'chapters'))}
                       className="rounded-lg border px-2.5 py-1.5 text-[13px] shadow-lg shadow-black/30"
                       style={{
@@ -4931,6 +4940,7 @@ function StructureModeInner({
             {/* 詳細欄のトグルは左下(生成 UI と離し、ミニマップの反対側に置く) */}
             <Panel position="bottom-left">
               <button
+                data-view-ok
                 onClick={toggleInspector}
                 className="flex h-10 w-10 items-center justify-center rounded-full border shadow-lg shadow-black/30"
                 style={{
@@ -5407,11 +5417,12 @@ function StructureModeInner({
           />
         </div>
         <aside
-          inert={productionEditingLocked || !inspectorOpen}
+          inert={!inspectorOpen}
+          data-write-locked={productionEditingLocked ? 'true' : undefined}
           className="flex shrink-0 flex-col"
           style={{ background: 'var(--bg-sidebar)', height: inspectorOpen ? inspectorHeight : 0, maxHeight: '70%', overflow: 'hidden' }}
         >
-          <div className="flex shrink-0 gap-1 border-b px-5 py-2" style={{ borderColor: 'var(--border)' }}>
+          <div data-view-ok className="flex shrink-0 gap-1 border-b px-5 py-2" style={{ borderColor: 'var(--border)' }}>
             {(
               [
                 { id: 'beat', label: activeGroup ? '章' : 'シーン' },
@@ -5451,12 +5462,15 @@ function StructureModeInner({
                 章にシーンを追加すると、章の終わりの時点の{shownTab === 'graph' ? '関係' : '事実'}を表示します
               </div>
             ) : shownTab === 'graph' ? (
+              // 関係図の絞り込み・履歴は見るための操作(図の上の配置の保存だけ、制作中は行われない)
+              <div data-view-ok className="contents">
               <RelationGraph detailLayout autoFit
                 characters={characters}
                 path={(activeGroup ? chapterEndPath : pathToSelected) ?? canonPath}
                 allNodes={graphNodes}
                 onCharactersChanged={() => void reload()}
               />
+              </div>
             ) : shownTab === 'facts' ? (
               <FactTimeline
                 path={(activeGroup ? chapterEndPath : pathToSelected) ?? canonPath}

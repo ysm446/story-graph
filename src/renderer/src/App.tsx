@@ -7,6 +7,7 @@ import ModelBar from './ModelBar'
 import StatusBar from './StatusBar'
 import TooltipHost from './Tooltip'
 import { useProductionLocked } from './tasks'
+import { installWriteLockGuard } from './writeLock'
 import StructureMode from './modes/StructureMode'
 import ReaderMode from './modes/ReaderMode'
 import CharactersMode from './modes/CharactersMode'
@@ -156,6 +157,8 @@ function LibraryMenu(): React.JSX.Element {
 
 export default function App(): React.JSX.Element {
   const productionLocked = useProductionLocked()
+  // 制作中は「書き換えだけ」を止める(見るための操作は通す)。仕組みは writeLock.ts
+  useEffect(() => installWriteLockGuard(), [])
   const [mode, setMode] = useState<Mode>('structure')
   const [chatHost, setChatHost] = useState<HTMLDivElement | null>(null)
   const [chatOpen, setChatOpen] = useState(() => localStorage.getItem('chatDrawerOpen') === '1')
@@ -383,7 +386,7 @@ export default function App(): React.JSX.Element {
               /></div>
             )}
             <div className="min-w-0 flex-1" style={{ display: mode === 'characters' ? 'block' : 'none' }}
-              inert={productionLocked && !manual}><CharactersMode /></div>
+              data-write-locked={productionLocked && !manual ? 'true' : undefined}><CharactersMode /></div>
             <div className="min-h-0 shrink-0" style={{ display: chatOpen && mode !== 'reader' ? 'flex' : 'none', width: chatWidth, maxWidth: '60%' }}>
               <div role="separator" aria-label="チャットの幅" aria-orientation="vertical"
                 onPointerDown={resizeChat}
