@@ -87,6 +87,21 @@ def available() -> bool:
     return False
 
 
+def preload() -> None:
+    """裏で読み込みを始める(設定「起動時に Embedding を読み込む」用)。待たない。"""
+    if _model is None and not _load_failed:
+        _start_background_load()
+
+
+def status() -> str:
+    """設定画面に出す状態: ready(読み込み済み)/ loading / failed / idle(まだ読み込んでいない)。"""
+    if _model is not None:
+        return "ready"
+    if _load_failed:
+        return "failed"
+    return "loading" if _loader is not None and _loader.is_alive() else "idle"
+
+
 def is_ready() -> bool:
     """ロード済みかを(ロードをトリガせずに)返す。"""
     return _model is not None

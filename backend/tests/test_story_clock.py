@@ -213,3 +213,22 @@ def test_chapter_digest_memory_is_dated_by_the_chapters_last_scene(store):
     # 次の章の先頭が未設定なら、章のまとめの時期も分からない
     store.update_node(n3["id"], {"elapsed_unit": None})
     assert "- 第一章で誓いと決別を経た" in chat_agent.build_character_system(store, path, "aya", "interview")
+
+
+def test_embedding_startup_setting_is_per_pc_and_status_does_not_trigger_loading(monkeypatch):
+    import app_settings
+
+    assert app_settings.is_app_key("embedding_load_on_startup")
+    started = []
+    monkeypatch.setattr(embed, "_model", None)
+    monkeypatch.setattr(embed, "_load_failed", False)
+    monkeypatch.setattr(embed, "_loader", None)
+    monkeypatch.setattr(embed, "_start_background_load", lambda: started.append(True))
+    assert embed.status() == "idle" and started == []  # 状態を見るだけでは読み込まない
+    embed.preload()
+    assert started == [True]
+    monkeypatch.setattr(embed, "_load_failed", True)
+    embed.preload()
+    assert embed.status() == "failed" and started == [True]  # 失敗後は読み込み直さない
+    monkeypatch.setattr(embed, "_model", object())
+    assert embed.status() == "ready"

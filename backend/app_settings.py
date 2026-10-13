@@ -31,6 +31,8 @@ APP_KEYS = frozenset({
     "tts_base_url", "tts_models_dir", "tts_engine", "tts_extra_body",
     # 画面の好み
     "chat_dynamic_suggestions",
+    # 埋め込みモデルを起動時に読み込むか(メモリと起動の重さは PC の事情)
+    "embedding_load_on_startup",
 })
 # ComfyUI は接続先・モデル・生成パラメータ・ネガティブプロンプトまで、すべてアプリ単位
 APP_PREFIXES = ("comfy_",)

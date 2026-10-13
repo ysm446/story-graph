@@ -235,6 +235,8 @@ export const api = {
     request<Group>(`/groups/${groupId}/digest`, { method: 'DELETE' }),
 
   getSettings: () => request<Record<string, string>>('/settings'),
+  /** 埋め込みモデル(記憶・設定資料のベクトル検索)の状態。読み込みは始めない */
+  embeddingStatus: () => request<{ state: 'ready' | 'loading' | 'failed' | 'idle'; model: string }>('/embedding/status'),
   putSettings: (values: Record<string, string>) =>
     request<Record<string, string>>('/settings', { method: 'PUT', body: JSON.stringify({ values }) }),
 

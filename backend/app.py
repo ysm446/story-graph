@@ -21,10 +21,12 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+import app_settings
 import backup
 import chat_agent
 import chat_rules
 import db
+import embed
 import generation
 import llm
 import node_operations
@@ -157,9 +159,17 @@ async def _unhandled_error_rollback(request: Request, exc: Exception):
 
 @app.on_event("startup")
 async def _startup() -> None:
-    # 埋め込みモデル(約 1.2GB)は起動時には読み込まない。最初の記憶検索のときに
-    # embed.available() がバックグラウンドで読み込み、それまでは FTS だけで検索する
+    # 埋め込みモデル(約 1.2GB)。設定「起動時に Embedding を読み込む」(既定オン)なら、裏で読み込み
+    # 始める(起動は待たせない)。オフなら最初の記憶検索のときに embed.available() が読み込み、
+    # それまでは FTS だけで検索する。アプリから起動したときだけ行う: テストや検証スクリプトが
+    # バックエンドを単体で起こすたびに読み込まないよう、アプリの設定が有効なときに限る
     import asyncio
+
+    try:
+        if app_settings.enabled() and store.get_settings().get("embedding_load_on_startup") != "0":
+            embed.preload()
+    except Exception as e:  # 読み込みの開始に失敗しても起動を止めない
+        print(f"[embed] 起動時の読み込みを始められませんでした: {e}")
 
     try:
         import llama_installer
@@ -2081,6 +2091,12 @@ async def suggest_scene_setting(node_id: str, body: SuggestSettingIn) -> dict[st
         raise HTTPException(400, str(e))
     except RuntimeError as e:
         raise HTTPException(500, str(e))
+
+
+@app.get("/embedding/status")
+async def embedding_status() -> dict[str, str]:
+    """埋め込みモデルの状態(設定画面の表示用)。読み込みは始めない。"""
+    return {"state": embed.status(), "model": embed.MODEL_NAME}
 
 
 @app.post("/nodes/{node_id}/extract_events")

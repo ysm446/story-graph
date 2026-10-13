@@ -101,6 +101,30 @@ for mode in ['production', None]:
   }
   await click('チャット')
   await click('制作')
+  if (process.argv.includes('--embedding')) {
+    // 設定の Embedding のページ: 起動時に読み込むかのオン・オフ(既定オン)と、いまの状態
+    await js(`document.querySelector('button[aria-label="設定"]').click()`)
+    await pause(400)
+    await click('Embedding')
+    await pause(500)
+    const pressed = `[...document.querySelectorAll('button[aria-pressed]')].filter(e=>['オン','オフ'].includes(e.textContent.trim())).map(e=>e.textContent.trim()+':'+e.getAttribute('aria-pressed')).join('|')`
+    await assert(`document.body.textContent.includes('起動時に Embedding を読み込む') && ${pressed}==='オン:true|オフ:false'`, '起動時に Embedding を読み込む設定があり、既定はオン')
+    await assert(`(() => {const s=[...document.querySelectorAll('[role="status"]')].find(e=>e.textContent.includes('読み込'));return !!s && s.textContent.includes('まだ読み込んでいません') && document.body.textContent.includes('cl-nagoya/ruri-v3-310m') && document.body.textContent.includes('この PC に保存します')})()`, 'いまの状態(未読み込み)とモデル名、保存先を表示する。開いただけでは読み込まない')
+    writeFileSync(join(target, 'settings-embedding.png'), (await win.webContents.capturePage()).toPNG())
+    await js(`[...document.querySelectorAll('button[aria-pressed]')].find(e=>e.textContent.trim()==='オフ').click()`)
+    await pause(500)
+    const stored = (await (await fetch(base + '/settings')).json()).embedding_load_on_startup
+    if (stored !== '0') errors.push('Embedding の設定が保存されていない: ' + JSON.stringify(stored))
+    else console.log('PASS オフにすると設定が保存される')
+    await assert(`${pressed}==='オン:false|オフ:true'`, 'オフに切り替えた表示になる')
+    const state = (await (await fetch(base + '/embedding/status')).json()).state
+    if (state !== 'idle') errors.push('検証用のバックエンドで Embedding を読み込んでしまった: ' + state)
+    else console.log('PASS バックエンド単体の起動では Embedding を読み込まない')
+    if (errors.length) throw new Error(errors.join('\n'))
+    console.log('Screenshots: ' + target)
+    win.destroy()
+    return
+  }
   if (process.argv.includes('--target')) {
     // 相談チャットの「話す相手」: アイコンと名前のメニューで選ぶ(標準の select は使わない)
     await click('相談')
