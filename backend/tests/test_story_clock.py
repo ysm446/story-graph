@@ -35,9 +35,10 @@ def test_normalize_and_label():
     assert story_clock.normalize("immediate", 3) == ("immediate", None)
     assert story_clock.normalize("day", None) == ("day", 1)
     assert story_clock.label("week", 2) == "2週間後"
+    assert story_clock.normalize("hour", None) == ("hour", 1) and story_clock.label("hour", 3) == "3時間後"
     assert story_clock.label("same_day", None) == "同じ日"
     assert story_clock.label(None, None) is None
-    for unit, count in (("hour", 1), ("day", 0), ("day", True), ("day", "3")):
+    for unit, count in (("minute", 1), ("day", 0), ("day", True), ("day", "3")):
         with pytest.raises(ValueError):
             story_clock.normalize(unit, count)
 
@@ -45,7 +46,14 @@ def test_normalize_and_label():
 def test_points_break_at_unset_and_ago():
     steps = [(None, None), ("immediate", None), ("day", 3), (None, None), ("year", 2)]
     points = story_clock.points(steps)
-    assert points == [(0, 0), (0, 0), (0, 3), (1, 0), (1, 730)]
+    # 距離は時間で足す(日 = 24、年 = 24 × 365)
+    assert points == [(0, 0), (0, 0), (0, 72), (1, 0), (1, 17520)]
+    hours = story_clock.points([(None, None), ("hour", 5), ("hour", 20), ("same_day", None), ("day", 2)])
+    assert hours == [(0, 0), (0, 5), (0, 25), (0, 25), (0, 73)]
+    assert story_clock.ago(hours[0], hours[1]) == "5時間前"
+    assert story_clock.ago(hours[0], hours[2]) == "1日前"  # 5 + 20 = 25 時間
+    assert story_clock.ago(hours[2], hours[3]) == "今日"
+    assert story_clock.ago(hours[1], hours[4]) == "3日前"  # 68 時間
     assert story_clock.ago(points[0], points[2]) == "3日前"
     assert story_clock.ago(points[2], points[2]) == "今日"
     assert story_clock.ago(points[3], points[4]) == "約2年前"
@@ -66,7 +74,7 @@ def test_store_keeps_elapsed_and_marks_render_stale(store):
     node = store.update_node("b", {"elapsed_unit": None})
     assert (node["elapsed_unit"], node["elapsed_count"]) == (None, None)
     with pytest.raises(ValueError):
-        store.update_node("b", {"elapsed_unit": "hour"})
+        store.update_node("b", {"elapsed_unit": "minute"})
 
 
 def render_prompt(store, node_id):

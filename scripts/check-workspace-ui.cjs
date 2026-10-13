@@ -479,6 +479,17 @@ for mode in ['production', None]:
       const sameDay = await saved()
       if (!(sameDay.elapsed_unit === 'same_day' && sameDay.elapsed_count === null)) errors.push('経過(同じ日)で数が残っている: ' + JSON.stringify([sameDay.elapsed_unit, sameDay.elapsed_count]))
       else console.log('PASS 経過を「同じ日」に変えると数は消える')
+      // 時間後: 同じ日と日後の間にあり、数を持つ
+      await assert(`[...document.querySelector('select[aria-label="前のシーンからの経過"]').options].map(o=>o.value).join('|')==='|immediate|same_day|hour|day|week|month|year'`, '経過の選択肢は 未設定 / 直後 / 同じ日 / 時間後 / 日後 / 週間後 / か月後 / 年後')
+      await pick('hour')
+      await pause(150)
+      await js(`(() => {const i=document.querySelector('input[aria-label="経過の数"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(i,'5');i.dispatchEvent(new Event('input',{bubbles:true}))})()`)
+      await pause(150)
+      await js(`[...document.querySelectorAll('.scene-detail button')].find(e=>e.textContent.trim()==='保存').click()`)
+      await pause(500)
+      const hourNode = await saved()
+      if (!(hourNode.elapsed_unit === 'hour' && hourNode.elapsed_count === 5)) errors.push('経過(5時間後)が保存されていない: ' + JSON.stringify([hourNode.elapsed_unit, hourNode.elapsed_count]))
+      else console.log('PASS 経過(5時間後)を保存できる')
       // Ctrl+S: 入力欄にフォーカスがあっても、保存ボタンと同じ保存をする。変更が無ければ何もしない。
       const titles = async () => (await (await fetch(base + '/graph')).json()).nodes.map((n) => n.title)
       const ctrlS = `(() => {const i=document.querySelector('.scene-detail-main input');i.focus();return i.dispatchEvent(new KeyboardEvent('keydown',{key:'s',ctrlKey:true,bubbles:true,cancelable:true}))})()`

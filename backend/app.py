@@ -262,7 +262,7 @@ class EventIn(BaseModel):
     source: str = "user"
 
 
-ElapsedUnit = Literal["immediate", "same_day", "day", "week", "month", "year"]
+ElapsedUnit = Literal["immediate", "same_day", "hour", "day", "week", "month", "year"]
 
 
 class NodeIn(BaseModel):

@@ -329,7 +329,7 @@ def init_schema(conn: sqlite3.Connection) -> None:
         # 会話室は char_id NULL のまま participants で見分ける
         "ALTER TABLE chats ADD COLUMN participants TEXT",
         # 前のシーンからの経過(backend/story_clock.py)。NULL = 未設定(「直後」とは区別する)。
-        # 単位は immediate / same_day / day / week / month / year、数は day 以降だけが持つ
+        # 単位は immediate / same_day / hour / day / week / month / year、数は hour 以降だけが持つ
         "ALTER TABLE nodes ADD COLUMN elapsed_unit TEXT",
         "ALTER TABLE nodes ADD COLUMN elapsed_count INTEGER",
     ):

@@ -69,7 +69,7 @@ def test_errors_say_where_and_how_to_fix():
     data = sample()
     data["scenes"][0]["cast"].append("田中")
     data["scenes"][1]["location"] = "山"
-    data["scenes"][1]["elapsed"] = {"unit": "hour", "count": 2}
+    data["scenes"][1]["elapsed"] = {"unit": "minute", "count": 2}
     data["scenes"][2]["emotion_core"] = "綴りの誤り"
     data["scenes"][2]["events"].append({"type": "relation", "who": "アヤ", "toward": "ケン"})
     data["scenes"].append({"title": "分岐", "beat": "別の道。", "after": "出発"})

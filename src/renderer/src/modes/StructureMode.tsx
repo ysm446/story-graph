@@ -543,12 +543,13 @@ const ELAPSED_OPTIONS: [string, string][] = [
   ['', '未設定'],
   ['immediate', '直後'],
   ['same_day', '同じ日'],
+  ['hour', '時間後'],
   ['day', '日後'],
   ['week', '週間後'],
   ['month', 'か月後'],
   ['year', '年後']
 ]
-const COUNTED_ELAPSED = ['day', 'week', 'month', 'year']
+const COUNTED_ELAPSED = ['hour', 'day', 'week', 'month', 'year']
 
 function savedBeatDraft(node: StoryNode): Partial<StoryNode> {
   return {
@@ -1261,7 +1262,8 @@ function BeatTab({
                 data-tip={['前のシーンからどれだけ時間が経ったか。清書と登場人物との会話に渡ります。',
                   '・未設定 — 決めていない(直後とは限らないものとして扱う)',
                   '・直後 — 前のシーンからひとつながり',
-                  '・同じ日 — 場面は変わるが、日はまたがない'].join('\n')}>
+                  '・同じ日 — 場面は変わるが、日はまたがない(何時間後かは決めない)',
+                  '・時間後 / 日後 … — はっきり分かるときに、数を入れる'].join('\n')}>
                 Elapsed
               </span>
               <button
@@ -1284,7 +1286,7 @@ function BeatTab({
                 )}
               </button>
               </span>
-              {/* 数は「日後」以降だけが持つ。単位を選ぶと左に数の欄が出る(「3」「日後」と読める並び) */}
+              {/* 数は「時間後」以降だけが持つ。単位を選ぶと左に数の欄が出る(「3」「日後」と読める並び) */}
               <div className="flex gap-1.5">
                 {COUNTED_ELAPSED.includes(draft.elapsed_unit ?? '') && (
                   <input

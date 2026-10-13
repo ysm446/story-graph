@@ -17,22 +17,22 @@ if TYPE_CHECKING:
 
 # 数を持たない単位 / 持つ単位。画面のプルダウンと LLM のツール引数もこの並び
 UNCOUNTED = ("immediate", "same_day")
-COUNTED = ("day", "week", "month", "year")
+COUNTED = ("hour", "day", "week", "month", "year")
 UNITS = UNCOUNTED + COUNTED
 
-_SUFFIX = {"day": "日", "week": "週間", "month": "か月", "year": "年"}
-# 距離の概算に使う日数(月・年は暦を持たないので丸める)
-_DAYS = {"day": 1, "week": 7, "month": 30, "year": 365}
+_SUFFIX = {"hour": "時間", "day": "日", "week": "週間", "month": "か月", "year": "年"}
+# 距離の概算に使う時間数(月・年は暦を持たないので丸める)。「時間後」を扱うので、日ではなく時間で足す
+_HOURS = {"hour": 1, "day": 24, "week": 24 * 7, "month": 24 * 30, "year": 24 * 365}
 MAX_COUNT = 9999
 
 UNIT_HELP = (
     "immediate=直後(ひとつながりの場面) / same_day=同じ日(場面は変わるが日はまたがない) / "
-    "day=日後 / week=週間後 / month=か月後 / year=年後"
+    "hour=時間後 / day=日後 / week=週間後 / month=か月後 / year=年後"
 )
 
 
 def normalize(unit: Any, count: Any) -> tuple[str | None, int | None]:
-    """保存する形に揃える。未設定は (None, None)。数を持つ単位は 1 以上の整数にする。"""
+    """保存する形に揃える。未設定は (None, None)。数を持つ単位(時間後・日後など)は 1 以上の整数にする。"""
     if unit is None or unit == "":
         return None, None
     if unit not in UNITS:
@@ -57,25 +57,25 @@ def label(unit: str | None, count: int | None) -> str | None:
     return f"{count or 1}{_SUFFIX[unit]}後"
 
 
-def _days(unit: str, count: int | None) -> int:
-    return 0 if unit in UNCOUNTED else _DAYS[unit] * (count or 1)
+def _hours(unit: str, count: int | None) -> int:
+    return 0 if unit in UNCOUNTED else _HOURS[unit] * (count or 1)
 
 
 def points(steps: list[tuple[str | None, int | None]]) -> list[tuple[int, int]]:
-    """道の各シーンの (区間, 区間の先頭からの日数)。
+    """道の各シーンの (区間, 区間の先頭からの時間数)。
 
     経過が未設定のシーンで区間を切る。区間をまたぐ 2 点の距離は分からない。
     先頭のシーンの経過は「物語の前」からのもので、距離には使わない。
     """
     out: list[tuple[int, int]] = []
-    segment = day = 0
+    segment = hours = 0
     for i, (unit, count) in enumerate(steps):
         if i > 0:
             if unit is None:
-                segment, day = segment + 1, 0
+                segment, hours = segment + 1, 0
             else:
-                day += _days(unit, count)
-        out.append((segment, day))
+                hours += _hours(unit, count)
+        out.append((segment, hours))
     return out
 
 
@@ -83,9 +83,12 @@ def ago(then: tuple[int, int], now: tuple[int, int]) -> str | None:
     """now から見て then がどれくらい前か。区間が違えば None(分からない)。"""
     if then[0] != now[0]:
         return None
-    days = now[1] - then[1]
-    if days <= 0:
+    hours = now[1] - then[1]
+    if hours <= 0:
         return "今日"
+    if hours < 24:
+        return f"{hours}時間前"
+    days = round(hours / 24)
     if days < 14:
         return f"{days}日前"
     if days < 60:

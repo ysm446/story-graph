@@ -316,7 +316,7 @@ def tools(allow_write: bool, memory: bool = True):
         "elapsed_unit": {"type": "string", "enum": [*story_clock.UNITS, "unset"],
                          "description": "前のシーンからの経過。" + story_clock.UNIT_HELP + "。unsetで未設定に戻す。省略時は維持(新規は未設定)。"
                                         "本文や依頼から経過が分かるときだけ指定し、推測では入れない"},
-        "elapsed_count": {"type": "integer", "description": "elapsed_unitがday/week/month/yearのときの数(1以上。省略時は1)"},
+        "elapsed_count": {"type": "integer", "description": "elapsed_unitがhour/day/week/month/yearのときの数(1以上。省略時は1)"},
     }
     for name, description, properties, required in [
         ("insert_scene", "既存ルートの途中への挿入、または枝の末尾を延長する。後続があればその間に入り、正史上では正史が変わる。別ルート・分岐の新規作成には使わずbranch_sceneを使う。",

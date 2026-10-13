@@ -91,7 +91,7 @@ export interface EventInput {
   source?: 'llm' | 'user'
 }
 
-export type ElapsedUnit = 'immediate' | 'same_day' | 'day' | 'week' | 'month' | 'year'
+export type ElapsedUnit = 'immediate' | 'same_day' | 'hour' | 'day' | 'week' | 'month' | 'year'
 
 export interface StoryNode {
   id: string
@@ -102,7 +102,7 @@ export interface StoryNode {
   location: string | null
   /** 前のシーンからの経過(backend/story_clock.py)。null = 未設定(「直後」とは区別する) */
   elapsed_unit: ElapsedUnit | null
-  /** 日後・週間後・か月後・年後のときの数(それ以外は null) */
+  /** 時間後・日後・週間後・か月後・年後のときの数(それ以外は null) */
   elapsed_count: number | null
   status: 'canon' | 'draft'
   pos_x: number | null
