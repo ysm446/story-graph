@@ -1,7 +1,7 @@
 # UI スタイルガイド(色・タイポ・余白・部品)
 
 作成日時: 2026-08-09 16:00
-更新日時: 2026-10-14 02:24
+更新日時: 2026-10-14 02:58
 
 新しい画面や部品を足すときに **見た目を揃えるための具体値** をまとめる。
 [overview.md](overview.md) がアーキテクチャの入口なら、本書は UI の入口。
@@ -272,6 +272,22 @@ Tailwind の既定スケール(`1 = 4px`)をそのまま使う。**使う段は�
 スクロール領域(`overflow-y-auto`)の中から出すメニューは、`absolute` だと領域の端で切り取られる。
 `createPortal` で `document.body` へ出し、`fixed` でボタンの位置(`getBoundingClientRect()`)に置く。
 下に入りきらないときは上へ出し、領域がスクロールしたら閉じる(例: `ChatHistoryPanel.tsx` の行の ⋯ メニュー)。
+
+### アイコン付きの選択メニュー(`ChatTargetPicker.tsx`)
+
+人物をアイコンと名前で選ばせたいときは、標準の `select` を使わない(`option` に画像を置けない)。
+相談チャットの「話す相手」がこの型(2026-10-14)。
+
+- ボタン: `inline-flex items-center gap-1.5 rounded-md border py-0.5 pl-1 pr-1.5 text-[11px]`、背景 `--bg-input`。
+  左に今の選択の印(20px)、名前、右端に `▾`(`text-[9px]`・`--text-faint`)。開いている間は `--accent-soft` と `--text`。
+  `aria-haspopup="listbox"`・`aria-expanded`・`aria-label` を付ける。枠の色はキャラを選んでいるときそのキャラの色
+- メニュー: ポップオーバーの型(`--bg-card`・`rounded-xl`・`--border-strong`・`shadow-lg shadow-black/40`・`z-50`・`p-1.5`)で幅 `w-60`、
+  高さは `min(320px, 60vh)` まで、中でスクロール。`createPortal` で body へ出し、`fixed` でボタンの下 4px に置く。
+  実寸を測ってから、下に入らなければ上へ、右にはみ出すなら左へ寄せる(位置が決まるまでの1フレームは `visibility: hidden`)
+- 行: 資料庫の一覧と同じ型(`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-[12px]`、選択は `--accent-soft` と `--text`、
+  それ以外は `--text-dim`、hover で `--accent-soft`)。左の印は 24px の枠に揃える: キャラは `CharAvatar`、人物でない項目は線画のアイコン
+  (17px)を同じ枠の中央に置く。人物でない項目とキャラの間に `--border` の区切り線。`role="listbox"` / `role="option"` / `aria-selected`
+- 閉じ方: 選ぶ、外側のクリック、Esc(ボタンへフォーカスを戻す)、外側のスクロール、ウインドウのリサイズ
 
 ### 右クリックメニュー(`ContextMenu.tsx`)
 

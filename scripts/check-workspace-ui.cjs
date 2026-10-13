@@ -101,6 +101,41 @@ for mode in ['production', None]:
   }
   await click('チャット')
   await click('制作')
+  if (process.argv.includes('--target')) {
+    // 相談チャットの「話す相手」: アイコンと名前のメニューで選ぶ(標準の select は使わない)
+    await click('相談')
+    await pause(300)
+    const button = `document.querySelector('button[aria-haspopup="listbox"]')`
+    const menu = `document.querySelector('[role="listbox"][aria-label="話す相手"]')`
+    await assert(`${button}.textContent.includes('相談(編集者)') && !${menu} && ![...document.querySelectorAll('select')].some(s=>[...s.options].some(o=>o.textContent.includes('と話す')))`, '話す相手は自前のボタンで、既定は相談(編集者)。標準の select は無い')
+    await js(`${button}.click()`)
+    await pause(250)
+    await assert(`(() => {const m=${menu};const rows=[...m.querySelectorAll('[role="option"]')];const b=${button}.getBoundingClientRect(),r=m.getBoundingClientRect();return rows.map(e=>e.lastElementChild.textContent.trim()).join('|')==='相談(編集者)|キャラ同士の会話|検証キャラ' && rows[0].getAttribute('aria-selected')==='true' && rows.every(e=>{const mark=e.firstElementChild.getBoundingClientRect();return Math.round(mark.width)===24 && Math.round(mark.height)===24}) && m.parentElement===document.body && getComputedStyle(m).position==='fixed' && r.top>=b.bottom && r.right<=innerWidth && r.bottom<=innerHeight})()`, 'メニューは 編集者 / 会話室 / キャラ の順で、各行に24pxの印と名前。ボタンの下に画面内で出る')
+    writeFileSync(join(target, 'target-menu.png'), (await win.webContents.capturePage()).toPNG())
+    await js(`window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}))`)
+    await pause(150)
+    await assert(`!${menu} && ${button}.textContent.includes('相談(編集者)')`, 'Escape でメニューを閉じ、相手は変わらない')
+    await js(`${button}.click()`)
+    await pause(200)
+    await js(`document.body.dispatchEvent(new MouseEvent('mousedown',{bubbles:true}))`)
+    await pause(150)
+    await assert(`!${menu}`, '外側のクリックでメニューを閉じる')
+    await js(`${button}.click()`)
+    await pause(200)
+    await js(`[...${menu}.querySelectorAll('[role="option"]')].find(e=>e.lastElementChild.textContent.trim()==='検証キャラ').click()`)
+    await pause(300)
+    await assert(`!${menu} && ${button}.textContent.includes('検証キャラと話す') && ${button}.getAttribute('aria-label')==='話す相手: 検証キャラ'`, 'キャラを選ぶとメニューを閉じ、ボタンにそのキャラのアイコンと名前を出す')
+    writeFileSync(join(target, 'target-char.png'), (await win.webContents.capturePage()).toPNG())
+    await js(`${button}.click()`)
+    await pause(200)
+    await js(`[...${menu}.querySelectorAll('[role="option"]')].find(e=>e.lastElementChild.textContent.trim()==='キャラ同士の会話').click()`)
+    await pause(300)
+    await assert(`${button}.textContent.includes('キャラ同士の会話')`, 'キャラ同士の会話に切り替えられる')
+    if (errors.length) throw new Error(errors.join('\n'))
+    console.log('Screenshots: ' + target)
+    win.destroy()
+    return
+  }
   if (process.argv.includes('--settings')) {
     await click('資料庫')
     const fill = async (label, value) => {

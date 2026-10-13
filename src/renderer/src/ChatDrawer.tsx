@@ -12,6 +12,7 @@ import {
 } from './api'
 import CharAvatar from './CharAvatar'
 import { MsgActionButton, StatsLine, SystemPromptModal } from './GenMeta'
+import ChatTargetPicker from './ChatTargetPicker'
 import { Icon } from './icons'
 import { Markdown } from './Markdown'
 import { useChatVoice } from './useChatVoice'
@@ -912,34 +913,13 @@ export default function ChatDrawer({
           {/* ヘッダー: 相手 / アンカー / スコープ */}
           <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px]" style={{ color: 'var(--text-faint)' }}>
             {/* 話す相手: 相談(編集者) or キャラ本人。切替は新規チャット扱い */}
-            {activeChar ? (
-              <CharAvatar char={activeChar} size={20} />
-            ) : room ? (
-              <Icon name="users" size={15} />
-            ) : (
-              <Icon name="chat" size={14} />
-            )}
-            <select
+            {/* アイコンと名前で選ぶ(標準の select は option に画像を置けないので自前のメニュー) */}
+            <ChatTargetPicker
               value={room ? 'room' : charId ?? ''}
-              onChange={(e) => switchTarget(e.target.value || null)}
+              characters={characters}
               disabled={busy}
-              className="rounded-md border px-1.5 py-0.5 text-[11px]"
-              style={{
-                background: 'var(--bg-input)',
-                borderColor: activeChar?.color || 'var(--border)',
-                color: 'var(--text-dim)'
-              }}
-              data-tip="話す相手。キャラを選ぶと、アンカー時点のそのキャラ本人と話せます。「キャラ同士の会話」は作者は参加せず、演出の指示だけ出します"
-            >
-              {/* option には SVG を置けないので、ここだけは文字だけで区別する */}
-              <option value="">相談(編集者)</option>
-              <option value="room">キャラ同士の会話</option>
-              {characters.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}と話す
-                </option>
-              ))}
-            </select>
+              onChange={switchTarget}
+            />
             <span>
               アンカー: <span style={{ color: 'var(--text-dim)' }}>{anchorTitle(liveAnchor)}</span> まで
             </span>
