@@ -1832,6 +1832,32 @@ class Store:
                     "DELETE FROM memories_vec WHERE memory_id = ?", (memory_id,)
                 )
 
+    def digest_memory_scenes(self) -> dict[str, str]:
+        """章のまとめの要約記憶(イベント ID = 記憶 ID)→ その章の最後のシーン。
+
+        まとめはノードの events に居ないので、どのシーンの記憶かを events からは引けない。
+        「いつのことか」は章の最後のシーンの時点で代表させる(story_order と同じ規則)。
+        """
+        rows = self.conn.execute(
+            "SELECT id, digest_events FROM groups WHERE digest_events IS NOT NULL"
+        ).fetchall()
+        if not rows:
+            return {}
+        routes = {g["id"]: g["route"] for g in self.list_groups()}
+        scenes: dict[str, str] = {}
+        for row in rows:
+            route = routes.get(row["id"]) or []
+            if not route:
+                continue
+            try:
+                events = json.loads(row["digest_events"]) or []
+            except (TypeError, ValueError):
+                continue
+            for e in events:
+                if e.get("type") == "memory_compress" and e.get("id"):
+                    scenes[e["id"]] = route[-1]
+        return scenes
+
     def summary_memory_ids(self) -> set[str]:
         """要約記憶(`memory_compress`)の ID 集合。章のまとめと手動の圧縮の両方。
 

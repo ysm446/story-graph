@@ -193,3 +193,23 @@ def test_suggest_setting_reads_text_and_refuses_to_guess(store, monkeypatch):
     store.delete_place(place["id"])
     with pytest.raises(ValueError):
         suggest("b", "location")  # 場所が1つも登録されていない
+
+
+def test_chapter_digest_memory_is_dated_by_the_chapters_last_scene(store):
+    """章のまとめの要約記憶はシーンに属さないが、章の最後のシーンの時点として時期を付ける。"""
+    n1 = store.append_node({"beat": "一", "cast": ["aya"]}, [memory("石橋で誓った")])
+    n2 = store.append_node({"beat": "二", "cast": ["aya"], "elapsed_unit": "day", "elapsed_count": 2}, [memory("ケンと決別した")])
+    n3 = store.append_node({"beat": "三", "cast": ["aya"], "elapsed_unit": "month", "elapsed_count": 3}, [memory("港で船を待った")])
+    group = store.create_group("第一章", [n1["id"], n2["id"]])
+    replaced = [e["id"] for nid in (n1["id"], n2["id"]) for e in store.list_events(nid) if e["type"] == "memory_add"]
+    store.save_group_digest(group["id"], [{"type": "memory_compress", "payload": {
+        "char": "aya", "replaces": replaced, "summary": "第一章で誓いと決別を経た", "importance": 0.9}}])
+    path = store.canon_path()
+    text = chat_agent.build_character_system(store, path, "aya", "interview")
+    # 章の最後のシーン(二)は、いま(三)の3か月前
+    assert "- (約3か月前)第一章で誓いと決別を経た" in text and "- (今日)港で船を待った" in text
+    found = chat_agent._tool_search_memories(store, path, "upto", {"query": "誓いと決別", "char_id": "aya"})["memories"]
+    assert (found[0]["content"], found[0]["when"], found[0]["node_id"]) == ("第一章で誓いと決別を経た", "約3か月前", None)
+    # 次の章の先頭が未設定なら、章のまとめの時期も分からない
+    store.update_node(n3["id"], {"elapsed_unit": None})
+    assert "- 第一章で誓いと決別を経た" in chat_agent.build_character_system(store, path, "aya", "interview")

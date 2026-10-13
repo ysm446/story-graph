@@ -387,12 +387,14 @@ def _tool_search_memories(store: Store, path: list[str], scope: str, args: dict[
     # いまから見ていつのことか(「3日前」など)。本文に載せた記憶と同じ基準で、分かるものだけ添える。
     # all は複数の枝をまたぐので、1 本の道の上の距離としては出せない
     ages = _ages_by_node(store, path) if scope != "all" else {}
+    # 時期を引くシーン。章のまとめの要約記憶は node_id を持たないが、章の最後のシーンの時点として扱う
+    scenes = _memory_scenes(store, [h["event_id"] for h in hits]) if ages else {}
 
     def item(h: Any) -> dict[str, Any]:
         node_id = origins[h["id"]]["node_id"] if origins[h["id"]] else None
         row = {"node_id": node_id, "char_id": h["char_id"], "content": h["content"], "importance": h["importance"]}
-        if node_id in ages:
-            row["when"] = ages[node_id]
+        if scenes.get(h["event_id"]) in ages:
+            row["when"] = ages[scenes[h["event_id"]]]
         return row
 
     return {
@@ -492,6 +494,27 @@ def _select_memories(
     return important, list(reversed(recent)), len(rows)
 
 
+def _memory_scenes(store: Store, event_ids: list[str]) -> dict[str, str]:
+    """記憶のイベント ID → その記憶が生まれたシーン。
+
+    章のまとめの要約記憶はノードの events に居ないので、その章の最後のシーンで代表させる
+    (章全体を 1 つの時点として扱う。「どれくらい前の章か」が分かればよい)。
+    """
+    if not event_ids:
+        return {}
+    marks = ",".join("?" for _ in event_ids)
+    scenes = {
+        r["id"]: r["node_id"]
+        for r in store.conn.execute(f"SELECT id, node_id FROM events WHERE id IN ({marks})", event_ids)
+    }
+    if len(scenes) < len(set(event_ids)):
+        digests = store.digest_memory_scenes()
+        for event_id in event_ids:
+            if event_id not in scenes and event_id in digests:
+                scenes[event_id] = digests[event_id]
+    return scenes
+
+
 def _ages_by_node(store: Store, path: list[str]) -> dict[str, str]:
     """道の上のシーン ID → 道の末尾(いま)から見ていつのことか。距離が分かるシーンだけ返す。
 
@@ -510,18 +533,12 @@ def _memory_ages(store: Store, path: list[str], rows: list[Any]) -> dict[str, st
 
     記憶が生まれたシーンと会話の時点(道の末尾)の間で、経過が全部設定されているものだけ返す。
     経過を 1 つも設定していない作品では空になり、記憶の見え方は変わらない(末尾のシーンの
-    記憶だけに「今日」と付くのを避ける)。章のまとめの要約記憶はシーンを持たないので付かない。
+    記憶だけに「今日」と付くのを避ける)。章のまとめの要約記憶は、その章の最後のシーンの時点とする。
     """
     by_node = _ages_by_node(store, path)
     if not rows or not by_node:
         return {}
-    marks = ",".join("?" for _ in rows)
-    node_of = {
-        r["id"]: r["node_id"]
-        for r in store.conn.execute(
-            f"SELECT id, node_id FROM events WHERE id IN ({marks})", [r["event_id"] for r in rows]
-        )
-    }
+    node_of = _memory_scenes(store, [r["event_id"] for r in rows])
     return {r["id"]: by_node[node_of[r["event_id"]]] for r in rows if node_of.get(r["event_id"]) in by_node}
 
 
