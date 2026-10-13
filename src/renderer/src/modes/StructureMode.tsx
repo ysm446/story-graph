@@ -5373,7 +5373,7 @@ function StructureModeInner({
                       data-tip={productionLocked ? '制作が終わるか停止してから切り替えられます' : value === 'consult' ? '作品を変更せずに相談します' : '会話からシーンを作成・編集する実験機能'}>{label}</button>
                   ))}
                 </div>
-                {productionLocked && <span className="text-[11px]" style={{ color: 'var(--text-dim)' }}>{productionManual ? '手動編集中・保存後に制作を再開できます' : '手動編集は制作チャットから切り替えられます'}</span>}
+                {productionLocked && <span className="text-[11px]" style={{ color: 'var(--text-dim)' }}>{productionManual ? '一時停止中(手動編集)・保存後に制作を再開できます' : '手動編集は制作チャットで一時停止してから行えます'}</span>}
                 {chatKind === 'production' && <button onClick={toggleChat}
                   className="ml-auto rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-50"
                   style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}

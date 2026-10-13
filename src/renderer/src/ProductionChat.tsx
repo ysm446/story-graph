@@ -329,7 +329,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
       setManualEditing(paused)
       onManualEdit(paused)
       if (paused) { setProductionPreview(null); onFollowTarget(null) }
-      setStatus(paused ? '手動編集中です。保存してから制作を再開してください。' : '最新の構成を読み直して再開します…')
+      setStatus(paused ? '一時停止中(手動編集)。保存してから「制作を再開」を押すと、続きから進みます。' : '最新の構成を読み直して再開します…')
       setStatusAt(new Date().toISOString())
     } catch (e) {
       onManualEdit(manualRef.current)
@@ -524,8 +524,8 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
       {busy && runId && <button disabled={!manualReady || switching} onClick={() => void toggleManual()}
         className="rounded-md border px-2 py-0.5 text-[12px] disabled:opacity-50"
         style={{ background: 'var(--bg-input)', borderColor: 'var(--border-strong)' }}
-        data-tip={!manualReady ? '作業前の保存が終わるまでお待ちください' : manualEditing ? '未保存のシーンを保存してから、最新の構成で制作を再開します' : '未確定の操作を破棄して、シーンと接続を手動で編集します'}>
-        {switching ? '切り替えています…' : manualEditing ? '制作を再開' : '手動編集に切り替える'}
+        data-tip={!manualReady ? '作業前の保存が終わるまでお待ちください' : manualEditing ? '未保存のシーンを保存してから、最新の構成で制作を再開します' : '制作を一時停止して、シーンと接続を手動で編集します。書きかけの操作は破棄されます。「制作を再開」で続きから進みます'}>
+        {switching ? '切り替えています…' : manualEditing ? '制作を再開' : '一時停止して手動編集'}
       </button>}
       <ChatRulesPanel busy={busy} onDirty={setRulesDirty} onSaved={() => setRulesRefresh((v) => v + 1)} />
       <ProductionMemoryPanel busy={busy} refresh={memoryRefresh} onDirty={setMemoryDirty} onChanged={bumpMemoryRefresh} />
