@@ -208,7 +208,6 @@ export default function ChatDrawer({
   nodesById,
   characters,
   open,
-  onClose,
   dynamicSuggestions
 }: {
   /** 新しい会話のアンカーにするシーン(構造モードの選択。章カードを選んでいる
@@ -217,9 +216,9 @@ export default function ChatDrawer({
   canonTailId: string | null
   nodesById: Record<string, StoryNode>
   characters: Character[]
-  // 開閉・寸法は共通ワークスペースが持つ。非表示でも会話と下書きを保持する
+  // 開閉・寸法は共通ワークスペースが持つ(上のバーの「チャット」で開閉する。パネルの中に閉じるボタンは置かない)。
+  // 非表示でも会話と下書きを保持する
   open: boolean
-  onClose: () => void
   // 設定「内容から質問候補を作る」。オフなら生成も表示もしない
   dynamicSuggestions: boolean
 }): React.JSX.Element | null {
@@ -1048,14 +1047,6 @@ export default function ChatDrawer({
                 ■ 停止
               </button>
             )}
-            <button
-              onClick={onClose}
-              className="rounded-md border px-2 py-0.5"
-              style={{ borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }}
-              data-tip="相談チャットを閉じる(履歴は残ります)"
-            >
-              ✕ 閉じる
-            </button>
           </div>
           {/* メッセージ */}
           <div

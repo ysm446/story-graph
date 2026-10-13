@@ -2516,7 +2516,7 @@ function StructureModeInner({
   const productionLocked = useProductionLocked()
   const [productionPolicy, setProductionPolicy] = useState<ProductionPolicy>(defaultProductionPolicy)
   const workspace = useWorkspace()
-  const { chatHost, chatOpen, toggleChat, manual: productionManual, setManual: setProductionManual } = workspace
+  const { chatHost, chatOpen, manual: productionManual, setManual: setProductionManual } = workspace
   const productionEditingLocked = productionLocked && !productionManual
   // 制作中に React Flow へ渡す右クリックのハンドラ(メニューを出さず、ブラウザ既定のメニューも出さない)
   const suppressContextMenu = useCallback((event: React.MouseEvent | MouseEvent): void => event.preventDefault(), [])
@@ -5588,15 +5588,10 @@ function StructureModeInner({
                   ))}
                 </div>
                 {productionLocked && <span className="text-[11px]" style={{ color: 'var(--text-dim)' }}>{productionManual ? '一時停止中(手動編集)・保存後に制作を再開できます' : '手動編集は制作チャットで一時停止してから行えます'}</span>}
-                {chatKind === 'production' && <button onClick={toggleChat}
-                  className="ml-auto rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-50"
-                  style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-                  data-tip="チャットを折りたたみます。制作中の処理は継続します">閉じる</button>}
               </div>
               <div className="min-h-0 flex-1" hidden={chatKind !== 'consult'}>
               <ChatDrawer
                 open={chatOpen && workspace.mode !== 'reader' && chatKind === 'consult'}
-                onClose={toggleChat}
                 anchorCandidateId={chatAnchorId}
                 canonTailId={canonPath.length > 0 ? canonPath[canonPath.length - 1].id : null}
                 nodesById={nodesById}
