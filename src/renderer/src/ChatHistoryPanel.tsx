@@ -81,28 +81,24 @@ export default function ChatHistoryPanel({ history, chatId, busy, characters = [
   }, [historyOpen, innerOpen])
   return <>
       <div ref={rootRef} className="relative flex min-w-0 shrink-0 items-center gap-2 border-b px-3 py-1" style={{ borderColor: 'var(--border)' }}>
-        <button onClick={() => setHistoryOpen(!historyOpen)} aria-expanded={historyOpen} aria-haspopup="dialog"
-          className="shrink-0 rounded-md border px-2 py-0.5 text-[11px]"
+        {/* 左に今の会話名(この行でいちばん見たいもの)、右端に操作のアイコン(一覧・新しい会話) */}
+        <span className="min-w-0 flex-1 truncate text-[12px]" style={{ color: 'var(--text)' }}
+          data-tip={activeChatLabel}>{activeChatLabel}</span>
+        <button onClick={() => setHistoryOpen(!historyOpen)} aria-expanded={historyOpen} aria-haspopup="dialog" aria-label="会話一覧"
+          className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md border hover:bg-[var(--accent-soft)]"
           style={historyOpen
             ? { borderColor: 'var(--border-strong)', background: 'var(--accent-soft)', color: 'var(--text)' }
             : { borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-          data-tip={historyOpen ? '会話一覧を閉じる' : '会話一覧を開く'}>会話一覧</button>
-        <span className="min-w-0 flex-1 truncate text-[12px]" style={{ color: 'var(--text)' }}
-          data-tip={activeChatLabel}>{activeChatLabel}</span>
+          data-tip={historyOpen ? '会話一覧を閉じる' : '会話一覧'}><Icon name="list" size={13} /></button>
+        <button onClick={() => { setHistoryOpen(false); startNewChat() }} disabled={busy} aria-label="新しい会話"
+          className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md border hover:bg-[var(--accent-soft)] disabled:opacity-50"
+          style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+          data-tip={busy ? '処理が終わるか停止してから始められます' : newChatTip}><Icon name="chatPlus" size={13} /></button>
       {historyOpen && <aside role="dialog" aria-label="会話一覧"
         className="absolute left-2 right-2 top-full z-50 mt-1 flex flex-col rounded-xl border shadow-lg shadow-black/40"
         style={{ maxHeight: 'min(320px, 60vh)', background: 'var(--bg-card)', borderColor: 'var(--border-strong)' }}>
-        <button
-          onClick={() => { setHistoryOpen(false); startNewChat() }}
-          disabled={busy}
-          className="m-2 rounded-lg border px-2 py-1 text-[12px] disabled:opacity-50"
-          style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-          data-tip={newChatTip}
-        >
-          + 新しい会話
-        </button>
         <div
-          className="inspector-scrollbar min-h-0 flex-1 overflow-y-auto px-2 pb-2"
+          className="inspector-scrollbar min-h-0 flex-1 overflow-y-auto p-2"
           onKeyDown={(e) => {
             // 会話一覧にフォーカスがあるときの Delete は選択中の会話の削除。
             // stopPropagation で構造モードの Delete(ノード削除)に届かせない

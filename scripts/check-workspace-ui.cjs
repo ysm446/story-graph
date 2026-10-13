@@ -193,7 +193,7 @@ for mode in ['production', None]:
       await js(`(() => {window.confirm=()=>true;const row=[...document.querySelectorAll('aside .group')].find(e=>e.textContent.includes('renamed-history') && e.getClientRects().length);row.querySelector('[aria-label="この会話の操作"]').click()})()`)
       await click('削除')
       await assert(`document.body.textContent.includes('history-one-message') && ![...document.querySelectorAll('aside .group')].some(e=>e.getClientRects().length && e.textContent.includes('renamed-history'))`, mode + 'の別会話を削除しても現在の会話を保持')
-      await click('+ 新しい会話')
+      await click('新しい会話')
       await assert(`!document.querySelector('aside[aria-label="会話一覧"]')`, mode + 'で新しい会話を始めると一覧を閉じる')
       await click('会話一覧')
       await assert(`![...document.querySelectorAll('aside .group')].some(e=>e.getClientRects().length && e.style.background)`, mode + 'で新しい会話を開始')
@@ -348,6 +348,7 @@ for mode in ['production', None]:
   const SEND = `document.querySelector('button[aria-label="送信"]')`
   const INPUT_BORDER = `getComputedStyle(document.querySelector('textarea[aria-label="制作への依頼"]')).borderColor`
   await assert(`${SEND}.classList.contains('accent-action') && !!${SEND}.querySelector('svg') && ${SEND}.textContent.trim()==='' && !${INPUT_BORDER}.includes('221, 136, 181') && !document.body.textContent.includes('「制作を実行」を選択中')`, '相談のときの送信は紫の↑ボタンで、入力欄の枠は通常の色')
+  await assert(`(() => {const visible=(q)=>[...document.querySelectorAll(q)].find(e=>e.getClientRects().length);const list=visible('button[aria-label="会話一覧"]'),add=visible('button[aria-label="新しい会話"]');const row=list.parentElement;const title=row.querySelector('span');const r=(e)=>e.getBoundingClientRect();const rr=row.getBoundingClientRect();return !!list.querySelector('svg') && !!add.querySelector('svg') && list.textContent.trim()==='' && title.textContent==='新しい会話' && Math.abs(r(title).x-rr.x-12)<1 && r(list).x>=r(title).right-1 && r(add).x>=r(list).right && Math.abs(rr.right-r(add).right-12)<1})()`, '会話名は左端、会話一覧と新しい会話のアイコンは右端に並ぶ')
   // 画面の右端にある部品のツールチップが、細く縦長にならないこと。
   await js(`(() => {const r=${SEND}.getBoundingClientRect();document.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,clientX:r.x+r.width/2,clientY:r.y+r.height/2}))})()`)
   for (let i = 0; i < 30; i++) { if (await js(`!!document.querySelector('[role="tooltip"]') && getComputedStyle(document.querySelector('[role="tooltip"]')).opacity!=='0'`)) break; await pause(100) }
@@ -474,7 +475,7 @@ for mode in ['production', None]:
   await pause(250)
   await assert(`(() => {const list=document.querySelector('[aria-live="polite"]');const items=[...list.querySelectorAll('.timeline-item')];const step=list.querySelector('[data-step="get_beats"]');const failed=list.querySelector('[data-step="read_library"]');const dot=(e)=>getComputedStyle(e.closest('.timeline-item').querySelector('.timeline-dot')).backgroundColor;const bubble=[...list.children].find(e=>e.textContent.startsWith('あなた'));return items.length>=2 && step.textContent==='シーン本文を読む: 検証シーン' && failed.closest('.timeline-item').textContent.includes('読み取りに失敗') && dot(failed)==='rgb(239, 68, 68)' && dot(step)!==dot(failed) && !bubble.classList.contains('timeline-item') && getComputedStyle(items[0],'::before').width==='1px'})()`, '制作側は線と丸の時系列で並び、読み取りの手順を1行ずつ出す(失敗は赤)')
   await click('会話一覧')
-  await assert(`[...document.querySelectorAll('button')].find(e=>e.getClientRects().length && e.textContent.trim()==='+ 新しい会話').disabled`, '制作中は一覧から新しい会話を開始できない')
+  await assert(`[...document.querySelectorAll('button[aria-label="新しい会話"]')].find(e=>e.getClientRects().length).disabled`, '制作中は新しい会話を開始できない')
   await js(`document.body.dispatchEvent(new MouseEvent('mousedown',{bubbles:true}))`)
   await pause(150)
   await assert(`!document.querySelector('aside[aria-label="会話一覧"]')`, '会話一覧は外側のクリックで閉じる')

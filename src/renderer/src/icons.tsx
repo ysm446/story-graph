@@ -8,6 +8,8 @@ export type IconName =
   | 'chat' // 吹き出し(相談チャット)
   | 'globe' // 世界(人物に属さない事実)
   | 'arrowUp' // 送信
+  | 'list' // 会話一覧
+  | 'chatPlus' // 新しい会話(吹き出しに +)
   | 'mask' // 芝居の仮面(キャラクターと話す)
   | 'search' // ツール実行(調査)
   | 'recall' // 記憶をたどる
@@ -58,6 +60,20 @@ const PATHS: Record<IconName, React.JSX.Element> = {
     </>
   ),
   chat: <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />,
+  // lucide の list
+  list: (
+    <>
+      <path d="M8 6h13M8 12h13M8 18h13" />
+      <path d="M3 6h.01M3 12h.01M3 18h.01" />
+    </>
+  ),
+  // lucide の message-square-plus
+  chatPlus: (
+    <>
+      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+      <path d="M12 7v6M9 10h6" />
+    </>
+  ),
   // lucide の arrow-up
   arrowUp: (
     <>

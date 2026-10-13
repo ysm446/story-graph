@@ -5368,7 +5368,7 @@ function StructureModeInner({
                 <div className="flex overflow-hidden rounded-md border" style={{ borderColor: 'var(--border-strong)' }}>
                   {([['consult', '相談'], ['production', '制作']] as const).map(([value, label]) => (
                     <button key={value} disabled={productionLocked} onClick={() => setChatKind(value)}
-                      className="px-2.5 py-0.5 text-[12px] disabled:opacity-50"
+                      className="px-3 py-1 text-[13px] disabled:opacity-50"
                       style={chatKind === value ? { background: 'var(--accent-soft)', color: 'var(--text)' } : { color: 'var(--text-faint)' }}
                       data-tip={productionLocked ? '制作が終わるか停止してから切り替えられます' : value === 'consult' ? '作品を変更せずに相談します' : '会話からシーンを作成・編集する実験機能'}>{label}</button>
                   ))}
