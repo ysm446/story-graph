@@ -161,7 +161,10 @@ export default function TooltipHost(): React.JSX.Element | null {
         background: 'var(--bg-card)',
         borderColor: 'var(--border-strong)',
         color: 'var(--text)',
-        maxWidth: MAX_WIDTH,
+        // 幅は中身で決める(上限は MAX_WIDTH と画面幅)。指定しないと、fixed の要素の幅は
+        // 「left から画面の右端まで」に収まるよう縮むので、右端近くの部品では極端に細く縦長になる
+        width: 'max-content',
+        maxWidth: `min(${MAX_WIDTH}px, calc(100vw - ${MARGIN * 2}px))`,
         left: pos?.left ?? anchor.rect.left,
         top: pos?.top ?? anchor.rect.bottom + GAP,
         // 位置が決まるまでは見せない(1 フレームだけ左上に出るのを防ぐ)

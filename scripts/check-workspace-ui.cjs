@@ -345,6 +345,13 @@ for mode in ['production', None]:
   const SEND = `document.querySelector('button[aria-label="送信"]')`
   const INPUT_BORDER = `getComputedStyle(document.querySelector('textarea[aria-label="制作への依頼"]')).borderColor`
   await assert(`${SEND}.classList.contains('accent-action') && !!${SEND}.querySelector('svg') && ${SEND}.textContent.trim()==='' && !${INPUT_BORDER}.includes('221, 136, 181') && !document.body.textContent.includes('「制作を実行」を選択中')`, '相談のときの送信は紫の↑ボタンで、入力欄の枠は通常の色')
+  // 画面の右端にある部品のツールチップが、細く縦長にならないこと。
+  await js(`(() => {const r=${SEND}.getBoundingClientRect();document.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,clientX:r.x+r.width/2,clientY:r.y+r.height/2}))})()`)
+  for (let i = 0; i < 30; i++) { if (await js(`!!document.querySelector('[role="tooltip"]') && getComputedStyle(document.querySelector('[role="tooltip"]')).opacity!=='0'`)) break; await pause(100) }
+  const tip = await js(`(() => {const t=document.querySelector('[role="tooltip"]');if(!t) return null;const r=t.getBoundingClientRect();return {width:r.width,height:r.height,right:r.right,text:t.textContent,inner:window.innerWidth}})()`)
+  if (!(tip && tip.text.includes('相談として送信') && tip.width >= 200 && tip.height <= 48 && tip.right <= tip.inner - 7)) errors.push('右端のツールチップが縦長になっている: ' + JSON.stringify(tip))
+  else console.log('PASS 画面の右端にある部品のツールチップも横長のまま画面内に収まる')
+  await js(`document.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}))`)
   for (let i = 0; i < 40; i++) { if (await js(`[...document.querySelectorAll('[role="img"] svg')].some(e=>e.getClientRects().length)`)) break; await pause(100) }
   await assert(`(() => {const h=(e)=>Math.round(e.getBoundingClientRect().height);const group=document.querySelector('[aria-label="制作チャットの送信モード"]');const ring=[...document.querySelectorAll('[role="img"] svg')].find(e=>e.getClientRects().length);const send=${SEND};const cy=(e)=>{const r=e.getBoundingClientRect();return r.y+r.height/2};return h(group)===26 && h(ring)===26 && h(send)===26 && Math.abs(cy(group)-cy(ring))<1 && Math.abs(cy(group)-cy(send))<1})()`, '送信モードの切り替え・使用量リング・送信ボタンの高さと位置が揃う')
   await assert(`(() => {const list=document.querySelector('[aria-live="polite"]');const area=document.querySelector('textarea[aria-label="制作への依頼"]').getBoundingClientRect();const l=list.getBoundingClientRect();const cs=getComputedStyle(list);return cs.scrollbarGutter==='stable' && Math.round(l.right-area.right)===16 && Math.round(l.right-10-parseFloat(cs.paddingRight)-area.right)===0})()`, '制作の発言欄はスクロールバーとの間を空け、発言の右端を入力欄と揃える')
