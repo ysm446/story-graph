@@ -13,6 +13,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+import app_settings
 import db as db_mod
 import embed
 import setting_documents
@@ -3238,9 +3239,14 @@ class Store:
     # ---- settings ---------------------------------------------------
 
     def get_settings(self) -> dict[str, str]:
-        return {r["key"]: r["value"] for r in self.conn.execute("SELECT * FROM settings")}
+        """ライブラリの設定に、この PC のアプリ単位の設定(app_settings)を重ねて返す。"""
+        return app_settings.merge({r["key"]: r["value"] for r in self.conn.execute("SELECT * FROM settings")})
 
     def set_settings(self, values: dict[str, str]) -> None:
+        # PC に依存する値(モデルの場所・接続先など)はアプリ単位、それ以外はライブラリの DB に置く
+        if app_settings.enabled():
+            app_settings.update({k: v for k, v in values.items() if app_settings.is_app_key(k)})
+            values = {k: v for k, v in values.items() if not app_settings.is_app_key(k)}
         self.conn.executemany(
             "INSERT OR REPLACE INTO settings(key, value) VALUES(?,?)", list(values.items())
         )

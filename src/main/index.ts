@@ -135,7 +135,8 @@ async function startSidecar(): Promise<string> {
     {
       cwd: join(root, 'backend'),
       windowsHide: true,
-      env: { ...process.env, STORY_GRAPH_LIBRARY: libraryRoot }
+      // STORY_GRAPH_APP_DATA: この PC のアプリ単位の設定(モデルの場所・接続先など)の置き場(backend/app_settings.py)
+      env: { ...process.env, STORY_GRAPH_LIBRARY: libraryRoot, STORY_GRAPH_APP_DATA: app.getPath('userData') }
     }
   )
   proc.stdout?.on('data', (chunk: Buffer) => console.log(`[sidecar] ${chunk.toString().trimEnd()}`))

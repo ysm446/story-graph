@@ -86,25 +86,40 @@ interface PromptLogEntry {
   error: string | null
 }
 
-// 左ナビの項目。id は表示するセクションの識別子(localStorage に覚える)
+// 左ナビの項目。id は表示するセクションの識別子(localStorage に覚える)。
+// group は保存先: app = この PC のアプリ単位(どのライブラリでも共通。backend/app_settings.py)、
+// work = 今開いているライブラリ(作品)。同じ group の項目は連続して並べる
 const SECTIONS = [
-  { id: 'engine', label: '推論エンジン' },
-  { id: 'params', label: '推論パラメータ' },
-  { id: 'generation', label: 'シーン生成' },
-  { id: 'presets', label: '清書(スタイルプリセット)' },
-  { id: 'proofread', label: '校正' },
-  { id: 'agent', label: '制作エージェントへの指示' },
-  { id: 'promptio', label: '書き出し / 読み込み' },
-  { id: 'structure', label: '構造モード' },
-  { id: 'chat', label: '相談チャット' },
-  { id: 'reader', label: '鑑賞モード' },
-  { id: 'image', label: '画像生成' },
-  { id: 'voice', label: '音声読み上げ' },
-  { id: 'backup', label: 'バックアップ' },
-  { id: 'promptlog', label: 'プロンプトログ' }
+  { id: 'engine', label: '推論エンジン', group: 'app' },
+  { id: 'params', label: '推論パラメータ', group: 'app' },
+  { id: 'image', label: '画像生成', group: 'app' },
+  { id: 'voice', label: '音声読み上げ', group: 'app' },
+  { id: 'chat', label: '相談チャット', group: 'app' },
+  { id: 'generation', label: 'シーン生成', group: 'work' },
+  { id: 'presets', label: '清書(スタイルプリセット)', group: 'work' },
+  { id: 'proofread', label: '校正', group: 'work' },
+  { id: 'agent', label: '制作エージェントへの指示', group: 'work' },
+  { id: 'promptio', label: '書き出し / 読み込み', group: 'work' },
+  { id: 'structure', label: '構造モード', group: 'work' },
+  { id: 'reader', label: '鑑賞モード', group: 'work' },
+  { id: 'backup', label: 'バックアップ', group: 'work' },
+  { id: 'promptlog', label: 'プロンプトログ', group: 'work' }
 ] as const
 
 type SectionId = (typeof SECTIONS)[number]['id']
+type SectionGroup = (typeof SECTIONS)[number]['group']
+
+const GROUP_LABEL: Record<SectionGroup, string> = { app: '環境設定(この PC)', work: 'この作品(ライブラリ)' }
+// 見出しの下に出す保存先の説明。group の既定と違うセクションだけ SAVED_HINT_OVERRIDE に書く(null は出さない)
+const SAVED_HINT: Record<SectionGroup, string> = {
+  app: 'この PC に保存します。どのライブラリを開いても同じ設定です。',
+  work: '今開いているライブラリ(作品)に保存します。'
+}
+const SAVED_HINT_OVERRIDE: Partial<Record<SectionId, string | null>> = {
+  voice: 'サーバー・エンジン・モデルの置き場は、この PC に保存します(どのライブラリでも同じ)。声のプロファイル・声の割り当て・読みの辞書は、今開いているライブラリ(作品)に保存します。',
+  promptio: null,
+  promptlog: null
+}
 
 // 左ナビで「システムプロンプト」の見出しの下にまとめる項目(SECTIONS では連続して並べる)。
 // LLM への指示がどこに書いてあるかを 1 か所で探せるようにする
@@ -128,9 +143,12 @@ function Section({
   children: React.ReactNode
 }): React.JSX.Element | null {
   if (id !== current) return null
+  const override = SAVED_HINT_OVERRIDE[id]
+  const saved = override !== undefined ? override : SAVED_HINT[SECTIONS.find((s) => s.id === id)!.group]
   return (
     <div className="flex flex-col gap-2.5">
       <div className="settings-group-title">{title}</div>
+      {saved && <p className="settings-field-hint">保存先: {saved}</p>}
       {scope && <p className="settings-field-hint">適用先: {scope}</p>}
       {children}
     </div>
@@ -1982,13 +2000,21 @@ export default function SettingsMode(): React.JSX.Element {
       {/* 左: セクション一覧。右: 選んだセクションの設定 */}
       <aside className="flex w-48 shrink-0 flex-col" style={{ background: 'var(--bg-sidebar)' }}>
         <div className="inspector-scrollbar min-h-0 flex-1 overflow-y-auto p-2">
-          {SECTIONS.map(({ id, label }, index) => {
+          {SECTIONS.map(({ id, label, group }, index) => {
             const grouped = PROMPT_GROUP.has(id)
             const previousGrouped = index > 0 && PROMPT_GROUP.has(SECTIONS[index - 1].id)
+            const groupStart = index === 0 || SECTIONS[index - 1].group !== group
             return (
               <div key={id} className={!grouped && previousGrouped ? 'mt-2' : undefined}>
+                {/* 保存先の区切り(この PC / この作品)。2つ目からは線で分ける */}
+                {groupStart && (
+                  <div className={`px-2.5 pb-1 text-[10px] tracking-[0.14em] ${index > 0 ? 'mt-3 border-t pt-3' : 'pt-1'}`}
+                    style={{ borderColor: 'var(--border)', color: 'var(--text-faint)' }}>
+                    {GROUP_LABEL[group]}
+                  </div>
+                )}
                 {grouped && !previousGrouped && (
-                  <div className="mt-2 px-2.5 pb-1 text-[11px] font-medium" style={{ color: 'var(--text-dim)' }}>
+                  <div className={`${groupStart ? '' : 'mt-2 '}px-2.5 pb-1 text-[11px] font-medium`} style={{ color: 'var(--text-dim)' }}>
                     {PROMPT_GROUP_LABEL}
                   </div>
                 )}
