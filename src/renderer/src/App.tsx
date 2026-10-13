@@ -24,8 +24,8 @@ const MODES: Array<{ id: Mode; label: string }> = [
 function FolderIcon(): React.JSX.Element {
   return (
     <svg
-      width="14"
-      height="14"
+      width="15"
+      height="15"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
@@ -101,15 +101,17 @@ function LibraryMenu(): React.JSX.Element {
     <div className="relative" ref={menuRef}>
       <button
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[12px]"
-        style={{ background: 'var(--bg-elevated)', color: 'var(--text-dim)' }}
+        // 右の TTS / ComfyUI(ServiceBar)と同じ大きさ・枠・文字サイズに揃える
+        className="flex min-w-[150px] items-center gap-2 rounded-lg border px-3 py-1 text-[12.5px] transition-colors"
+        style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
         data-tip={current ?? undefined}
       >
-        <span className="flex" style={{ color: 'var(--text-faint)' }}>
+        <span className="flex shrink-0" style={{ color: 'var(--text-faint)' }}>
           <FolderIcon />
         </span>
-        <span className="max-w-40 truncate">{current ? baseName(current) : '…'}</span>
-        <span style={{ color: 'var(--text-faint)' }}>▾</span>
+        <span className="min-w-0 max-w-40 flex-auto truncate text-center">{current ? baseName(current) : '…'}</span>
+        {/* 左のアイコンと同じ幅にして、名前をボタンの中央に置く */}
+        <span className="w-[15px] shrink-0 text-center" style={{ color: 'var(--text-faint)' }}>▾</span>
       </button>
       {open && (
         <div

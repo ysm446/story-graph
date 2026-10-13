@@ -168,10 +168,13 @@ export default function ServiceBar({
         </span>
         {/* 停止中は「停止中」と書かない。アイコンと枠・文字の色(稼働中はアクセント、停止中は淡色)で分かる。
             未導入は、押しても起動できず対処(インストール)が違うので文字で示す */}
-        <span className="min-w-0 flex-1 truncate text-center text-[12.5px]"
+        <span className="min-w-0 flex-auto truncate text-center text-[12.5px]"
           style={hasError ? { color: 'var(--danger)' } : !healthy && !loading ? { color: 'var(--text-dim)' } : undefined}>
           {loading ? `起動中… ${name}` : hasError ? '起動失敗' : healthy || installed ? name : `${name} 未導入`}
         </span>
+        {/* 左のアイコンと同じ幅の空きを右にも取り、文字をボタン全体の中央に置く(無いとアイコンの分だけ右へ寄って見える)。
+            文字が収まらないときは、この空きが先に縮む */}
+        <span aria-hidden className="w-[15px] shrink-[9999]" />
       </button>
       {healthy && !loading && !status?.external && (
         <button
