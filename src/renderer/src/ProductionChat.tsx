@@ -645,11 +645,13 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
             </button>
           ))}
         </div>
-        {busy && runId && <button onClick={submit} disabled={!input.trim() || sendingInstruction}
-          className="rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-50"
-          style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-          data-tip="指示を受け付け、次の判断に取り込みます。確定済みの変更は自動では戻りません">途中指示を送る</button>}
-        {busy ? <button onClick={() => {
+        {/* 制作の実行中は、同じ丸いボタンが入力の有無で切り替わる: 空なら停止(■)、文字があれば途中指示の送信(↑)。
+            相談の処理中は途中指示を受け付けないので、常に停止 */}
+        {busy && runId && input.trim() ? <button onClick={submit} disabled={sendingInstruction} aria-label="途中指示を送る"
+          className="execute-action inline-flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full border disabled:opacity-40"
+          data-tip="途中指示を送る(次の判断に取り込みます。確定済みの変更は自動では戻りません)。入力を空にすると停止ボタンに戻ります">
+          <Icon name="arrowUp" size={14} strokeWidth={2.4} />
+        </button> : busy ? <button onClick={() => {
           runRef.current = null; setRunId(null); if (taskId) cancelTask(taskId)
           // まだ動き出していない依頼は履歴にも残っていないので、入力欄へ戻す
           const pending = pendingMessageRef.current
