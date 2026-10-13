@@ -234,8 +234,9 @@ def test_embedding_startup_setting_is_per_pc_and_status_does_not_trigger_loading
     assert embed.status() == "ready"
 
 
-def test_memory_search_decay_can_be_switched_off(store):
-    """検証用の設定で、記憶の検索の時間減衰を外せる(古い記憶が出ない原因の切り分け用)。"""
+def test_memory_half_life_is_a_per_work_setting(store):
+    """記憶の検索の半減期は作品ごとに選べる(長い作品で序盤の記憶が出てこない問題の調整用)。"""
+    import app_settings
     import retrieval
 
     store.append_node({"id": "old", "beat": "一", "cast": ["aya"]}, [memory("港で指輪を拾った")])
@@ -245,13 +246,20 @@ def test_memory_search_decay_can_be_switched_off(store):
     path = store.canon_path()
     search = lambda: [m["content"] for m in chat_agent._tool_search_memories(
         store, path, "upto", {"query": "港で指輪", "char_id": "aya"})["memories"]]
-    # 既定: 41 シーン前の記憶は点数が 4 分の 1 以下になり、同じ近さの新しい記憶より下に来る
-    assert search() == ["港で指輪を落とした", "港で指輪を拾った"]
     row = lambda order: {"importance": 0.5, "story_order": order}
-    assert retrieval._decayed_score(1.0, row(0), 40) == pytest.approx(0.125)
-    assert retrieval._decayed_score(1.0, row(0), 40, decay=False) == pytest.approx(0.5)
-    store.set_settings({"memory_search_decay": "0"})
-    assert retrieval.decay_enabled(store.get_settings()) is False
+    # 既定は 100 シーンで半分。40 シーン前でも 4 分の 3 ほど残る
+    assert retrieval.half_life(store.get_settings()) == 100
+    assert retrieval._decayed_score(1.0, row(0), 100) == pytest.approx(0.25)
+    assert retrieval._decayed_score(1.0, row(0), 40, 20) == pytest.approx(0.125)
+    assert retrieval._decayed_score(1.0, row(0), 40, None) == pytest.approx(0.5)
     assert set(search()) == {"港で指輪を落とした", "港で指輪を拾った"}
-    import app_settings
-    assert app_settings.is_app_key("memory_search_decay")
+    # 20 に戻すと、同じ近さなら新しい記憶が上に来る
+    store.set_settings({"memory_half_life": "20"})
+    assert retrieval.half_life(store.get_settings()) == 20
+    assert search() == ["港で指輪を落とした", "港で指輪を拾った"]
+    store.set_settings({"memory_half_life": "0"})
+    assert retrieval.half_life(store.get_settings()) is None
+    store.set_settings({"memory_half_life": "abc"})
+    assert retrieval.half_life(store.get_settings()) == 100
+    # 作品の長さで合う値が変わるので、この PC の設定ではなくライブラリに置く
+    assert not app_settings.is_app_key("memory_half_life")

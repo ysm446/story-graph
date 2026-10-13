@@ -101,6 +101,7 @@ const SECTIONS = [
   { id: 'proofread', label: '校正', group: 'work' },
   { id: 'agent', label: '制作エージェントへの指示', group: 'work' },
   { id: 'promptio', label: '書き出し / 読み込み', group: 'work' },
+  { id: 'memory', label: '記憶の検索', group: 'work' },
   { id: 'structure', label: '構造モード', group: 'work' },
   { id: 'reader', label: '鑑賞モード', group: 'work' },
   { id: 'backup', label: 'バックアップ', group: 'work' },
@@ -111,6 +112,15 @@ type SectionId = (typeof SECTIONS)[number]['id']
 type SectionGroup = (typeof SECTIONS)[number]['group']
 
 const GROUP_LABEL: Record<SectionGroup, string> = { app: '環境設定(この PC)', work: 'この作品(ライブラリ)' }
+// 記憶の検索の半減期(backend/retrieval.py の HALF_LIFE_CHOICES と同じ並び)。'0' は古さを点数に反映しない
+const MEMORY_HALF_LIFE_OPTIONS: [string, string][] = [
+  ['0', '下げない'],
+  ['20', '20 シーンで半分'],
+  ['50', '50 シーンで半分'],
+  ['100', '100 シーンで半分(既定)'],
+  ['200', '200 シーンで半分']
+]
+
 // 見出しの下に出す保存先の説明。group の既定と違うセクションだけ SAVED_HINT_OVERRIDE に書く(null は出さない)
 const SAVED_HINT: Record<SectionGroup, string> = {
   app: 'この PC に保存します。どのライブラリを開いても同じ設定です。',
@@ -1950,7 +1960,9 @@ export default function SettingsMode(): React.JSX.Element {
   const gridSnap = values.grid_snap !== '0' // 既定はスナップする
   const chatDynamicSuggestions = values.chat_dynamic_suggestions !== '0' // 既定は生成する
   const embeddingOnStartup = values.embedding_load_on_startup !== '0' // 既定は起動時に読み込む
-  const memorySearchDecay = values.memory_search_decay !== '0' // 既定は古さを反映する
+  const memoryHalfLife = MEMORY_HALF_LIFE_OPTIONS.some(([value]) => value === values.memory_half_life)
+    ? values.memory_half_life
+    : '100' // 既定は 100 シーンで半分
 
   const refreshStatus = async (): Promise<void> => {
     try {
@@ -2463,6 +2475,46 @@ export default function SettingsMode(): React.JSX.Element {
             </div>
           </Section>
 
+          <Section
+            id="memory"
+            current={section}
+            title="記憶の検索"
+            scope="登場人物が会話の途中で思い出す記憶(recall)、相談・制作チャットの記憶の検索、シーン生成で各キャラが思い出す記憶"
+          >
+            <div className="settings-card">
+              <div className="settings-field">
+                <div className="settings-field-header">
+                  <span className="settings-field-label">古い記憶の点数を下げる速さ</span>
+                  <div className="settings-field-controls">
+                    <select
+                      aria-label="古い記憶の点数を下げる速さ"
+                      value={memoryHalfLife}
+                      onChange={(e) => void save({ memory_half_life: e.target.value })}
+                      className="rounded-lg border px-2 py-1.5 text-[13px]"
+                      style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
+                    >
+                      {MEMORY_HALF_LIFE_OPTIONS.map(([value, label]) => (
+                        <option key={value} value={value}>
+                          {label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <p className="settings-field-hint">
+                  記憶の検索では、言葉の近さと重要度に加えて、古い記憶ほど点数を下げます。古さは「何シーン前か」で測ります。
+                  ここで選ぶのは、点数が半分になるまでのシーン数です。大きくするほど、古い記憶が出やすくなります。
+                  長い作品で序盤の記憶が出てこないときは大きくし、最近の出来事を優先したいときは小さくします。
+                  「下げない」を選ぶと、古さを使わず、言葉の近さと重要度だけで順位を決めます。
+                </p>
+                <p className="settings-field-hint">
+                  目安: 150 シーン前の記憶の点数は、20 シーンで半分だと約 180 分の 1、100 シーンで半分だと約 3 分の 1 になります。
+                  会話の最初に渡す記憶の選び方と、章のまとめには効きません。切り替えは次の検索から反映されます。
+                </p>
+              </div>
+            </div>
+          </Section>
+
           <Section id="structure" current={section} title="構造モード">
             <div className="settings-card">
               <div className="settings-field">
@@ -2567,42 +2619,6 @@ export default function SettingsMode(): React.JSX.Element {
                 </p>
               </div>
               <EmbeddingStatusLine />
-              <div className="settings-field">
-                <div className="settings-field-header">
-                  <span className="settings-field-label">記憶の検索で古さを点数に反映する(検証用)</span>
-                  <div className="settings-field-controls">
-                    <div className="flex overflow-hidden rounded-md border" style={{ borderColor: 'var(--border-strong)' }}>
-                      {(
-                        [
-                          ['1', 'オン'],
-                          ['0', 'オフ']
-                        ] as const
-                      ).map(([value, label]) => (
-                        <button
-                          key={value}
-                          aria-pressed={memorySearchDecay === (value === '1')}
-                          onClick={() => void save({ memory_search_decay: value })}
-                          className="px-2.5 py-0.5 text-[12px]"
-                          style={
-                            memorySearchDecay === (value === '1')
-                              ? { background: 'var(--accent-soft)', color: 'var(--text)' }
-                              : { color: 'var(--text-faint)' }
-                          }
-                        >
-                          {label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-                <p className="settings-field-hint">
-                  オン(既定)では、記憶の検索で古い記憶ほど点数を下げます(20 シーン前で半分。何シーン前かで測ります)。
-                  オフにすると古さでは下げず、言葉の近さと重要度だけで順位を決めます。
-                  古い記憶が出てこない原因を切り分けるための切り替えで、ふだんはオンのままにします。
-                  登場人物の recall、相談・制作チャットの記憶の検索、シーン生成で各キャラが思い出す記憶に効きます。
-                  会話の最初に渡す記憶の選び方と、章のまとめには効きません。切り替えは次の検索から反映されます。
-                </p>
-              </div>
             </div>
           </Section>
 

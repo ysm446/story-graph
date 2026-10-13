@@ -108,7 +108,7 @@ for mode in ['production', None]:
     await click('Embedding')
     await pause(500)
     const pressed = `[...document.querySelectorAll('button[aria-pressed]')].filter(e=>['オン','オフ'].includes(e.textContent.trim())).map(e=>e.textContent.trim()+':'+e.getAttribute('aria-pressed')).join('|')`
-    await assert(`document.body.textContent.includes('起動時に Embedding を読み込む') && document.body.textContent.includes('記憶の検索で古さを点数に反映する(検証用)') && ${pressed}==='オン:true|オフ:false|オン:true|オフ:false'`, '起動時に Embedding を読み込む設定と、記憶の検索の古さの設定(検証用)があり、どちらも既定はオン')
+    await assert(`document.body.textContent.includes('起動時に Embedding を読み込む') && ${pressed}==='オン:true|オフ:false'`, '起動時に Embedding を読み込む設定があり、既定はオン')
     await assert(`(() => {const s=[...document.querySelectorAll('[role="status"]')].find(e=>e.textContent.includes('読み込'));return !!s && s.textContent.includes('まだ読み込んでいません') && document.body.textContent.includes('cl-nagoya/ruri-v3-310m') && document.body.textContent.includes('この PC に保存します')})()`, 'いまの状態(未読み込み)とモデル名、保存先を表示する。開いただけでは読み込まない')
     writeFileSync(join(target, 'settings-embedding.png'), (await win.webContents.capturePage()).toPNG())
     await js(`[...document.querySelectorAll('button[aria-pressed]')].find(e=>e.textContent.trim()==='オフ').click()`)
@@ -116,13 +116,19 @@ for mode in ['production', None]:
     const stored = (await (await fetch(base + '/settings')).json()).embedding_load_on_startup
     if (stored !== '0') errors.push('Embedding の設定が保存されていない: ' + JSON.stringify(stored))
     else console.log('PASS オフにすると設定が保存される')
-    await assert(`${pressed}==='オン:false|オフ:true|オン:true|オフ:false'`, 'オフに切り替えた表示になる(もう一方の設定は変わらない)')
-    await js(`[...document.querySelectorAll('button[aria-pressed]')].filter(e=>e.textContent.trim()==='オフ')[1].click()`)
+    await assert(`${pressed}==='オン:false|オフ:true'`, 'オフに切り替えた表示になる')
+    // 記憶の検索のページ(作品ごと): 古い記憶の点数を下げる速さをプルダウンで選ぶ。既定は 100 シーンで半分
+    await click('記憶の検索')
+    await pause(400)
+    const half = `document.querySelector('select[aria-label="古い記憶の点数を下げる速さ"]')`
+    await assert(`${half}.value==='100' && [...${half}.options].map(o=>o.value).join('|')==='0|20|50|100|200' && document.body.textContent.includes('今開いているライブラリ(作品)に保存します')`, '記憶の検索のページに半減期のプルダウンがあり、既定は100。保存先は作品')
+    writeFileSync(join(target, 'settings-memory.png'), (await win.webContents.capturePage()).toPNG())
+    await js(`(() => {const s=${half};Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(s,'200');s.dispatchEvent(new Event('change',{bubbles:true}))})()`)
     await pause(500)
-    const decay = (await (await fetch(base + '/settings')).json()).memory_search_decay
-    if (decay !== '0') errors.push('記憶の検索の古さの設定が保存されていない: ' + JSON.stringify(decay))
-    else console.log('PASS 記憶の検索の古さをオフにすると設定が保存される')
-    await assert(`${pressed}==='オン:false|オフ:true|オン:false|オフ:true'`, '古さの設定もオフに切り替えた表示になる')
+    const halfLife = (await (await fetch(base + '/settings')).json()).memory_half_life
+    if (halfLife !== '200') errors.push('半減期の設定が保存されていない: ' + JSON.stringify(halfLife))
+    else console.log('PASS 半減期を選ぶと設定が保存される')
+    await assert(`${half}.value==='200'`, '選んだ半減期が表示に残る')
     const state = (await (await fetch(base + '/embedding/status')).json()).state
     if (state !== 'idle') errors.push('検証用のバックエンドで Embedding を読み込んでしまった: ' + state)
     else console.log('PASS バックエンド単体の起動では Embedding を読み込まない')

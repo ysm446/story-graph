@@ -1,7 +1,7 @@
 """記憶のハイブリッド検索(news-picker の search_vault.py を story-graph 用に移植)。
 
 スコア = RRF(FTS5 trigram + ベクトル cosine) × 重要度 × 物語内時間減衰(spec §6.1)。
-時間減衰は実時間ではなく正史パス上の story_order 距離の半減期式(spec §12)。
+時間減衰は実時間ではなく正史パス上の story_order 距離の半減期式(spec §12)。半減期は作品ごとの設定。
 分岐ノード上の記憶(story_order = -1)は「現在」扱い(距離 0)。
 """
 
@@ -17,7 +17,24 @@ import db
 import embed
 
 RRF_K = 60
-HALF_LIFE_BEATS = 20.0  # 何ビート前で重みが半分になるか
+# 何シーン前で重みが半分になるか。作品ごとの設定 memory_half_life で変えられる(設定 → 記憶の検索)。
+# 既定は 100。以前は 20 固定で、150 シーンある作品では序盤の記憶の点数が 180 分の 1 になり、
+# 検索の言葉にぴったり合っていても出てこなかった(2026-10-14 ユーザー報告)
+HALF_LIFE_KEY = "memory_half_life"
+HALF_LIFE_BEATS = 100.0
+HALF_LIFE_CHOICES = (0, 20, 50, 100, 200)  # 0 = 古さを点数に反映しない
+
+
+def half_life(settings: dict[str, str]) -> float | None:
+    """設定から半減期(シーン数)を読む。None は「古さを点数に反映しない」。"""
+    raw = settings.get(HALF_LIFE_KEY)
+    if raw is None or raw == "":
+        return HALF_LIFE_BEATS
+    try:
+        value = float(raw)
+    except ValueError:
+        return HALF_LIFE_BEATS
+    return value if value > 0 else None
 CANDIDATE_LIMIT = 50
 
 
@@ -59,20 +76,13 @@ def ensure_vectors(conn: sqlite3.Connection) -> None:
         conn.commit()
 
 
-# 設定「記憶の検索で古さを点数に反映する(検証用)」。'0' で時間減衰を掛けない(既定は掛ける)。
-# 古い記憶が出てこない原因が、減衰なのか検索の言葉なのかを切り分けるための切り替え
-DECAY_KEY = "memory_search_decay"
-
-
-def decay_enabled(settings: dict[str, str]) -> bool:
-    return settings.get(DECAY_KEY) != "0"
-
-
-def _decayed_score(base: float, row: sqlite3.Row, current_order: int, decay: bool = True) -> float:
+def _decayed_score(
+    base: float, row: sqlite3.Row, current_order: int, half_life: float | None = HALF_LIFE_BEATS
+) -> float:
     importance = row["importance"] if row["importance"] is not None else 0.5
     story_order = row["story_order"]
     distance = 0 if story_order is None or story_order < 0 else max(0, current_order - story_order)
-    factor = math.pow(0.5, distance / HALF_LIFE_BEATS) if decay else 1.0
+    factor = math.pow(0.5, distance / half_life) if half_life else 1.0
     return base * max(importance, 0.1) * factor
 
 
@@ -82,11 +92,12 @@ def search_memories(
     candidate_ids: set[str],
     current_order: int,
     top_k: int = 5,
-    decay: bool = True,
+    half_life: float | None = HALF_LIFE_BEATS,
 ) -> list[dict[str, Any]]:
     """candidate_ids(fold 済み state の記憶参照)の中から上位 top_k 件を返す。
 
-    decay=False で物語内時間の減衰を掛けない(点数は RRF × 重要度だけ)。"""
+    half_life は何シーン前で重みが半分になるか。None で物語内時間の減衰を掛けない
+    (点数は RRF × 重要度だけ)。"""
     if not candidate_ids:
         return []
     ensure_vectors(conn)
@@ -136,6 +147,6 @@ def search_memories(
         row = conn.execute("SELECT * FROM memories WHERE id = ?", (memory_id,)).fetchone()
         if row is None:
             continue
-        results.append((_decayed_score(base, row, current_order, decay), dict(row)))
+        results.append((_decayed_score(base, row, current_order, half_life), dict(row)))
     results.sort(key=lambda pair: pair[0], reverse=True)
     return [row for _, row in results[:top_k]]
