@@ -166,8 +166,11 @@ export default function ServiceBar({
         <span className="shrink-0" style={{ color: healthy ? 'var(--accent)' : 'var(--text-faint)' }}>
           {loading ? <SpinnerIcon /> : <Icon name={icon} size={15} />}
         </span>
-        <span className="min-w-0 flex-1 truncate text-center text-[12.5px]" style={hasError ? { color: 'var(--danger)' } : undefined}>
-          {loading ? `起動中… ${name}` : hasError ? '起動失敗' : healthy ? name : installed ? `${name} 停止中` : `${name} 未導入`}
+        {/* 停止中は「停止中」と書かない。アイコンと枠・文字の色(稼働中はアクセント、停止中は淡色)で分かる。
+            未導入は、押しても起動できず対処(インストール)が違うので文字で示す */}
+        <span className="min-w-0 flex-1 truncate text-center text-[12.5px]"
+          style={hasError ? { color: 'var(--danger)' } : !healthy && !loading ? { color: 'var(--text-dim)' } : undefined}>
+          {loading ? `起動中… ${name}` : hasError ? '起動失敗' : healthy || installed ? name : `${name} 未導入`}
         </span>
       </button>
       {healthy && !loading && !status?.external && (

@@ -26,7 +26,7 @@ export default function ProductionPreviewPanel({ nodes }: { nodes: StoryNode[] }
         編集案を作成中{title ? `: ${title}` : '(対象を確認中)'}
         <span className="ml-2" style={{ color: 'var(--text-faint)' }}>未確定・検証後に反映</span>
       </div>
-      <div ref={body} className="inspector-scrollbar max-h-48 overflow-y-auto whitespace-pre-wrap break-words text-[12px] leading-relaxed"
+      <div ref={body} className="inspector-scrollbar max-h-80 overflow-y-auto whitespace-pre-wrap break-words text-[12px] leading-relaxed"
         style={{ color: 'var(--text-dim)' }}>
         {preview.beat || '本文を生成しています…'}
       </div>
