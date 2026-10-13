@@ -1,7 +1,7 @@
 """6章・48シーンの制作実機検証。新規の検証ライブラリだけを操作する。
 
 実行例: .venv/Scripts/python scripts/check-production-scenario.py --model path/to/model.gguf
-全SSE、段階別グラフ、会話、チェック結果をdata/production-scenario-<id>へ残す。
+全SSE、段階別グラフ、会話、チェック結果をdata/test/production-scenario-<id>へ残す。
 """
 import argparse
 import asyncio
@@ -127,7 +127,7 @@ async def main():
     mode.add_argument("--direction-only", action="store_true", help="枝の拡張後の方針変更を単独で確認する")
     mode.add_argument("--consult-only", action="store_true", help="相談で変更案を提示して待ち、モード切替後に同じ会話の案を実行することを確認する")
     args = parser.parse_args()
-    root = ROOT / "data" / ("production-scenario-" + uuid.uuid4().hex[:8])
+    root = ROOT / "data" / "test" / ("production-scenario-" + uuid.uuid4().hex[:8])
     root.mkdir(parents=True)
     store = Store(db.connect(root / "story-graph.db"), root=str(root))
     store.set_settings({"production_memory_enabled": "1"})  # 既定はオフ。検証は作業メモを使う経路で行う

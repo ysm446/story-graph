@@ -1,7 +1,7 @@
 """制作段階0の実機検証。検証用ライブラリだけを変更し、通常の作品には触れない。
 
 リポジトリの.venvで実行する。既存サーバーを使うか、--model 指定時に専用ポートで起動する。
-結果とスナップショットは data/production-check-<id>/ に残す。
+結果とスナップショットは data/test/production-check-<id>/ に残す。
 """
 
 import argparse
@@ -36,7 +36,7 @@ async def main():
     args = parser.parse_args()
     if sum((args.instructions, args.policy, args.reconnect, args.memory, bool(args.clarify))) > 1:
         parser.error("--instructions / --policy / --reconnect / --memory / --clarify は別々に実行してください")
-    root = ROOT / "data" / ("production-check-" + uuid.uuid4().hex[:8])
+    root = ROOT / "data" / "test" / ("production-check-" + uuid.uuid4().hex[:8])
     root.mkdir(parents=True)
     store = Store(db.connect(root / "story-graph.db"), root=str(root))
     store.set_settings({"production_memory_enabled": "1"})  # 既定はオフ。検証は作業メモを使う経路で行う

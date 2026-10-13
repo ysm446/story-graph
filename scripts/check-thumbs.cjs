@@ -1,12 +1,23 @@
 // 隔離したライブラリとElectronで、静止画サムネイルの自動生成と画面外カードの描画抑制を検証する。
 const { app, BrowserWindow, ipcMain } = require('electron')
 const { spawn } = require('node:child_process')
-const { mkdirSync, readFileSync, statSync, writeFileSync } = require('node:fs')
+const { mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } = require('node:fs')
 const { join, resolve } = require('node:path')
 const { createServer } = require('node:net')
 const root = resolve(__dirname, '..')
-const target = join(root, 'data', `thumbs-check-${Date.now()}`)
+// 検証の出力は data/test/ にまとめる(data/ の直下には既定のライブラリがあるので混ぜない。2026-10-14 ユーザー指示)
+const testRoot = join(root, 'data', 'test')
+const target = join(testRoot, `thumbs-check-${Date.now()}`)
 mkdirSync(target, { recursive: true })
+// 前回までの検証フォルダを片付ける。実行のたびに data/test/ へ 1 つ作るので、消さないと増え続ける
+// (2026-10-14 に 1 個・13MB たまっていた)。終了時に消さないのは、スクリーンショットを後から
+// 見られるようにするためと、実行中は Electron が中のファイルを開いていて消せないため。
+// 10 分より古いものだけを消すので、並行して走っている別の検証のフォルダには触らない
+for (const name of readdirSync(testRoot)) {
+  const match = /^thumbs-check-(\d+)$/.exec(name)
+  if (!match || Date.now() - Number(match[1]) < 10 * 60 * 1000) continue
+  try { rmSync(join(testRoot, name), { recursive: true, force: true }) } catch { /* 開かれている間は次の回に任せる */ }
+}
 app.setPath('userData', join(target, 'electron'))
 let backend
 const pause = (ms) => new Promise((done) => setTimeout(done, ms))

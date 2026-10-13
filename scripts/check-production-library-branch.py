@@ -41,7 +41,7 @@ async def main():
     parser.add_argument("--model", help="省略時はbase-urlの起動済みサーバーを使う")
     parser.add_argument("--base-url", default="http://127.0.0.1:8089")
     args = parser.parse_args()
-    root = ROOT / "data" / ("production-library-branch-" + uuid.uuid4().hex[:8])
+    root = ROOT / "data" / "test" / ("production-library-branch-" + uuid.uuid4().hex[:8])
     root.mkdir(parents=True)
     store = Store(db.connect(root / "story-graph.db"), root=str(root))
     store.set_settings({"production_memory_enabled": "1"})  # 既定はオフ。検証は作業メモを使う経路で行う

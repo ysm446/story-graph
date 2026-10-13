@@ -1,12 +1,23 @@
 // 隔離したライブラリとElectronで、共通チャットの配置・下書き保持・編集ガードを検証する。
 const { app, BrowserWindow, ipcMain } = require('electron')
 const { spawn, spawnSync } = require('node:child_process')
-const { mkdirSync, writeFileSync } = require('node:fs')
+const { mkdirSync, readdirSync, rmSync, writeFileSync } = require('node:fs')
 const { join, resolve } = require('node:path')
 const { createServer } = require('node:net')
 const root = resolve(__dirname, '..')
-const target = join(root, 'data', `workspace-check-${Date.now()}`)
+// 検証の出力は data/test/ にまとめる(data/ の直下には既定のライブラリがあるので混ぜない。2026-10-14 ユーザー指示)
+const testRoot = join(root, 'data', 'test')
+const target = join(testRoot, `workspace-check-${Date.now()}`)
 mkdirSync(target, { recursive: true })
+// 前回までの検証フォルダを片付ける。実行のたびに data/test/ へ 1 つ作るので、消さないと増え続ける
+// (2026-10-14 に 173 個・約 1.3GB たまっていた)。終了時に消さないのは、スクリーンショットを後から
+// 見られるようにするためと、実行中は Electron が中のファイルを開いていて消せないため。
+// 10 分より古いものだけを消すので、並行して走っている別の検証のフォルダには触らない
+for (const name of readdirSync(testRoot)) {
+  const match = /^workspace-check-(\d+)$/.exec(name)
+  if (!match || Date.now() - Number(match[1]) < 10 * 60 * 1000) continue
+  try { rmSync(join(testRoot, name), { recursive: true, force: true }) } catch { /* 開かれている間は次の回に任せる */ }
+}
 app.setPath('userData', join(target, 'electron'))
 let backend
 const pause = (ms) => new Promise((done) => setTimeout(done, ms))
