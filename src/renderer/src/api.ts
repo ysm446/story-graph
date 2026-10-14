@@ -489,37 +489,7 @@ export async function proofreadStream(
   onEvent: (data: ProofreadStreamEvent) => void,
   signal?: AbortSignal
 ): Promise<void> {
-  if (!baseUrl) throw new Error('backend not ready')
-  const res = await fetch(`${baseUrl}/proofread/stream`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-    signal
-  })
-  if (!res.ok || !res.body) {
-    throw new Error(`${res.status} /proofread/stream: ${await res.text()}`)
-  }
-  const reader = res.body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
-  try {
-    for (;;) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
-      const parts = buffer.split('\n\n')
-      buffer = parts.pop() ?? ''
-      for (const part of parts) {
-        const line = part.trim()
-        if (line.startsWith('data: ')) {
-          onEvent(JSON.parse(line.slice(6)) as ProofreadStreamEvent)
-        }
-      }
-    }
-  } finally {
-    // 中断時もストリームを閉じて、接続とリーダーのロックを残さない
-    void reader.cancel().catch(() => undefined)
-  }
+  return postSse('/proofread/stream', body, onEvent, signal)
 }
 
 export interface ReextractStreamEvent {
@@ -546,34 +516,7 @@ async function reextractStream(
   onEvent: (data: ReextractStreamEvent) => void,
   signal?: AbortSignal
 ): Promise<void> {
-  if (!baseUrl) throw new Error('backend not ready')
-  const res = await fetch(`${baseUrl}${path}`, {
-    method: 'POST',
-    headers: body ? { 'Content-Type': 'application/json' } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
-    signal
-  })
-  if (!res.ok || !res.body) {
-    throw new Error(`${res.status} ${path}: ${await res.text()}`)
-  }
-  const reader = res.body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
-  try {
-    for (;;) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
-      const parts = buffer.split('\n\n')
-      buffer = parts.pop() ?? ''
-      for (const part of parts) {
-        const line = part.trim()
-        if (line.startsWith('data: ')) onEvent(JSON.parse(line.slice(6)) as ReextractStreamEvent)
-      }
-    }
-  } finally {
-    void reader.cancel().catch(() => undefined)
-  }
+  return postSse(path, body, onEvent, signal)
 }
 
 export interface RenderStreamEvent {
@@ -760,13 +703,19 @@ export interface ImagePromptStreamEvent<M = { suffix: string }> {
   error?: string
 }
 
-/** POST して SSE(`data: {...}` 行)を逐次 onEvent に渡す共通部。abort で中断 */
-async function postSse<E>(path: string, body: unknown, onEvent: (e: E) => void, signal?: AbortSignal): Promise<void> {
+/** POST して SSE(`data: {...}` 行)を逐次 onEvent に渡す共通部。abort で中断。
+ * body が undefined なら本文なしで送る。onEvent が Promise を返すときはそれを待ってから次へ進む */
+async function postSse<E>(
+  path: string,
+  body: unknown,
+  onEvent: (e: E) => void | Promise<void>,
+  signal?: AbortSignal
+): Promise<void> {
   if (!baseUrl) throw new Error('backend not ready')
   const res = await fetch(`${baseUrl}${path}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
     signal
   })
   if (!res.ok || !res.body) throw new Error(`${res.status} ${path}: ${await res.text()}`)
@@ -782,10 +731,13 @@ async function postSse<E>(path: string, body: unknown, onEvent: (e: E) => void, 
       buffer = parts.pop() ?? ''
       for (const part of parts) {
         const line = part.trim()
-        if (line.startsWith('data: ')) onEvent(JSON.parse(line.slice(6)) as E)
+        if (!line.startsWith('data: ')) continue
+        const result = onEvent(JSON.parse(line.slice(6)) as E)
+        if (result) await result
       }
     }
   } finally {
+    // 中断時もストリームを閉じて、接続とリーダーのロックを残さない
     void reader.cancel().catch(() => undefined)
   }
 }
@@ -1031,36 +983,7 @@ async function installStream(
   onProgress: (p: LlamaInstallProgress) => void,
   signal?: AbortSignal
 ): Promise<void> {
-  if (!baseUrl) throw new Error('backend not ready')
-  const res = await fetch(`${baseUrl}${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-    signal
-  })
-  if (!res.ok || !res.body) {
-    throw new Error(`${res.status} ${path}: ${await res.text()}`)
-  }
-  const reader = res.body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
-  try {
-    for (;;) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
-      const parts = buffer.split('\n\n')
-      buffer = parts.pop() ?? ''
-      for (const part of parts) {
-        const line = part.trim()
-        if (line.startsWith('data: ')) {
-          onProgress(JSON.parse(line.slice(6)) as LlamaInstallProgress)
-        }
-      }
-    }
-  } finally {
-    void reader.cancel().catch(() => undefined)
-  }
+  return postSse(path, body, onProgress, signal)
 }
 
 const VIDEO_EXTS = ['.mp4', '.webm']
@@ -1094,39 +1017,16 @@ export async function renderStream(
   onEvent: (data: RenderStreamEvent) => void,
   signal?: AbortSignal
 ): Promise<void> {
-  if (!baseUrl) throw new Error('backend not ready')
-  const res = await fetch(`${baseUrl}/render`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+  return postSse<RenderStreamEvent>(
+    '/render',
+    body,
+    (data) => {
+      onEvent(data)
+      // 保存が済んだシーンは、走らせた画面以外にも知らせる(鑑賞モードの読み直し)
+      if (data.scene_done) emitRenderSaved(data.scene_done)
+    },
     signal
-  })
-  if (!res.ok || !res.body) {
-    throw new Error(`${res.status} /render: ${await res.text()}`)
-  }
-  const reader = res.body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
-  try {
-    for (;;) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
-      const parts = buffer.split('\n\n')
-      buffer = parts.pop() ?? ''
-      for (const part of parts) {
-        const line = part.trim()
-        if (line.startsWith('data: ')) {
-          const data = JSON.parse(line.slice(6)) as RenderStreamEvent
-          onEvent(data)
-          // 保存が済んだシーンは、走らせた画面以外にも知らせる(鑑賞モードの読み直し)
-          if (data.scene_done) emitRenderSaved(data.scene_done)
-        }
-      }
-    }
-  } finally {
-    void reader.cancel().catch(() => undefined)
-  }
+  )
 }
 
 export interface ChatSummary {
@@ -1273,36 +1173,7 @@ async function chatSse<T = ChatStreamEvent>(
   onEvent: (data: T) => void | Promise<void>,
   signal?: AbortSignal
 ): Promise<void> {
-  if (!baseUrl) throw new Error('backend not ready')
-  const res = await fetch(`${baseUrl}${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-    signal
-  })
-  if (!res.ok || !res.body) {
-    throw new Error(`${res.status} ${path}: ${await res.text()}`)
-  }
-  const reader = res.body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
-  try {
-    for (;;) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
-      const parts = buffer.split('\n\n')
-      buffer = parts.pop() ?? ''
-      for (const part of parts) {
-        const line = part.trim()
-        if (line.startsWith('data: ')) {
-          await onEvent(JSON.parse(line.slice(6)) as T)
-        }
-      }
-    }
-  } finally {
-    void reader.cancel().catch(() => undefined)
-  }
+  return postSse<T>(path, body, onEvent, signal)
 }
 
 export interface ProductionPolicy {
@@ -1444,34 +1315,5 @@ export async function generateBeatStream(
   // 指定するとそのノードの直後へ割り込ませる(章の中への追加。章の出口の手前に入る)
   afterId: string | null = null
 ): Promise<void> {
-  if (!baseUrl) throw new Error('backend not ready')
-  const res = await fetch(`${baseUrl}/generate/beat`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ instruction, parent_id: parentId, after_id: afterId }),
-    signal
-  })
-  if (!res.ok || !res.body) {
-    throw new Error(`${res.status} /generate/beat: ${await res.text()}`)
-  }
-  const reader = res.body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
-  try {
-    for (;;) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
-      const parts = buffer.split('\n\n')
-      buffer = parts.pop() ?? ''
-      for (const part of parts) {
-        const line = part.trim()
-        if (line.startsWith('data: ')) {
-          onEvent(JSON.parse(line.slice(6)) as GenerationEvent)
-        }
-      }
-    }
-  } finally {
-    void reader.cancel().catch(() => undefined)
-  }
+  return postSse('/generate/beat', { instruction, parent_id: parentId, after_id: afterId }, onEvent, signal)
 }

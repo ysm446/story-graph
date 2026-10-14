@@ -1,0 +1,386 @@
+import DetailSplit from '../../DetailSplit'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { api } from '../../api'
+import AutoTextarea from '../../AutoTextarea'
+import { showStatusNotice } from '../../statusNotice'
+import CharAvatar from '../../CharAvatar'
+import { Icon } from '../../icons'
+import { enqueueTask, notifyGraphChanged, useTasks } from '../../tasks'
+import type { Character, EventInput, Group, StoryNode } from '../../types'
+import { chapterCoverNode, NodeThumb } from './StructureNodes'
+import { useSaveShortcut } from './useSaveShortcut'
+
+// ---- 章タブ(章ノードを選択したときのインスペクタ。docs/design/chapters.md §6) ----
+
+export function ChapterTab({
+  group,
+  number,
+  nodes,
+  characters,
+  onSelectScene,
+  onChanged,
+  onRename,
+  onDissolve,
+  onSetCover
+}: {
+  group: Group
+  number: number
+  nodes: StoryNode[]
+  characters: Character[]
+  onSelectScene: (nodeId: string) => void
+  onChanged: () => void
+  onRename: () => void
+  onDissolve: () => void
+  /** 章カードの表紙にするシーン(null = 自動に戻す) */
+  onSetCover: (nodeId: string | null) => void
+}): React.JSX.Element {
+  const [digest, setDigest] = useState<EventInput[]>([])
+  const [hasDigest, setHasDigest] = useState(false)
+  const [digestStale, setDigestStale] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [dirty, setDirty] = useState(false) // ローカル編集が未保存
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  // まとめの生成は LLM キューに積む(他の生成と同じ 1 件ずつの逐次実行)。
+  // ラベルだけで見ると別の章の生成待ちでもこの章のボタンが待機中になる
+  const generateQueued = useTasks().some(
+    (t) => t.kind === 'digest' && t.nodeId === group.id
+  )
+
+  const charOf = (charId: string): Character | undefined => characters.find((c) => c.id === charId)
+  const nameOf = (charId: string): string => charOf(charId)?.name ?? charId
+  const nodeTitle = (id: string): string => nodes.find((n) => n.id === id)?.title || '(無題)'
+  // 章カードの表紙。指定が無ければ章内で最初に挿絵があるシーン(章カードと同じ導出)
+  const nodeById = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes])
+  const cover = chapterCoverNode(group, nodeById)
+
+  const refetch = useCallback(async (): Promise<void> => {
+    setLoading(true)
+    setError(null)
+    try {
+      const d = await api.getGroupDigest(group.id)
+      setDigest(d.digest_events ?? [])
+      setHasDigest(d.digest_events !== null)
+      setDigestStale(d.digest_stale === 1)
+      setDirty(false)
+    } catch (e) {
+      setError(String(e))
+    } finally {
+      setLoading(false)
+    }
+  }, [group.id])
+
+  // 生成タスクの完了は notifyGraphChanged → reload → groups の変化で伝わるので、
+  // has_digest / digest_stale が動いたときも取り直す
+  useEffect(() => {
+    void refetch()
+  }, [refetch, group.has_digest, group.digest_stale])
+
+  const generate = (): void => {
+    enqueueTask({
+      label: '章のまとめ',
+      detail: group.title,
+      kind: 'digest',
+      nodeId: group.id, // 章 ID を目印にする(useTasks の絞り込み用)
+      runner: async () => {
+        // キュー(tasks.ts)は runner の例外を握りつぶすので、ここで知らせる。
+        // 章タブはタスク完了前に閉じられていることがあるため、setError ではなく全体の通知に出す
+        try {
+          await api.generateGroupDigest(group.id)
+          notifyGraphChanged()
+        } catch (e) {
+          showStatusNotice(`章のまとめを作れませんでした(${group.title}): ${String(e)}`)
+        }
+      }
+    })
+  }
+
+  const save = async (): Promise<boolean> => {
+    setBusy(true)
+    setError(null)
+    try {
+      await api.putGroupDigest(group.id, digest)
+      await refetch()
+      onChanged()
+      return true
+    } catch (e) {
+      setError(String(e))
+      return false
+    } finally {
+      setBusy(false)
+    }
+  }
+  const saveButtonRef = useRef<HTMLButtonElement | null>(null)
+  useSaveShortcut(saveButtonRef, save, '章のまとめを保存しました')
+
+  const removeDigest = async (): Promise<void> => {
+    if (!window.confirm('まとめを削除しますか?(次の章からは生の記憶に戻ります)')) return
+    setBusy(true)
+    setError(null)
+    try {
+      await api.deleteGroupDigest(group.id)
+      await refetch()
+      onChanged()
+    } catch (e) {
+      setError(String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const updateEntry = (index: number, patch: Record<string, unknown>): void => {
+    setDigest((prev) => prev.map((e, i) => (i === index ? { ...e, payload: { ...e.payload, ...patch } } : e)))
+    setDirty(true)
+  }
+
+  return (
+    <div className="scene-detail flex min-h-0 flex-1 flex-col">
+      <div className="shrink-0 border-b px-5 py-2" style={{ borderColor: 'var(--border)' }}>
+
+      <div className="flex items-center gap-2">
+        <span className="shrink-0 text-[10px] uppercase tracking-[0.2em]" style={{ color: 'var(--text-faint)' }}>
+          {group.on_canon ? `第${number}章` : '別ルートの章'}
+        </span>
+        <span className="min-w-0 flex-1 truncate text-[14px] font-semibold" style={{ color: 'var(--text)' }}>
+          {group.title}
+        </span>
+        <button
+          onClick={onRename}
+          aria-label="章の名前を変更"
+          data-tip="章の名前を変更"
+          className="rounded p-0.5 hover:bg-[var(--accent-soft)]"
+          style={{ color: 'var(--text-faint)' }}
+        >
+          ✎
+        </button>
+        <button
+          onClick={onDissolve}
+          data-tip="章を解除する(シーンは残る)"
+          className="rounded p-0.5 text-[11px] hover:bg-[var(--accent-soft)]"
+          style={{ color: 'var(--text-faint)' }}
+        >
+          解除
+        </button>
+      </div>
+      {group.warning && (
+        <p className="text-[11px] leading-relaxed" style={{ color: '#f2a3a3' }}>
+          ⚠ {group.warning}
+        </p>
+      )}
+      </div>
+      <DetailSplit storageKey="chapterDetailListWidth" defaultWidth={34} main={<>
+      <div>
+        <div className="mb-1 flex items-center gap-2">
+          <span className="text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
+            章のまとめ
+          </span>
+          {hasDigest &&
+            (digestStale ? (
+              <span
+                className="rounded px-1.5 py-px text-[10px]"
+                style={{ background: 'rgba(239,68,68,0.12)', color: '#f2a3a3' }}
+                data-tip="章の中が編集されたので、まとめが古くなっている可能性があります"
+              >
+                要更新
+              </span>
+            ) : (
+              <span
+                className="rounded px-1.5 py-px text-[10px]"
+                style={{ background: 'var(--accent-soft)', color: 'var(--text-dim)' }}
+              >
+                最新
+              </span>
+            ))}
+        </div>
+        <p className="mb-2 text-[11px] leading-relaxed" style={{ color: 'var(--text-faint)' }}>
+          章を閉じたときのキャラごとの要約記憶。次の章からは、この章の生の記憶の代わりに
+          このまとめが引き継がれます(生の記憶は清書時の検索などで引き続き参照されます)。
+          まとめを更新しない限り、章の中の記憶の編集は次の章へ波及しません。
+        </p>
+        <div className="mb-2 flex gap-1.5">
+          <button
+            onClick={generate}
+            disabled={generateQueued}
+            className="rounded-lg px-2.5 py-1 text-[12px] font-medium text-white disabled:opacity-50"
+            style={{ background: 'var(--accent)' }}
+            data-tip="LLM で章のまとめを作る(既存のまとめは置き換え)"
+          >
+            {generateQueued ? '生成待ち…' : hasDigest ? '⟳ まとめを作り直す' : '▶ まとめを作る'}
+          </button>
+          {hasDigest && (
+            <button
+              onClick={() => void removeDigest()}
+              disabled={busy}
+              className="delete-action rounded-lg border px-2 py-1 text-[12px] disabled:opacity-50"
+            >
+              削除
+            </button>
+          )}
+        </div>
+        {error && (
+          <p className="mb-2 text-[11px]" style={{ color: 'var(--danger)' }}>
+            {error}
+          </p>
+        )}
+        {loading ? (
+          <p className="text-[11px]" style={{ color: 'var(--text-faint)' }}>
+            読み込み中…
+          </p>
+        ) : digest.length === 0 ? (
+          <p className="text-[11px]" style={{ color: 'var(--text-faint)' }}>
+            まだまとめはありません
+          </p>
+        ) : (
+          <div className="flex flex-col gap-2">
+            {digest.map((e, i) =>
+              e.type === 'memory_compress' ? (
+                <div
+                  key={e.id ?? i}
+                  className="rounded-xl border p-2"
+                  style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}
+                >
+                  <div className="mb-1 flex items-center gap-2 text-[11px]" style={{ color: 'var(--text-dim)' }}>
+                    {/* まとめはキャラごとの要約記憶なので、誰のものかをアイコンでも示す */}
+                    {charOf(String(e.payload.char ?? '')) && (
+                      <CharAvatar char={charOf(String(e.payload.char ?? ''))!} size={28} />
+                    )}
+                    <span className="font-medium" style={{ color: 'var(--text)' }}>
+                      {nameOf(String(e.payload.char ?? ''))}
+                    </span>
+                    <span className="ml-auto" style={{ color: 'var(--text-faint)' }}>
+                      重要度
+                    </span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={1}
+                      step={0.1}
+                      value={Number(e.payload.importance ?? 0.6)}
+                      onChange={(ev) => updateEntry(i, { importance: Number(ev.target.value) })}
+                      className="w-16 rounded-md border px-1.5 py-0.5 text-[11px]"
+                      style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
+                    />
+                  </div>
+                  <AutoTextarea
+                    value={String(e.payload.summary ?? '')}
+                    onChange={(v) => updateEntry(i, { summary: v })}
+                    className="w-full rounded-md border px-2 py-1 text-[12px] leading-relaxed outline-none"
+                    style={{ background: 'var(--bg-input)', borderColor: 'var(--border)', color: 'var(--text)' }}
+                  />
+                </div>
+              ) : (
+                <div
+                  key={e.id ?? i}
+                  className="rounded-xl border p-2 text-[11px]"
+                  style={{ borderColor: 'var(--border)', color: 'var(--text-dim)' }}
+                >
+                  {e.type}: {JSON.stringify(e.payload)}
+                </div>
+              )
+            )}
+
+          </div>
+        )}
+      </div>      </>} aside={<>
+      {/* 表紙(章カードのサムネイル)。挿絵はシーンのもので、章はどれを使うかだけを持つ */}
+      {cover ? (
+        <div>
+          <div className="mb-1 flex items-center gap-2">
+            <span className="text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
+              表紙
+            </span>
+            <span className="min-w-0 flex-1 truncate text-[11px]" style={{ color: 'var(--text-faint)' }}>
+              {group.cover_node_id ? nodeTitle(cover.id) : `自動(${nodeTitle(cover.id)})`}
+            </span>
+            {group.cover_node_id && (
+              <button
+                onClick={() => onSetCover(null)}
+                data-tip="表紙の指定を外して、章内で最初に挿絵があるシーンに戻す"
+                className="shrink-0 rounded px-1 text-[11px] hover:bg-[var(--accent-soft)]"
+                style={{ color: 'var(--text-faint)' }}
+              >
+                自動に戻す
+              </button>
+            )}
+          </div>
+          <NodeThumb node={cover} className="h-auto w-full rounded-xl" />
+        </div>
+      ) : (
+        <div>
+          <span className="mb-1 block text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
+            表紙
+          </span>
+          <p className="text-[11px] leading-relaxed" style={{ color: 'var(--text-faint)' }}>
+            まだ表紙がありません。章の中のシーンに挿絵を付けると、最初の1枚が表紙になります。
+          </p>
+        </div>
+      )}
+      </>} secondary={<>
+      <div>
+        <span className="mb-1 block text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
+          シーン({group.node_ids.length})
+          {group.node_ids.length > group.route.length && (
+            <span className="ml-1.5 normal-case tracking-normal">
+              うち読む道 {group.route.length}
+            </span>
+          )}
+        </span>
+        <div className="flex flex-col">
+          {group.node_ids.map((id, i) => (
+            <div key={id} className="group/scene flex items-center rounded-md hover:bg-[var(--accent-soft)]">
+              <button
+                data-view-ok
+                onClick={() => onSelectScene(id)}
+                className="min-w-0 flex-1 truncate px-2 py-1 text-left text-[12px]"
+                style={{ color: 'var(--text-dim)' }}
+              >
+                {/* ルート(読む道)のシーンだけ番号を振る。分岐・島は番号なし */}
+                {i < group.route.length ? `${i + 1}. ` : '⌁ '}
+                {nodeTitle(id)}
+              </button>
+              {i >= group.route.length && (
+                <span
+                  className="shrink-0 px-1 text-[10px]"
+                  style={{ color: 'var(--text-faint)' }}
+                  data-tip="この章のシーンですが、読む道(鑑賞モード・まとめ)には乗っていません"
+                >
+                  別の道
+                </span>
+              )}
+              {/* 挿絵のあるシーンだけ、表紙にできる */}
+              {nodeById.get(id)?.image_path && (
+                <button
+                  onClick={() => onSetCover(group.cover_node_id === id ? null : id)}
+                  aria-label="章の表紙にする"
+                  data-tip={
+                    group.cover_node_id === id
+                      ? '表紙の指定を外す(自動に戻す)'
+                      : 'このシーンの挿絵を章の表紙にする'
+                  }
+                  className={`shrink-0 rounded px-1.5 py-1 ${
+                    group.cover_node_id === id ? '' : 'opacity-0 group-hover/scene:opacity-100'
+                  }`}
+                  style={
+                    group.cover_node_id === id
+                      ? { background: 'var(--accent-soft)', color: 'var(--accent)' }
+                      : { color: 'var(--text-faint)' }
+                  }
+                >
+                  <Icon name="image" size={12} />
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+      </>} />
+      <div className="flex shrink-0 items-center justify-end gap-2 border-t px-5 py-2" style={{ borderColor: 'var(--border)' }}>
+        {dirty && <span className="mr-auto text-[11px]" style={{ color: 'var(--text-dim)' }}>未保存の変更があります</span>}
+        <button ref={saveButtonRef} onClick={() => void save()} disabled={busy || !dirty}
+          className="rounded-md px-3 py-1 text-[12px] font-medium disabled:opacity-50"
+          style={{ background: 'var(--accent)', color: 'var(--text)' }}
+          data-tip={dirty ? '章のまとめの変更を保存します(Ctrl+S)' : '変更はありません'}>まとめを保存</button>
+      </div>
+    </div>
+  )
+}
