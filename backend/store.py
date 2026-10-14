@@ -319,7 +319,8 @@ class Store:
                 return
             self.conn.execute(
                 "UPDATE factions SET name = ?, description = ? WHERE id = ?",
-                (data.get("name", row["name"]), data.get("description", row["description"]), faction_id),
+                # name は NOT NULL なので、明示的な null は「変えない」として扱う
+                (data.get("name") or row["name"], data.get("description", row["description"]), faction_id),
             )
         if "members" in data:
             self.conn.execute("DELETE FROM faction_members WHERE faction_id = ?", (faction_id,))

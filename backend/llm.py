@@ -59,6 +59,11 @@ async def health(base_url: str, timeout: float = 2.0) -> bool:
         return False
 
 
+def sse(data: dict[str, Any]) -> str:
+    """SSE の 1 イベント(data: 行 + 空行)。各モジュールの _sse はこれの別名。"""
+    return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
 def _extract_stats(chunk: dict[str, Any], choice: dict[str, Any]) -> dict[str, Any]:
     """ストリーム最終チャンクから生成統計を取り出す(lm-chat と同じ読み方)。
 
@@ -308,12 +313,20 @@ async def chat_stream_tools(
                                 f"llama-server ストリームエラー: {json.dumps(obj['error'], ensure_ascii=False)[:300]}"
                             )
                         choices = obj.get("choices") or []
+                        choice = choices[0] if choices else {}
+                        # 生成統計は timings / usage を含むチャンクから取る(timings は
+                        # llama.cpp の拡張。usage は OAI 互換)。finish_reason は統計より前の
+                        # チャンクに乗ることがあり、統計のチャンクは choices が空のこともある
+                        # (chat_stream と同じ扱い)
+                        if choice.get("finish_reason"):
+                            stats["finish_reason"] = choice["finish_reason"]
+                        if obj.get("timings") or obj.get("usage"):
+                            finish = stats.get("finish_reason")
+                            stats.update(_extract_stats(obj, choice))
+                            if stats.get("finish_reason") is None:
+                                stats["finish_reason"] = finish
                         if not choices:
                             continue
-                        # 生成統計は finish_reason を持つ最終チャンクに入る
-                        # (timings は llama.cpp の拡張。usage は OAI 互換)
-                        if choices[0].get("finish_reason"):
-                            stats = _extract_stats(obj, choices[0])
                         delta = choices[0].get("delta") or {}
                         if delta.get("content"):
                             content_parts.append(delta["content"])

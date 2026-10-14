@@ -189,8 +189,13 @@ export default function RefImagePanel({
   }
 
   const remove = async (): Promise<void> => {
-    await api.updateCharacter(character.id, { ref_image_path: null })
-    await onChanged({ ref_image_path: null })
+    setError(null)
+    try {
+      await api.updateCharacter(character.id, { ref_image_path: null })
+      await onChanged({ ref_image_path: null })
+    } catch (e) {
+      setError(`参照画像を外せませんでした: ${String(e)}`)
+    }
   }
 
   return (

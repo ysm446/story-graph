@@ -91,8 +91,14 @@ function LibraryMenu(): React.JSX.Element {
   }, [open])
 
   const applyRoot = async (root: string): Promise<void> => {
-    await window.storyGraph.switchLibrary(root)
-    await api.switchLibrary(root)
+    try {
+      await window.storyGraph.switchLibrary(root)
+      await api.switchLibrary(root)
+    } catch (e) {
+      // 失敗を未処理の reject にすると、メニューが閉じるだけで何も起きないように見える
+      showStatusNotice(`ライブラリを切り替えられませんでした: ${String(e)}`)
+      return
+    }
     window.location.reload()
   }
 

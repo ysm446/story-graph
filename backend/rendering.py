@@ -48,8 +48,7 @@ def effective_target_chars(node: dict[str, Any], default_chars: int | None) -> i
     return default_chars
 
 
-def _sse(data: dict[str, Any]) -> str:
-    return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+_sse = llm.sse
 
 
 def _memory_contents(store: Store, memory_ids: list[str], limit: int = MEMORY_LIMIT) -> list[str]:

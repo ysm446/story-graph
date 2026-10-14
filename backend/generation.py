@@ -333,7 +333,10 @@ def _format_next_scene(store: Store, node: dict[str, Any]) -> str:
     """補間生成の「## 次のシーン」ブロック(直近のビートと同じ体裁)。"""
     cast = ", ".join(node["cast"])
     place = store.place_name(store.effective_location(node["id"])[0])
-    return f"[{node['title'] or '無題'}] ({cast} @ {place or '?'})\n{node['beat']}"
+    # 直近のビートと同じく、次のシーンまでの経過も出す(間を埋めるビートが時間の幅を守れるように)
+    elapsed = story_clock.label(node.get("elapsed_unit"), node.get("elapsed_count"))
+    when = f" / 前のシーンから{elapsed}" if elapsed else ""
+    return f"[{node['title'] or '無題'}] ({cast} @ {place or '?'}{when})\n{node['beat']}"
 
 
 def _build_messages(store: Store, instruction: str | None, path: list[str],
@@ -389,8 +392,7 @@ def _build_messages(store: Store, instruction: str | None, path: list[str],
 
 # ---- ビート生成 ------------------------------------------------------
 
-def _sse(data: dict[str, Any]) -> str:
-    return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+_sse = llm.sse
 
 
 def _clamp(value: Any, low: float, high: float) -> Any:
@@ -636,7 +638,7 @@ ELAPSED_SUGGEST_PROMPT = f"""あなたは物語の構成を点検する編集者
 
 - evidence: 判断の根拠にした本文の言葉を短く抜き出す(例: 「三日後の朝」「そのまま廊下へ出た」)。根拠が無ければ空文字
 - elapsed_unit: {story_clock.UNIT_HELP} / unknown=本文からは分からない
-- elapsed_count: day・week・month・year のときの数(それ以外は 1)
+- elapsed_count: hour 以降(hour・day・week・month・year)のときの数(それ以外は 1)
 
 ルール:
 - 本文に書かれていることだけで判断する。雰囲気や一般的な流れから推測しない

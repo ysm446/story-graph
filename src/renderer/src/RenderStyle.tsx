@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from './api'
+import { showStatusNotice } from './statusNotice'
 import type { Character, StylePreset } from './types'
 
 /** 清書の条件(スタイルプリセット / POV / 本文フォント)を、鑑賞モードと
@@ -203,7 +204,10 @@ export function useRenderStyle(): RenderStyleState {
         const savedSize = Number(settings.reader_font_size)
         if (FONT_SIZES.some((s) => s.value === savedSize)) setFontSizeState(savedSize)
       }
-    )
+    ).catch((e) => {
+      // 読めないと文体プリセットが空のまま「清書」が押せなくなるので、理由を出す
+      showStatusNotice(`清書の設定を読み込めませんでした: ${String(e)}`)
+    })
   }, [])
 
   const setPresetId = useCallback((id: string): void => {

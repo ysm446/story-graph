@@ -32,8 +32,7 @@ MEMORY_TOP_K = 8
 STATE_OVERVIEW_MEMORIES = 5  # 全体 state で 1 キャラあたりに載せる記憶数(char_id 指定なら絞らない)
 
 
-def _sse(data: dict[str, Any]) -> str:
-    return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+_sse = llm.sse
 
 
 def build_tools() -> list[dict[str, Any]]:
@@ -905,6 +904,13 @@ async def _room_impl(
                         yield _sse({"delta": value, "speaker": current})
                     elif kind == "done":
                         result = value
+                # まとめの 1 回分も統計に足す(_chat_impl の上限時と同じ)
+                st = result.get("stats") or {}
+                stats_total["tokens"] += st.get("tokens") or 0
+                stats_total["elapsed_sec"] += st.get("elapsed_sec") or 0.0
+                stats_total["finish_reason"] = st.get("finish_reason") or stats_total["finish_reason"]
+                stats_total["model"] = st.get("model") or stats_total.get("model")
+                stats_total["steps"] += 1
                 text = result.get("content") or ""
             text = _strip_speaker_prefix(text, names.get(current, current))
             elapsed = stats_total["elapsed_sec"] or None

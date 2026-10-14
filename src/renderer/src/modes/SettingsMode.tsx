@@ -228,10 +228,15 @@ function ImportSection({ onImported }: { onImported?: (message: string) => void 
   const errors = check ? [...check.errors, ...check.blocked] : []
   const copyErrors = async (): Promise<void> => {
     if (!check) return
-    await navigator.clipboard.writeText(
-      ['取り込み JSON の検査で、次の誤りがありました。直してください。', ...check.errors.map((e) => `- ${e}`)].join('\n')
-    )
-    setCopied(true)
+    try {
+      // 画面に出している一覧(errors + blocked)と同じものを写す
+      await navigator.clipboard.writeText(
+        ['取り込み JSON の検査で、次の誤りがありました。直してください。', ...errors.map((e) => `- ${e}`)].join('\n')
+      )
+      setCopied(true)
+    } catch (e) {
+      setProblem(`コピーできませんでした: ${String(e)}`)
+    }
   }
 
   return (
@@ -2128,6 +2133,7 @@ export default function SettingsMode({ onImported }: {
     return SECTIONS.some((s) => s.id === saved) ? (saved as SectionId) : 'engine'
   })
   const [savedMsg, setSavedMsg] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
   const [status, setStatus] = useState<LlmStatus | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [llmError, setLlmError] = useState<string | null>(null)
@@ -2172,10 +2178,12 @@ export default function SettingsMode({ onImported }: {
   }
 
   useEffect(() => {
-    void api.getSettings().then(setValues)
+    // 読み込めなかったときは空の画面のまま黙らず、保存の合図と同じ場所に出す
+    const report = (what: string) => (e: unknown) => setSaveError(`${what}を読み込めませんでした: ${String(e)}`)
+    void api.getSettings().then(setValues).catch(report('設定'))
     void refreshStatus()
-    void loadModels()
-    void api.getGenerationPrompt().then((r) => setGenPromptDefault(r.default))
+    void loadModels().catch(report('モデル一覧'))
+    void api.getGenerationPrompt().then((r) => setGenPromptDefault(r.default)).catch(report('生成プロンプト'))
     void api.getFixedPrompts().then(setFixedPrompts).catch(() => undefined)
   }, [])
 
@@ -2196,7 +2204,14 @@ export default function SettingsMode({ onImported }: {
   // 開いている間に他所(ModelBar 等)で変わった設定が巻き戻ってしまう
   const save = async (patch: Record<string, string>): Promise<void> => {
     setValues((v) => ({ ...v, ...patch }))
-    if (Object.keys(patch).length > 0) await api.putSettings(patch)
+    setSaveError(null)
+    try {
+      if (Object.keys(patch).length > 0) await api.putSettings(patch)
+    } catch (e) {
+      // 呼び出し側はほぼ void save(...) なので、ここで出さないと失敗が見えない
+      setSaveError(`保存できませんでした: ${String(e)}`)
+      return
+    }
     showSaved()
     void refreshStatus()
   }
@@ -2294,8 +2309,12 @@ export default function SettingsMode({ onImported }: {
           })}
         </div>
         {/* 保存の合図はどのセクションでも同じ場所に出す */}
-        <p className="h-5 px-3 pb-2 text-[11px]" style={{ color: 'var(--accent)' }}>
-          {savedMsg ? '保存しました' : ''}
+        <p
+          className="min-h-5 px-3 pb-2 text-[11px]"
+          role={saveError ? 'alert' : undefined}
+          style={{ color: saveError ? 'var(--danger)' : 'var(--accent)' }}
+        >
+          {saveError ?? (savedMsg ? '保存しました' : '')}
         </p>
       </aside>
       <div className="w-px shrink-0" style={{ background: 'var(--border)' }} />

@@ -271,22 +271,31 @@ function CharactersMode(): React.JSX.Element {
       finally { setCreating(false) }
       return
     }
-    if (kind === 'places') {
-      const created = await api.createPlace({ name: '新しい場所', color: '#5a8fa7' })
+    // 設定資料と同じく、連打の二重作成を防ぎ、失敗は一覧の上に出す
+    if (creating) return
+    setCreating(true); setCreateError('')
+    try {
+      if (kind === 'places') {
+        const created = await api.createPlace({ name: '新しい場所', color: '#5a8fa7' })
+        await reload()
+        setTab('places')
+        setExpanded((value) => ({ ...value, places: true }))
+        setNewPlaceId(created.id)
+        setSelectedPlaceId(created.id)
+        return
+      }
+      const created = await api.createCharacter({ name: '新しいキャラクター', color: '#7c5af7' })
       await reload()
-      setTab('places')
-      setExpanded((value) => ({ ...value, places: true }))
-      setNewPlaceId(created.id)
-      setSelectedPlaceId(created.id)
-      return
+      setTab('characters')
+      setShowRelations(false)
+      setExpanded((value) => ({ ...value, characters: true }))
+      editAllFor.current = created.id
+      setSelectedId(created.id)
+    } catch (error) {
+      setCreateError(`${kind === 'places' ? '場所' : 'キャラクター'}を追加できませんでした: ${String(error)}`)
+    } finally {
+      setCreating(false)
     }
-    const created = await api.createCharacter({ name: '新しいキャラクター', color: '#7c5af7' })
-    await reload()
-    setTab('characters')
-    setShowRelations(false)
-    setExpanded((value) => ({ ...value, characters: true }))
-    editAllFor.current = created.id
-    setSelectedId(created.id)
   }
 
   const groupDirty = (group: EditGroup): boolean =>
@@ -387,9 +396,13 @@ function CharactersMode(): React.JSX.Element {
   const handleDelete = async (): Promise<void> => {
     if (!selectedId) return
     if (!window.confirm(`「${selected?.name}」を削除しますか?`)) return
-    await api.deleteCharacter(selectedId)
-    setSelectedId(null)
-    await reload()
+    try {
+      await api.deleteCharacter(selectedId)
+      setSelectedId(null)
+      await reload()
+    } catch (e) {
+      window.alert(`削除に失敗しました: ${String(e)}`)
+    }
   }
 
   return (
@@ -610,10 +623,12 @@ function CharactersMode(): React.JSX.Element {
                     onClick={() => {
                       if (!selectedId) return
                       const patch = { portrait_path: null, portrait_source_path: null, portrait_crop: null }
-                      void api.updateCharacter(selectedId, patch).then(async () => {
-                        setDraft((d) => ({ ...d, ...patch }))
-                        await reload()
-                      })
+                      void api.updateCharacter(selectedId, patch)
+                        .then(async () => {
+                          setDraft((d) => ({ ...d, ...patch }))
+                          await reload()
+                        })
+                        .catch((e) => window.alert(`画像を外せませんでした: ${String(e)}`))
                     }}
                     data-tip="画像を外す"
                   >

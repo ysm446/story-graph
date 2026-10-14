@@ -92,7 +92,6 @@ export const api = {
     request<Place>(`/places/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deletePlace: (id: string) => request<unknown>(`/places/${id}`, { method: 'DELETE' }),
 
-  timeline: () => request<StoryNode[]>('/timeline'),
   getGraph: () => request<StoryGraph>('/graph'),
   getNode: (id: string) => request<StoryNode>(`/nodes/${id}`),
   pasteNodes: (clipboard: NodeClipboard, groupId: string | null, x: number, y: number) =>
@@ -530,15 +529,6 @@ export interface ReextractStreamEvent {
   title?: string
   node_id?: string
   failed?: Array<{ node_id: string; title: string; error: string }>
-}
-
-/** このシーン以下の部分木を、親から順にイベント抽出し直す(SSE) */
-export async function reextractChainStream(
-  nodeId: string,
-  onEvent: (data: ReextractStreamEvent) => void,
-  signal?: AbortSignal
-): Promise<void> {
-  return reextractStream(`/nodes/${nodeId}/reextract_chain`, undefined, onEvent, signal)
 }
 
 /** 選択した複数シーンのイベントを抽出し直す(親から順に逐次、SSE) */

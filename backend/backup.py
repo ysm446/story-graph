@@ -13,6 +13,7 @@ story-graph.db(VACUUM INTO の整合コピー)+ assets/ で、復元は
 
 from __future__ import annotations
 
+import glob
 import json
 import os
 import re
@@ -141,8 +142,12 @@ def prepare_db(store: Store) -> Path:
         raise RuntimeError("ライブラリが未設定のためバックアップできません")
     tmp_dir = Path(tempfile.mkdtemp(prefix="story-graph-backup-"))
     dest = tmp_dir / DB_NAME
-    store.conn.commit()  # VACUUM は進行中のトランザクションがあると失敗する
-    store.conn.execute("VACUUM INTO ?", (str(dest),))
+    try:
+        store.conn.commit()  # VACUUM は進行中のトランザクションがあると失敗する
+        store.conn.execute("VACUUM INTO ?", (str(dest),))
+    except Exception:
+        shutil.rmtree(tmp_dir, ignore_errors=True)  # 失敗したコピー先を残さない
+        raise
     return dest
 
 
@@ -281,7 +286,7 @@ def rotate(directory: str, name: str, keep: int) -> list[str]:
     if not base.is_dir():
         return []
     files = sorted(
-        (f for f in base.glob(f"{name}{AUTO_MARK}*.zip") if f.is_file()),
+        (f for f in base.glob(f"{glob.escape(name + AUTO_MARK)}*.zip") if f.is_file()),
         key=lambda f: f.name,
         reverse=True,
     )

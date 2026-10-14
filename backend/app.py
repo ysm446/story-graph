@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sqlite3
 import zipfile
+from collections.abc import AsyncIterator
 from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile
@@ -38,6 +40,7 @@ import rendering
 import setting_documents
 import snapshots
 import story_clock
+import validation
 from comfy_manager import ComfyManager
 from llama_manager import LlamaManager
 from store import Store
@@ -319,7 +322,7 @@ async def get_library() -> dict[str, Any]:
 async def switch_library(body: LibrarySwitchIn) -> dict[str, Any]:
     try:
         store.switch_library(body.root)
-    except OSError as e:
+    except (OSError, sqlite3.DatabaseError) as e:  # DB でないファイルは DatabaseError
         raise HTTPException(400, f"ライブラリを開けません: {e}")
     try:
         store.gc_assets()
@@ -489,6 +492,24 @@ async def graph() -> dict[str, Any]:
     return store.graph()
 
 
+def _default_anchor(anchor: str | None) -> str | None:
+    """指定が無ければ正史の末尾(正史が空なら None)。"""
+    if anchor is not None:
+        return anchor
+    canon = store.canon_path()
+    return canon[-1] if canon else None
+
+
+async def _read_upload(file: UploadFile, limit: int, refusal: str) -> bytearray:
+    """アップロードを 1MB ずつ読み、limit を超えたら 400 で断る。"""
+    data = bytearray()
+    while chunk := await file.read(1 << 20):
+        data.extend(chunk)
+        if len(data) > limit:
+            raise HTTPException(400, f"{limit // (1024 * 1024)}MB を超える{refusal}")
+    return data
+
+
 @app.post("/nodes")
 async def create_node(body: NodeIn) -> dict[str, Any]:
     data = body.model_dump(exclude={"events", "parent_id", "draft", "detached"})
@@ -499,6 +520,8 @@ async def create_node(body: NodeIn) -> dict[str, Any]:
         )
     except KeyError as e:
         raise HTTPException(404, str(e))
+    except ValueError as e:  # 結末の先につなぐ等(store が拒否する)
+        raise HTTPException(400, str(e))
     node["validation"] = store.validate(node["id"])
     return node
 
@@ -512,8 +535,9 @@ async def insert_node_after(node_id: str, body: NodeIn) -> dict[str, Any]:
         node = node_operations.insert(store, node_id, data, events)
     except KeyError as e:
         raise HTTPException(404, str(e))
-    node["validation"] = store.validate(node["id"])
-    return node
+    except ValueError as e:  # 結末の先につなぐ等(store が拒否する)
+        raise HTTPException(400, str(e))
+    return node  # validation は node_operations.insert が付けている
 
 
 @app.post("/nodes/{node_id}/make_canon")
@@ -856,11 +880,7 @@ async def upload_asset(file: UploadFile) -> dict[str, str]:
         raise HTTPException(400, f"対応していない形式です: {ext}(画像: png/jpg/gif/webp、動画: mp4/webm)")
     name = f"{uuid.uuid4().hex[:12]}{ext}"
     limit = MAX_VIDEO_BYTES if ext in ALLOWED_VIDEO_EXTS else MAX_IMAGE_BYTES
-    data = bytearray()
-    while chunk := await file.read(1 << 20):
-        data.extend(chunk)
-        if len(data) > limit:
-            raise HTTPException(400, f"{limit // (1024 * 1024)}MB を超えるファイルはアップロードできません")
+    data = await _read_upload(file, limit, "ファイルはアップロードできません")
     # 大きい動画の書き込みでイベントループを塞がないようスレッドに逃がす
     await asyncio.to_thread((_Path(assets) / name).write_bytes, bytes(data))
     return {"path": name}
@@ -1023,8 +1043,14 @@ async def reset_layout() -> dict[str, str]:
 async def put_events(node_id: str, body: EventsPut) -> dict[str, Any]:
     if store.get_node(node_id) is None:
         raise HTTPException(404, "node not found")
+    events_in = [e.model_dump() for e in body.events]
+    # 必須フィールドの無いイベントを保存すると、このノード以降の fold が全部
+    # 落ちる(状態・検証・追加が 500 になる)ので、保存前に断る
+    problems = validation.payload_errors(events_in)
+    if problems:
+        raise HTTPException(400, "保存できないイベントがあります: " + " / ".join(problems))
     await snapshots.auto(store, "イベント編集の前", 600)
-    events = store.replace_events(node_id, [e.model_dump() for e in body.events])
+    events = store.replace_events(node_id, events_in)
     return {"events": events, "validation": store.validate(node_id)}
 
 
@@ -1179,7 +1205,6 @@ class LlamaInstallIn(BaseModel):
 
 @app.post("/llama/install")
 async def llama_install(body: LlamaInstallIn) -> StreamingResponse:
-    import json as _json
     from pathlib import Path
 
     import llama_installer
@@ -1200,19 +1225,25 @@ async def llama_install(body: LlamaInstallIn) -> StreamingResponse:
         if in_use:
             raise HTTPException(409, "起動中の llama-server です。停止してからインストールしてください。")
 
+    if body.cudart_only:
+        source = llama_installer.install_cudart(body.variant)
+    else:
+        source = llama_installer.install_variant(body.variant, body.include_cudart)
+    return _progress_sse(source)
+
+
+def _progress_sse(source: AsyncIterator[dict[str, Any]]) -> StreamingResponse:
+    """インストーラの進捗(dict の非同期列)を SSE で流す。失敗は error イベントにする。"""
+
     async def stream():
         try:
-            if body.cudart_only:
-                source = llama_installer.install_cudart(body.variant)
-            else:
-                source = llama_installer.install_variant(body.variant, body.include_cudart)
             async for progress in source:
-                yield f"data: {_json.dumps(progress, ensure_ascii=False)}\n\n"
+                yield llm.sse(progress)
         except asyncio.CancelledError:
             # クライアント切断でキャンセル。ここでの yield は届かないので何もしない
             raise
         except Exception as e:  # noqa: BLE001
-            yield f"data: {_json.dumps({'phase': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+            yield llm.sse({"phase": "error", "message": str(e)})
 
     return StreamingResponse(stream(), media_type="text/event-stream")
 
@@ -1322,23 +1353,13 @@ class ComfyInstallIn(BaseModel):
 
 @app.post("/comfy/install")
 async def comfy_install(body: ComfyInstallIn) -> StreamingResponse:
-    import json as _json
 
     import comfy_installer
 
     if comfy_mgr.status()["spawned"]:
         raise HTTPException(409, "ComfyUI が起動中です。停止してからインストールしてください。")
 
-    async def stream():
-        try:
-            async for progress in comfy_installer.install_variant(body.variant):
-                yield f"data: {_json.dumps(progress, ensure_ascii=False)}\n\n"
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:  # noqa: BLE001
-            yield f"data: {_json.dumps({'phase': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
-
-    return StreamingResponse(stream(), media_type="text/event-stream")
+    return _progress_sse(comfy_installer.install_variant(body.variant))
 
 
 @app.post("/comfy/uninstall")
@@ -1427,7 +1448,6 @@ async def tts_stop() -> dict[str, Any]:
 
 @app.post("/tts/install")
 async def tts_install() -> StreamingResponse:
-    import json as _json
 
     import tts_installer
 
@@ -1435,16 +1455,7 @@ async def tts_install() -> StreamingResponse:
     if tts_mgr.status()["spawned"]:
         raise HTTPException(409, "TTS サーバーが起動中です。停止してからインストールしてください。")
 
-    async def stream():
-        try:
-            async for progress in tts_installer.install(engine):
-                yield f"data: {_json.dumps(progress, ensure_ascii=False)}\n\n"
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:  # noqa: BLE001
-            yield f"data: {_json.dumps({'phase': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
-
-    return StreamingResponse(stream(), media_type="text/event-stream")
+    return _progress_sse(tts_installer.install(engine))
 
 
 @app.post("/tts/uninstall")
@@ -1671,11 +1682,7 @@ async def add_voice_ref(profile_id: str, file: UploadFile) -> dict[str, Any]:
     ext = _Path(file.filename or "").suffix.lower()
     if ext not in ALLOWED_VOICE_EXTS:
         raise HTTPException(400, f"対応していない形式です: {ext or '(拡張子なし)'}(wav / mp3 / flac / ogg)")
-    data = bytearray()
-    while chunk := await file.read(1 << 20):
-        data.extend(chunk)
-        if len(data) > MAX_VOICE_BYTES:
-            raise HTTPException(400, f"{MAX_VOICE_BYTES // (1024 * 1024)}MB を超える音声は取り込めません")
+    data = await _read_upload(file, MAX_VOICE_BYTES, "音声は取り込めません")
     name = f"{uuid.uuid4().hex[:12]}{ext}"
     await asyncio.to_thread((_Path(voices) / name).write_bytes, bytes(data))
     updated = store.update_voice_profile(profile_id, {"ref_paths": [*profile["ref_paths"], name]})
@@ -2402,10 +2409,7 @@ async def chat_room_send(body: RoomSendIn) -> StreamingResponse:
         base_url = await llama.ensure_running(store.get_settings())
     except Exception as e:
         return _sse_error_response(str(e))
-    anchor = body.anchor_node
-    if anchor is None:
-        canon = store.canon_path()
-        anchor = canon[-1] if canon else None
+    anchor = _default_anchor(body.anchor_node)
     return StreamingResponse(
         chat_agent.room_stream(
             store,
@@ -2430,10 +2434,7 @@ async def chat_send(body: ChatSendIn) -> StreamingResponse:
         base_url = await llama.ensure_running(store.get_settings())
     except Exception as e:
         return _sse_error_response(str(e))
-    anchor = body.anchor_node
-    if anchor is None:
-        canon = store.canon_path()
-        anchor = canon[-1] if canon else None
+    anchor = _default_anchor(body.anchor_node)
     return StreamingResponse(
         chat_agent.chat_stream(
             store,
@@ -2668,10 +2669,7 @@ async def chat_token_usage(body: ChatSuggestIn) -> dict[str, Any]:
     --ctx-size に渡している値)。サーバー未起動時は文字数からの概算を返す。"""
     settings = store.get_settings()
     base_url = settings.get("llm_base_url") or llm.DEFAULT_BASE_URL
-    anchor = body.anchor_node
-    if anchor is None:
-        canon = store.canon_path()
-        anchor = canon[-1] if canon else None
+    anchor = _default_anchor(body.anchor_node)
     usage = await chat_agent.token_usage(
         store, base_url, body.chat_id, anchor, body.scope, body.char_id, body.mode, body.participants
     )
@@ -2688,10 +2686,7 @@ async def chat_suggest_questions(body: ChatSuggestIn) -> dict[str, Any]:
     base_url = settings.get("llm_base_url") or llm.DEFAULT_BASE_URL
     if not await llm.health(base_url):
         return {"questions": []}
-    anchor = body.anchor_node
-    if anchor is None:
-        canon = store.canon_path()
-        anchor = canon[-1] if canon else None
+    anchor = _default_anchor(body.anchor_node)
     try:
         questions = await chat_agent.suggest_questions(store, base_url, body.chat_id, anchor, body.scope)
     except Exception:  # noqa: BLE001

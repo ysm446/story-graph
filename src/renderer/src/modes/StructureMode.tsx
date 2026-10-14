@@ -806,9 +806,14 @@ function BeatTab({
   const handleSave = async (): Promise<boolean> => {
     if (saving) return false
     setSaving(true)
+    const sent = draft
     try {
-      await api.updateNode(node.id, draft)
-      deleteBeatDraft(node.id) // 保存できたら退避を破棄
+      await api.updateNode(node.id, sent)
+      // 保存できたら退避を破棄する。ただし保存中に打った分は退避に残っている
+      // (下の effect が入力のたびに積む)ので、送った内容と同じときだけ消す。
+      // 残した退避は再読込後の初期化(beatDraftCache から復元)で引き継がれる
+      const latest = beatDraftCache.get(node.id)
+      if (!latest || latest === sent) deleteBeatDraft(node.id)
       onSaved()
       return true
     } catch (e) {
@@ -1841,8 +1846,14 @@ function ChapterTab({
       kind: 'digest',
       nodeId: group.id, // 章 ID を目印にする(useTasks の絞り込み用)
       runner: async () => {
-        await api.generateGroupDigest(group.id)
-        notifyGraphChanged()
+        // キュー(tasks.ts)は runner の例外を握りつぶすので、ここで知らせる。
+        // 章タブはタスク完了前に閉じられていることがあるため、setError ではなく全体の通知に出す
+        try {
+          await api.generateGroupDigest(group.id)
+          notifyGraphChanged()
+        } catch (e) {
+          showStatusNotice(`章のまとめを作れませんでした(${group.title}): ${String(e)}`)
+        }
       }
     })
   }
@@ -4195,7 +4206,8 @@ function StructureModeInner({
         if (!draft) continue
         try {
           await api.updateNode(id, draft)
-          deleteBeatDraft(id)
+          // 保存中に打った分(表示中のシーン)は退避に残す(BeatTab.handleSave と同じ)
+          if (beatDraftCache.get(id) === draft) deleteBeatDraft(id)
           saved += 1
         } catch {
           // 1つ失敗しても残りは保存する。失敗したシーンの下書きは残る

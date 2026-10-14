@@ -69,6 +69,27 @@ def _missing_payload_fields(etype: str, payload: dict[str, Any]) -> list[str]:
     required = list(_REQUIRED_FIELDS.get(etype, ()))
     if etype == "fact_set":
         required = ["scope", "key", "value"]
-        if payload.get("scope") == "char":
+        # fold は world 以外をすべてキャラ scope として扱うので、それに合わせる
+        if payload.get("scope") != "world":
             required.append("char")
     return [f for f in required if payload.get(f) is None]
+
+
+def payload_errors(events: list[dict[str, Any]]) -> list[str]:
+    """fold に掛けられないイベント(未知の型・必須フィールド欠け)の説明を返す。空なら OK。
+
+    保存前の門番用。validate_node と違って状態は見ない。
+    """
+    problems: list[str] = []
+    for i, event in enumerate(events):
+        etype = event.get("type")
+        payload = event.get("payload")
+        if etype not in EVENT_TYPES:
+            problems.append(f"{i + 1}件目: 未知のイベント型です: {etype}")
+            continue
+        if not isinstance(payload, dict):
+            problems.append(f"{i + 1}件目({etype}): payload がオブジェクトではありません")
+            continue
+        for missing in _missing_payload_fields(etype, payload):
+            problems.append(f"{i + 1}件目({etype}): 必須フィールドがありません: {missing}")
+    return problems
