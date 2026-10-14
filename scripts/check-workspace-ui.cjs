@@ -197,7 +197,8 @@ for mode in ['production', None]:
     // 下に隠れているフローチャートのノード・線も DOM に居るので、鎖の領域の中だけを数える
     const chainNodes = `[...document.querySelectorAll('[data-cast-chain] .react-flow__node')]`
     const chainEdges = `document.querySelectorAll('[data-cast-chain] .react-flow__edge')`
-    await assert(`${chainNodes}.length === 7 && ${chainEdges}.length === 8 && ${chainNodes}.filter(e => e.textContent.includes('別の人物を差す')).length === 4`, '人物の鎖に、キャラクター 3・シーン 4 のノードと 8 本の線、各シーンに空き口が出る')
+    // 線は出番の 8 本 + シーンの順番の 3 本(見るだけ)
+    await assert(`${chainNodes}.length === 7 && ${chainEdges}.length === 11 && [...${chainEdges}].filter(e => e.dataset.id.startsWith('flow:')).length === 3 && ${chainNodes}.filter(e => e.textContent.includes('別の人物を差す')).length === 4`, '人物の鎖に、キャラクター 3・シーン 4 のノードと 8 本の線、各シーンに空き口が出る')
     writeFileSync(join(target, 'cast-chain.png'), (await win.webContents.capturePage()).toPNG())
     const graphBefore = await (await fetch(base + '/graph')).json()
     const target2 = graphBefore.nodes.find((n) => n.title === second)
@@ -209,7 +210,7 @@ for mode in ['production', None]:
     const after = graphAfter.nodes.find((n) => n.id === target2.id)
     if (after.cast.includes(engineer.id) || after.cast.length !== target2.cast.length - 1) errors.push('線をダブルクリックしても cast から外れない: ' + JSON.stringify(after.cast))
     else console.log('PASS 線をダブルクリックすると、線の先のシーンの cast から外れる')
-    await assert(`${chainEdges}.length === 7`, '外したあとは線が 7 本になり、前後の出番がつながり直す')
+    await assert(`[...${chainEdges}].filter(e => e.dataset.id.startsWith('chain:')).length === 7`, '外したあとは線が 7 本になり、前後の出番がつながり直す')
     // シーンのノードに挿絵の場所と本文の一部が出る(完成例に挿絵は無いので本文だけ)
     await assert(`${chainNodes}.some(e => e.textContent.includes(${JSON.stringify(example.scenes[1].beat.slice(0, 12))}))`, 'シーンのノードに本文の一部が出る')
     // ドラッグで動かすと配置が保存され、読み直しても残る
@@ -236,7 +237,8 @@ for mode in ['production', None]:
     // キャラクターをクリックすると、その人物が居るシーンを選び、詳細欄のキャラタブにその人物を出す
     await js(`${chainNodes}.find(e => e.textContent.includes('ケン')).dispatchEvent(new MouseEvent('click', { bubbles: true }))`)
     await pause(800)
-    await assert(`(() => { const name = [...document.querySelectorAll('[data-character-name]')].find(e => e.getClientRects().length); const pressed = [...document.querySelectorAll('button[aria-pressed="true"]')].map(e => e.textContent.trim()); return !!name && name.textContent.trim() === 'ケン' && pressed.some(t => t.includes('ケン')) && !!document.querySelector('button[aria-label="プロフィールを編集"]') && !document.body.textContent.includes('このキャラクターを削除') })()`, 'キャラクターをクリックすると、詳細欄の「資料」タブに資料庫と同じ編集画面でその人物が出る(削除は出ない)')
+    const tabLabels = `[...document.querySelectorAll('aside button')].filter(e => e.getClientRects().length).map(e => e.textContent.trim())`
+    await assert(`(() => { const name = [...document.querySelectorAll('[data-character-name]')].find(e => e.getClientRects().length); const tabs = ${tabLabels}; return !!name && name.textContent.trim() === 'ケン' && ['プロフィール','状態','関係図','事実の履歴'].every(t => tabs.includes(t)) && !tabs.includes('シーン') && !tabs.includes('清書') && !!document.querySelector('button[aria-label="プロフィールを編集"]') && !document.body.textContent.includes('このキャラクターを削除') })()`, 'キャラクターをクリックすると、詳細欄が人物専用(プロフィール / 状態 / 関係図 / 事実の履歴)になり、プロフィールに資料庫と同じ編集画面が出る(シーン・清書・削除は出ない)')
     // 詳細欄で保存すると、鎖と資料庫に反映される
     await js(`document.querySelector('button[aria-label="プロフィールを編集"]').click()`)
     await pause(300)
@@ -246,18 +248,31 @@ for mode in ['production', None]:
     const savedKen = (await (await fetch(base + '/characters')).json()).find((c) => c.name === 'ケン')
     if (savedKen.profile !== '詳細欄から書いたプロフィール') errors.push('詳細欄で確定したプロフィールが保存されていない: ' + JSON.stringify(savedKen.profile))
     else console.log('PASS 詳細欄の「資料」タブで確定したプロフィールが保存される')
-    await js(`[...document.querySelectorAll('[role="group"][aria-label="資料を見る人物"] button')].find(e => e.getAttribute('data-tip') === 'アヤ').click()`)
+    await click('状態')
+    await pause(600)
+    await assert(`document.body.textContent.includes('の時点') && !!document.querySelector('input[placeholder^="記憶を追加"]') && !document.querySelector('[role="group"][aria-label="このシーンの登場人物"]')`, '「状態」でその人物の記憶・事実・関係が、時点つきで出る(人物の一覧は出さない)')
+    await click('事実の履歴')
+    await pause(400)
+    await assert(`!document.querySelector('[role="group"][aria-label="事実を見る対象"]') && document.body.textContent.includes('の時点')`, '「事実の履歴」はその人物に絞って出る')
+    await click('プロフィール')
     await pause(300)
-    await assert(`[...document.querySelectorAll('[data-character-name]')].some(e => e.getClientRects().length && e.textContent.trim() === 'アヤ')`, '左の一覧で別の人物を選ぶと編集画面が切り替わる')
     writeFileSync(join(target, 'cast-library.png'), (await win.webContents.capturePage()).toPNG())
     // シーンのノードの登場人物の行をクリック → その人物が資料タブに出て、シーンの選択は変わらない
     await js(`(() => { const row = [...document.querySelectorAll('[data-cast-chain] [data-tip$="この人物を出す"]')].find(e => e.getAttribute('data-tip').startsWith('老技師')); row.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 10, clientY: 10 })); row.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 10, clientY: 10 })) })()`)
     await pause(400)
-    await assert(`[...document.querySelectorAll('[data-character-name]')].some(e => e.getClientRects().length && e.textContent.trim() === '老技師') && [...document.querySelectorAll('[data-cast-chain] .react-flow__node')].some(e => e.textContent.includes(${JSON.stringify(second)}) && e.classList.contains('selected')) === false`, 'シーンのノードの登場人物の行をクリックすると、その人物が資料タブに出る(シーンは選ばれない)')
+    await assert(`[...document.querySelectorAll('[data-character-name]')].some(e => e.getClientRects().length && e.textContent.trim() === '老技師') && [...document.querySelectorAll('[data-cast-chain] .react-flow__node')].some(e => e.textContent.includes(${JSON.stringify(second)}) && e.classList.contains('selected')) === false`, 'シーンのノードの登場人物の行をクリックすると、その人物が人物専用の表示に出る(シーンは選ばれない)')
     // そのあとシーンの見出しをクリックすると、詳細欄は「シーン」に戻る
     await js(`[...document.querySelectorAll('[data-cast-chain] [data-tip*="ドラッグで動かせます"]')].find(e => e.textContent.includes(${JSON.stringify(example.scenes[2].title)})).dispatchEvent(new MouseEvent('click', { bubbles: true }))`)
     await pause(500)
-    await assert(`[...document.querySelectorAll('input')].some(i => i.value === ${JSON.stringify(example.scenes[2].title)})`, '資料タブのあとにシーンをクリックすると、詳細欄が「シーン」に戻ってそのシーンが出る')
+    await assert(`[...document.querySelectorAll('input')].some(i => i.value === ${JSON.stringify(example.scenes[2].title)}) && ${tabLabels}.includes('シーン') && !${tabLabels}.includes('プロフィール')`, '人物専用の表示のあとにシーンをクリックすると、詳細欄がシーンのタブに戻ってそのシーンが出る')
+    // シーンをダブルクリック → フローチャートに戻り、そのシーンが選ばれている
+    await js(`[...document.querySelectorAll('[data-cast-chain] [data-tip*="ドラッグで動かせます"]')].find(e => e.textContent.includes(${JSON.stringify(example.scenes[3].title)})).dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))`)
+    await pause(1500)
+    await assert(`!document.body.textContent.includes('キャラクタービュー') && [...document.querySelectorAll('input')].some(i => i.value === ${JSON.stringify(example.scenes[3].title)})`, 'シーンをダブルクリックするとフローチャートに戻り、そのシーンが選ばれる')
+    await click('👥 人物')
+    await pause(300)
+    await click('人物の鎖')
+    await pause(500)
     writeFileSync(join(target, 'cast-chain-char.png'), (await win.webContents.capturePage()).toPNG())
     // 整列で自動配置に戻る
     await js(`window.confirm = () => true; 0`)

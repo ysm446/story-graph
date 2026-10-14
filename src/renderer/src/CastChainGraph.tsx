@@ -28,6 +28,8 @@ import type { Character, Group, StoryNode } from './types'
  *   前後の出番は自動でつながり直す
  * - ノードは動かせる。配置は chain_x / chain_y に保存する(フローチャートの pos_x / pos_y
  *   とは別。null = 自動配置)。「整列」で全部を自動配置に戻す
+ * - シーンどうしのつながり(正史の順番)は見出しの行の口を細い灰色の線で結んで見せるだけ。
+ *   つなぎ替え・削除はできない(順番の編集はフローチャート。ダブルクリックでそのシーンへ飛ぶ)
  * - 対象は正史のみ
  *
  * docs/plan/plan.md の「構造モードのキャラクタービュー」を参照。
@@ -56,6 +58,9 @@ type ChainSceneData = {
   /** 登場人物の行(アイコン・名前・ピン)をクリック → その人物を詳細欄の「資料」タブで開く(シーンの選択は変えない) */
   onSelectChar: (charId: string) => void
 }
+/** シーンのつながり(正史の順番)の線。見るだけで、つなぎ替えも削除もできない */
+const FLOW_EDGE_STYLE = { stroke: 'var(--text-faint)', strokeWidth: 1.5, strokeDasharray: '6 4' }
+const FLOW_HANDLE_STYLE = { ['--handle-color' as string]: 'var(--text-faint)' }
 type ChainSceneNode = Node<ChainSceneData, 'chainScene'>
 
 function ChainCharCard({ data }: NodeProps<ChainCharNode>): React.JSX.Element {
@@ -97,7 +102,14 @@ function ChainSceneCard({ data }: NodeProps<ChainSceneNode>): React.JSX.Element 
         ['--tw-ring-color' as string]: 'var(--accent-border)'
       }}
     >
-      <div className="border-b px-3 py-2" style={{ borderColor: 'var(--border)' }} data-tip="クリックで選択(下の詳細欄で編集できます)。ドラッグで動かせます">
+      <div
+        className="relative border-b px-3 py-2"
+        style={{ borderColor: 'var(--border)' }}
+        data-tip="クリックで選択(下の詳細欄で編集できます)。ドラッグで動かせます。ダブルクリックでフローチャートのこのシーンへ(順番の編集はそちらで)"
+      >
+        {/* シーンのつながり(正史の順番)の口。見るだけなので線は引けない */}
+        <Handle type="target" position={Position.Left} id="flow:in" isConnectable={false} style={FLOW_HANDLE_STYLE} />
+        <Handle type="source" position={Position.Right} id="flow:out" isConnectable={false} style={FLOW_HANDLE_STYLE} />
         {chapter && (
           <div className="truncate text-[10px]" style={{ color: 'var(--text-faint)' }}>{chapter}</div>
         )}
@@ -215,9 +227,23 @@ function buildNodes(
   return [...chars, ...scenes]
 }
 
-/** 人物ごとに、正史順の出番を順に結ぶ。最初の 1 本はキャラクターのノードから */
+/** 人物ごとに、正史順の出番を順に結ぶ。最初の 1 本はキャラクターのノードから。
+ *  シーンどうしのつながり(正史の順番)も、見るだけの線として足す */
 function buildEdges(path: StoryNode[], characters: Character[], readOnly: boolean): Edge[] {
   const edges: Edge[] = []
+  for (let i = 1; i < path.length; i += 1) {
+    edges.push({
+      id: `flow:${path[i - 1].id}:${path[i].id}`,
+      source: path[i - 1].id,
+      sourceHandle: 'flow:out',
+      target: path[i].id,
+      targetHandle: 'flow:in',
+      deletable: false,
+      selectable: false,
+      focusable: false,
+      style: FLOW_EDGE_STYLE
+    })
+  }
   for (const c of characters) {
     const color = c.color ?? FALLBACK_COLOR
     let prev: string | null = null
@@ -274,6 +300,7 @@ function CastChainGraphInner({
   readOnly,
   onSelectNode,
   onSelectChar,
+  onOpenInFlow,
   onCastChange,
   onPositionsChange
 }: {
@@ -285,6 +312,8 @@ function CastChainGraphInner({
   readOnly: boolean
   onSelectNode: (nodeId: string) => void
   onSelectChar: (charId: string) => void
+  /** シーンのダブルクリック → フローチャートでそのシーンを見る(順番の編集はそちらで) */
+  onOpenInFlow: (nodeId: string) => void
   /** cast を付け替える(保存は呼び出し側)。add = 登場させる、remove = 外す */
   onCastChange: (sceneId: string, charId: string, op: 'add' | 'remove') => void
   /** ドラッグで動かしたノードの配置(保存は呼び出し側) */
@@ -328,6 +357,12 @@ function CastChainGraphInner({
     },
     [onSelectNode, onSelectChar]
   )
+  const onNodeDoubleClick = useCallback(
+    (_: React.MouseEvent, node: Node): void => {
+      if (node.type === 'chainScene') onOpenInFlow(node.id)
+    },
+    [onOpenInFlow]
+  )
   // まとめて動かしたときも 1 回で保存する(nodes = 一緒に動いた全ノード)
   const onNodeDragStop = useCallback(
     (_: React.MouseEvent | MouseEvent | TouchEvent, __: Node, dragged: Node[]): void => {
@@ -355,6 +390,7 @@ function CastChainGraphInner({
       onEdgesDelete={removeEdges}
       onEdgeDoubleClick={readOnly ? undefined : (_, edge) => removeEdges([edge])}
       onNodeClick={onNodeClick}
+      onNodeDoubleClick={onNodeDoubleClick}
       onNodeDragStop={onNodeDragStop}
       // ノードは消せない(消すのは線だけ。線を消すと cast から外れる)
       onBeforeDelete={async ({ edges: toDelete }) => ({ nodes: [], edges: toDelete })}

@@ -23,7 +23,8 @@ export function CharTab({
   memoryContents,
   onChanged,
   onSelectNode,
-  focusChar
+  focusChar,
+  lockChar
 }: {
   node: StoryNode
   characters: Character[]
@@ -34,6 +35,8 @@ export function CharTab({
   /** 外から人物を指定する(人物の鎖でキャラクターをクリックしたとき)。
    *  同じ人物を続けて指しても効くよう、押すたびに増える番号を添える */
   focusChar?: { id: string; seq: number } | null
+  /** 人物を固定する(左の登場人物の一覧を出さない)。詳細欄の人物専用の表示で使う */
+  lockChar?: boolean
 }): React.JSX.Element {
   const [state, setState] = useState<StateSnapshot | null>(null)
   const [charId, setCharId] = useState<string | null>(focusChar?.id && node.cast.includes(focusChar.id) ? focusChar.id : node.cast[0] ?? null)
@@ -109,6 +112,7 @@ export function CharTab({
       {/* 左に登場人物の一覧(資料庫の一覧と同じ行: アイコン + 名前)、右に選んだ人物の状態。
           下段は横に広く縦に短いので、選択を上の行ではなく左の列に置く。狭いときは上の横並びに戻す(index.css の char-detail) */}
       <div className="char-detail-layout">
+      {!lockChar && (
       <div data-view-ok className="char-detail-list inspector-scrollbar" role="group" aria-label="このシーンの登場人物">
         {node.cast.map((id) => {
           const character = characters.find((c) => c.id === id)
@@ -127,6 +131,7 @@ export function CharTab({
           )
         })}
       </div>
+      )}
       <div className="scene-detail flex min-h-0 min-w-0 flex-1 flex-col">
       {node.cast.length === 0 && (
         <div className="text-[12px]" style={{ color: 'var(--text-faint)' }}>

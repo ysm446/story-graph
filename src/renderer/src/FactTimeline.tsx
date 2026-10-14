@@ -64,21 +64,26 @@ export default function FactTimeline({
   path,
   characters,
   selectedNodeId,
-  onSelectNode
+  onSelectNode,
+  fixedTarget
 }: {
   path: StoryNode[]
   characters: Character[]
   selectedNodeId: string | null
   onSelectNode: (nodeId: string) => void
+  /** 対象の人物を固定する(左の一覧を出さない)。詳細欄の人物専用の表示で使う */
+  fixedTarget?: string | null
 }): React.JSX.Element {
   // 表示対象。null = 世界の facts
   const [target, setTarget] = useState<string | null>(() => characters[0]?.id ?? null)
   // 削除済み・読み込み前のキャラを指したままにしない(一覧に該当の行が無いのに、
   // 帯だけ居ないキャラで計算されてしまう)
   const effectiveTarget =
-    target !== null && !characters.some((c) => c.id === target)
-      ? (characters[0]?.id ?? null)
-      : target
+    fixedTarget !== undefined && fixedTarget !== null
+      ? fixedTarget
+      : target !== null && !characters.some((c) => c.id === target)
+        ? (characters[0]?.id ?? null)
+        : target
   const { keys, bands } = useMemo(
     () => buildBands(path, effectiveTarget),
     [path, effectiveTarget]
@@ -90,6 +95,7 @@ export default function FactTimeline({
       {/* 左に対象の一覧(キャラタブと同じ行: アイコン + 名前)、右に事実の帯。対象は人物の全員と、
           人物に属さない「世界」。狭いときは上の横並びに戻す(index.css の char-detail) */}
       <div className="char-detail-layout">
+      {!fixedTarget && (
       <div className="char-detail-list inspector-scrollbar" role="group" aria-label="事実を見る対象">
         {characters.map((c) => (
           <button
@@ -115,6 +121,7 @@ export default function FactTimeline({
           <span className="min-w-0 flex-1 truncate">世界</span>
         </button>
       </div>
+      )}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       {keys.length === 0 ? (
         <div className="py-6 text-center text-[12px]" style={{ color: 'var(--text-faint)' }}>

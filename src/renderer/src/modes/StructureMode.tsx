@@ -131,9 +131,12 @@ function StructureModeInner({
   const [pendingFocusId, setPendingFocusId] = useState<string | null>(focusNodeId ?? null)
   // 初回フォーカスを消化したか。済むまでは自動の全体表示(fitView)を止める
   const focusDoneRef = useRef(!focusNodeId)
-  const [inspectorTab, setInspectorTab] = useState<'beat' | 'render' | 'char' | 'graph' | 'facts' | 'library'>('beat')
-  // 詳細欄「資料」タブで開いている人物(資料庫と同じ編集画面を出す)
+  const [inspectorTab, setInspectorTab] = useState<'beat' | 'render' | 'char' | 'graph' | 'facts'>('beat')
+  // 詳細欄の対象。scene = 選択中のシーン(章・マーカー)のタブ、character = 人物専用のタブ
+  // (人物の鎖でキャラクターや登場人物の行をクリックすると character、シーンを選ぶと scene に戻る)
+  const [inspectorFocus, setInspectorFocus] = useState<'scene' | 'character'>('scene')
   const [libraryCharId, setLibraryCharId] = useState<string | null>(null)
+  const [charTab, setCharTab] = useState<'profile' | 'state' | 'graph' | 'facts'>('profile')
   const [validation, setValidation] = useState<string[]>([])
   const [instruction, setInstruction] = useState('')
   const [generating, setGenerating] = useState(false)
@@ -1472,8 +1475,8 @@ function StructureModeInner({
     // 章ノードの選択はインスペクタの章パネルへ。シーン選択・選択解除で閉じる
     if (chapter) setSelectedChapterId((chapter.data as ChapterNodeData).group.id)
     else setSelectedChapterId(null)
-    // 「資料」はシーンに結びつかないタブなので、シーンを選んだら「シーン」へ戻す
-    if (beats.length > 0) setInspectorTab((tab) => (tab === 'library' ? 'beat' : tab))
+    // シーンを選んだら、詳細欄を人物専用の表示からシーンの表示に戻す
+    if (beats.length > 0 || chapter) setInspectorFocus('scene')
     setSelectedId((prev) => {
       if (beats.length === 0) return null
       // 複数選択中は先頭をインスペクタ対象にする
@@ -1843,23 +1846,46 @@ function StructureModeInner({
     []
   )
 
-  /** シーンをクリックで選んだとき、詳細欄が「資料」(シーンに結びつかないタブ)なら「シーン」に戻す。
-   *  キャラ・関係図・事実はシーンに結びついたタブなので、そのまま(選んだシーンの内容に変わる) */
+  /** キャラクタービューからシーンを選んだとき: 詳細欄を人物専用の表示からシーンの表示に戻す。
+   *  シーン側のタブ(キャラ・関係図・事実)は前のまま(選んだシーンの内容に変わる) */
   const selectSceneFromView = useCallback(
     (nodeId: string): void => {
       focusNodeOnCanvas(nodeId)
-      setInspectorTab((tab) => (tab === 'library' ? 'beat' : tab))
+      setInspectorFocus('scene')
     },
     [focusNodeOnCanvas]
   )
 
-  /** 人物の鎖でキャラクターをクリック → 詳細欄の「資料」タブに、資料庫と同じ編集画面でその人物を出す。
-   *  キャラタブ(その時点の状態)にもその人物を指しておくので、タブを切り替えればそのまま見られる */
+  /** 人物の鎖でシーンをダブルクリック → フローチャートに戻ってそのシーンへ寄せる
+   *  (章に畳まれていれば章の中まで開く。pendingFocusId の仕組みを使う) */
+  const openSceneInFlow = useCallback((nodeId: string): void => {
+    setCastView(null)
+    setInspectorFocus('scene')
+    focusDoneRef.current = false
+    setPendingFocusId(nodeId)
+  }, [])
+
+  /** 人物の鎖でキャラクター(ノード・登場人物の行)をクリック → 詳細欄を人物専用の表示にする
+   *  (プロフィール / 状態 / 関係図 / 事実の履歴。シーンや清書のタブは出さない) */
   const handleSelectChainChar = useCallback((charId: string): void => {
     setLibraryCharId(charId)
     setFocusChar((prev) => ({ id: charId, seq: (prev?.seq ?? 0) + 1 }))
-    setInspectorTab('library')
+    setInspectorFocus('character')
   }, [])
+
+  // 人物専用の表示で見ている人物と、その「時点」のシーン。選択中のシーンにその人物が居ればそのシーン、
+  // 居なければ正史で最後に登場したシーン(どこにも居なければ null = 状態・関係図・事実は出せない)
+  const focusCharacter = useMemo(
+    () => (libraryCharId ? characters.find((c) => c.id === libraryCharId) ?? null : null),
+    [characters, libraryCharId]
+  )
+  const charPointNode = useMemo(() => {
+    if (!libraryCharId) return null
+    const current = selectedId ? graphNodes.find((n) => n.id === selectedId) : null
+    if (current && !current.kind && (current.cast ?? []).includes(libraryCharId)) return current
+    return [...canonPath].reverse().find((n) => (n.cast ?? []).includes(libraryCharId)) ?? null
+  }, [libraryCharId, selectedId, graphNodes, canonPath])
+  const charPointPath = useMemo(() => (charPointNode ? pathToNode(charPointNode.id) : null), [charPointNode, pathToNode])
 
   /** 人物の鎖で線を差す / 消す → そのシーンの cast を付け替えて保存する。
    *  画面は先に書き換え(楽観更新)、保存後に読み直す。詳細欄に未保存の下書きが
@@ -2926,7 +2952,7 @@ function StructureModeInner({
                   {castView === 'chain'
                     ? productionEditingLocked
                       ? '制作中は見るだけです(線の差し替えは制作が終わってから)'
-                      : 'キャラクターやシーンの出口から入口へ線を引くと登場。線を選んで Delete かダブルクリックで外す。ノードはドラッグで動かせる'
+                      : 'キャラクターやシーンの出口から入口へ線を引くと登場。線を選んで Delete かダブルクリックで外す。灰色の点線はシーンの順番(見るだけ。シーンをダブルクリックでフローチャートへ)'
                     : '横がシーン、縦が人物。縦線でつながっているセルは同じシーンに一緒に登場しています'}
                 </span>
                 {castView === 'chain' && !productionEditingLocked && (
@@ -2950,10 +2976,11 @@ function StructureModeInner({
                     characters={characters}
                     groups={groups}
                     selectedNodeId={selectedId}
-                    selectedCharId={inspectorTab === 'library' ? libraryCharId : inspectorTab === 'char' ? focusChar?.id ?? null : null}
+                    selectedCharId={inspectorFocus === 'character' ? libraryCharId : null}
                     readOnly={productionEditingLocked}
                     onSelectNode={selectSceneFromView}
                     onSelectChar={handleSelectChainChar}
+                    onOpenInFlow={openSceneInFlow}
                     onCastChange={handleCastChange}
                     onPositionsChange={handleChainPositions}
                   />
@@ -3422,15 +3449,40 @@ function StructureModeInner({
           className="flex shrink-0 flex-col"
           style={{ background: 'var(--bg-sidebar)', height: inspectorOpen ? inspectorHeight : 0, maxHeight: '70%', overflow: 'hidden' }}
         >
-          <div data-view-ok className="flex shrink-0 gap-1 border-b px-5 py-2" style={{ borderColor: 'var(--border)' }}>
-            {(
+          <div data-view-ok className="flex shrink-0 items-center gap-1 border-b px-5 py-2" style={{ borderColor: 'var(--border)' }}>
+            {inspectorFocus === 'character' && focusCharacter ? (
+              <>
+                {/* 人物専用の表示: 誰を見ているかを先頭に出し、タブは人物のもの(シーン・清書は出さない) */}
+                <span className="mr-2 flex min-w-0 items-center gap-1.5 text-[12px] font-medium" style={{ color: 'var(--text)' }}
+                  data-tip="人物の鎖で選んだ人物。シーンを選ぶとシーンの表示に戻ります">
+                  <CharAvatar char={focusCharacter} size={20} />
+                  <span className="max-w-40 truncate">{focusCharacter.name}</span>
+                </span>
+                {(
+                  [
+                    { id: 'profile', label: 'プロフィール' },
+                    { id: 'state', label: '状態' },
+                    { id: 'graph', label: '関係図' },
+                    { id: 'facts', label: '事実の履歴' }
+                  ] as const
+                ).map((t) => (
+                  <button
+                    key={t.id}
+                    onClick={() => setCharTab(t.id)}
+                    className="rounded-md px-3 py-1 text-[12px]"
+                    style={charTab === t.id ? { background: 'var(--accent-soft)', color: 'var(--text)' } : { color: 'var(--text-dim)' }}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </>
+            ) : (
               [
                 { id: 'beat', label: activeGroup ? '章' : 'シーン' },
                 { id: 'render', label: '清書' },
                 { id: 'char', label: 'キャラ' },
                 { id: 'graph', label: '関係図' },
-                { id: 'facts', label: '事実' },
-                { id: 'library', label: '資料' }
+                { id: 'facts', label: '事実' }
               ] as const
             ).filter((t) => !activeGroup || (t.id !== 'render' && t.id !== 'char')).map((t) => (
               <button
@@ -3450,6 +3502,68 @@ function StructureModeInner({
               style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }} data-tip="詳細欄を折りたたむ">閉じる</button>
           </div>
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            {inspectorFocus === 'character' && focusCharacter ? (
+              // ---- 人物専用の表示 ----
+              charTab === 'profile' ? (
+                // 資料庫と同じ編集画面。削除は資料庫に限定する(onDeleted を渡さない)。保存後は構造も資料庫も読み直す
+                <div className="min-h-0 min-w-0 flex-1 overflow-hidden px-5 pt-3">
+                  <CharacterEditor
+                    key={focusCharacter.id}
+                    character={focusCharacter}
+                    onChanged={async () => {
+                      await reload()
+                      workspace.changed() // 資料庫側も次に開いたとき読み直す
+                    }}
+                  />
+                </div>
+              ) : !charPointNode || !charPointPath ? (
+                <div className="pt-8 text-center text-[12px]" style={{ color: 'var(--text-faint)' }}>
+                  {focusCharacter.name}はまだ正史のシーンに登場していません。
+                  <br />
+                  人物の鎖でシーンの入口へ線を引くと、その時点の{charTab === 'state' ? '状態' : charTab === 'graph' ? '関係' : '事実'}が見られます
+                </div>
+              ) : (
+                <>
+                  {/* どの時点を見ているか */}
+                  <div className="shrink-0 border-b px-5 py-1 text-[11px]" style={{ borderColor: 'var(--border)', color: 'var(--text-faint)' }}>
+                    「{charPointNode.title || '無題'}」の時点
+                    {charPointNode.id !== selectedId && '(この人物が最後に登場したシーン)'}
+                  </div>
+                  {charTab === 'state' ? (
+                    <CharTab
+                      key={`${focusCharacter.id}:${charPointNode.id}`}
+                      node={charPointNode}
+                      characters={characters}
+                      memoryContents={memoryContents}
+                      onChanged={() => void reload()}
+                      onSelectNode={selectSceneFromView}
+                      focusChar={{ id: focusCharacter.id, seq: 0 }}
+                      lockChar
+                    />
+                  ) : charTab === 'graph' ? (
+                    <div data-view-ok className="contents">
+                      <RelationGraph detailLayout autoFit
+                        characters={characters}
+                        path={charPointPath}
+                        allNodes={graphNodes}
+                        onCharactersChanged={() => void reload()}
+                        egoCharId={focusCharacter.id}
+                        onEgoChange={() => undefined}
+                      />
+                    </div>
+                  ) : (
+                    <FactTimeline
+                      path={charPointPath}
+                      characters={characters}
+                      selectedNodeId={charPointNode.id}
+                      onSelectNode={selectSceneFromView}
+                      fixedTarget={focusCharacter.id}
+                    />
+                  )}
+                </>
+              )
+            ) : (
+            <>
             {activeGroup && (shownTab === 'graph' || shownTab === 'facts') && (
               // どの時点を見ているか。章のときは選んだシーンが無いので明示する
               <div className="shrink-0 border-b px-5 py-1 text-[11px]" style={{ borderColor: 'var(--border)', color: 'var(--text-faint)' }}>
@@ -3471,47 +3585,6 @@ function StructureModeInner({
                 allNodes={graphNodes}
                 onCharactersChanged={() => void reload()}
               />
-              </div>
-            ) : shownTab === 'library' ? (
-              // 資料庫のキャラクター編集をそのまま出す。左は人物の一覧(キャラタブと同じ並び)。
-              // 削除は資料庫に限定する(onDeleted を渡さない)。保存後は構造も資料庫も読み直す
-              <div className="char-detail flex min-h-0 flex-1 flex-col">
-                <div className="char-detail-layout">
-                  <div className="char-detail-list inspector-scrollbar" role="group" aria-label="資料を見る人物">
-                    {characters.map((c) => (
-                      <button
-                        key={c.id}
-                        onClick={() => setLibraryCharId(c.id)}
-                        aria-pressed={c.id === libraryCharId}
-                        className="flex w-full min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12px]"
-                        style={c.id === libraryCharId ? { background: 'var(--accent-soft)', color: 'var(--text)' } : { color: 'var(--text-dim)' }}
-                        data-tip={c.name}
-                      >
-                        <CharAvatar char={c} size={24} />
-                        <span className="min-w-0 flex-1 truncate">{c.name}</span>
-                      </button>
-                    ))}
-                    {characters.length === 0 && (
-                      <div className="px-2 py-1.5 text-[11px]" style={{ color: 'var(--text-faint)' }}>キャラクターがいません(資料庫で追加)</div>
-                    )}
-                  </div>
-                  <div className="min-h-0 min-w-0 flex-1 overflow-hidden px-5 pt-3">
-                    {libraryCharId && characters.some((c) => c.id === libraryCharId) ? (
-                      <CharacterEditor
-                        key={libraryCharId}
-                        character={characters.find((c) => c.id === libraryCharId)!}
-                        onChanged={async () => {
-                          await reload()
-                          workspace.changed() // 資料庫側も次に開いたとき読み直す
-                        }}
-                      />
-                    ) : (
-                      <div className="pt-8 text-center text-[12px]" style={{ color: 'var(--text-faint)' }}>
-                        左の一覧か、人物の鎖のキャラクターをクリックすると、資料庫と同じ編集画面がここに出ます
-                      </div>
-                    )}
-                  </div>
-                </div>
               </div>
             ) : shownTab === 'facts' ? (
               <FactTimeline
@@ -3622,6 +3695,8 @@ function StructureModeInner({
               <div className="pt-8 text-center text-[12px]" style={{ color: 'var(--text-faint)' }}>
                 ノードを選択してください
               </div>
+            )}
+            </>
             )}
           </div>
         </aside>
