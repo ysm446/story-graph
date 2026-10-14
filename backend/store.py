@@ -1623,6 +1623,34 @@ class Store:
         self.conn.commit()
         return updated
 
+    def set_chain_positions(
+        self,
+        nodes: list[tuple[str, float | None, float | None]],
+        characters: list[tuple[str, float | None, float | None]],
+    ) -> int:
+        """人物の鎖(キャラクタービュー)での手動配置をまとめて保存する。
+
+        フローチャートの pos_x / pos_y とは別の列。NULL を渡すと自動配置に戻る。
+        存在しない ID は黙って無視する(戻り値は更新した件数)。
+        """
+        updated = 0
+        for node_id, x, y in nodes:
+            updated += self.conn.execute(
+                "UPDATE nodes SET chain_x = ?, chain_y = ? WHERE id = ?", (x, y, node_id)
+            ).rowcount
+        for char_id, x, y in characters:
+            updated += self.conn.execute(
+                "UPDATE characters SET chain_x = ?, chain_y = ? WHERE id = ?", (x, y, char_id)
+            ).rowcount
+        self.conn.commit()
+        return updated
+
+    def reset_chain_positions(self) -> None:
+        """人物の鎖の手動配置をすべて捨てる(自動配置に戻す)。"""
+        self.conn.execute("UPDATE nodes SET chain_x = NULL, chain_y = NULL")
+        self.conn.execute("UPDATE characters SET chain_x = NULL, chain_y = NULL")
+        self.conn.commit()
+
     def reset_positions(self) -> None:
         self.conn.execute("UPDATE nodes SET pos_x = NULL, pos_y = NULL")
         # 章カードの手動配置も一緒に捨てる(⟲ は「導出の配置に戻す」操作)

@@ -104,7 +104,11 @@ for mode in ['production', None]:
     await pause(180)
   }
   const assert = async (condition, message) => {
-    if (!await js(condition)) throw new Error(message)
+    if (!await js(condition)) {
+      try { writeFileSync(join(target, 'fail.png'), (await win.webContents.capturePage()).toPNG()) } catch {}
+      if (errors.length) console.error('これまでの不一致: ' + errors.join(' / '))
+      throw new Error(message)
+    }
     console.log('PASS ' + message)
   }
   const input = async (selector, value) => {
@@ -206,6 +210,58 @@ for mode in ['production', None]:
     if (after.cast.includes(engineer.id) || after.cast.length !== target2.cast.length - 1) errors.push('線をダブルクリックしても cast から外れない: ' + JSON.stringify(after.cast))
     else console.log('PASS 線をダブルクリックすると、線の先のシーンの cast から外れる')
     await assert(`${chainEdges}.length === 7`, '外したあとは線が 7 本になり、前後の出番がつながり直す')
+    // シーンのノードに挿絵の場所と本文の一部が出る(完成例に挿絵は無いので本文だけ)
+    await assert(`${chainNodes}.some(e => e.textContent.includes(${JSON.stringify(example.scenes[1].beat.slice(0, 12))}))`, 'シーンのノードに本文の一部が出る')
+    // ドラッグで動かすと配置が保存され、読み直しても残る
+    const sceneNode = `${chainNodes}.find(e => e.textContent.includes(${JSON.stringify(second)}))`
+    const before = await js(`(() => { const r = ${sceneNode}.getBoundingClientRect(); return [r.x, r.y] })()`)
+    await js(`(() => {
+      const el = ${sceneNode}.querySelector('[data-tip*="ドラッグで動かせます"]');
+      const r = el.getBoundingClientRect(); const x = r.x + r.width / 2, y = r.y + r.height / 2;
+      const fire = (target, type, cx, cy) => target.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy, button: 0, buttons: 1 }));
+      fire(el, 'mousedown', x, y); fire(window, 'mousemove', x + 40, y + 60); fire(window, 'mousemove', x + 120, y + 160); fire(window, 'mouseup', x + 120, y + 160);
+    })()`)
+    // 保存は非同期なので、しばらく待ってから確かめる(固定の待ち時間だと取りこぼすことがあった)
+    let movedScene = null
+    for (let i = 0; i < 30; i++) {
+      movedScene = (await (await fetch(base + '/graph')).json()).nodes.find((n) => n.id === target2.id)
+      if (typeof movedScene.chain_x === 'number') break
+      await pause(200)
+    }
+    if (typeof movedScene.chain_x !== 'number' || typeof movedScene.chain_y !== 'number') errors.push('ドラッグした配置が保存されていない: ' + JSON.stringify([movedScene.chain_x, movedScene.chain_y]))
+    else console.log('PASS ドラッグするとシーンの配置(chain_x / chain_y)が保存される')
+    const afterRect = await js(`(() => { const r = ${sceneNode}.getBoundingClientRect(); return [r.x, r.y] })()`)
+    if (!(afterRect[0] > before[0] + 50 && afterRect[1] > before[1] + 50)) errors.push("ドラッグしてもノードが動いていない: " + JSON.stringify({ before, afterRect }))
+    else console.log('PASS ドラッグしたノードが動く')
+    // キャラクターをクリックすると、その人物が居るシーンを選び、詳細欄のキャラタブにその人物を出す
+    await js(`${chainNodes}.find(e => e.textContent.includes('ケン')).dispatchEvent(new MouseEvent('click', { bubbles: true }))`)
+    await pause(800)
+    await assert(`(() => { const name = [...document.querySelectorAll('[data-character-name]')].find(e => e.getClientRects().length); const pressed = [...document.querySelectorAll('button[aria-pressed="true"]')].map(e => e.textContent.trim()); return !!name && name.textContent.trim() === 'ケン' && pressed.some(t => t.includes('ケン')) && !!document.querySelector('button[aria-label="プロフィールを編集"]') && !document.body.textContent.includes('このキャラクターを削除') })()`, 'キャラクターをクリックすると、詳細欄の「資料」タブに資料庫と同じ編集画面でその人物が出る(削除は出ない)')
+    // 詳細欄で保存すると、鎖と資料庫に反映される
+    await js(`document.querySelector('button[aria-label="プロフィールを編集"]').click()`)
+    await pause(300)
+    await input('[data-edit-group="profile"] textarea', '詳細欄から書いたプロフィール')
+    await js(`[...document.querySelectorAll('[data-edit-group="profile"] button')].find(e => e.textContent.trim() === '確定').click()`)
+    await pause(800)
+    const savedKen = (await (await fetch(base + '/characters')).json()).find((c) => c.name === 'ケン')
+    if (savedKen.profile !== '詳細欄から書いたプロフィール') errors.push('詳細欄で確定したプロフィールが保存されていない: ' + JSON.stringify(savedKen.profile))
+    else console.log('PASS 詳細欄の「資料」タブで確定したプロフィールが保存される')
+    await js(`[...document.querySelectorAll('[role="group"][aria-label="資料を見る人物"] button')].find(e => e.getAttribute('data-tip') === 'アヤ').click()`)
+    await pause(300)
+    await assert(`[...document.querySelectorAll('[data-character-name]')].some(e => e.getClientRects().length && e.textContent.trim() === 'アヤ')`, '左の一覧で別の人物を選ぶと編集画面が切り替わる')
+    writeFileSync(join(target, 'cast-library.png'), (await win.webContents.capturePage()).toPNG())
+    writeFileSync(join(target, 'cast-chain-char.png'), (await win.webContents.capturePage()).toPNG())
+    // 整列で自動配置に戻る
+    await js(`window.confirm = () => true; 0`)
+    await click('⟲ 整列')
+    let resetScene = null
+    for (let i = 0; i < 30; i++) {
+      resetScene = (await (await fetch(base + '/graph')).json()).nodes.find((n) => n.id === target2.id)
+      if (resetScene.chain_x === null) break
+      await pause(200)
+    }
+    if (resetScene.chain_x !== null) errors.push('整列しても配置が残っている')
+    else console.log('PASS 「整列」で配置が自動に戻る')
     await click('⊞ フローチャート')
     await pause(300)
     await assert(`!document.body.textContent.includes('キャラクタービュー') && [...document.querySelectorAll('.react-flow__node')].length > 0`, '「フローチャート」で元の表示に戻る')

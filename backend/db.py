@@ -300,6 +300,11 @@ def init_schema(conn: sqlite3.Connection) -> None:
         # 章ビューでの章カードの手動配置(NULL = 導出位置。正史章は専用レーン、島章は先頭シーンの位置)
         "ALTER TABLE groups ADD COLUMN pos_x REAL",
         "ALTER TABLE groups ADD COLUMN pos_y REAL",
+        # キャラクタービュー「人物の鎖」での手動配置(NULL = 自動配置)。フローチャートの pos_x / pos_y とは別
+        "ALTER TABLE nodes ADD COLUMN chain_x REAL",
+        "ALTER TABLE nodes ADD COLUMN chain_y REAL",
+        "ALTER TABLE characters ADD COLUMN chain_x REAL",
+        "ALTER TABLE characters ADD COLUMN chain_y REAL",
         # 章カードの表紙にするシーン(NULL = 自動。章内で最初に挿絵があるシーンを使う)
         "ALTER TABLE groups ADD COLUMN cover_node_id TEXT",
         # はじまり / 結末のマーカーノード(NULL = 通常シーン。docs/design/endings.md)

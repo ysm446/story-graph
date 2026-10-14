@@ -35,6 +35,8 @@ import type { ProductionPolicy } from '../api'
 import FactTimeline from '../FactTimeline'
 import CharacterTimeline from '../CharacterTimeline'
 import CastChainGraph from '../CastChainGraph'
+import CharacterEditor from './CharacterEditor'
+import CharAvatar from '../CharAvatar'
 import { Icon } from '../icons'
 import RelationGraph from '../RelationGraph'
 import { useRenderStyle } from '../RenderStyle'
@@ -117,6 +119,8 @@ function StructureModeInner({
   // キャラクタービュー。フローチャートの上に重ねて出す(docs/plan/plan.md)。
   // null = 出さない、table = 出番表(CharacterTimeline)、chain = 人物の鎖(CastChainGraph)
   const [castView, setCastView] = useState<null | 'table' | 'chain'>(null)
+  // 人物の鎖でクリックした人物(詳細欄のキャラタブに出す)。seq は同じ人物の連打でも効かせるため
+  const [focusChar, setFocusChar] = useState<{ id: string; seq: number } | null>(null)
   // 章ノードを選択中(インスペクタに章パネルを出す)
   const [selectedChapterId, setSelectedChapterId] = useState<string | null>(null)
   const [characters, setCharacters] = useState<Character[]>([])
@@ -127,7 +131,9 @@ function StructureModeInner({
   const [pendingFocusId, setPendingFocusId] = useState<string | null>(focusNodeId ?? null)
   // 初回フォーカスを消化したか。済むまでは自動の全体表示(fitView)を止める
   const focusDoneRef = useRef(!focusNodeId)
-  const [inspectorTab, setInspectorTab] = useState<'beat' | 'render' | 'char' | 'graph' | 'facts'>('beat')
+  const [inspectorTab, setInspectorTab] = useState<'beat' | 'render' | 'char' | 'graph' | 'facts' | 'library'>('beat')
+  // 詳細欄「資料」タブで開いている人物(資料庫と同じ編集画面を出す)
+  const [libraryCharId, setLibraryCharId] = useState<string | null>(null)
   const [validation, setValidation] = useState<string[]>([])
   const [instruction, setInstruction] = useState('')
   const [generating, setGenerating] = useState(false)
@@ -1823,6 +1829,26 @@ function StructureModeInner({
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [workspace.mode, castView, reactFlow, displayNodes, selectedId, selectedEdgeId, detachEdge, deleteNodeById, deleteNodes, navigateSelection, productionEditingLocked, copyNodes, pasteNodes, nodeClipboard])
 
+  /** 人物の鎖でノードを動かした → 配置を保存する(画面は先に書き換える) */
+  const handleChainPositions = useCallback(
+    (scenes: Array<{ id: string; x: number; y: number }>, chars: Array<{ id: string; x: number; y: number }>): void => {
+      const sceneMap = new Map(scenes.map((p) => [p.id, p]))
+      const charMap = new Map(chars.map((p) => [p.id, p]))
+      if (scenes.length) setGraphNodes((prev) => prev.map((n) => (sceneMap.has(n.id) ? { ...n, chain_x: sceneMap.get(n.id)!.x, chain_y: sceneMap.get(n.id)!.y } : n)))
+      if (chars.length) setCharacters((prev) => prev.map((c) => (charMap.has(c.id) ? { ...c, chain_x: charMap.get(c.id)!.x, chain_y: charMap.get(c.id)!.y } : c)))
+      void api.setChainPositions(scenes, chars).catch((e) => setGenStatus(`配置を保存できません: ${String(e)}`))
+    },
+    []
+  )
+
+  /** 人物の鎖でキャラクターをクリック → 詳細欄の「資料」タブに、資料庫と同じ編集画面でその人物を出す。
+   *  キャラタブ(その時点の状態)にもその人物を指しておくので、タブを切り替えればそのまま見られる */
+  const handleSelectChainChar = useCallback((charId: string): void => {
+    setLibraryCharId(charId)
+    setFocusChar((prev) => ({ id: charId, seq: (prev?.seq ?? 0) + 1 }))
+    setInspectorTab('library')
+  }, [])
+
   /** 人物の鎖で線を差す / 消す → そのシーンの cast を付け替えて保存する。
    *  画面は先に書き換え(楽観更新)、保存後に読み直す。詳細欄に未保存の下書きが
    *  残っていれば、その cast も合わせる(あとで保存したときに巻き戻さないように) */
@@ -2864,19 +2890,19 @@ function StructureModeInner({
               <div className="flex shrink-0 items-center gap-2 border-b px-3 py-1.5" style={{ borderColor: 'var(--border)' }}>
                 <button
                   onClick={() => setCastView(null)}
-                  className="rounded-lg border px-2.5 py-1 text-[13px]"
+                  className="shrink-0 whitespace-nowrap rounded-lg border px-2.5 py-1 text-[13px]"
                   style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
                   data-tip="フローチャート(シーンのつながり)に戻る"
                 >
                   ⊞ フローチャート
                 </button>
-                <span className="text-[13px] font-medium" style={{ color: 'var(--text)' }}>キャラクタービュー</span>
-                <div className="flex overflow-hidden rounded-md border" style={{ borderColor: 'var(--border-strong)' }}>
+                <span className="shrink-0 whitespace-nowrap text-[13px] font-medium" style={{ color: 'var(--text)' }}>キャラクタービュー</span>
+                <div className="flex shrink-0 overflow-hidden rounded-md border" style={{ borderColor: 'var(--border-strong)' }}>
                   {([['table', '出番表'], ['chain', '人物の鎖']] as const).map(([value, label]) => (
                     <button
                       key={value}
                       onClick={() => setCastView(value)}
-                      className="px-2.5 py-0.5 text-[12px]"
+                      className="whitespace-nowrap px-2.5 py-0.5 text-[12px]"
                       style={castView === value ? { background: 'var(--accent-soft)', color: 'var(--text)' } : { color: 'var(--text-faint)' }}
                       data-tip={value === 'table' ? '人物ごとの出番を表にして見る' : '人物の線がシーンを通り抜けていくノード図。線を差して登場させる'}
                     >
@@ -2884,13 +2910,26 @@ function StructureModeInner({
                     </button>
                   ))}
                 </div>
-                <span className="text-[11px]" style={{ color: 'var(--text-faint)' }}>
+                <span className="min-w-0 truncate text-[11px]" style={{ color: 'var(--text-faint)' }}>
                   {castView === 'chain'
                     ? productionEditingLocked
                       ? '制作中は見るだけです(線の差し替えは制作が終わってから)'
-                      : 'キャラクターやシーンの出口から入口へ線を引くと登場。線を選んで Delete かダブルクリックで外す'
+                      : 'キャラクターやシーンの出口から入口へ線を引くと登場。線を選んで Delete かダブルクリックで外す。ノードはドラッグで動かせる'
                     : '横がシーン、縦が人物。縦線でつながっているセルは同じシーンに一緒に登場しています'}
                 </span>
+                {castView === 'chain' && !productionEditingLocked && (
+                  <button
+                    onClick={() => {
+                      if (!window.confirm('人物の鎖の配置をすべて自動配置に戻します。よろしいですか?')) return
+                      void api.resetChainLayout().then(() => reload()).catch((e) => setGenStatus(`配置を戻せません: ${String(e)}`))
+                    }}
+                    className="ml-auto shrink-0 rounded-md border px-2 py-0.5 text-[11px]"
+                    style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+                    data-tip="手で動かした配置を捨てて、自動配置(左にキャラクター、正史順にシーン)に戻す"
+                  >
+                    ⟲ 整列
+                  </button>
+                )}
               </div>
               {castView === 'chain' ? (
                 <div data-cast-chain className="min-h-0 flex-1">
@@ -2899,9 +2938,12 @@ function StructureModeInner({
                     characters={characters}
                     groups={groups}
                     selectedNodeId={selectedId}
+                    selectedCharId={inspectorTab === 'library' ? libraryCharId : inspectorTab === 'char' ? focusChar?.id ?? null : null}
                     readOnly={productionEditingLocked}
                     onSelectNode={(nodeId) => focusNodeOnCanvas(nodeId)}
+                    onSelectChar={handleSelectChainChar}
                     onCastChange={handleCastChange}
+                    onPositionsChange={handleChainPositions}
                   />
                 </div>
               ) : (
@@ -3375,7 +3417,8 @@ function StructureModeInner({
                 { id: 'render', label: '清書' },
                 { id: 'char', label: 'キャラ' },
                 { id: 'graph', label: '関係図' },
-                { id: 'facts', label: '事実' }
+                { id: 'facts', label: '事実' },
+                { id: 'library', label: '資料' }
               ] as const
             ).filter((t) => !activeGroup || (t.id !== 'render' && t.id !== 'char')).map((t) => (
               <button
@@ -3416,6 +3459,47 @@ function StructureModeInner({
                 allNodes={graphNodes}
                 onCharactersChanged={() => void reload()}
               />
+              </div>
+            ) : shownTab === 'library' ? (
+              // 資料庫のキャラクター編集をそのまま出す。左は人物の一覧(キャラタブと同じ並び)。
+              // 削除は資料庫に限定する(onDeleted を渡さない)。保存後は構造も資料庫も読み直す
+              <div className="char-detail flex min-h-0 flex-1 flex-col">
+                <div className="char-detail-layout">
+                  <div className="char-detail-list inspector-scrollbar" role="group" aria-label="資料を見る人物">
+                    {characters.map((c) => (
+                      <button
+                        key={c.id}
+                        onClick={() => setLibraryCharId(c.id)}
+                        aria-pressed={c.id === libraryCharId}
+                        className="flex w-full min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12px]"
+                        style={c.id === libraryCharId ? { background: 'var(--accent-soft)', color: 'var(--text)' } : { color: 'var(--text-dim)' }}
+                        data-tip={c.name}
+                      >
+                        <CharAvatar char={c} size={24} />
+                        <span className="min-w-0 flex-1 truncate">{c.name}</span>
+                      </button>
+                    ))}
+                    {characters.length === 0 && (
+                      <div className="px-2 py-1.5 text-[11px]" style={{ color: 'var(--text-faint)' }}>キャラクターがいません(資料庫で追加)</div>
+                    )}
+                  </div>
+                  <div className="min-h-0 min-w-0 flex-1 overflow-hidden px-5 pt-3">
+                    {libraryCharId && characters.some((c) => c.id === libraryCharId) ? (
+                      <CharacterEditor
+                        key={libraryCharId}
+                        character={characters.find((c) => c.id === libraryCharId)!}
+                        onChanged={async () => {
+                          await reload()
+                          workspace.changed() // 資料庫側も次に開いたとき読み直す
+                        }}
+                      />
+                    ) : (
+                      <div className="pt-8 text-center text-[12px]" style={{ color: 'var(--text-faint)' }}>
+                        左の一覧か、人物の鎖のキャラクターをクリックすると、資料庫と同じ編集画面がここに出ます
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
             ) : shownTab === 'facts' ? (
               <FactTimeline
@@ -3519,6 +3603,7 @@ function StructureModeInner({
                   memoryContents={memoryContents}
                   onChanged={() => void reload()}
                   onSelectNode={(nodeId) => focusNodeOnCanvas(nodeId)}
+                  focusChar={focusChar}
                 />
               )
             ) : (

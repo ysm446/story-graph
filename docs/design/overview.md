@@ -1,7 +1,7 @@
 # 全体設計(アーキテクチャ)
 
 作成日時: 2026-08-09 15:30
-更新日時: 2026-10-14 19:20
+更新日時: 2026-10-14 20:50
 
 このアプリが **どう組まれているか** をまとめた入口。「何を作るか」は
 [story-graph-spec.md](../story-graph-spec.md)(仕様)と [plan/goals.md](../plan/goals.md)(目的・価値)、
@@ -165,13 +165,15 @@ memories の同期を書き忘れる場所を作らない)。
 - `modes/StructureMode.tsx` — React Flow(`@xyflow/react`)のキャンバス。DAG の編集、
   章ビュー、インスペクタ。アプリで最も大きい画面
 - `modes/ReaderMode.tsx` — 鑑賞(ページ / 縦読み / 挿絵分割)。読んでいるシーンを App に返す
-- `modes/CharactersMode.tsx` / `PlaceEditor.tsx` — 資料庫(キャラ・場所・派閥)
+- `modes/CharactersMode.tsx` / `CharacterEditor.tsx` / `PlaceEditor.tsx` — 資料庫(キャラ・場所・派閥)。
+  `CharacterEditor` は構造モードの詳細欄「資料」タブからも使う(キャラクターの編集画面を 1 か所にする)
 - `modes/SettingsMode.tsx` — モデル・プロンプト・スナップショット・バックアップ
 - `RelationGraph.tsx` — d3-force の関係グラフ(初回レイアウトのみ。座標はピン留め)
 - `CharacterTimeline.tsx` — キャラクタービュー(人物別の出番表)。正史パス × キャラクターの固定幅の表で、
   登場はシーンの `cast` で判定する。構造モードのキャンバスの上に重ねて出す(React Flow は下で生きたまま)
 - `CastChainGraph.tsx` — キャラクタービューの「人物の鎖」。別 Provider の React Flow で、キャラクターのノードから
-  出番のシーンを順に結ぶ線を cast から導出して描く。線を差す / 消すと cast を書き換える(線は保存しない)
+  出番のシーンを順に結ぶ線を cast から導出して描く。線を差す / 消すと cast を書き換える(線は保存しない)。
+  ノードの配置は `chain_x / chain_y`(フローチャートの `pos_x / pos_y` とは別の列)
 - `ChatDrawer.tsx` — 相談チャット(引き出し)
 - `Workspace.tsx` — 共通チャットの表示先・開閉、制作の手動編集状態、資料庫の変更通知・未保存ガードを共有するContext。
   Appが右側の表示先と幅を持ち、構造側からPortalで相談・制作を配置する。既存のグラフ・選択・変更範囲・作成位置の処理は構造側を唯一の所有者として維持する。

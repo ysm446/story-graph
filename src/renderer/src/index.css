@@ -640,15 +640,25 @@ input[type='range']:focus-visible {
   border-radius: 9px;
 }
 
-/* ノードのピン(ハンドル)。掴みやすいように当たり判定を広く取り、
-   見た目の点は ::after で小さく描く(接続点の位置は変わらない) */
+/* ノードのピン(ハンドル)。見た目の点(::after)と同じ大きさの箱にして、当たり判定は
+   ::before で外側へ広げる(22px)。線の端は箱の外縁に置かれる(xyflow の getHandlePosition は
+   左のピンなら箱の左端、右のピンなら右端)ので、箱を当たり判定の大きさにすると
+   線が点から 11px 手前で止まって見える(2026-10-14 人物の鎖で指摘)。擬似要素は
+   箱の大きさに数えられないが、クリックやドラッグの当たりにはなる */
 .react-flow .react-flow__handle {
-  width: 22px;
-  height: 22px;
-  min-width: 22px;
-  min-height: 22px;
+  width: 10px;
+  height: 10px;
+  min-width: 10px;
+  min-height: 10px;
   background: transparent;
   border: none;
+  border-radius: 50%;
+}
+
+.react-flow .react-flow__handle::before {
+  content: '';
+  position: absolute;
+  inset: -6px;
   border-radius: 50%;
 }
 
@@ -661,8 +671,24 @@ input[type='range']:focus-visible {
   height: 10px;
   transform: translate(-50%, -50%);
   border-radius: 50%;
-  background: #6a728f;
+  /* 点の色は --handle-color で差し替えられる(人物の鎖では人物の色) */
+  background: var(--handle-color, #6a728f);
   transition: background 0.15s, width 0.15s, height 0.15s;
+}
+
+/* 人物の鎖(CastChainGraph)はピンが人物ごとに並ぶので、点を一回り小さくする(当たり判定は同じ 22px) */
+.cast-chain .react-flow__handle {
+  width: 8px;
+  height: 8px;
+  min-width: 8px;
+  min-height: 8px;
+}
+.cast-chain .react-flow__handle::before {
+  inset: -7px;
+}
+.cast-chain .react-flow__handle::after {
+  width: 8px;
+  height: 8px;
 }
 
 .react-flow .react-flow__handle:hover::after,

@@ -22,7 +22,8 @@ export function CharTab({
   characters,
   memoryContents,
   onChanged,
-  onSelectNode
+  onSelectNode,
+  focusChar
 }: {
   node: StoryNode
   characters: Character[]
@@ -30,9 +31,15 @@ export function CharTab({
   memoryContents: Record<string, MemorySource>
   onChanged: () => void
   onSelectNode: (nodeId: string) => void
+  /** 外から人物を指定する(人物の鎖でキャラクターをクリックしたとき)。
+   *  同じ人物を続けて指しても効くよう、押すたびに増える番号を添える */
+  focusChar?: { id: string; seq: number } | null
 }): React.JSX.Element {
   const [state, setState] = useState<StateSnapshot | null>(null)
-  const [charId, setCharId] = useState<string | null>(node.cast[0] ?? null)
+  const [charId, setCharId] = useState<string | null>(focusChar?.id && node.cast.includes(focusChar.id) ? focusChar.id : node.cast[0] ?? null)
+  useEffect(() => {
+    if (focusChar && node.cast.includes(focusChar.id)) setCharId(focusChar.id)
+  }, [focusChar, node.cast])
   const [factKey, setFactKey] = useState('')
   const [factValue, setFactValue] = useState('')
   const [relTarget, setRelTarget] = useState('')

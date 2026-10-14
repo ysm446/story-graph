@@ -7,6 +7,9 @@ export interface Character {
   color: string | null
   graph_x: number | null
   graph_y: number | null
+  /** 人物の鎖(キャラクタービュー)での手動配置(null = 自動配置) */
+  chain_x?: number | null
+  chain_y?: number | null
   portrait_path: string | null
   portrait_source_path: string | null
   portrait_crop: string | null
@@ -107,6 +110,9 @@ export interface StoryNode {
   status: 'canon' | 'draft'
   pos_x: number | null
   pos_y: number | null
+  /** 人物の鎖(キャラクタービュー)での手動配置(null = 自動配置)。pos_x / pos_y とは別 */
+  chain_x?: number | null
+  chain_y?: number | null
   image_path: string | null
   /** 挿絵が動画のときのサムネイル画像(構造モードのカード用。無ければ描画時に生成される) */
   thumb_path: string | null
