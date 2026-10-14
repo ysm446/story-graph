@@ -4,6 +4,7 @@ import type { ProductionTarget } from './Workspace'
 import ChatRulesPanel from './ChatRulesPanel'
 import ProductionPreviewPanel from './ProductionPreviewPanel'
 import AutoTextarea from './AutoTextarea'
+import { useInputHistory } from './useInputHistory'
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { chatApi, isAbortError, productionApi, type ChatSummary, type ProductionInstruction, type ProductionPolicy, type ProductionOperation, type ProductionSelectedNode, type ProductionStep } from './api'
 import { Markdown } from './Markdown'
@@ -189,6 +190,16 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
   const [memoryDirty, setMemoryDirty] = useState(false)
   const [memoryRefresh, setMemoryRefresh] = useState(0)
   const [input, setInput] = useState('')
+  // ↑ / ↓ で前に送った依頼文を呼び出す(この会話の自分の発言。候補ボタンから送ったものも含む)
+  const inputHistory = useInputHistory(
+    useMemo(() => {
+      const sent: string[] = []
+      for (const m of messages) if (m.role === 'user' && m.content.trim() && sent[sent.length - 1] !== m.content) sent.push(m.content)
+      return sent
+    }, [messages]),
+    input,
+    setInput
+  )
   const [sendMode, setSendMode] = useState<'consult' | 'execute'>('consult')
   const [usage, setUsage] = useState<ContextUsage | null>(null)
   const [live, setLiveState] = useState('')
@@ -636,6 +647,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
         style={{ background: 'var(--bg-input)', borderColor: executeArmed ? 'var(--execute-border)' : 'var(--border)' }}>
       <AutoTextarea ariaLabel="制作への依頼" value={input} onChange={setInput} disabled={sendingInstruction || (busy && !runId)}
         onKeyDown={(e) => {
+          if (inputHistory.onKeyDown(e)) return
           if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return
           e.preventDefault()
           if (!e.repeat) submit()

@@ -329,6 +329,18 @@ store.save_chat_messages(chat['id'], [
     await pause(200)
     await assert(`(() => { const d = ${details}; return d.open && d.textContent.includes('確定した本文です。二行目もあります。') })()`, '開くと確定した本文が読める')
     writeFileSync(join(target, 'operation-text.png'), (await win.webContents.capturePage()).toPNG())
+    // ↑ で前に送った依頼文を呼び出し、↓ で空に戻る。打ちかけがあるときの ↑ は置き換えない
+    const area = `document.querySelector('textarea[aria-label="制作への依頼"]')`
+    const key = (k) => js(`(() => { const el = ${area}; el.focus(); el.dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(k)}, bubbles: true, cancelable: true })) })()`)
+    await key('ArrowUp'); await pause(100)
+    await assert(`${area}.value === '本文を直して'`, '入力欄が空のとき ↑ で前に送った依頼文が入る')
+    await key('ArrowUp'); await pause(100)
+    await assert(`${area}.value === '本文を直して'`, 'いちばん古いものより前には行かない')
+    await key('ArrowDown'); await pause(100)
+    await assert(`${area}.value === ''`, '↓ で空に戻る')
+    await input('textarea[aria-label="制作への依頼"]', '打ちかけ')
+    await key('ArrowUp'); await pause(100)
+    await assert(`${area}.value === '打ちかけ'`, '打ちかけがあるときの ↑ は置き換えない')
     if (errors.length) throw new Error(errors.join(String.fromCharCode(10)))
     console.log('Screenshots: ' + target)
     win.destroy()

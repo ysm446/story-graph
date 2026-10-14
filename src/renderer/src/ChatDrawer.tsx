@@ -1,4 +1,5 @@
 import ChatHistoryPanel from './ChatHistoryPanel'
+import { useInputHistory } from './useInputHistory'
 import ContextUsageRing from './ContextUsageRing'
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -248,6 +249,16 @@ export default function ChatDrawer({
   // 再生成中はこの項目の直後に書きかけの吹き出しを出す(null = 一番下)
   const [liveAfter, setLiveAfter] = useState<number | null>(null)
   const [input, setInput] = useState('')
+  // ↑ / ↓ で前に送った文章を呼び出す(この会話の自分の発言)
+  const inputHistory = useInputHistory(
+    useMemo(() => {
+      const sent: string[] = []
+      for (const it of items) if (it.kind === 'user' && it.text.trim() && sent[sent.length - 1] !== it.text) sent.push(it.text)
+      return sent
+    }, [items]),
+    input,
+    setInput
+  )
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
   const [history, setHistory] = useState<ChatSummary[]>([])
@@ -1360,6 +1371,7 @@ export default function ChatDrawer({
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => {
+                if (inputHistory.onKeyDown(e)) return
                 if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                   e.preventDefault()
                   void send()
