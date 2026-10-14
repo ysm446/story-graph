@@ -1,7 +1,7 @@
 # UI スタイルガイド(色・タイポ・余白・部品)
 
 作成日時: 2026-08-09 16:00
-更新日時: 2026-10-15 00:20
+更新日時: 2026-10-15 01:20
 
 新しい画面や部品を足すときに **見た目を揃えるための具体値** をまとめる。
 [overview.md](overview.md) がアーキテクチャの入口なら、本書は UI の入口。
@@ -257,6 +257,21 @@ Tailwind の既定スケール(`1 = 4px`)をそのまま使う。**使う段は�
 
 **中身は `min-w-0 flex-1 truncate`、両脇は `shrink-0`** —— これを守らないと長い名前で
 行が横に伸びる。
+
+### 折りたたみ(`details`)
+
+制作チャットの「本文を表示(N 字)」「資料庫の変更内容」「章の変更内容」の型(2026-10-15)。一覧の行と同じ枠で囲み、押せる場所を周りの文章と区別する。
+
+```tsx
+<details className="mb-1.5 rounded-lg border px-3 py-1.5 text-[11px]"
+         style={{ borderColor: 'var(--border)', background: 'var(--bg-elevated)', color: 'var(--text-dim)' }}>
+  <summary className="cursor-pointer">本文を表示(320 字)</summary>
+  <p className="mt-1.5 whitespace-pre-wrap break-words text-[12px] leading-relaxed" style={{ color: 'var(--text)' }}>…</p>
+</details>
+```
+
+- `summary` が見出し(`--text-dim`)、開いた中身は本文の色(`--text`)。既定は閉じる
+- 設定画面の `settings-card` のような大きな区切りには使わない(あれは常に開いている)
 
 ### ポップオーバー / モーダル
 
