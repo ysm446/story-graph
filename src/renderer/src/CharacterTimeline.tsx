@@ -63,7 +63,9 @@ export default function CharacterTimeline({
   characters,
   groups,
   selectedNodeId,
-  onSelectNode
+  selectedChapterId,
+  onSelectNode,
+  onSelectChapter
 }: {
   path: StoryNode[]
   /** 正史パスに乗っていないので表示していないシーン数(分岐・島) */
@@ -71,7 +73,10 @@ export default function CharacterTimeline({
   characters: Character[]
   groups: Group[]
   selectedNodeId: string | null
+  /** 章カードを選んでいるときのその章(章の帯を強調する) */
+  selectedChapterId: string | null
   onSelectNode: (nodeId: string) => void
+  onSelectChapter: (groupId: string) => void
 }): React.JSX.Element {
   const spans = useMemo(() => chapterSpans(path, groups), [path, groups])
   // シーンごとの cast(登場している人物の集合)
@@ -173,21 +178,25 @@ export default function CharacterTimeline({
                 const color = span.group.color
                 const order = groups.indexOf(span.group)
                 const label = span.group.on_canon ? `第${order + 1}章「${span.group.title}」` : `別ルートの章「${span.group.title}」`
+                // クリックで章を選ぶ(フローチャートで章カードを選んだのと同じく、詳細欄が章の表示になる)
                 return (
-                  <div
+                  <button
                     key={`${span.group.id}-${span.start}`}
-                    className="absolute top-0.5 truncate rounded-md border px-1.5 text-[10px] font-medium leading-[16px]"
+                    onClick={() => onSelectChapter(span.group.id)}
+                    className="absolute top-0.5 truncate rounded-md border px-1.5 text-left text-[10px] font-medium leading-[16px]"
                     style={{
                       left: span.start * COLUMN_WIDTH + 2,
                       width: (span.end - span.start) * COLUMN_WIDTH - 4,
                       background: color ? `${color}33` : 'var(--bg-card)',
                       borderColor: color || 'var(--border-strong)',
-                      color: color || 'var(--text-dim)'
+                      color: color || 'var(--text-dim)',
+                      boxShadow: span.group.id === selectedChapterId ? '0 0 0 2px var(--accent-border)' : undefined
                     }}
-                    data-tip={`${label}(${span.end - span.start} シーン)`}
+                    aria-pressed={span.group.id === selectedChapterId}
+                    data-tip={`${label}(${span.end - span.start} シーン)\nクリックで章を選択(詳細欄に章の内容を出します)`}
                   >
                     {label}
-                  </div>
+                  </button>
                 )
               })}
             </div>

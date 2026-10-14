@@ -235,8 +235,12 @@ store.save_chat_messages(chat['id'], [
     await mouse('mouseUp', at.x, at.y)
     await pause(400)
     await assert(`[...document.querySelectorAll('input')].some(i => i.value === ${JSON.stringify(example.scenes[0].title)})`, '動かさずに見出しを押すと、今までどおりそのシーンが選ばれる')
-    // 後の検証のために元に戻す(表の大きさと、選択は 2 番目のシーン)
     await js(`(() => { const el = ${table}; el.style.maxWidth = ''; el.style.maxHeight = ''; el.scrollLeft = 0; el.scrollTop = 0 })()`)
+    // 章の帯をクリックすると章を選んだことになり、詳細欄が章の表示(章 / 関係図 / 事実)になる
+    await js(`[...${table}.querySelectorAll('button')].find(e => e.textContent === '第2章「第二幕 橋」').click()`)
+    await pause(500)
+    await assert(`(() => {const band=[...${table}.querySelectorAll('button')].find(e => e.textContent === '第2章「第二幕 橋」');const tab=[...document.querySelectorAll('button')].find(e=>e.getClientRects().length && e.textContent.trim()==='関係図');const labels=[...tab.parentElement.querySelectorAll('button')].map(e=>e.textContent.trim());return band.getAttribute('aria-pressed')==='true' && labels.slice(0,3).join('|')==='章|関係図|事実' && tab.closest('aside').textContent.includes('第二幕 橋') && document.body.textContent.includes('キャラクタービュー')})()`, '章の帯をクリックすると、その章が選ばれて詳細欄が章の表示になる(ビューは開いたまま)')
+    // 後の検証のために元に戻す(選択は 2 番目のシーン)
     await js(`${cells}.find(e => e.getAttribute('aria-label') === '老技師: ' + ${JSON.stringify(second)}).click()`)
     await pause(400)
     // 人物の鎖: キャラクター 3 + シーン 4 のノード、線は出番の数(4 + 2 + 2)。線を消すと cast から外れる
@@ -586,6 +590,17 @@ store.save_chat_messages(chat['id'], [
         if (label === '清書') {
           // 左の列に上から プリセット / POV / 分量 / 清書ボタン、右に本文(2026-10-15 ユーザー指定)
           await assert(`(() => {const meta=document.querySelector('.scene-detail-meta'),main=document.querySelector('.scene-detail-main');const [preset,pov,length]=[...meta.querySelectorAll('select')];const run=[...meta.querySelectorAll('button')].find(e=>e.textContent.includes('清書'));const y=(e)=>e.getBoundingClientRect().top;return main.getBoundingClientRect().left>=meta.getBoundingClientRect().right-1 && y(preset)<y(pov) && y(pov)<y(length) && y(length)<y(run) && pov.textContent.includes('POV') && length.value!=='custom' && length.textContent.includes('分量')})()`, '清書は左にプリセット・POV・分量・ボタンを縦に並べ、右に本文')
+          // 清書の本文は読み物の見た目(15px・行間 1.9・1 行は全角 40 字ほど)。LLM を使わずに清書を 1 件入れて確かめる
+          const nodeId = (await (await fetch(base + '/graph')).json()).nodes.find((n) => n.title === '検証シーン').id
+          const presetId = await js(`document.querySelector('.scene-detail-meta select').value`)
+          const prose = '港の朝は、まだ霧の底に沈んでいた。アヤは桟橋の端に立ち、遠くで鳴る汽笛の数を数えた。三つ目が途切れたところで、彼女はようやく息を吐いた。\n\n'.repeat(4)
+          const seeded = spawnSync(join(root, '.venv/Scripts/python.exe'), ['-c', 'import sys, db; from store import Store; s = Store(db.connect(sys.argv[1]), root=sys.argv[2]); s.save_render(sys.argv[3], sys.argv[4], None, sys.argv[5]); s.conn.commit()', join(target, 'story-graph.db'), target, nodeId, presetId, prose], { cwd: join(root, 'backend'), encoding: 'utf8' })
+          if (seeded.status !== 0) throw new Error(seeded.stderr)
+          await click('シーン')
+          await pause(200)
+          await click('清書')
+          await pause(400)
+          await assert(`(() => {const p=[...document.querySelectorAll('.scene-detail-main .whitespace-pre-wrap')].find(e=>e.textContent.includes('港の朝'));if(!p)return false;const s=getComputedStyle(p);return s.fontSize==='15px' && Math.abs(parseFloat(s.lineHeight)-28.5)<0.6 && p.getBoundingClientRect().width<=600.5})()`, '清書の本文は 15px・行間 1.9・幅は 40em まで')
         }
         if (label === 'キャラ') {
           await assert(`(() => {const list=document.querySelector('.char-detail-list');const row=list.querySelector('button');const l=list.getBoundingClientRect(),d=document.querySelector('.char-detail .scene-detail').getBoundingClientRect();return row.lastElementChild.textContent.trim()==='検証キャラ' && row.getAttribute('aria-pressed')==='true' && row.children.length===2 && Math.round(l.width)===188 && d.x>=l.right-1 && Math.abs(l.y-d.y)<1})()`, 'キャラは左に登場人物の一覧(アイコンと名前)、右に状態')

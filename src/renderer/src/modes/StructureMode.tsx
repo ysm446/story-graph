@@ -3006,7 +3006,9 @@ function StructureModeInner({
                   characters={characters}
                   groups={groups}
                   selectedNodeId={selectedId}
+                  selectedChapterId={selectedChapterId}
                   onSelectNode={selectSceneFromView}
+                  onSelectChapter={(groupId) => selectSceneFromView(`chapter:${groupId}`)}
                 />
               )}
             </div>

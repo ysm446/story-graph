@@ -1,13 +1,12 @@
 import DetailSplit from '../../DetailSplit'
 import { createPortal } from 'react-dom'
 import { useEffect, useRef, useState } from 'react'
-import { api, isAbortError, onRenderSaved, renderStream } from '../../api'
+import { api, assetUrl, isAbortError, isVideoAsset, onRenderSaved, renderStream } from '../../api'
 import { MsgActionButton, StatsLine, SystemPromptModal } from '../../GenMeta'
 import { LengthSelect, lengthLabel, RenderStyleControls, type RenderStyleState } from '../../RenderStyle'
 import { cancelTask, enqueueTask, useTaskFor } from '../../tasks'
 import { useElapsedSeconds } from '../../useElapsed'
 import type { RenderResult, StoryNode } from '../../types'
-import { NodeThumb } from './StructureNodes'
 
 // ---- 清書タブ --------------------------------------------------------
 
@@ -203,10 +202,12 @@ export function RenderTab({
     })
   }
 
-  // 本文はシーンタブと同じ UI フォント・サイズで出す(鑑賞用の proseFont / fontSize は
-  // 鑑賞モード側だけに使う。インスペクタ内は他タブと見た目を揃える方針。2026-07-31)
-  const proseClass = 'whitespace-pre-wrap text-[13px] leading-relaxed'
+  // 本文はシーンタブと同じ UI フォントで出す(鑑賞用の proseFont / fontSize は
+  // 鑑賞モード側だけに使う。インスペクタ内は他タブと見た目を揃える方針。2026-07-31)。
+  // ただし読み物なので、大きさ・行間・字間を広げ、1 行を全角 40 字ほどに収める(2026-10-15 ユーザー要望)
+  const proseClass = 'mx-auto w-full max-w-[40em] whitespace-pre-wrap text-[15px] leading-[1.9] tracking-[0.02em]'
   const stale = render?.stale === 1
+  const imageUrl = assetUrl(node.image_path)
 
   return (
     <div className="scene-detail flex min-h-0 flex-1 flex-col">
@@ -239,8 +240,13 @@ export function RenderTab({
 
       </>} secondary={<>
       {/* 左の列は上から 挿絵 / プリセット(人称と文体)/ POV / 分量 / 清書ボタン(2026-10-15 ユーザー指定)。
-          挿絵は見るだけ(差し替えはシーンタブで)。シーンタブと同じく列の全幅・縦横比のまま */}
-      <NodeThumb node={node} className="block h-auto w-full rounded-xl" />
+          挿絵は見るだけ(差し替えはシーンタブで)。シーンタブと同じく原画を列の全幅・縦横比のまま出し、
+          動画は静止画のサムネイルにせず再生する */}
+      {imageUrl && (isVideoAsset(node.image_path) ? (
+        <video src={imageUrl} autoPlay muted loop playsInline className="block h-auto w-full rounded-xl" />
+      ) : (
+        <img src={imageUrl} decoding="async" draggable={false} className="block h-auto w-full rounded-xl" />
+      ))}
       {/* 条件。プリセットと POV は鑑賞モードと共通、分量はこのシーンだけの指定 */}
       <RenderStyleControls style={style} variant="compact" showLength={false} />
       <div className="flex items-center gap-1.5">
