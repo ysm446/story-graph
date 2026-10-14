@@ -55,8 +55,8 @@ type ChainSceneData = {
   cast: Character[]
   selected: boolean
   readOnly: boolean
-  /** 登場人物の行(アイコン・名前・ピン)をクリック → その人物を詳細欄の「資料」タブで開く(シーンの選択は変えない) */
-  onSelectChar: (charId: string) => void
+  /** 登場人物の行(アイコン・名前・ピン)をクリック → そのシーンを選び、その人物を詳細欄の人物専用の表示で開く */
+  onSelectChar: (charId: string, sceneId: string) => void
 }
 /** シーンのつながり(正史の順番)の線。見るだけで、つなぎ替えも削除もできない */
 const FLOW_EDGE_STYLE = { stroke: 'var(--text-faint)', strokeWidth: 1.5, strokeDasharray: '6 4' }
@@ -137,7 +137,7 @@ function ChainSceneCard({ data }: NodeProps<ChainSceneNode>): React.JSX.Element 
                 pressAt.current = null
                 if (start && Math.hypot(e.clientX - start.x, e.clientY - start.y) > 4) return // ドラッグ(線引き・ノード移動)
                 e.stopPropagation() // ノードのクリック(シーンの選択)にはしない
-                onSelectChar(c.id)
+                onSelectChar(c.id, scene.id)
               }}
               data-tip={`${c.name}。クリックで下の詳細欄の「資料」タブにこの人物を出す`}
             >
@@ -188,7 +188,7 @@ function buildNodes(
   selectedNodeId: string | null,
   selectedCharId: string | null,
   readOnly: boolean,
-  onSelectChar: (charId: string) => void
+  onSelectChar: (charId: string, sceneId: string) => void
 ): Array<ChainCharNode | ChainSceneNode> {
   const byId = new Map(characters.map((c) => [c.id, c]))
   const groupById = new Map(groups.map((g) => [g.id, g]))
@@ -311,7 +311,8 @@ function CastChainGraphInner({
   selectedCharId: string | null
   readOnly: boolean
   onSelectNode: (nodeId: string) => void
-  onSelectChar: (charId: string) => void
+  /** キャラクターのノード(sceneId なし)か、シーンの登場人物の行(sceneId あり)をクリック */
+  onSelectChar: (charId: string, sceneId?: string) => void
   /** シーンのダブルクリック → フローチャートでそのシーンを見る(順番の編集はそちらで) */
   onOpenInFlow: (nodeId: string) => void
   /** cast を付け替える(保存は呼び出し側)。add = 登場させる、remove = 外す */

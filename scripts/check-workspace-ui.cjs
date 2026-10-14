@@ -180,7 +180,7 @@ for mode in ['production', None]:
     await new Promise((done) => { win.webContents.once('did-finish-load', () => done()); win.webContents.reload() })
     for (let i = 0; i < 60; i++) { if (await js(`[...document.querySelectorAll('.react-flow__node')].some(e=>e.textContent.includes('第一幕'))`)) break; await pause(200) }
     await pause(400)
-    await click('👥 人物')
+    await click('人物')
     await pause(400)
     const cells = `[...document.querySelectorAll('button[aria-label]')].filter(e => /^(アヤ|ケン|老技師): /.test(e.getAttribute('aria-label')))`
     await assert(`document.body.textContent.includes('キャラクタービュー') && ${cells}.length === 8 && ${cells}.filter(e=>e.getAttribute('aria-label').startsWith('アヤ:')).length === 4`, 'キャラクタービューに、cast どおりの出番のセルが並ぶ(アヤ 4・ケン 2・老技師 2)')
@@ -260,7 +260,12 @@ for mode in ['production', None]:
     // シーンのノードの登場人物の行をクリック → その人物が資料タブに出て、シーンの選択は変わらない
     await js(`(() => { const row = [...document.querySelectorAll('[data-cast-chain] [data-tip$="この人物を出す"]')].find(e => e.getAttribute('data-tip').startsWith('老技師')); row.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 10, clientY: 10 })); row.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 10, clientY: 10 })) })()`)
     await pause(400)
-    await assert(`[...document.querySelectorAll('[data-character-name]')].some(e => e.getClientRects().length && e.textContent.trim() === '老技師') && [...document.querySelectorAll('[data-cast-chain] .react-flow__node')].some(e => e.textContent.includes(${JSON.stringify(second)}) && e.classList.contains('selected')) === false`, 'シーンのノードの登場人物の行をクリックすると、その人物が人物専用の表示に出る(シーンは選ばれない)')
+    await assert(`[...document.querySelectorAll('[data-character-name]')].some(e => e.getClientRects().length && e.textContent.trim() === '老技師') && ${tabLabels}.includes('プロフィール')`, 'シーンのノードの登場人物の行をクリックすると、その人物が人物専用の表示に出る')
+    await click('状態')
+    await pause(600)
+    await assert(`document.body.textContent.includes('「' + ${JSON.stringify(example.scenes[2].title)} + '」の時点') && !document.body.textContent.includes('最後に登場したシーン')`, '行を押したシーンが選ばれ、人物の詳細はそのシーンの時点になる')
+    await click('プロフィール')
+    await pause(300)
     // そのあとシーンの見出しをクリックすると、詳細欄は「シーン」に戻る
     await js(`[...document.querySelectorAll('[data-cast-chain] [data-tip*="ドラッグで動かせます"]')].find(e => e.textContent.includes(${JSON.stringify(example.scenes[2].title)})).dispatchEvent(new MouseEvent('click', { bubbles: true }))`)
     await pause(500)
@@ -269,7 +274,11 @@ for mode in ['production', None]:
     await js(`[...document.querySelectorAll('[data-cast-chain] [data-tip*="ドラッグで動かせます"]')].find(e => e.textContent.includes(${JSON.stringify(example.scenes[3].title)})).dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))`)
     await pause(1500)
     await assert(`!document.body.textContent.includes('キャラクタービュー') && [...document.querySelectorAll('input')].some(i => i.value === ${JSON.stringify(example.scenes[3].title)})`, 'シーンをダブルクリックするとフローチャートに戻り、そのシーンが選ばれる')
-    await click('👥 人物')
+    // フローチャートのカードの登場人物の札をクリック → 人物専用の表示(シーンの選択は変えない)
+    await js(`[...document.querySelectorAll('.react-flow__node button[data-tip$="この人物を出す"]')].find(e => e.getAttribute('data-tip').startsWith('アヤ') && e.getClientRects().length).click()`)
+    await pause(500)
+    await assert(`(() => { const name = [...document.querySelectorAll('[data-character-name]')].find(e => e.getClientRects().length); const chip = [...document.querySelectorAll('.react-flow__node button[data-tip$="この人物を出す"]')].find(e => e.getAttribute('data-tip').startsWith('アヤ') && e.getClientRects().length); return !!name && name.textContent.trim() === 'アヤ' && ${tabLabels}.includes('プロフィール') && chip.closest('.react-flow__node').classList.contains('selected') })()`, 'フローチャートのカードの登場人物の札をクリックすると、そのシーンが選ばれ、詳細欄が人物専用の表示になる')
+    await click('人物')
     await pause(300)
     await click('人物の鎖')
     await pause(500)

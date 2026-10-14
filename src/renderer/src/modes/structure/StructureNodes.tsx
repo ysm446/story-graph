@@ -43,12 +43,14 @@ export type BeatNodeData = {
   // 実効ロケーション。inherited = このシーンでは指定せず、親から引き継いだもの
   place?: { name: string; inherited: boolean }
   busy?: boolean // LLM 処理中(枠が時計まわりに光る)
+  /** 登場人物の札をクリック → このシーンを選び、詳細欄を人物専用の表示にする */
+  onSelectChar?: (charId: string, sceneId: string) => void
 }
 
 export type BeatFlowNode = Node<BeatNodeData, 'beatNode'>
 
 export function BeatNodeCard({ data, selected }: NodeProps<BeatFlowNode>): React.JSX.Element {
-  const { storyNode, characters, place, busy, connected } = data
+  const { storyNode, characters, place, busy, connected, onSelectChar } = data
   const preview = useProductionPreview(storyNode.id)
   const unsaved = useSyncExternalStore(subscribeBeatDrafts, () => beatDraftCache.has(storyNode.id))
   const isDraft = storyNode.status === 'draft'
@@ -174,10 +176,16 @@ export function BeatNodeCard({ data, selected }: NodeProps<BeatFlowNode>): React
           const c = characters[charId]
           const portrait = assetUrl(c?.portrait_path)
           return (
-            <span
+            // nodrag: 札を押してもカードのドラッグ・選択を始めない。クリックもカードに伝えない
+            <button
               key={charId}
-              className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px]"
+              className="nodrag inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] hover:bg-[var(--accent-soft)]"
               style={{ background: 'var(--bg-elevated)', color: 'var(--text-dim)' }}
+              onClick={(e) => {
+                e.stopPropagation()
+                onSelectChar?.(charId, storyNode.id)
+              }}
+              data-tip={`${c?.name ?? charId}。クリックでこのシーンを選び、下の詳細欄にこの人物を出す`}
             >
               {portrait ? (
                 <img src={portrait} className="h-3.5 w-3.5 rounded-full object-cover" />
@@ -185,7 +193,7 @@ export function BeatNodeCard({ data, selected }: NodeProps<BeatFlowNode>): React
                 <span className="inline-block h-2 w-2 rounded-full" style={{ background: c?.color ?? '#8a8fa8' }} />
               )}
               {c?.name ?? charId}
-            </span>
+            </button>
           )
         })}
         {place && (

@@ -121,6 +121,19 @@ function StructureModeInner({
   const [castView, setCastView] = useState<null | 'table' | 'chain'>(null)
   // 人物の鎖でクリックした人物(詳細欄のキャラタブに出す)。seq は同じ人物の連打でも効かせるため
   const [focusChar, setFocusChar] = useState<{ id: string; seq: number } | null>(null)
+  /** キャラクター(鎖のノード・登場人物の行・フローチャートのカードの札)をクリック → 詳細欄を人物専用の表示にする
+   *  (プロフィール / 状態 / 関係図 / 事実の履歴。シーンや清書のタブは出さない)。
+   *  フローチャートのノードの data にも渡すので、他の state より先に定義しておく */
+  // focusNodeOnCanvas は後ろで定義される(React Flow の instance が要る)ので、ref を介して呼ぶ
+  const focusNodeOnCanvasRef = useRef<(nodeId: string) => void>(() => undefined)
+  const handleSelectChainChar = useCallback((charId: string, sceneId?: string): void => {
+    // どのシーンの札を押したかが分かるときは、そのシーンも選ぶ(人物の詳細の「時点」になる)。
+    // 詳細欄は人物専用の表示のまま(onNodeClick を通らないので scene には戻らない)
+    if (sceneId) focusNodeOnCanvasRef.current(sceneId)
+    setLibraryCharId(charId)
+    setFocusChar((prev) => ({ id: charId, seq: (prev?.seq ?? 0) + 1 }))
+    setInspectorFocus('character')
+  }, [])
   // 章ノードを選択中(インスペクタに章パネルを出す)
   const [selectedChapterId, setSelectedChapterId] = useState<string | null>(null)
   const [characters, setCharacters] = useState<Character[]>([])
@@ -455,6 +468,7 @@ function StructureModeInner({
             d.storyNode === n &&
             d.connected === connected &&
             d.characters === charMap &&
+            d.onSelectChar === handleSelectChainChar &&
             d.busy === busy &&
             samePlace &&
             existing.position.x === nextPosition.x &&
@@ -478,12 +492,13 @@ function StructureModeInner({
             connected,
             characters: charMap,
             place: eff ? { name: placeName as string, inherited: eff.inherited } : undefined,
-            busy
+            busy,
+            onSelectChar: handleSelectChainChar
           }
         }
       })
     })
-  }, [graphNodes, graphEdges, charMap, placeMap, effectiveLocations, busyNodeIds])
+  }, [graphNodes, graphEdges, charMap, placeMap, effectiveLocations, busyNodeIds, handleSelectChainChar])
 
   // 実測高さが揃ったら、まだ置き場所が決まっていないノードだけ位置を組み直す
   // (初回マウント直後は高さ未測定のため、測定後に一度リフローする)。
@@ -1475,8 +1490,6 @@ function StructureModeInner({
     // 章ノードの選択はインスペクタの章パネルへ。シーン選択・選択解除で閉じる
     if (chapter) setSelectedChapterId((chapter.data as ChapterNodeData).group.id)
     else setSelectedChapterId(null)
-    // シーンを選んだら、詳細欄を人物専用の表示からシーンの表示に戻す
-    if (beats.length > 0 || chapter) setInspectorFocus('scene')
     setSelectedId((prev) => {
       if (beats.length === 0) return null
       // 複数選択中は先頭をインスペクタ対象にする
@@ -1512,6 +1525,7 @@ function StructureModeInner({
     },
     [reactFlow]
   )
+  focusNodeOnCanvasRef.current = focusNodeOnCanvas
 
   /** 作ったばかりのシーンへ画面を寄せる。
    *
@@ -1554,7 +1568,10 @@ function StructureModeInner({
   const followProductionTarget = useCallback((target: ProductionTarget | null): void => {
     workspace.followTarget(target)
     const nodeId = target?.kind === 'chapter' ? `chapter:${target.id}` : target?.kind === 'scene' ? target.id : null
-    if (nodeId) setInspectorTab('beat')
+    if (nodeId) {
+      setInspectorTab('beat')
+      setInspectorFocus('scene')
+    }
     focusDoneRef.current = nodeId === null
     setPendingFocusId(nodeId)
   }, [workspace.followTarget])
@@ -1863,14 +1880,6 @@ function StructureModeInner({
     setInspectorFocus('scene')
     focusDoneRef.current = false
     setPendingFocusId(nodeId)
-  }, [])
-
-  /** 人物の鎖でキャラクター(ノード・登場人物の行)をクリック → 詳細欄を人物専用の表示にする
-   *  (プロフィール / 状態 / 関係図 / 事実の履歴。シーンや清書のタブは出さない) */
-  const handleSelectChainChar = useCallback((charId: string): void => {
-    setLibraryCharId(charId)
-    setFocusChar((prev) => ({ id: charId, seq: (prev?.seq ?? 0) + 1 }))
-    setInspectorFocus('character')
   }, [])
 
   // 人物専用の表示で見ている人物と、その「時点」のシーン。選択中のシーンにその人物が居ればそのシーン、
@@ -2480,7 +2489,12 @@ function StructureModeInner({
 
   // React Flow へ渡すハンドラ。参照を固定し、中身だけ最新に追従させる(useStableCallback)
   // ノードを選んだらエッジ選択は解く(残すと Delete がエッジ切断に化ける)
-  const onNodeClick = useStableCallback((): void => setSelectedEdgeId(null))
+  // ノード本体のクリックは、詳細欄を人物専用の表示からシーンの表示に戻す
+  // (登場人物の札のクリックはここに伝えないので、人物の表示のまま)
+  const onNodeClick = useStableCallback((): void => {
+    setSelectedEdgeId(null)
+    setInspectorFocus('scene')
+  })
   // 章ノードのダブルクリックで章の中へ(章ビューのドリルダウン)
   const onNodeDoubleClick = useStableCallback((_: React.MouseEvent, node: Node): void => {
     if (node.type === 'chapterNode') setChapterView((node.data as ChapterNodeData).group.id)
@@ -2701,11 +2715,11 @@ function StructureModeInner({
                   <button
                     data-view-ok
                     onClick={() => setCastView('table')}
-                    className="rounded-lg border px-2.5 py-1.5 text-[13px] shadow-lg shadow-black/30"
+                    className="inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[13px] shadow-lg shadow-black/30"
                     style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
                     data-tip="キャラクタービュー(人物ごとの出番を表にして見る)に切り替える"
                   >
-                    👥 人物
+                    <Icon name="users" size={14} /> 人物
                   </button>
                   <button
                     onClick={() => void handleAddBeat()}
