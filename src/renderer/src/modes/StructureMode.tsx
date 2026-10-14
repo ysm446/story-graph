@@ -33,6 +33,7 @@ import ProductionChatBase from '../ProductionChat'
 import { defaultProductionPolicy } from '../ProductionPolicyPanel'
 import type { ProductionPolicy } from '../api'
 import FactTimeline from '../FactTimeline'
+import CharacterTimeline from '../CharacterTimeline'
 import { Icon } from '../icons'
 import RelationGraph from '../RelationGraph'
 import { useRenderStyle } from '../RenderStyle'
@@ -112,6 +113,8 @@ function StructureModeInner({
   // 章の表示状態: 'flat' = 全シーン、'chapters' = 章ビュー、それ以外 = 章 ID(章内ビュー)。
   // 章がひとつも無い間は常に flat(書き始めの体験を変えない)
   const [chapterView, setChapterView] = useState<string>('chapters')
+  // キャラクタービュー(人物別の出番表)。フローチャートの上に重ねて出す(docs/plan/plan.md)
+  const [castView, setCastView] = useState(false)
   // 章ノードを選択中(インスペクタに章パネルを出す)
   const [selectedChapterId, setSelectedChapterId] = useState<string | null>(null)
   const [characters, setCharacters] = useState<Character[]>([])
@@ -2609,6 +2612,15 @@ function StructureModeInner({
                     </button>
                   )}
                   <button
+                    data-view-ok
+                    onClick={() => setCastView(true)}
+                    className="rounded-lg border px-2.5 py-1.5 text-[13px] shadow-lg shadow-black/30"
+                    style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+                    data-tip="キャラクタービュー(人物ごとの出番を表にして見る)に切り替える"
+                  >
+                    👥 人物
+                  </button>
+                  <button
                     onClick={() => void handleAddBeat()}
                     className="rounded-lg px-3 py-1.5 text-[13px] font-medium text-white shadow-lg shadow-black/30"
                     style={{ background: 'var(--accent)' }}
@@ -2822,6 +2834,34 @@ function StructureModeInner({
               </Panel>
             )}
           </ReactFlow>
+          {/* キャラクタービュー: フローチャートの上に重ねる(React Flow は下で生きたままなので、
+              選択・フォーカス・矢印キーの仕組みはそのまま使える)。見るだけの画面なので制作中も触れる */}
+          {castView && (
+            <div data-view-ok className="absolute inset-0 z-10 flex flex-col" style={{ background: 'var(--bg-canvas)' }}>
+              <div className="flex shrink-0 items-center gap-2 border-b px-3 py-1.5" style={{ borderColor: 'var(--border)' }}>
+                <button
+                  onClick={() => setCastView(false)}
+                  className="rounded-lg border px-2.5 py-1 text-[13px]"
+                  style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+                  data-tip="フローチャート(シーンのつながり)に戻る"
+                >
+                  ⊞ フローチャート
+                </button>
+                <span className="text-[13px] font-medium" style={{ color: 'var(--text)' }}>キャラクタービュー</span>
+                <span className="text-[11px]" style={{ color: 'var(--text-faint)' }}>
+                  横がシーン、縦が人物。縦線でつながっているセルは同じシーンに一緒に登場しています
+                </span>
+              </div>
+              <CharacterTimeline
+                path={canonPath}
+                hiddenCount={graphNodes.filter((n) => !n.kind).length - canonPath.length}
+                characters={characters}
+                groups={groups}
+                selectedNodeId={selectedId}
+                onSelectNode={(nodeId) => focusNodeOnCanvas(nodeId)}
+              />
+            </div>
+          )}
           {/* 右クリックメニュー: 選択したシーンへの一括操作。説明はホバーのツールチップ、
               区切り線は group の切れ目(ContextMenu.tsx) */}
           {menu && (

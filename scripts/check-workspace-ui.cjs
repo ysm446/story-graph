@@ -19,10 +19,13 @@ for (const name of readdirSync(testRoot)) {
   try { rmSync(join(testRoot, name), { recursive: true, force: true }) } catch { /* 開かれている間は次の回に任せる */ }
 }
 app.setPath('userData', join(target, 'electron'))
+const trace = (m) => { if (process.env.CHECK_TRACE) console.error('[trace] ' + m) }
+trace('script loaded ' + target)
 let backend
 const pause = (ms) => new Promise((done) => setTimeout(done, ms))
 async function main() {
   await app.whenReady()
+  trace('app ready')
   const port = await new Promise((done) => {
     const server = createServer().listen(0, '127.0.0.1', () => {
       const port = server.address().port
@@ -39,7 +42,8 @@ async function main() {
     await pause(200)
   }
   if (!ready) throw new Error('検証用バックエンドを起動できませんでした')
-  for (const [path, value] of process.argv.includes('--import') ? [] : [['/characters', { name: '検証キャラ', profile: '保存済みプロフィール' }], ['/nodes', { title: '検証シーン', beat: '保存済みの本文。' }]]) {
+  trace('backend ready ' + base)
+  for (const [path, value] of process.argv.includes('--import') || process.argv.includes('--cast') ? [] : [['/characters', { name: '検証キャラ', profile: '保存済みプロフィール' }], ['/nodes', { title: '検証シーン', beat: '保存済みの本文。' }]]) {
     const response = await fetch(base + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(value) })
     if (!response.ok) throw new Error(await response.text())
   }
@@ -92,6 +96,7 @@ for mode in ['production', None]:
     }
   })
   await win.loadFile(join(root, 'out/renderer/index.html'))
+  trace('page loaded')
   const js = (source) => win.webContents.executeJavaScript(source)
   const click = async (label) => {
     // 文字の無いアイコンのボタン(送信の ↑ など)は aria-label で探す
@@ -155,6 +160,36 @@ for mode in ['production', None]:
     await click('資料庫')
     await pause(500)
     await assert(`['アヤ','ケン','老技師','港','北の橋','測量組合'].every(name => document.body.textContent.includes(name))`, '資料庫に、取り込んだキャラクター・場所・設定資料が出る')
+    if (errors.length) throw new Error(errors.join('\n'))
+    console.log('Screenshots: ' + target)
+    win.destroy()
+    return
+  }
+  if (process.argv.includes('--cast')) {
+    // キャラクタービュー(人物別の出番表): 完成例を取り込んで、人物ごとのセル・章の帯・選択の連動を確かめる
+    const { readFileSync } = require('node:fs')
+    const example = JSON.parse(readFileSync(join(root, 'docs/reference/import-example.json'), 'utf8'))
+    const applied = await fetch(base + '/import/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data: example }) })
+    if (!applied.ok) throw new Error(await applied.text())
+    // 取り込みは画面を読む前に済ませたので、読み直して反映する(executeJavaScript で reload すると
+    // 画面が消えて約束が戻らないので、webContents 側で行う)
+    await new Promise((done) => { win.webContents.once('did-finish-load', () => done()); win.webContents.reload() })
+    for (let i = 0; i < 60; i++) { if (await js(`[...document.querySelectorAll('.react-flow__node')].some(e=>e.textContent.includes('第一幕'))`)) break; await pause(200) }
+    await pause(400)
+    await click('👥 人物')
+    await pause(400)
+    const cells = `[...document.querySelectorAll('button[aria-label]')].filter(e => /^(アヤ|ケン|老技師): /.test(e.getAttribute('aria-label')))`
+    await assert(`document.body.textContent.includes('キャラクタービュー') && ${cells}.length === 8 && ${cells}.filter(e=>e.getAttribute('aria-label').startsWith('アヤ:')).length === 4`, 'キャラクタービューに、cast どおりの出番のセルが並ぶ(アヤ 4・ケン 2・老技師 2)')
+    await assert(`['第1章「第一幕 出発」','第2章「第二幕 橋」','第3章「第三幕 帰港」'].every(t => document.body.textContent.includes(t))`, '列の上に章の帯が出る')
+    await assert(`(() => {const tips=[...document.querySelectorAll('[data-tip$="シーンに登場"]')].map(e=>e.getAttribute('data-tip'));return tips.includes('アヤ: 4 シーンに登場') && tips.includes('ケン: 2 シーンに登場') && tips.includes('老技師: 2 シーンに登場')})()`, '左の人物の行に出番の数が出る')
+    const second = example.scenes[1].title
+    await js(`${cells}.find(e => e.getAttribute('aria-label') === '老技師: ' + ${JSON.stringify(second)}).click()`)
+    await pause(500)
+    await assert(`[...document.querySelectorAll('input')].some(i => i.value === ${JSON.stringify(second)}) && document.body.textContent.includes('キャラクタービュー')`, 'セルをクリックすると、そのシーンが選ばれて下の詳細欄に出る(ビューは開いたまま)')
+    writeFileSync(join(target, 'cast-view.png'), (await win.webContents.capturePage()).toPNG())
+    await click('⊞ フローチャート')
+    await pause(300)
+    await assert(`!document.body.textContent.includes('キャラクタービュー') && [...document.querySelectorAll('.react-flow__node')].length > 0`, '「フローチャート」で元の表示に戻る')
     if (errors.length) throw new Error(errors.join('\n'))
     console.log('Screenshots: ' + target)
     win.destroy()
