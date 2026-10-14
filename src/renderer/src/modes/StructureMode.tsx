@@ -34,6 +34,7 @@ import { defaultProductionPolicy } from '../ProductionPolicyPanel'
 import type { ProductionPolicy } from '../api'
 import FactTimeline from '../FactTimeline'
 import CharacterTimeline from '../CharacterTimeline'
+import CastChainGraph from '../CastChainGraph'
 import { Icon } from '../icons'
 import RelationGraph from '../RelationGraph'
 import { useRenderStyle } from '../RenderStyle'
@@ -57,7 +58,7 @@ import type {
   StoryGraph,
   StoryNode
 } from '../types'
-import { beatDraftCache, deleteBeatDraft } from './structure/beatDrafts'
+import { beatDraftCache, deleteBeatDraft, setBeatDraft } from './structure/beatDrafts'
 import {
   avoidingOverlap,
   COLUMN_GAP_X,
@@ -113,8 +114,9 @@ function StructureModeInner({
   // 章の表示状態: 'flat' = 全シーン、'chapters' = 章ビュー、それ以外 = 章 ID(章内ビュー)。
   // 章がひとつも無い間は常に flat(書き始めの体験を変えない)
   const [chapterView, setChapterView] = useState<string>('chapters')
-  // キャラクタービュー(人物別の出番表)。フローチャートの上に重ねて出す(docs/plan/plan.md)
-  const [castView, setCastView] = useState(false)
+  // キャラクタービュー。フローチャートの上に重ねて出す(docs/plan/plan.md)。
+  // null = 出さない、table = 出番表(CharacterTimeline)、chain = 人物の鎖(CastChainGraph)
+  const [castView, setCastView] = useState<null | 'table' | 'chain'>(null)
   // 章ノードを選択中(インスペクタに章パネルを出す)
   const [selectedChapterId, setSelectedChapterId] = useState<string | null>(null)
   const [characters, setCharacters] = useState<Character[]>([])
@@ -1723,6 +1725,7 @@ function StructureModeInner({
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent): void => {
       if (workspace.mode !== 'structure') return
+      if (castView) return // キャラクタービューの間は、下のフローチャートのキー操作(削除・移動)を効かせない
       if (event.isComposing || event.defaultPrevented) return
       const target = event.target as HTMLElement | null
       if (
@@ -1818,7 +1821,27 @@ function StructureModeInner({
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [workspace.mode, reactFlow, displayNodes, selectedId, selectedEdgeId, detachEdge, deleteNodeById, deleteNodes, navigateSelection, productionEditingLocked, copyNodes, pasteNodes, nodeClipboard])
+  }, [workspace.mode, castView, reactFlow, displayNodes, selectedId, selectedEdgeId, detachEdge, deleteNodeById, deleteNodes, navigateSelection, productionEditingLocked, copyNodes, pasteNodes, nodeClipboard])
+
+  /** 人物の鎖で線を差す / 消す → そのシーンの cast を付け替えて保存する。
+   *  画面は先に書き換え(楽観更新)、保存後に読み直す。詳細欄に未保存の下書きが
+   *  残っていれば、その cast も合わせる(あとで保存したときに巻き戻さないように) */
+  const handleCastChange = useCallback(
+    (sceneId: string, charId: string, op: 'add' | 'remove'): void => {
+      const node = graphNodes.find((n) => n.id === sceneId)
+      if (!node) return
+      const current = node.cast ?? []
+      const cast = op === 'add' ? (current.includes(charId) ? current : [...current, charId]) : current.filter((c) => c !== charId)
+      setGraphNodes((prev) => prev.map((n) => (n.id === sceneId ? { ...n, cast } : n)))
+      const draft = beatDraftCache.get(sceneId)
+      if (draft) setBeatDraft(sceneId, { ...draft, cast })
+      void api
+        .updateNode(sceneId, { cast })
+        .then(() => reload())
+        .catch((e) => setGenStatus(`登場人物を保存できません: ${String(e)}`))
+    },
+    [graphNodes, reload]
+  )
 
   // Ctrl+S: 選択中のシーンのうち、未保存の下書きが残っているものをまとめて保存する。
   // 下書きはシーンタブを離れてもシーンごとに残る(beatDraftCache)ので、どのタブを開いていても、
@@ -2613,7 +2636,7 @@ function StructureModeInner({
                   )}
                   <button
                     data-view-ok
-                    onClick={() => setCastView(true)}
+                    onClick={() => setCastView('table')}
                     className="rounded-lg border px-2.5 py-1.5 text-[13px] shadow-lg shadow-black/30"
                     style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
                     data-tip="キャラクタービュー(人物ごとの出番を表にして見る)に切り替える"
@@ -2840,7 +2863,7 @@ function StructureModeInner({
             <div data-view-ok className="absolute inset-0 z-10 flex flex-col" style={{ background: 'var(--bg-canvas)' }}>
               <div className="flex shrink-0 items-center gap-2 border-b px-3 py-1.5" style={{ borderColor: 'var(--border)' }}>
                 <button
-                  onClick={() => setCastView(false)}
+                  onClick={() => setCastView(null)}
                   className="rounded-lg border px-2.5 py-1 text-[13px]"
                   style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
                   data-tip="フローチャート(シーンのつながり)に戻る"
@@ -2848,18 +2871,49 @@ function StructureModeInner({
                   ⊞ フローチャート
                 </button>
                 <span className="text-[13px] font-medium" style={{ color: 'var(--text)' }}>キャラクタービュー</span>
+                <div className="flex overflow-hidden rounded-md border" style={{ borderColor: 'var(--border-strong)' }}>
+                  {([['table', '出番表'], ['chain', '人物の鎖']] as const).map(([value, label]) => (
+                    <button
+                      key={value}
+                      onClick={() => setCastView(value)}
+                      className="px-2.5 py-0.5 text-[12px]"
+                      style={castView === value ? { background: 'var(--accent-soft)', color: 'var(--text)' } : { color: 'var(--text-faint)' }}
+                      data-tip={value === 'table' ? '人物ごとの出番を表にして見る' : '人物の線がシーンを通り抜けていくノード図。線を差して登場させる'}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
                 <span className="text-[11px]" style={{ color: 'var(--text-faint)' }}>
-                  横がシーン、縦が人物。縦線でつながっているセルは同じシーンに一緒に登場しています
+                  {castView === 'chain'
+                    ? productionEditingLocked
+                      ? '制作中は見るだけです(線の差し替えは制作が終わってから)'
+                      : 'キャラクターやシーンの出口から入口へ線を引くと登場。線を選んで Delete かダブルクリックで外す'
+                    : '横がシーン、縦が人物。縦線でつながっているセルは同じシーンに一緒に登場しています'}
                 </span>
               </div>
-              <CharacterTimeline
-                path={canonPath}
-                hiddenCount={graphNodes.filter((n) => !n.kind).length - canonPath.length}
-                characters={characters}
-                groups={groups}
-                selectedNodeId={selectedId}
-                onSelectNode={(nodeId) => focusNodeOnCanvas(nodeId)}
-              />
+              {castView === 'chain' ? (
+                <div data-cast-chain className="min-h-0 flex-1">
+                  <CastChainGraph
+                    path={canonPath}
+                    characters={characters}
+                    groups={groups}
+                    selectedNodeId={selectedId}
+                    readOnly={productionEditingLocked}
+                    onSelectNode={(nodeId) => focusNodeOnCanvas(nodeId)}
+                    onCastChange={handleCastChange}
+                  />
+                </div>
+              ) : (
+                <CharacterTimeline
+                  path={canonPath}
+                  hiddenCount={graphNodes.filter((n) => !n.kind).length - canonPath.length}
+                  characters={characters}
+                  groups={groups}
+                  selectedNodeId={selectedId}
+                  onSelectNode={(nodeId) => focusNodeOnCanvas(nodeId)}
+                />
+              )}
             </div>
           )}
           {/* 右クリックメニュー: 選択したシーンへの一括操作。説明はホバーのツールチップ、

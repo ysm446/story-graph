@@ -187,6 +187,25 @@ for mode in ['production', None]:
     await pause(500)
     await assert(`[...document.querySelectorAll('input')].some(i => i.value === ${JSON.stringify(second)}) && document.body.textContent.includes('キャラクタービュー')`, 'セルをクリックすると、そのシーンが選ばれて下の詳細欄に出る(ビューは開いたまま)')
     writeFileSync(join(target, 'cast-view.png'), (await win.webContents.capturePage()).toPNG())
+    // 人物の鎖: キャラクター 3 + シーン 4 のノード、線は出番の数(4 + 2 + 2)。線を消すと cast から外れる
+    await click('人物の鎖')
+    await pause(800)
+    // 下に隠れているフローチャートのノード・線も DOM に居るので、鎖の領域の中だけを数える
+    const chainNodes = `[...document.querySelectorAll('[data-cast-chain] .react-flow__node')]`
+    const chainEdges = `document.querySelectorAll('[data-cast-chain] .react-flow__edge')`
+    await assert(`${chainNodes}.length === 7 && ${chainEdges}.length === 8 && ${chainNodes}.filter(e => e.textContent.includes('別の人物を差す')).length === 4`, '人物の鎖に、キャラクター 3・シーン 4 のノードと 8 本の線、各シーンに空き口が出る')
+    writeFileSync(join(target, 'cast-chain.png'), (await win.webContents.capturePage()).toPNG())
+    const graphBefore = await (await fetch(base + '/graph')).json()
+    const target2 = graphBefore.nodes.find((n) => n.title === second)
+    const chars = await (await fetch(base + '/characters')).json()
+    const engineer = chars.find((c) => c.name === '老技師')
+    await js(`(() => { const path = document.querySelector('.react-flow__edge[data-id="chain:${engineer.id}:${target2.id}"] .react-flow__edge-interaction, .react-flow__edge[data-id="chain:${engineer.id}:${target2.id}"]'); if (!path) throw new Error('線がありません'); path.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })) })()`)
+    await pause(800)
+    const graphAfter = await (await fetch(base + '/graph')).json()
+    const after = graphAfter.nodes.find((n) => n.id === target2.id)
+    if (after.cast.includes(engineer.id) || after.cast.length !== target2.cast.length - 1) errors.push('線をダブルクリックしても cast から外れない: ' + JSON.stringify(after.cast))
+    else console.log('PASS 線をダブルクリックすると、線の先のシーンの cast から外れる')
+    await assert(`${chainEdges}.length === 7`, '外したあとは線が 7 本になり、前後の出番がつながり直す')
     await click('⊞ フローチャート')
     await pause(300)
     await assert(`!document.body.textContent.includes('キャラクタービュー') && [...document.querySelectorAll('.react-flow__node')].length > 0`, '「フローチャート」で元の表示に戻る')
