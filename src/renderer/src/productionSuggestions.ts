@@ -15,6 +15,7 @@ export interface ProductionSuggestion { label: string; text: string; execute: bo
 /**
  * 初期版は選択・開いている章・直近の応答・確定済み操作から候補を組み立てる。
  * 選択と章のレビューは会話の起点になるので、会話が空でも出す。章はシーンを選択していないときだけ。
+ * どちらも無い(作品全体の画面で何も選んでいない)ときは作品全体のレビューを出す(2026-10-15)。
  * 「この案で進めて」は、応答に案があるときだけ・案を指して出したいので LLM の候補に任せている。
  * proceedFallback は、LLM の候補が使えないとき(設定オフ・未起動・失敗・過去の会話)に代わりを出す指定。
  * 実行として送った依頼の応答(完了報告)の後には出さない。
@@ -38,6 +39,10 @@ export function productionSuggestions(messages: ContextMessage[], selection: Pro
   } else if (chapter) {
     const title = chapter.title || '無題'
     result.push({ label: `章「${title}」をレビュー`, execute: false, text: `次の章をレビューしてください。対象はこの章に固定し、送信時の画面や選択が変わっていても変更しないでください。\n・${title}（章ID: ${chapter.id}）\nまず章の構成で読む順と分岐を確認し、その順に本文を読んでください。シーンの前後は本文の並びではなく接続（prev / next）で判断し、章全体の流れも見たうえで、${review}` })
+  } else {
+    // 作品全体の画面で何も選んでいない: 全部を読む全体レビュー(章のまとめだけで済ませる軽い版は、作品が大きくなって遅いと感じたら足す)
+    result.push({ label: '作品全体をレビュー', execute: false, text: `作品全体をレビューしてください。対象は作品全体に固定し、送信時の画面や選択が変わっていても変更しないでください。
+まず章の構成で章の一覧と読む順(正史)を確認し、その順に各章のシーン本文を読んでください。シーンの前後は本文の並びではなく接続（prev / next）で判断してください。章をまたぐ流れ、伏線の回収漏れ、人物の言動と記憶・事実の一貫性を中心に見たうえで、${review}` })
   }
   if (changes.length) {
     const targets = [...new Set(changes.map((operation) => `${operation.title || '無題'}（${'entity_id' in operation ? operation.entity_type + ': ' + operation.entity_id : 'scene: ' + operation.node_id}）`))]

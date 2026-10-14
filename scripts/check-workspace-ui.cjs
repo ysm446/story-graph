@@ -308,6 +308,8 @@ for mode in ['production', None]:
     await assert(`(() => {const list=document.querySelector('[aria-live="polite"]');const box=document.querySelector('.chat-composer');const help=[...list.querySelectorAll('p')].find(e=>e.textContent.includes('相談するだけでは作品を変更しません'));const between=[...box.parentElement.children].filter(e=>e!==box && e.getBoundingClientRect().top>=list.getBoundingClientRect().bottom-1 && e.getClientRects().length);return !!help && getComputedStyle(help).textAlign==='center' && between.every(e=>!e.textContent.includes('参照できます')) && between.length===0})()`, '使い方の説明は空の会話欄の中に出し、入力の箱の上には何も常設しない')
     await assert(`(() => {const area=document.querySelector('.chat-composer textarea');return getComputedStyle(area,'::placeholder').color==='rgb(92, 96, 120)' && area.placeholder.includes('方針の相談')})()`, '入力欄のプレースホルダは控えめな色(--text-faint)')
     await assert(`(() => {const box=document.querySelector('.chat-composer').getBoundingClientRect();const panel=document.querySelector('.chat-composer').parentElement.getBoundingClientRect();return Math.round(panel.bottom-box.bottom)===16})()`, '入力の箱とチャット欄の下端の間は16px')
+    // 作品全体の画面で何も選んでいない: 候補に「作品全体をレビュー」が出る(シーン・章のレビューは出ない)
+    await assert(`(() => {const labels=[...document.querySelectorAll('[aria-label="制作の依頼候補"] button')].map(e=>e.textContent.trim());return labels.includes('作品全体をレビュー') && !labels.some(t=>t.startsWith('章「')||t.startsWith('選択中'))})()`, '何も選んでいないときは「作品全体をレビュー」の候補を出す')
     writeFileSync(join(target, 'composer-empty.png'), (await win.webContents.capturePage()).toPNG())
     if (errors.length) throw new Error(errors.join('\n'))
     console.log('Screenshots: ' + target)
