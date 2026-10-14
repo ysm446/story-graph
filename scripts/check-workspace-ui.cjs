@@ -583,6 +583,10 @@ store.save_chat_messages(chat['id'], [
         await pause(250)
         await assert(`(() => {const aside=[...document.querySelectorAll('aside')].find(e=>e.textContent.includes('清書'));return aside.scrollWidth<=aside.clientWidth+1;})()`, label + 'は詳細欄の幅内に収まる')
         if (label !== '事実') await assert(`!!document.querySelector('.scene-detail-layout')`, label + 'は左右分割')
+        if (label === '清書') {
+          // 左の列に上から プリセット / POV / 分量 / 清書ボタン、右に本文(2026-10-15 ユーザー指定)
+          await assert(`(() => {const meta=document.querySelector('.scene-detail-meta'),main=document.querySelector('.scene-detail-main');const [preset,pov,length]=[...meta.querySelectorAll('select')];const run=[...meta.querySelectorAll('button')].find(e=>e.textContent.includes('清書'));const y=(e)=>e.getBoundingClientRect().top;return main.getBoundingClientRect().left>=meta.getBoundingClientRect().right-1 && y(preset)<y(pov) && y(pov)<y(length) && y(length)<y(run) && pov.textContent.includes('POV') && length.value!=='custom' && length.textContent.includes('分量')})()`, '清書は左にプリセット・POV・分量・ボタンを縦に並べ、右に本文')
+        }
         if (label === 'キャラ') {
           await assert(`(() => {const list=document.querySelector('.char-detail-list');const row=list.querySelector('button');const l=list.getBoundingClientRect(),d=document.querySelector('.char-detail .scene-detail').getBoundingClientRect();return row.lastElementChild.textContent.trim()==='検証キャラ' && row.getAttribute('aria-pressed')==='true' && row.children.length===2 && Math.round(l.width)===188 && d.x>=l.right-1 && Math.abs(l.y-d.y)<1})()`, 'キャラは左に登場人物の一覧(アイコンと名前)、右に状態')
         }

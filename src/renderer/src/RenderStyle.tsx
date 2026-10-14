@@ -394,9 +394,10 @@ export function PresetEditorModal({
 
 /** スタイルプリセットと POV のプルダウン(+ プリセットの編集・新規)。
  *
- *  レイアウトは呼び出し側に任せるためフラグメントを返す。親は flex コンテナで包む。
- *  - `variant='full'`(鑑賞モード): ボタンにラベルを付ける
- *  - `variant='compact'`(構造モードのインスペクタ): 幅が狭いのでアイコンだけ
+ *  レイアウトは呼び出し側に任せるためフラグメントを返す。
+ *  - `variant='full'`(鑑賞モード): ボタンにラベルを付ける。親は横並びの flex コンテナで包む
+ *  - `variant='compact'`(構造モードの清書タブの左の列): 幅が狭いのでアイコンだけ。
+ *    プリセットの行 / POV / 分量を 1 行ずつ返すので、親は縦に積むコンテナで包む
  *  プリセットの書き出し・読み込みは設定画面「プロンプトの書き出し / 読み込み」にある
  *  (シーン生成・校正のプロンプトとまとめて 1 ファイルで扱う)
  */
@@ -418,7 +419,7 @@ export function RenderStyleControls({
   const buttonClass = 'shrink-0 rounded-lg border px-2 py-1 text-[12px] disabled:opacity-40'
   const buttonStyle = { borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }
 
-  return (
+  const presetControls = (
     <>
       <select
         value={style.presetId ?? ''}
@@ -463,28 +464,49 @@ export function RenderStyleControls({
       >
         {compact ? '+' : '+ 新規'}
       </button>
-      <select
-        value={style.povChar ?? ''}
-        onChange={(e) => style.setPovChar(e.target.value || null)}
-        className={`rounded-lg border px-2 py-1 text-[12px] ${compact ? 'min-w-0 flex-1 basis-40' : ''}`}
-        style={selectStyle}
-        data-tip="視点キャラクター(そのキャラが知らないことは書かれない)"
-      >
-        <option value="">三人称(POVなし)</option>
-        {style.characters.map((c) => (
-          <option key={c.id} value={c.id}>
-            POV: {c.name}
-          </option>
-        ))}
-      </select>
-      {showLength && (
-        <LengthSelect
-          value={style.targetChars}
-          onChange={style.setTargetChars}
-          zeroLabel="分量: おまかせ"
-          className={compact ? 'min-w-0 flex-1 basis-40' : ''}
-          tip="全シーン共通の目安の字数。シーンごとの指定があればそちらが優先する"
-        />
+    </>
+  )
+  const povSelect = (
+    <select
+      value={style.povChar ?? ''}
+      onChange={(e) => style.setPovChar(e.target.value || null)}
+      className={`rounded-lg border px-2 py-1 text-[12px] ${compact ? 'w-full min-w-0' : ''}`}
+      style={selectStyle}
+      data-tip="視点キャラクター(そのキャラが知らないことは書かれない)"
+    >
+      <option value="">三人称(POVなし)</option>
+      {style.characters.map((c) => (
+        <option key={c.id} value={c.id}>
+          POV: {c.name}
+        </option>
+      ))}
+    </select>
+  )
+  const lengthSelect = showLength && (
+    <LengthSelect
+      value={style.targetChars}
+      onChange={style.setTargetChars}
+      zeroLabel="分量: おまかせ"
+      className={compact ? 'min-w-0 flex-1' : ''}
+      tip="全シーン共通の目安の字数。シーンごとの指定があればそちらが優先する"
+    />
+  )
+
+  return (
+    <>
+      {compact ? (
+        // インスペクタの左の列: 1 項目 1 行で縦に積む(プリセット + 編集・新規 / POV / 分量)
+        <>
+          <div className="flex items-center gap-1.5">{presetControls}</div>
+          {povSelect}
+          {lengthSelect && <div className="flex items-center gap-1.5">{lengthSelect}</div>}
+        </>
+      ) : (
+        <>
+          {presetControls}
+          {povSelect}
+          {lengthSelect}
+        </>
       )}
       {editor && (
         <PresetEditorModal

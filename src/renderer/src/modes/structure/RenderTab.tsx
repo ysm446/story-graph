@@ -7,6 +7,7 @@ import { LengthSelect, lengthLabel, RenderStyleControls, type RenderStyleState }
 import { cancelTask, enqueueTask, useTaskFor } from '../../tasks'
 import { useElapsedSeconds } from '../../useElapsed'
 import type { RenderResult, StoryNode } from '../../types'
+import { NodeThumb } from './StructureNodes'
 
 // ---- 清書タブ --------------------------------------------------------
 
@@ -209,7 +210,7 @@ export function RenderTab({
 
   return (
     <div className="scene-detail flex min-h-0 flex-1 flex-col">
-      <DetailSplit storageKey="renderDetailMetaWidth" mainScrollRef={bodyRef} main={<>
+      <DetailSplit storageKey="renderDetailMetaWidth" mainOnRight mainScrollRef={bodyRef} main={<>
         {liveText !== null ? (
           <div className={proseClass} style={{ color: 'var(--text)' }}>
             {liveText}
@@ -237,14 +238,17 @@ export function RenderTab({
         )}
 
       </>} secondary={<>
+      {/* 左の列は上から 挿絵 / プリセット(人称と文体)/ POV / 分量 / 清書ボタン(2026-10-15 ユーザー指定)。
+          挿絵は見るだけ(差し替えはシーンタブで)。シーンタブと同じく列の全幅・縦横比のまま */}
+      <NodeThumb node={node} className="block h-auto w-full rounded-xl" />
       {/* 条件。プリセットと POV は鑑賞モードと共通、分量はこのシーンだけの指定 */}
-      <div className="flex flex-wrap items-center gap-1.5">
-        <RenderStyleControls style={style} variant="compact" showLength={false} />
+      <RenderStyleControls style={style} variant="compact" showLength={false} />
+      <div className="flex items-center gap-1.5">
         <LengthSelect
           value={nodeChars}
           onChange={saveNodeChars}
           zeroLabel={`分量: 共通に従う(${lengthLabel(style.targetChars)})`}
-          className="min-w-0 flex-1 basis-40"
+          className="min-w-0 flex-1"
           tip="このシーンだけの目安の字数。共通の設定より優先される(鑑賞モードの全編清書にも効く)"
         />
       </div>
