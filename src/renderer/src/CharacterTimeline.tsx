@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import CharAvatar from './CharAvatar'
+import { NodeThumb } from './modes/structure/StructureNodes'
 import type { Character, Group, StoryNode } from './types'
 
 /** キャラクタービュー(人物別の出番表)。
@@ -19,9 +20,11 @@ const LABEL_WIDTH = 168
 const ROW_HEIGHT = 44
 const CELL_HEIGHT = 26
 const CELL_INSET = 10 // セルの左右の余白(列の中で少し細くして、縦線がセルの中央を通るように)
-const CHAPTER_ROW_HEIGHT = 22
+const CHAPTER_ROW_HEIGHT = 30 // 帯(高さ 16px)の下を 12px 空けて、シーンの見出しのサムネイルと離す
 const TITLE_ROW_HEIGHT = 30
+const THUMB_HEIGHT = 54 // 見出しの挿絵(列の中の幅 96px で 16:9 くらい)
 const FALLBACK_COLOR = '#8a8fa8'
+const PAN_THRESHOLD = 4 // これだけ動いたらドラッグ(表を動かす)、それまではクリック
 
 interface ChapterSpan {
   group: Group
@@ -41,6 +44,17 @@ function chapterSpans(path: StoryNode[], groups: Group[]): ChapterSpan[] {
     else spans.push({ group, start: index, end: index + 1 })
   })
   return spans
+}
+
+/** 出番の列(昇順)を、隣り合う列ごとのまとまり [start, end](両端を含む)に分ける */
+function consecutiveRuns(cols: number[]): Array<[number, number]> {
+  const runs: Array<[number, number]> = []
+  for (const col of cols) {
+    const last = runs[runs.length - 1]
+    if (last && last[1] === col - 1) last[1] = col
+    else runs.push([col, col])
+  }
+  return runs
 }
 
 export default function CharacterTimeline({
@@ -86,6 +100,21 @@ export default function CharacterTimeline({
 
   const selectedIndex = selectedNodeId ? path.findIndex((n) => n.id === selectedNodeId) : -1
 
+  // 左ドラッグで表を上下左右に動かす(フローチャートの空き地のドラッグと同じ感覚)。
+  // 出番の帯の上からは始めない(将来、帯をドラッグして cast を付け替える操作のために空けておく)。
+  // 少し動いてから掴むので、見出しのクリックはそのまま効く。動かしたあとのクリックは捨てる
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const pan = useRef<{ x: number; y: number; left: number; top: number; moved: boolean } | null>(null)
+  const swallowClick = useRef(false)
+  const [panning, setPanning] = useState(false)
+  const endPan = (): void => {
+    if (pan.current?.moved) {
+      swallowClick.current = true
+      setPanning(false)
+    }
+    pan.current = null
+  }
+
   if (path.length === 0) {
     return (
       <div className="flex flex-1 items-center justify-center text-[12px]" style={{ color: 'var(--text-faint)' }}>
@@ -95,7 +124,44 @@ export default function CharacterTimeline({
   }
 
   return (
-    <div className="inspector-scrollbar min-h-0 flex-1 overflow-auto">
+    <div
+      ref={scrollRef}
+      data-cast-table
+      className={`inspector-scrollbar min-h-0 flex-1 select-none overflow-auto ${panning ? 'cursor-grabbing [&_*]:!cursor-grabbing' : 'cursor-grab'}`}
+      onPointerDown={(e) => {
+        swallowClick.current = false
+        const el = scrollRef.current
+        if (e.button !== 0 || !el || (e.target as Element).closest('[data-cast-cell]')) return
+        // スクロールバーの上はスクロールバーの操作に任せる
+        const rect = el.getBoundingClientRect()
+        if (e.clientX - rect.left >= el.clientWidth || e.clientY - rect.top >= el.clientHeight) return
+        pan.current = { x: e.clientX, y: e.clientY, left: el.scrollLeft, top: el.scrollTop, moved: false }
+      }}
+      onPointerMove={(e) => {
+        const p = pan.current
+        const el = scrollRef.current
+        if (!p || !el) return
+        if (e.buttons === 0) return endPan()
+        const dx = e.clientX - p.x
+        const dy = e.clientY - p.y
+        if (!p.moved) {
+          if (Math.hypot(dx, dy) < PAN_THRESHOLD) return
+          p.moved = true
+          setPanning(true)
+          el.setPointerCapture(e.pointerId)
+        }
+        el.scrollLeft = p.left - dx
+        el.scrollTop = p.top - dy
+      }}
+      onPointerUp={endPan}
+      onPointerCancel={endPan}
+      onClickCapture={(e) => {
+        if (!swallowClick.current) return
+        swallowClick.current = false
+        e.stopPropagation()
+        e.preventDefault()
+      }}
+    >
       <div className="relative" style={{ width: LABEL_WIDTH + gridWidth, paddingBottom: 12 }}>
         {/* 見出し: 章の帯 + シーンのタイトル。縦スクロールしても残す */}
         <div className="sticky top-0 z-20" style={{ background: 'var(--bg-canvas)' }}>
@@ -103,7 +169,8 @@ export default function CharacterTimeline({
             <div className="sticky left-0 z-10" style={{ background: 'var(--bg-canvas)' }} />
             <div className="relative" style={{ height: CHAPTER_ROW_HEIGHT }}>
               {spans.map((span) => {
-                const color = span.group.color ?? FALLBACK_COLOR
+                // 色の無い章はフローチャートの章カードと同じ無彩色(カードの地 + 濃い枠)。灰色の 20% 下地だと浮いて見える
+                const color = span.group.color
                 const order = groups.indexOf(span.group)
                 const label = span.group.on_canon ? `第${order + 1}章「${span.group.title}」` : `別ルートの章「${span.group.title}」`
                 return (
@@ -113,9 +180,9 @@ export default function CharacterTimeline({
                     style={{
                       left: span.start * COLUMN_WIDTH + 2,
                       width: (span.end - span.start) * COLUMN_WIDTH - 4,
-                      background: `${color}33`,
-                      borderColor: color,
-                      color
+                      background: color ? `${color}33` : 'var(--bg-card)',
+                      borderColor: color || 'var(--border-strong)',
+                      color: color || 'var(--text-dim)'
                     }}
                     data-tip={`${label}(${span.end - span.start} シーン)`}
                   >
@@ -128,7 +195,7 @@ export default function CharacterTimeline({
           <div className="grid border-b" style={{ gridTemplateColumns: `${LABEL_WIDTH}px repeat(${columns}, ${COLUMN_WIDTH}px)`, borderColor: 'var(--border)' }}>
             <div
               className="sticky left-0 z-10 flex items-end px-3 pb-1 text-[11px]"
-              style={{ background: 'var(--bg-canvas)', color: 'var(--text-faint)', height: TITLE_ROW_HEIGHT }}
+              style={{ background: 'var(--bg-canvas)', color: 'var(--text-faint)', minHeight: TITLE_ROW_HEIGHT }}
               data-tip="セルや見出しをクリックすると、そのシーンを選択して下の詳細欄に出します"
             >
               {hiddenCount > 0 ? `正史のみ(分岐・島の ${hiddenCount} シーンは非表示)` : '正史のシーン'}
@@ -141,15 +208,19 @@ export default function CharacterTimeline({
                   else headerRefs.current.delete(node.id)
                 }}
                 onClick={() => onSelectNode(node.id)}
-                className="m-0.5 truncate rounded-md px-1.5 py-0.5 text-left text-[11px] hover:bg-[var(--accent-soft)]"
+                className="m-0.5 flex min-w-0 flex-col justify-end gap-1 rounded-md px-1.5 py-0.5 text-left text-[11px] hover:bg-[var(--accent-soft)]"
                 style={{
                   background: index === selectedIndex ? 'var(--accent-soft)' : 'transparent',
                   color: index === selectedIndex ? 'var(--text)' : 'var(--text-dim)'
                 }}
                 data-tip={`${index + 1}. ${node.title || '(無題)'}\nクリックで選択(詳細欄で編集できます)`}
               >
-                <span className="tabular-nums" style={{ color: 'var(--text-faint)' }}>{index + 1}.</span>{' '}
-                {node.title || '(無題)'}
+                {/* 挿絵のサムネイル。列の幅で高さを揃えるので中央で切り抜く。挿絵の無いシーンはタイトルだけ(下端で揃う) */}
+                <NodeThumb node={node} className="block w-full rounded object-cover" style={{ height: THUMB_HEIGHT }} />
+                <span className="truncate">
+                  <span className="tabular-nums" style={{ color: 'var(--text-faint)' }}>{index + 1}.</span>{' '}
+                  {node.title || '(無題)'}
+                </span>
               </button>
             ))}
           </div>
@@ -234,34 +305,67 @@ export default function CharacterTimeline({
                 )
               })}
             </svg>
-            {/* 出番のセル */}
-            {characters.map((c, i) =>
-              (appearances.get(c.id) ?? []).map((index) => {
-                const node = path[index]
-                const color = c.color ?? FALLBACK_COLOR
-                const selected = index === selectedIndex
+            {/* 出番の帯: 続けて出ているシーンは 1 本の帯にまとめる(出番が途切れたら切る。章の境目では切らない)。
+                帯は見た目だけで、クリックとツールチップはその上に重ねたシーンごとの透明なボタンが受ける */}
+            {characters.map((c, i) => {
+              const color = c.color ?? FALLBACK_COLOR
+              const top = i * ROW_HEIGHT + (ROW_HEIGHT - CELL_HEIGHT) / 2
+              return consecutiveRuns(appearances.get(c.id) ?? []).map(([start, end]) => {
+                const runLeft = start * COLUMN_WIDTH + CELL_INSET
+                const runRight = (end + 1) * COLUMN_WIDTH - CELL_INSET
+                const runLength = end - start + 1
+                const runNote = runLength > 1 ? `(${start + 1}〜${end + 1} の ${runLength} シーン続けて登場)` : ''
+                const cols = Array.from({ length: runLength }, (_, k) => start + k)
                 return (
-                  <button
-                    key={`${c.id}-${node.id}`}
-                    onClick={() => onSelectNode(node.id)}
-                    className="absolute rounded-md border"
-                    style={{
-                      left: index * COLUMN_WIDTH + CELL_INSET,
-                      top: i * ROW_HEIGHT + (ROW_HEIGHT - CELL_HEIGHT) / 2,
-                      width: COLUMN_WIDTH - CELL_INSET * 2,
-                      height: CELL_HEIGHT,
-                      // 線はセルの下を通るので、色の下地の下にキャンバスの地を敷いて透けないようにする
-                      background: `linear-gradient(${color}33, ${color}33), var(--bg-canvas)`,
-                      borderColor: color,
-                      borderWidth: 1.5,
-                      boxShadow: selected ? '0 0 0 2px var(--accent-border)' : undefined
-                    }}
-                    aria-label={`${c.name}: ${node.title || '(無題)'}`}
-                    data-tip={`${c.name} が「${node.title || '(無題)'}」に登場\nクリックで選択(詳細欄で編集できます)`}
-                  />
+                  <Fragment key={`${c.id}-${path[start].id}`}>
+                    <div
+                      data-cast-run={c.id}
+                      className="pointer-events-none absolute rounded-md border"
+                      style={{
+                        left: runLeft,
+                        top,
+                        width: runRight - runLeft,
+                        height: CELL_HEIGHT,
+                        // 線は帯の下を通るので、色の下地の下にキャンバスの地を敷いて透けないようにする
+                        background: `linear-gradient(${color}33, ${color}33), var(--bg-canvas)`,
+                        borderColor: color,
+                        borderWidth: 1.5
+                      }}
+                    />
+                    {/* 帯の中のシーンの区切り(何シーン続いているかを見せる) */}
+                    {cols.slice(1).map((index) => (
+                      <div
+                        key={`sep-${index}`}
+                        className="pointer-events-none absolute"
+                        style={{ left: index * COLUMN_WIDTH - 0.5, top: top + 6, width: 1, height: CELL_HEIGHT - 12, background: `${color}80` }}
+                      />
+                    ))}
+                    {cols.map((index) => {
+                      const node = path[index]
+                      const left = index === start ? runLeft : index * COLUMN_WIDTH
+                      const right = index === end ? runRight : (index + 1) * COLUMN_WIDTH
+                      return (
+                        <button
+                          key={node.id}
+                          data-cast-cell
+                          onClick={() => onSelectNode(node.id)}
+                          className="absolute rounded-md"
+                          style={{
+                            left,
+                            top,
+                            width: right - left,
+                            height: CELL_HEIGHT,
+                            boxShadow: index === selectedIndex ? '0 0 0 2px var(--accent-border)' : undefined
+                          }}
+                          aria-label={`${c.name}: ${node.title || '(無題)'}`}
+                          data-tip={`${c.name} が「${node.title || '(無題)'}」に登場${runNote}\nクリックで選択(詳細欄で編集できます)`}
+                        />
+                      )
+                    })}
+                  </Fragment>
                 )
               })
-            )}
+            })}
           </div>
         </div>
       </div>

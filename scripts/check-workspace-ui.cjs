@@ -201,6 +201,8 @@ store.save_chat_messages(chat['id'], [
     await pause(400)
     const cells = `[...document.querySelectorAll('button[aria-label]')].filter(e => /^(アヤ|ケン|老技師): /.test(e.getAttribute('aria-label')))`
     await assert(`document.body.textContent.includes('キャラクタービュー') && ${cells}.length === 8 && ${cells}.filter(e=>e.getAttribute('aria-label').startsWith('アヤ:')).length === 4`, 'キャラクタービューに、cast どおりの出番のセルが並ぶ(アヤ 4・ケン 2・老技師 2)')
+    // 続けて出ているシーンは 1 本の帯にまとまる: アヤは 1〜4 で 1 本、ケンは 1 と 4 で 2 本、老技師は 2〜3 で 1 本
+    await assert(`(() => {const runs=[...document.querySelectorAll('[data-cast-run]')];const n=(id)=>runs.filter(e=>e.getAttribute('data-cast-run')===id).length;const ids=[...new Set(runs.map(e=>e.getAttribute('data-cast-run')))];return runs.length===4 && ids.map(n).sort().join()==='1,1,2' && Math.max(...runs.map(e=>e.offsetWidth))===${4 * 112 - 20}})()`, '続けて出ているシーンの出番は 1 本の帯にまとまる(帯は 4 本、いちばん長いのはアヤの 4 シーン分)')
     await assert(`['第1章「第一幕 出発」','第2章「第二幕 橋」','第3章「第三幕 帰港」'].every(t => document.body.textContent.includes(t))`, '列の上に章の帯が出る')
     await assert(`(() => {const tips=[...document.querySelectorAll('[data-tip$="シーンに登場"]')].map(e=>e.getAttribute('data-tip'));return tips.includes('アヤ: 4 シーンに登場') && tips.includes('ケン: 2 シーンに登場') && tips.includes('老技師: 2 シーンに登場')})()`, '左の人物の行に出番の数が出る')
     const second = example.scenes[1].title
@@ -208,6 +210,35 @@ store.save_chat_messages(chat['id'], [
     await pause(500)
     await assert(`[...document.querySelectorAll('input')].some(i => i.value === ${JSON.stringify(second)}) && document.body.textContent.includes('キャラクタービュー')`, 'セルをクリックすると、そのシーンが選ばれて下の詳細欄に出る(ビューは開いたまま)')
     writeFileSync(join(target, 'cast-view.png'), (await win.webContents.capturePage()).toPNG())
+    // 左ドラッグで表を上下左右に動かす。完成例では画面に収まってしまうので、表の枠を小さくして試す。
+    // setPointerCapture は本物のポインタでないと効かないので、合成イベントではなく sendInputEvent で動かす
+    const mouse = async (type, x, y) => { win.webContents.sendInputEvent({ type, x: Math.round(x), y: Math.round(y), button: 'left', clickCount: 1, modifiers: type === 'mouseMove' ? ['leftButtonDown'] : [] }); await pause(40) }
+    const dragBy = async (x, y, dx, dy) => { await mouse('mouseDown', x, y); for (let k = 1; k <= 5; k++) await mouse('mouseMove', x + (dx * k) / 5, y + (dy * k) / 5); await mouse('mouseUp', x + dx, y + dy); await pause(200) }
+    const table = `document.querySelector('[data-cast-table]')`
+    await js(`(() => { const el = ${table}; el.style.maxWidth = '420px'; el.style.maxHeight = '150px'; el.scrollLeft = 0; el.scrollTop = 0 })()`)
+    await pause(200)
+    const tableRect = await js(`(() => { const r = ${table}.getBoundingClientRect(); return { x: r.x, y: r.y } })()`)
+    // 左の人物の名前の列から(帯の上ではない所)ドラッグ
+    await dragBy(tableRect.x + 80, tableRect.y + 110, -100, -30)
+    const scrolled = await js(`[${table}.scrollLeft, ${table}.scrollTop]`)
+    if (!(Math.abs(scrolled[0] - 100) <= 6 && scrolled[1] >= 20)) errors.push('ドラッグで表が動いていない: ' + JSON.stringify(scrolled))
+    else console.log('PASS 左ドラッグで出番表が上下左右に動く')
+    // 見出しから始めたドラッグはシーンを選ばない(選択は 2 番目のシーンのまま)。動かさずに押せば今までどおり選ぶ
+    const headerAt = (title) => js(`(() => { const r = [...${table}.querySelectorAll('button[data-tip]')].find(e => e.getAttribute('data-tip').includes(${JSON.stringify('. ')} + ${JSON.stringify(title)})).getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 } })()`)
+    await js(`${table}.scrollLeft = 0`)
+    await pause(100)
+    let at = await headerAt(example.scenes[0].title)
+    await dragBy(at.x, at.y, 60, 0)
+    await assert(`[...document.querySelectorAll('input')].some(i => i.value === ${JSON.stringify(second)})`, '見出しから始めたドラッグではシーンが選ばれない')
+    at = await headerAt(example.scenes[0].title)
+    await mouse('mouseDown', at.x, at.y)
+    await mouse('mouseUp', at.x, at.y)
+    await pause(400)
+    await assert(`[...document.querySelectorAll('input')].some(i => i.value === ${JSON.stringify(example.scenes[0].title)})`, '動かさずに見出しを押すと、今までどおりそのシーンが選ばれる')
+    // 後の検証のために元に戻す(表の大きさと、選択は 2 番目のシーン)
+    await js(`(() => { const el = ${table}; el.style.maxWidth = ''; el.style.maxHeight = ''; el.scrollLeft = 0; el.scrollTop = 0 })()`)
+    await js(`${cells}.find(e => e.getAttribute('aria-label') === '老技師: ' + ${JSON.stringify(second)}).click()`)
+    await pause(400)
     // 人物の鎖: キャラクター 3 + シーン 4 のノード、線は出番の数(4 + 2 + 2)。線を消すと cast から外れる
     await click('人物の鎖')
     await pause(800)
