@@ -1202,6 +1202,8 @@ export type ProductionOperation = ProductionOperationBase & ({
     old_parent_title: string | null; parent_title: string | null; affected_ids: string[] }
   action: 'insert_scene' | 'branch_scene' | 'update_scene' | 'delete_scene' | 'reconnect_scene'
   node_id: string
+  /** 確定した後のシーン(削除以外)。制作チャットで、確定した本文を折りたたんで見せるのに使う */
+  scene?: { id: string; title: string | null; beat: string | null; cast: string[]; location: string | null }
 } | {
   action: 'create_character' | 'update_character' | 'delete_character' | 'create_place' | 'update_place' | 'delete_place' | 'create_setting_document' | 'update_setting_document' | 'create_chapter' | 'rename_chapter' | 'add_scenes_to_chapter'
   entity_type: 'character' | 'place' | 'setting_document' | 'chapter'

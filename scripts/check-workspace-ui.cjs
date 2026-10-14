@@ -59,6 +59,23 @@ for mode in ['production', None]:
 `], {cwd:join(root,'backend'),env:{...process.env,STORY_GRAPH_LIBRARY:target},windowsHide:true,encoding:'utf8'})
     if (seed.status !== 0) throw new Error(seed.stderr)
   }
+  // 確定したシーン編集の項目に、本文の折りたたみが出るか(制作の履歴を直接仕込む)
+  if (process.argv.includes('--optext')) {
+    const graph = await (await fetch(base + '/graph')).json()
+    const node = graph.nodes.find((n) => !n.kind)
+    const seed = spawnSync(join(root, '.venv/Scripts/python.exe'), ['-c', `import json
+from app import store
+chat = store.create_chat(None, 'upto', mode='production')
+store.set_chat_title(chat['id'], 'optext-chat')
+scene = {'id': ${JSON.stringify(node.id)}, 'title': '検証シーン', 'beat': '確定した本文です。二行目もあります。', 'cast': [], 'location': None}
+store.save_chat_messages(chat['id'], [
+  {'role': 'user', 'content': '本文を直して', 'execute': True},
+  {'role': 'assistant', 'content': '語尾を整えました', 'operation': {'action': 'update_scene', 'node_id': scene['id'], 'title': '検証シーン', 'reason': '語尾を整えました', 'scene': scene}},
+  {'role': 'assistant', 'content': '完了しました。'}
+])
+`], {cwd:join(root,'backend'),env:{...process.env,STORY_GRAPH_LIBRARY:target},windowsHide:true,encoding:'utf8'})
+    if (seed.status !== 0) throw new Error(seed.stderr)
+  }
   const tabsCheck = process.argv.includes('--tabs')
   if (tabsCheck) {
     const chars = await (await fetch(base + '/characters')).json()
@@ -298,6 +315,21 @@ for mode in ['production', None]:
     await pause(300)
     await assert(`!document.body.textContent.includes('キャラクタービュー') && [...document.querySelectorAll('.react-flow__node')].length > 0`, '「フローチャート」で元の表示に戻る')
     if (errors.length) throw new Error(errors.join('\n'))
+    console.log('Screenshots: ' + target)
+    win.destroy()
+    return
+  }
+  if (process.argv.includes('--optext')) {
+    await click('会話一覧')
+    await js(`[...document.querySelectorAll('aside button')].find(e=>e.getClientRects().length && e.textContent.includes('optext-chat')).click()`)
+    await pause(400)
+    const details = `[...document.querySelectorAll('details')].find(e => e.textContent.includes('本文を表示('))`
+    await assert(`(() => { const d = ${details}; return !!d && !d.open && d.querySelector('summary').textContent.trim() === '本文を表示(18 字)' && document.body.textContent.includes('編集: 検証シーン') })()`, '確定したシーン編集の項目に、確定した本文の折りたたみ(閉じた状態)が出る')
+    await js(`${details}.querySelector('summary').click()`)
+    await pause(200)
+    await assert(`(() => { const d = ${details}; return d.open && d.textContent.includes('確定した本文です。二行目もあります。') })()`, '開くと確定した本文が読める')
+    writeFileSync(join(target, 'operation-text.png'), (await win.webContents.capturePage()).toPNG())
+    if (errors.length) throw new Error(errors.join(String.fromCharCode(10)))
     console.log('Screenshots: ' + target)
     win.destroy()
     return

@@ -129,6 +129,12 @@ const MessageList = memo(function MessageList({ messages, nodes, groups }: {
                 {Object.keys(operation.after ?? operation.before ?? {}).filter((field) => operation.before?.[field] !== operation.after?.[field]).map((field) =>
                   <p key={field} className="whitespace-pre-wrap break-words">{libraryFieldLabels[field] ?? field}: {operation.before?.[field] || '（未設定）'} → {operation.after?.[field] || '（未設定）'}</p>)}
               </details>}
+              {/* 確定した本文。ストリーミングの編集案は確定で消えるので、代わりにここに畳んで残す
+                  (開いたままだと会話欄が本文だらけになるので既定は閉じる。変更前の本文は履歴に持たない) */}
+              {'scene' in operation && operation.scene?.beat && <details className="mb-1 text-[11px]" style={{ color: 'var(--text-dim)' }}>
+                <summary className="cursor-pointer">本文を表示({operation.scene.beat.length} 字)</summary>
+                <p className="mt-1 whitespace-pre-wrap break-words text-[12px] leading-relaxed">{operation.scene.beat}</p>
+              </details>}
               {operation.connection && <p className="mb-1 text-[11px]" style={{ color: 'var(--text-dim)' }}>
                 {operation.connection.mode === 'scene' ? '1シーンを移動' : '枝ごと親を変更'}: {operation.connection.old_parent_title || '接続なし'} → {operation.connection.parent_title || operation.connection.parent_id} の後
               </p>}
