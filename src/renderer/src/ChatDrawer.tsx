@@ -1353,7 +1353,7 @@ export default function ChatDrawer({
             </div>
           </div>
           {/* 入力 */}
-          <div className="mt-1.5 flex items-end gap-2">
+          <div className={`mt-1.5 flex items-end gap-2${room ? ' room-composer' : ''}`}>
             <textarea
               ref={inputRef}
               rows={1}
