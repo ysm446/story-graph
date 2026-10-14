@@ -740,6 +740,7 @@ input[type='range']:focus-visible {
 }
 .scene-detail {
   container-type: inline-size;
+  container-name: scene-detail; /* 中に別のコンテナ(清書タブの本文の列)があっても、詳細欄の幅で判定できるように */
 }
 
 /* 資料庫のキャラクター編集。上段(左=アイコン・名前・読み / 右=参照画像)を固定し、下段の文章欄だけをスクロールする
@@ -935,6 +936,73 @@ input[type='range']:focus-visible {
 .scene-detail-main.detail-fill > div {
   height: 100%;
   max-width: none;
+}
+
+/* 清書タブ: 挿絵と本文を横に並べるので 80ch に絞らない(鑑賞モードの挿絵分割の max-w-5xl に合わせる) */
+.scene-detail-main.detail-wide > div {
+  max-width: 64rem;
+  container-type: inline-size;
+}
+
+/* 清書タブの挿絵分割(鑑賞モードの挿絵分割と同じ 5:7・間 32px)。タイトルと挿絵は動かさず、
+   本文だけをその列の中でスクロールする(2026-10-15 ユーザー要望「挿絵側はスクロールしても固定」)。
+   そのため本文の列(scene-detail-main)自体はスクロールさせず、中身を列の高さいっぱいに広げる */
+.scene-detail-main.detail-wide:has(> div > .render-split) {
+  overflow: hidden;
+}
+.scene-detail-main.detail-wide > div:has(> .render-split) {
+  height: 100%;
+}
+.render-split {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  grid-template-rows: minmax(0, 1fr);
+  gap: 2rem;
+  flex: 1 1 0;
+  min-height: 0;
+}
+.render-art-cell {
+  min-height: 0;
+}
+.render-prose {
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+/* 本文の列が狭いときは、挿絵を上に小さく置いて固定し、その下で本文をスクロールする */
+@container (max-width: 420px) {
+  .render-split {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 1rem;
+  }
+  .render-split img.render-art,
+  .render-split .render-art video {
+    max-height: 140px;
+  }
+}
+/* 詳細欄が 1 列になる幅では欄全体がスクロールするので、固定をやめて挿絵・本文を縦に流す */
+@container scene-detail (max-width: 719px) {
+  .scene-detail-main.detail-wide:has(> div > .render-split) {
+    overflow: visible;
+  }
+  .scene-detail-main.detail-wide > div:has(> .render-split) {
+    height: auto;
+  }
+  .render-split {
+    display: block;
+    flex: none; /* 列の高さに合わせて伸ばす指定(flex: 1 1 0)のままだと、高さが決まらない 1 列では 0 に潰れる */
+  }
+  .render-art-cell {
+    margin-bottom: 1rem;
+  }
+  .render-prose {
+    overflow: visible;
+  }
+  .render-split img.render-art,
+  .render-split .render-art video {
+    max-height: 320px;
+  }
 }
 
 @container (max-width: 719px) {

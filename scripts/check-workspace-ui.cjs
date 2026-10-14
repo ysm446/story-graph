@@ -590,17 +590,31 @@ store.save_chat_messages(chat['id'], [
         if (label === '清書') {
           // 左の列に上から プリセット / POV / 分量 / 清書ボタン、右に本文(2026-10-15 ユーザー指定)
           await assert(`(() => {const meta=document.querySelector('.scene-detail-meta'),main=document.querySelector('.scene-detail-main');const [preset,pov,length]=[...meta.querySelectorAll('select')];const run=[...meta.querySelectorAll('button')].find(e=>e.textContent.includes('清書'));const y=(e)=>e.getBoundingClientRect().top;return main.getBoundingClientRect().left>=meta.getBoundingClientRect().right-1 && y(preset)<y(pov) && y(pov)<y(length) && y(length)<y(run) && pov.textContent.includes('POV') && length.value!=='custom' && length.textContent.includes('分量')})()`, '清書は左にプリセット・POV・分量・ボタンを縦に並べ、右に本文')
-          // 清書の本文は読み物の見た目(15px・行間 1.9・1 行は全角 40 字ほど)。LLM を使わずに清書を 1 件入れて確かめる
+          // 右の列は鑑賞モードの「挿絵分割」と同じ: 上にタイトル、下に左が挿絵・右が本文(鑑賞モードの本文フォント・大きさ、行間 1.9)。
+          // LLM を使わずに清書を 1 件入れ、挿絵(アプリのアイコン)も付けて確かめる
           const nodeId = (await (await fetch(base + '/graph')).json()).nodes.find((n) => n.title === '検証シーン').id
           const presetId = await js(`document.querySelector('.scene-detail-meta select').value`)
           const prose = '港の朝は、まだ霧の底に沈んでいた。アヤは桟橋の端に立ち、遠くで鳴る汽笛の数を数えた。三つ目が途切れたところで、彼女はようやく息を吐いた。\n\n'.repeat(4)
-          const seeded = spawnSync(join(root, '.venv/Scripts/python.exe'), ['-c', 'import sys, db; from store import Store; s = Store(db.connect(sys.argv[1]), root=sys.argv[2]); s.save_render(sys.argv[3], sys.argv[4], None, sys.argv[5]); s.conn.commit()', join(target, 'story-graph.db'), target, nodeId, presetId, prose], { cwd: join(root, 'backend'), encoding: 'utf8' })
+          const seeded = spawnSync(join(root, '.venv/Scripts/python.exe'), ['-c', 'import sys, shutil, os, db; from store import Store; s = Store(db.connect(sys.argv[1]), root=sys.argv[2]); s.save_render(sys.argv[3], sys.argv[4], None, sys.argv[5]); shutil.copy(sys.argv[6], os.path.join(s.assets_dir(), "test-art.png")); s.set_node_image(sys.argv[3], "test-art.png"); s.conn.commit()', join(target, 'story-graph.db'), target, nodeId, presetId, prose, join(root, 'resources/icon.png')], { cwd: join(root, 'backend'), encoding: 'utf8' })
           if (seeded.status !== 0) throw new Error(seeded.stderr)
-          await click('シーン')
-          await pause(200)
+          await new Promise((done) => { win.webContents.once('did-finish-load', () => done()); win.webContents.reload() })
+          for (let i = 0; i < 60; i++) { if (await js(`[...document.querySelectorAll('.react-flow__node')].some(e=>e.textContent.includes('検証シーン'))`)) break; await pause(100) }
+          await js(`(() => {const node=[...document.querySelectorAll('.react-flow__node')].find(e=>e.textContent.includes('検証シーン')); node.dispatchEvent(new MouseEvent('click',{bubbles:true}));})()`)
+          await pause(300)
           await click('清書')
+          await pause(600)
+          await assert(`(() => {const main=document.querySelector('.scene-detail-main'),meta=document.querySelector('.scene-detail-meta');const h=main.querySelector('h2'),split=main.querySelector('.render-split');if(!h||!split)return false;const art=split.querySelector('img'),p=[...split.querySelectorAll('.whitespace-pre-wrap')].find(e=>e.textContent.includes('港の朝'));if(!art||!p)return false;const s=getComputedStyle(p);return h.textContent==='検証シーン' && getComputedStyle(h).fontFamily===s.fontFamily && h.getBoundingClientRect().bottom<=split.getBoundingClientRect().top && art.getBoundingClientRect().right<=p.getBoundingClientRect().left && !meta.querySelector('img,video') && s.fontFamily.includes('Inter') && s.fontSize==='14px' && Math.abs(parseFloat(s.lineHeight)-26.6)<0.6})()`, '清書は右の列の上にタイトル、下に左が挿絵・右が本文(フォント・大きさは最初は鑑賞モードと同じ)。左の列に挿絵は無い')
+          // タイトルと挿絵は動かさず、本文だけがスクロールする(2026-10-15 ユーザー要望)
+          const artBefore = await js(`(() => {const main=document.querySelector('.scene-detail-main');return [main.querySelector('h2').getBoundingClientRect().top, main.querySelector('.render-split img').getBoundingClientRect().top]})()`)
+          await js(`(() => {const prose=document.querySelector('.render-prose');prose.scrollTop=99999;document.querySelector('.scene-detail-main').scrollTop=99999})()`)
+          await pause(300)
+          await assert(`(() => {const main=document.querySelector('.scene-detail-main'),prose=main.querySelector('.render-prose'),art=main.querySelector('.render-split img');const before=${JSON.stringify(artBefore)};return prose.scrollTop>50 && main.scrollTop===0 && Math.abs(main.querySelector('h2').getBoundingClientRect().top-before[0])<1 && Math.abs(art.getBoundingClientRect().top-before[1])<1 && art.getBoundingClientRect().bottom<=main.getBoundingClientRect().bottom+1})()`, '清書の本文をスクロールしても、タイトルと挿絵は動かない(挿絵は列に収まる)')
+          // 左の列の「表示」で、この画面だけの本文フォント・大きさを選べる(鑑賞モードの設定は変わらない)
+          const readerBefore = await (await fetch(base + '/settings')).json()
+          await js(`(() => {const section=document.querySelector('.scene-detail-meta section[aria-label="清書タブの表示"]');const [font,size]=section.querySelectorAll('select');const set=(el,v)=>{Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(el,v);el.dispatchEvent(new Event('change',{bubbles:true}))};set(font,'mincho');set(size,'18')})()`)
           await pause(400)
-          await assert(`(() => {const p=[...document.querySelectorAll('.scene-detail-main .whitespace-pre-wrap')].find(e=>e.textContent.includes('港の朝'));if(!p)return false;const s=getComputedStyle(p);return s.fontSize==='15px' && Math.abs(parseFloat(s.lineHeight)-28.5)<0.6 && p.getBoundingClientRect().width<=600.5})()`, '清書の本文は 15px・行間 1.9・幅は 40em まで')
+          const readerAfter = await (await fetch(base + '/settings')).json()
+          await assert(`(() => {const p=document.querySelector('.render-prose .whitespace-pre-wrap'),h=document.querySelector('.scene-detail-main h2');const s=getComputedStyle(p);return s.fontFamily.includes('Shippori Mincho') && s.fontSize==='18px' && getComputedStyle(h).fontFamily===s.fontFamily})()` + ` && ${JSON.stringify(readerAfter.render_tab_font === 'mincho' && readerAfter.render_tab_font_size === '18' && readerAfter.reader_font === readerBefore.reader_font && readerAfter.reader_font_size === readerBefore.reader_font_size)}`, '清書の「表示」でフォントと大きさを変えると本文とタイトルに効き、鑑賞モードの設定は変わらない')
         }
         if (label === 'キャラ') {
           await assert(`(() => {const list=document.querySelector('.char-detail-list');const row=list.querySelector('button');const l=list.getBoundingClientRect(),d=document.querySelector('.char-detail .scene-detail').getBoundingClientRect();return row.lastElementChild.textContent.trim()==='検証キャラ' && row.getAttribute('aria-pressed')==='true' && row.children.length===2 && Math.round(l.width)===188 && d.x>=l.right-1 && Math.abs(l.y-d.y)<1})()`, 'キャラは左に登場人物の一覧(アイコンと名前)、右に状態')
@@ -626,6 +640,7 @@ store.save_chat_messages(chat['id'], [
         win.setSize(1050,800)
         await pause(250)
         if (label !== '事実') await assert(`getComputedStyle(document.querySelector('.scene-detail-layout')).display==='block'`, label + 'は狭幅で1列')
+        if (label === '清書') await assert(`(() => {const art=document.querySelector('.render-split img'),p=document.querySelector('.render-prose'),meta=document.querySelector('.scene-detail-meta');return art.getBoundingClientRect().bottom<=p.getBoundingClientRect().top+1 && p.getBoundingClientRect().bottom<=meta.getBoundingClientRect().top+1 && art.getBoundingClientRect().height<=321})()`, '清書は狭幅で挿絵・本文・設定が重ならずに縦に並ぶ')
         if (label === 'キャラ') await assert(`(() => {const l=document.querySelector('.char-detail-list').getBoundingClientRect(),d=document.querySelector('.char-detail .scene-detail').getBoundingClientRect();return d.y>=l.bottom-1 && getComputedStyle(document.querySelector('.char-detail-list')).flexDirection==='row'})()`, 'キャラは狭幅で登場人物を上の横並びに戻す')
         writeFileSync(join(target, label + '-narrow.png'), (await win.webContents.capturePage()).toPNG())
         win.setSize(1440,1000)

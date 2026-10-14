@@ -9,13 +9,15 @@ const ASIDE_MAX = 440
  * aside を渡すと3列(aside | secondary | main)になり、幅が足りないときは aside と secondary を
  * 左の1列に縦に重ねる(index.css の detail-three)。3列のときは aside の右の境界も動かせる(幅は px で保存)。
  */
-export default function DetailSplit({ storageKey, main, secondary, aside, mainScrollRef, fillMain = false, mainOnRight = false, defaultWidth = 42 }: {
+export default function DetailSplit({ storageKey, main, secondary, aside, mainScrollRef, fillMain = false, wideMain = false, mainOnRight = false, defaultWidth = 42 }: {
   storageKey: string
   main: ReactNode
   secondary: ReactNode
   aside?: ReactNode
   mainScrollRef?: React.RefObject<HTMLDivElement | null>
   fillMain?: boolean
+  /** 本文の列の中身を 80ch に絞らない(清書タブの挿絵 + 本文の 2 列のように、横に並べるもの) */
+  wideMain?: boolean
   mainOnRight?: boolean
   defaultWidth?: number
 }): React.JSX.Element {
@@ -67,7 +69,7 @@ export default function DetailSplit({ storageKey, main, secondary, aside, mainSc
   return (
     <div ref={detailLayoutRef} className={`scene-detail-layout min-h-0 flex-1${three ? ' detail-three' : mainOnRight ? ' detail-main-right' : ''}`}
       style={{ '--detail-meta-width': `${metaWidth}%`, '--detail-aside-width': `${asideWidth}px` } as React.CSSProperties}>
-      <div ref={mainScrollRef} className={`scene-detail-main inspector-scrollbar min-w-0 py-3 pl-5 pr-2.5${fillMain ? ' detail-fill' : ''}`}>
+      <div ref={mainScrollRef} className={`scene-detail-main inspector-scrollbar min-w-0 py-3 pl-5 pr-2.5${fillMain ? ' detail-fill' : ''}${wideMain ? ' detail-wide' : ''}`}>
         <div className="flex flex-col gap-3">{main}</div>
       </div>
         <div className="scene-detail-divider relative cursor-col-resize"

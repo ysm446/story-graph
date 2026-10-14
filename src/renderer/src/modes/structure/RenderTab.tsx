@@ -1,9 +1,10 @@
 import DetailSplit from '../../DetailSplit'
 import { createPortal } from 'react-dom'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, assetUrl, isAbortError, isVideoAsset, onRenderSaved, renderStream } from '../../api'
+import { CrossfadeLoopVideo, DEFAULT_VIDEO_CROSSFADE_SECONDS } from '../../CrossfadeLoopVideo'
 import { MsgActionButton, StatsLine, SystemPromptModal } from '../../GenMeta'
-import { LengthSelect, lengthLabel, RenderStyleControls, type RenderStyleState } from '../../RenderStyle'
+import { FONT_OPTIONS, FONT_SIZES, LengthSelect, lengthLabel, RenderStyleControls, type RenderStyleState } from '../../RenderStyle'
 import { cancelTask, enqueueTask, useTaskFor } from '../../tasks'
 import { useElapsedSeconds } from '../../useElapsed'
 import type { RenderResult, StoryNode } from '../../types'
@@ -28,6 +29,13 @@ const RENDER_INPUTS_HELP = [
   '・直前シーンの清書の末尾 — 文体と場面をつなぎます(同じ条件で清書済みのときだけ)',
   '・分量の目安 — このシーンの指定があれば共通の設定より優先します'
 ].join('\n')
+
+/** 清書タブの本文の表示(鑑賞モードとは別の設定) */
+interface RenderTabDisplay {
+  fontId: string
+  fontSize: number
+}
+let displayCache: RenderTabDisplay | null = null
 
 export function RenderTab({
   node,
@@ -134,10 +142,62 @@ export function RenderTab({
     [node.id, presetId, povChar]
   )
 
+  // 動画の挿絵のループのつなぎ目(鑑賞モードと同じ設定 video_crossfade_seconds を使う)
+  const [videoFade, setVideoFade] = useState(DEFAULT_VIDEO_CROSSFADE_SECONDS)
+  // 本文フォント・文字の大きさ。鑑賞モードとは別の、この画面だけの設定(render_tab_font / render_tab_font_size。
+  // 2026-10-15 ユーザー指定)。未設定のあいだは鑑賞モードの設定から始める。タブを開き直すたびに既定へ戻って
+  // ちらつかないよう、読んだ値はモジュールに持っておく
+  const [display, setDisplay] = useState<RenderTabDisplay>(
+    () => displayCache ?? { fontId: style.fontId, fontSize: style.fontSize }
+  )
+  useEffect(() => {
+    void api
+      .getSettings()
+      .then((settings) => {
+        const saved = Number(settings.video_crossfade_seconds)
+        if (Number.isFinite(saved) && saved >= 0) setVideoFade(Math.min(saved, 5))
+        const fontId = [settings.render_tab_font, settings.reader_font].find((id) => FONT_OPTIONS.some((f) => f.id === id))
+        const fontSize = [settings.render_tab_font_size, settings.reader_font_size]
+          .map(Number)
+          .find((size) => FONT_SIZES.some((s) => s.value === size))
+        displayCache = { fontId: fontId ?? FONT_OPTIONS[0].id, fontSize: fontSize ?? 14 }
+        setDisplay(displayCache)
+      })
+      .catch(() => undefined)
+  }, [])
+  const changeDisplay = (patch: Partial<RenderTabDisplay>): void => {
+    displayCache = { ...display, ...patch }
+    setDisplay(displayCache)
+    void api.putSettings({
+      ...(patch.fontId !== undefined && { render_tab_font: patch.fontId }),
+      ...(patch.fontSize !== undefined && { render_tab_font_size: String(patch.fontSize) })
+    })
+  }
+  const proseFont = FONT_OPTIONS.find((f) => f.id === display.fontId)?.stack ?? FONT_OPTIONS[0].stack
+
+  // 挿絵の高さの上限は、挿絵の欄(タイトルの下から列の下端まで)の高さ。鑑賞モードの 70vh の代わりに、
+  // 下段の低い列に収めて動かさない(index.css の render-split)。欄は挿絵があるときだけ出るので callback ref で見張る
+  const [artMaxHeight, setArtMaxHeight] = useState(320)
+  const artObserver = useRef<ResizeObserver | null>(null)
+  const artCellRef = useCallback((el: HTMLDivElement | null) => {
+    artObserver.current?.disconnect()
+    artObserver.current = null
+    if (!el) return
+    artObserver.current = new ResizeObserver(() => setArtMaxHeight(Math.max(120, el.clientHeight)))
+    artObserver.current.observe(el)
+  }, [])
+  // 挿絵分割のときは本文だけがスクロールする(その欄)
+  const proseScrollRef = useRef<HTMLDivElement | null>(null)
+
   // 生成中は末尾に追従する
   const liveText = live?.nodeId === node.id ? live.text : null
   useEffect(() => {
     if (liveText === null) return
+    const prose = proseScrollRef.current
+    if (prose && getComputedStyle(prose).overflowY === 'auto') {
+      prose.scrollTop = prose.scrollHeight
+      return
+    }
     const el = bodyRef.current
     if (el) {
       const layout = el.parentElement
@@ -202,28 +262,50 @@ export function RenderTab({
     })
   }
 
-  // 本文はシーンタブと同じ UI フォントで出す(鑑賞用の proseFont / fontSize は
-  // 鑑賞モード側だけに使う。インスペクタ内は他タブと見た目を揃える方針。2026-07-31)。
-  // ただし読み物なので、大きさ・行間・字間を広げ、1 行を全角 40 字ほどに収める(2026-10-15 ユーザー要望)
-  const proseClass = 'mx-auto w-full max-w-[40em] whitespace-pre-wrap text-[15px] leading-[1.9] tracking-[0.02em]'
+  // 本文は鑑賞モードと同じ見た目(本文フォント・文字の大きさ、行間 1.9)。フォントと大きさはこの画面の設定。
+  // 2026-07-31 にインスペクタ内の見た目に揃えたが、2026-10-15 のユーザー要望で鑑賞モードに合わせ直した
+  const proseStyle = { color: 'var(--text)', fontFamily: proseFont, fontSize: display.fontSize, lineHeight: 1.9 }
   const stale = render?.stale === 1
   const imageUrl = assetUrl(node.image_path)
 
+  const prose =
+    liveText !== null ? (
+      <div className="whitespace-pre-wrap" style={proseStyle}>
+        {liveText}
+        <span
+          className="node-generating-border ml-0.5 inline-block h-4 w-1.5 align-middle"
+          style={{ background: 'var(--accent)' }}
+        />
+      </div>
+    ) : render ? (
+      <div className="whitespace-pre-wrap" style={{ ...proseStyle, opacity: stale ? 0.6 : 1 }}>
+        {render.prose}
+      </div>
+    ) : null
+
   return (
     <div className="scene-detail flex min-h-0 flex-1 flex-col">
-      <DetailSplit storageKey="renderDetailMetaWidth" mainOnRight mainScrollRef={bodyRef} main={<>
-        {liveText !== null ? (
-          <div className={proseClass} style={{ color: 'var(--text)' }}>
-            {liveText}
-            <span
-              className="node-generating-border ml-0.5 inline-block h-4 w-1.5 align-middle"
-              style={{ background: 'var(--accent)' }}
-            />
+      <DetailSplit storageKey="renderDetailMetaWidth" mainOnRight wideMain mainScrollRef={bodyRef} main={<>
+        {/* 鑑賞モードの「挿絵分割」と同じ並び: 上にシーンのタイトル、その下に左が挿絵・右が本文(2026-10-15 ユーザー指定)。
+            タイトルと挿絵は動かさず、本文だけをスクロールする。挿絵が無いシーンは本文だけ(index.css の render-split) */}
+        <h2 className="shrink-0 text-[16px] font-semibold" style={{ color: 'var(--text)', fontFamily: proseFont }}>
+          {node.title || '(無題)'}
+        </h2>
+        {prose && imageUrl ? (
+          <div className="render-split" style={{ '--render-art-max': `${artMaxHeight}px` } as React.CSSProperties}>
+            <div ref={artCellRef} className="render-art-cell">
+              {isVideoAsset(node.image_path) ? (
+                <CrossfadeLoopVideo src={imageUrl} fadeSeconds={videoFade} className="render-art mx-auto w-fit" videoClassName="max-h-[var(--render-art-max)] rounded-2xl" />
+              ) : (
+                <img src={imageUrl} decoding="async" draggable={false} className="render-art mx-auto block max-h-[var(--render-art-max)] max-w-full rounded-2xl" />
+              )}
+            </div>
+            <div ref={proseScrollRef} className="render-prose inspector-scrollbar pr-2.5">
+              {prose}
+            </div>
           </div>
-        ) : render ? (
-          <div className={proseClass} style={{ color: 'var(--text)', opacity: stale ? 0.6 : 1 }}>
-            {render.prose}
-          </div>
+        ) : prose ? (
+          <div className="mx-auto w-full max-w-2xl">{prose}</div>
         ) : loading ? (
           <div className="pt-6 text-center text-[12px]" style={{ color: 'var(--text-faint)' }}>
             読み込み中…
@@ -239,15 +321,8 @@ export function RenderTab({
         )}
 
       </>} secondary={<>
-      {/* 左の列は上から 挿絵 / プリセット(人称と文体)/ POV / 分量 / 清書ボタン(2026-10-15 ユーザー指定)。
-          挿絵は見るだけ(差し替えはシーンタブで)。シーンタブと同じく原画を列の全幅・縦横比のまま出し、
-          動画は静止画のサムネイルにせず再生する */}
-      {imageUrl && (isVideoAsset(node.image_path) ? (
-        <video src={imageUrl} autoPlay muted loop playsInline className="block h-auto w-full rounded-xl" />
-      ) : (
-        <img src={imageUrl} decoding="async" draggable={false} className="block h-auto w-full rounded-xl" />
-      ))}
-      {/* 条件。プリセットと POV は鑑賞モードと共通、分量はこのシーンだけの指定 */}
+      {/* 左の列は上から プリセット(人称と文体)/ POV / 分量 / 清書ボタン(2026-10-15 ユーザー指定。挿絵は右の本文の横へ)。
+          条件。プリセットと POV は鑑賞モードと共通、分量はこのシーンだけの指定 */}
       <RenderStyleControls style={style} variant="compact" showLength={false} />
       <div className="flex items-center gap-1.5">
         <LengthSelect
@@ -329,6 +404,40 @@ export function RenderTab({
           )}
         </div>
       )}
+      {/* 表示: 右の本文のフォントと大きさ。鑑賞モードとは別の、この画面だけの設定(清書の条件とは別の区切り) */}
+      <section className="border-t pt-3" style={{ borderColor: 'var(--border)' }} aria-label="清書タブの表示">
+        <span className="mb-1.5 block text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
+          表示
+        </span>
+        <div className="flex items-center gap-1.5">
+          <select
+            value={display.fontId}
+            onChange={(e) => changeDisplay({ fontId: e.target.value })}
+            className="min-w-0 flex-1 rounded-lg border px-2 py-1 text-[12px]"
+            style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
+            data-tip="この画面の本文フォント(鑑賞モードの設定とは別)。ローカルにインストールされているものが使われます"
+          >
+            {FONT_OPTIONS.map((f) => (
+              <option key={f.id} value={f.id}>
+                {f.label}
+              </option>
+            ))}
+          </select>
+          <select
+            value={display.fontSize}
+            onChange={(e) => changeDisplay({ fontSize: Number(e.target.value) })}
+            className="shrink-0 rounded-lg border px-2 py-1 text-[12px]"
+            style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
+            data-tip="この画面の本文の文字サイズ(鑑賞モードの設定とは別)"
+          >
+            {FONT_SIZES.map((s) => (
+              <option key={s.value} value={s.value}>
+                {s.label}({s.value}px)
+              </option>
+            ))}
+          </select>
+        </div>
+      </section>
 
       </>} />
       {promptView !== null && createPortal(<SystemPromptModal messages={promptView} onClose={() => setPromptView(null)} />, document.body)}
