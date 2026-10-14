@@ -126,14 +126,14 @@ const MessageList = memo(function MessageList({ messages, nodes, groups }: {
             <TimelineItem key={i} time={m.created_at} color="var(--ok)"
               label={<span style={{ color: 'var(--text)' }}>{operationLabels[operation.action]}: {operation.title || '(無題)'}</span>}>
               {/* 折りたたみは枠で囲む(周りの文章と区別して、押せる場所を分かりやすく)。本文の折りたたみと同じ型 */}
-              {'entity_id' in operation && <details className="mb-1.5 rounded-lg border px-3 py-1.5 text-[11px]" style={{ borderColor: 'var(--border)', background: 'var(--bg-elevated)', color: 'var(--text-dim)' }}>
+              {'entity_id' in operation && <details className="mb-1.5 mt-1.5 rounded-lg border px-3 py-1.5 text-[11px]" style={{ borderColor: 'var(--border)', background: 'var(--bg-elevated)', color: 'var(--text-dim)' }}>
                 <summary className="cursor-pointer">{operation.entity_type === 'chapter' ? '章の変更内容' : '資料庫の変更内容'}</summary>
                 {Object.keys(operation.after ?? operation.before ?? {}).filter((field) => operation.before?.[field] !== operation.after?.[field]).map((field) =>
                   <p key={field} className="whitespace-pre-wrap break-words">{libraryFieldLabels[field] ?? field}: {operation.before?.[field] || '（未設定）'} → {operation.after?.[field] || '（未設定）'}</p>)}
               </details>}
               {/* 確定した本文。ストリーミングの編集案は確定で消えるので、代わりにここに畳んで残す
                   (開いたままだと会話欄が本文だらけになるので既定は閉じる。変更前の本文は履歴に持たない) */}
-              {'scene' in operation && operation.scene?.beat && <details className="mb-1.5 rounded-lg border px-3 py-1.5 text-[11px]" style={{ borderColor: 'var(--border)', background: 'var(--bg-elevated)', color: 'var(--text-dim)' }}>
+              {'scene' in operation && operation.scene?.beat && <details className="mb-1.5 mt-1.5 rounded-lg border px-3 py-1.5 text-[11px]" style={{ borderColor: 'var(--border)', background: 'var(--bg-elevated)', color: 'var(--text-dim)' }}>
                 <summary className="cursor-pointer">本文を表示({operation.scene.beat.length} 字)</summary>
                 <p className="mt-1.5 whitespace-pre-wrap break-words text-[12px] leading-relaxed" style={{ color: 'var(--text)' }}>{operation.scene.beat}</p>
               </details>}
