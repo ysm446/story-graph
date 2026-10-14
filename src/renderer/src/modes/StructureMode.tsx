@@ -126,6 +126,7 @@ function StructureModeInner({
    *  フローチャートのノードの data にも渡すので、他の state より先に定義しておく */
   // focusNodeOnCanvas は後ろで定義される(React Flow の instance が要る)ので、ref を介して呼ぶ
   const focusNodeOnCanvasRef = useRef<(nodeId: string) => void>(() => undefined)
+  const ignoreEmptySelection = useRef(false)
   const handleSelectChainChar = useCallback((charId: string, sceneId?: string): void => {
     // どのシーンの札を押したかが分かるときは、そのシーンも選ぶ(人物の詳細の「時点」になる)。
     // 詳細欄は人物専用の表示のまま(onNodeClick を通らないので scene には戻らない)
@@ -1484,6 +1485,9 @@ function StructureModeInner({
    * setSelectedId(リンクからの移動など)が直後に打ち消される。参照を固定しておく。
    */
   const handleSelectionChange = useCallback(({ nodes }: { nodes: Node[] }): void => {
+    // キャンバスに出ていないノード(章カードに畳まれたシーンなど)を focusNodeOnCanvas で選んだ直後は、
+    // それまでの選択(章カードなど)が外れて「何も選んでいない」が届く。これで選んだばかりの対象を消さない
+    if (nodes.length === 0 && ignoreEmptySelection.current) return
     if (nodes.length > 0) setSelectedEdgeId(null)
     const chapter = nodes.find((n) => n.type === 'chapterNode')
     const beats = nodes.filter((n) => n.type !== 'chapterNode')
@@ -1514,6 +1518,14 @@ function StructureModeInner({
         )
       }
       const chapterId = nodeId.startsWith('chapter:') ? nodeId.slice('chapter:'.length) : null
+      if (!flow) {
+        // キャンバスに無いノード: 下の選択の付け替えで届く「何も選んでいない」を少しのあいだ無視する
+        // (handleSelectionChange)。キャラクタービューから章の中のシーンや別の章を選ぶとき
+        ignoreEmptySelection.current = true
+        window.setTimeout(() => {
+          ignoreEmptySelection.current = false
+        }, 200)
+      }
       setFlowNodes((prev) =>
         prev.map((n) => (n.selected === (n.id === nodeId) ? n : { ...n, selected: n.id === nodeId }))
       )

@@ -243,6 +243,21 @@ store.save_chat_messages(chat['id'], [
     // 後の検証のために元に戻す(選択は 2 番目のシーン)
     await js(`${cells}.find(e => e.getAttribute('aria-label') === '老技師: ' + ${JSON.stringify(second)}).click()`)
     await pause(400)
+    await assert(`[...document.querySelectorAll('input')].some(i => i.value === ${JSON.stringify(second)})`, '章の帯のあとにセルをクリックしても、そのシーンが選ばれる(章カードの選択が外れても消えない)')
+    // シーンを選んだ状態で → / ← を押すと、前後のシーンへ移る(キャラクタービューは開いたまま)
+    const key = async (keyCode) => { win.webContents.sendInputEvent({ type: 'keyDown', keyCode }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode }); await pause(400) }
+    // 前にクリックした見出しにフォーカスを置いておき、キーで移っても枠(:focus-visible)が置き去りにならないことも見る
+    win.focus(); win.webContents.focus()
+    await js(`[...document.querySelectorAll('[data-cast-table] button[data-tip]')].find(e => e.getAttribute('data-tip').includes('. ' + ${JSON.stringify(second)})).focus()`)
+    await key('Right')
+    await assert(`[...document.querySelectorAll('input')].some(i => i.value === ${JSON.stringify(example.scenes[2].title)}) && document.body.textContent.includes('キャラクタービュー') && !document.querySelector('[data-cast-table] :focus-visible')`, '→ キーで次のシーンへ移る(前に押した見出しの枠は残らない)')
+    await key('Left')
+    await key('Left')
+    await assert(`[...document.querySelectorAll('input')].some(i => i.value === ${JSON.stringify(example.scenes[0].title)})`, '← キーで前のシーンへ移る')
+    await key('Left')
+    await assert(`[...document.querySelectorAll('input')].some(i => i.value === ${JSON.stringify(example.scenes[0].title)})`, '最初のシーンで ← を押しても動かない')
+    await js(`${cells}.find(e => e.getAttribute('aria-label') === '老技師: ' + ${JSON.stringify(second)}).click()`)
+    await pause(400)
     // 人物の鎖: キャラクター 3 + シーン 4 のノード、線は出番の数(4 + 2 + 2)。線を消すと cast から外れる
     await click('人物の鎖')
     await pause(800)

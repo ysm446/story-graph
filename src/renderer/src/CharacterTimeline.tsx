@@ -105,6 +105,29 @@ export default function CharacterTimeline({
 
   const selectedIndex = selectedNodeId ? path.findIndex((n) => n.id === selectedNodeId) : -1
 
+  // ← / → で前後のシーンへ(シーンを選んでいるときだけ。2026-10-15 ユーザー要望)。
+  // キャラクタービューの間はフローチャートの矢印キーを止めているので、ここで受ける。
+  // 文字の入力中と、表が画面に出ていないとき(別のモードを開いている)は何もしない
+  useEffect(() => {
+    if (selectedIndex < 0) return
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+      if (event.isComposing || event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return
+      const target = event.target as HTMLElement | null
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) return
+      if (!scrollRef.current?.getClientRects().length) return
+      const next = selectedIndex + (event.key === 'ArrowLeft' ? -1 : 1)
+      event.preventDefault() // 表の横スクロールには使わない
+      // 前にクリックしたセル・見出しにフォーカスが残っていると、キー操作でその枠(:focus-visible)が出て、
+      // 選択だけが移り枠が置き去りになる。クリックで選んだときと同じく、選択の強調だけを動かす
+      const focused = document.activeElement
+      if (focused instanceof HTMLElement && scrollRef.current?.contains(focused)) focused.blur()
+      if (next >= 0 && next < path.length) onSelectNode(path[next].id)
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [selectedIndex, path, onSelectNode])
+
   // 左ドラッグで表を上下左右に動かす(フローチャートの空き地のドラッグと同じ感覚)。
   // 出番の帯の上からは始めない(将来、帯をドラッグして cast を付け替える操作のために空けておく)。
   // 少し動いてから掴むので、見出しのクリックはそのまま効く。動かしたあとのクリックは捨てる
