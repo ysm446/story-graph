@@ -250,6 +250,14 @@ for mode in ['production', None]:
     await pause(300)
     await assert(`[...document.querySelectorAll('[data-character-name]')].some(e => e.getClientRects().length && e.textContent.trim() === 'アヤ')`, '左の一覧で別の人物を選ぶと編集画面が切り替わる')
     writeFileSync(join(target, 'cast-library.png'), (await win.webContents.capturePage()).toPNG())
+    // シーンのノードの登場人物の行をクリック → その人物が資料タブに出て、シーンの選択は変わらない
+    await js(`(() => { const row = [...document.querySelectorAll('[data-cast-chain] [data-tip$="この人物を出す"]')].find(e => e.getAttribute('data-tip').startsWith('老技師')); row.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 10, clientY: 10 })); row.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 10, clientY: 10 })) })()`)
+    await pause(400)
+    await assert(`[...document.querySelectorAll('[data-character-name]')].some(e => e.getClientRects().length && e.textContent.trim() === '老技師') && [...document.querySelectorAll('[data-cast-chain] .react-flow__node')].some(e => e.textContent.includes(${JSON.stringify(second)}) && e.classList.contains('selected')) === false`, 'シーンのノードの登場人物の行をクリックすると、その人物が資料タブに出る(シーンは選ばれない)')
+    // そのあとシーンの見出しをクリックすると、詳細欄は「シーン」に戻る
+    await js(`[...document.querySelectorAll('[data-cast-chain] [data-tip*="ドラッグで動かせます"]')].find(e => e.textContent.includes(${JSON.stringify(example.scenes[2].title)})).dispatchEvent(new MouseEvent('click', { bubbles: true }))`)
+    await pause(500)
+    await assert(`[...document.querySelectorAll('input')].some(i => i.value === ${JSON.stringify(example.scenes[2].title)})`, '資料タブのあとにシーンをクリックすると、詳細欄が「シーン」に戻ってそのシーンが出る')
     writeFileSync(join(target, 'cast-chain-char.png'), (await win.webContents.capturePage()).toPNG())
     // 整列で自動配置に戻る
     await js(`window.confirm = () => true; 0`)

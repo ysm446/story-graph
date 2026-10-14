@@ -179,7 +179,7 @@ export default function SettingsMode({ onImported }: {
   const videoFade = values.video_crossfade_seconds
     ? Math.min(Math.max(Number(values.video_crossfade_seconds) || 0, 0), 2)
     : DEFAULT_VIDEO_CROSSFADE_SECONDS
-  const minimapVisible = values.minimap_visible !== '0' // 既定は表示
+  const minimapVisible = values.minimap_visible === '1' // 既定は非表示(2026-10-14 に表示から変更)
   const gridSnap = values.grid_snap !== '0' // 既定はスナップする
   const chatDynamicSuggestions = values.chat_dynamic_suggestions !== '0' // 既定は生成する
   const embeddingOnStartup = values.embedding_load_on_startup !== '0' // 既定は起動時に読み込む

@@ -107,7 +107,7 @@ function StructureModeInner({
   onSelectionCountChange?: (count: number) => void
   onReaderScopeChange?: (groupId: string | null) => void
 }): React.JSX.Element {
-  const [minimapVisible, setMinimapVisible] = useState(true)
+  const [minimapVisible, setMinimapVisible] = useState(false) // 既定は非表示(2026-10-14 ユーザー指示)
   const [gridSnap, setGridSnap] = useState(true) // ドラッグを背景のグリッドに合わせる
   const [chatDynamicSuggestions, setChatDynamicSuggestions] = useState(true)
   const [graphNodes, setGraphNodes] = useState<StoryNode[]>([])
@@ -263,7 +263,7 @@ function StructureModeInner({
     void api
       .getSettings()
       .then((s) => {
-        setMinimapVisible(s.minimap_visible !== '0')
+        setMinimapVisible(s.minimap_visible === '1')
         setGridSnap(s.grid_snap !== '0')
         setChatDynamicSuggestions(s.chat_dynamic_suggestions !== '0')
       })
@@ -1472,6 +1472,8 @@ function StructureModeInner({
     // 章ノードの選択はインスペクタの章パネルへ。シーン選択・選択解除で閉じる
     if (chapter) setSelectedChapterId((chapter.data as ChapterNodeData).group.id)
     else setSelectedChapterId(null)
+    // 「資料」はシーンに結びつかないタブなので、シーンを選んだら「シーン」へ戻す
+    if (beats.length > 0) setInspectorTab((tab) => (tab === 'library' ? 'beat' : tab))
     setSelectedId((prev) => {
       if (beats.length === 0) return null
       // 複数選択中は先頭をインスペクタ対象にする
@@ -1839,6 +1841,16 @@ function StructureModeInner({
       void api.setChainPositions(scenes, chars).catch((e) => setGenStatus(`配置を保存できません: ${String(e)}`))
     },
     []
+  )
+
+  /** シーンをクリックで選んだとき、詳細欄が「資料」(シーンに結びつかないタブ)なら「シーン」に戻す。
+   *  キャラ・関係図・事実はシーンに結びついたタブなので、そのまま(選んだシーンの内容に変わる) */
+  const selectSceneFromView = useCallback(
+    (nodeId: string): void => {
+      focusNodeOnCanvas(nodeId)
+      setInspectorTab((tab) => (tab === 'library' ? 'beat' : tab))
+    },
+    [focusNodeOnCanvas]
   )
 
   /** 人物の鎖でキャラクターをクリック → 詳細欄の「資料」タブに、資料庫と同じ編集画面でその人物を出す。
@@ -2940,7 +2952,7 @@ function StructureModeInner({
                     selectedNodeId={selectedId}
                     selectedCharId={inspectorTab === 'library' ? libraryCharId : inspectorTab === 'char' ? focusChar?.id ?? null : null}
                     readOnly={productionEditingLocked}
-                    onSelectNode={(nodeId) => focusNodeOnCanvas(nodeId)}
+                    onSelectNode={selectSceneFromView}
                     onSelectChar={handleSelectChainChar}
                     onCastChange={handleCastChange}
                     onPositionsChange={handleChainPositions}
@@ -2953,7 +2965,7 @@ function StructureModeInner({
                   characters={characters}
                   groups={groups}
                   selectedNodeId={selectedId}
-                  onSelectNode={(nodeId) => focusNodeOnCanvas(nodeId)}
+                  onSelectNode={selectSceneFromView}
                 />
               )}
             </div>

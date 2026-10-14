@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef } from 'react'
 import {
   Background,
   Handle,
@@ -53,6 +53,8 @@ type ChainSceneData = {
   cast: Character[]
   selected: boolean
   readOnly: boolean
+  /** 登場人物の行(アイコン・名前・ピン)をクリック → その人物を詳細欄の「資料」タブで開く(シーンの選択は変えない) */
+  onSelectChar: (charId: string) => void
 }
 type ChainSceneNode = Node<ChainSceneData, 'chainScene'>
 
@@ -83,7 +85,9 @@ function ChainCharCard({ data }: NodeProps<ChainCharNode>): React.JSX.Element {
 }
 
 function ChainSceneCard({ data }: NodeProps<ChainSceneNode>): React.JSX.Element {
-  const { scene, index, chapter, cast, selected, readOnly } = data
+  const { scene, index, chapter, cast, selected, readOnly, onSelectChar } = data
+  // ピンは押したまま動かすと線を引く操作になるので、動かさずに離したときだけクリック扱いにする
+  const pressAt = useRef<{ x: number; y: number } | null>(null)
   return (
     <div
       className={`w-72 rounded-2xl border ${selected ? 'ring-4' : ''}`}
@@ -111,7 +115,20 @@ function ChainSceneCard({ data }: NodeProps<ChainSceneNode>): React.JSX.Element 
         {cast.map((c) => {
           const color = c.color ?? FALLBACK_COLOR
           return (
-            <div key={c.id} className="relative flex items-center gap-2 px-3 py-1 text-[11px]" style={{ color: 'var(--text)' }}>
+            <div
+              key={c.id}
+              className="relative flex cursor-pointer items-center gap-2 px-3 py-1 text-[11px] hover:bg-[var(--accent-soft)]"
+              style={{ color: 'var(--text)' }}
+              onPointerDown={(e) => { pressAt.current = { x: e.clientX, y: e.clientY } }}
+              onClick={(e) => {
+                const start = pressAt.current
+                pressAt.current = null
+                if (start && Math.hypot(e.clientX - start.x, e.clientY - start.y) > 4) return // ドラッグ(線引き・ノード移動)
+                e.stopPropagation() // ノードのクリック(シーンの選択)にはしない
+                onSelectChar(c.id)
+              }}
+              data-tip={`${c.name}。クリックで下の詳細欄の「資料」タブにこの人物を出す`}
+            >
               <Handle type="target" position={Position.Left} id={`in:${c.id}`} style={{ ['--handle-color' as string]: color }} />
               <CharAvatar char={c} size={18} />
               <span className="min-w-0 flex-1 truncate">{c.name}</span>
@@ -158,7 +175,8 @@ function buildNodes(
   groups: Group[],
   selectedNodeId: string | null,
   selectedCharId: string | null,
-  readOnly: boolean
+  readOnly: boolean,
+  onSelectChar: (charId: string) => void
 ): Array<ChainCharNode | ChainSceneNode> {
   const byId = new Map(characters.map((c) => [c.id, c]))
   const groupById = new Map(groups.map((g) => [g.id, g]))
@@ -189,7 +207,8 @@ function buildNodes(
         chapter,
         cast: (scene.cast ?? []).map((id) => byId.get(id)).filter((c): c is Character => !!c),
         selected: scene.id === selectedNodeId,
-        readOnly
+        readOnly,
+        onSelectChar
       }
     }
   })
@@ -272,8 +291,8 @@ function CastChainGraphInner({
   onPositionsChange: (scenes: ChainPosition[], chars: ChainPosition[]) => void
 }): React.JSX.Element {
   const derivedNodes = useMemo(
-    () => buildNodes(path, characters, groups, selectedNodeId, selectedCharId, readOnly),
-    [path, characters, groups, selectedNodeId, selectedCharId, readOnly]
+    () => buildNodes(path, characters, groups, selectedNodeId, selectedCharId, readOnly, onSelectChar),
+    [path, characters, groups, selectedNodeId, selectedCharId, readOnly, onSelectChar]
   )
   const derivedEdges = useMemo(() => buildEdges(path, characters, readOnly), [path, characters, readOnly])
   // 選択・接続・ドラッグの途中状態は React Flow 側に持たせ、導出が変わったら差し替える
