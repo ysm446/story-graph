@@ -1,4 +1,5 @@
 import AutoTextarea from './AutoTextarea'
+import ProductionPanelToggle, { panelBodyClass, panelBodyStyle } from './ProductionPanelToggle'
 import { useEffect, useRef, useState } from 'react'
 import { api } from './api'
 
@@ -8,8 +9,8 @@ export const CHAT_RULES_EVENT = 'story-graph:chat-rules-changed'
 const example = '・シーン本文は、1シーンあたり600文字程度に収める。\n・シーン本文は小説調ではなく、出来事と人物の行動が分かる指示書形式で書く。'
 
 /** 制作エージェント専用の指示。保存キーは以前の設定を引き継ぐ。 */
-export default function ChatRulesPanel({ busy, onDirty, onSaved }: {
-  busy: boolean; onDirty: (dirty: boolean) => void; onSaved: () => void
+export default function ChatRulesPanel({ busy, open, onToggle, onDirty, onSaved }: {
+  busy: boolean; open: boolean; onToggle: () => void; onDirty: (dirty: boolean) => void; onSaved: () => void
 }): React.JSX.Element {
   const [saved, setSaved] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
@@ -55,9 +56,11 @@ export default function ChatRulesPanel({ busy, onDirty, onSaved }: {
   }
   const button = 'rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-50'
   const style = { borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }
-  return <details className="shrink-0 rounded-lg border px-3 py-1.5 text-[12px]" style={{ borderColor: 'var(--border)', background: 'var(--bg-elevated)' }}>
-    <summary className="cursor-pointer" data-tip="制作エージェントの作業方針や制約を設定します">制作エージェントへの指示{dirty ? ' · 未保存' : saved?.trim() ? ' · 設定済み' : ''}</summary>
-    <div className="inspector-scrollbar mt-2 flex max-h-[50vh] flex-col gap-2 overflow-y-auto">
+  // 閉じても下書きはこのコンポーネントに残る(開き直すと続きから編集できる)
+  return <>
+    <ProductionPanelToggle open={open} onToggle={onToggle} highlight={dirty}
+      tip="制作エージェントへの指示(作業方針や制約)を設定します">指示{dirty ? ' · 未保存' : saved?.trim() ? ' · 設定済み' : ''}</ProductionPanelToggle>
+    {open && <div className={`inspector-scrollbar ${panelBodyClass} flex max-h-[50vh] flex-col gap-2 overflow-y-auto`} style={panelBodyStyle}>
       <p className="text-[11px]" style={{ color: 'var(--text-dim)' }}>この作品の制作チャットに適用します。「相談する」で変更案を考えるときにも使います。相談（編集者）やキャラクターとの会話には適用しません。AIはこの設定を書き換えません。</p>
       <AutoTextarea ariaLabel="制作エージェントへの指示" minRows={3} maxLength={6000} value={draft} placeholder={example}
         disabled={busy || saving || saved === null}
@@ -72,6 +75,6 @@ export default function ChatRulesPanel({ busy, onDirty, onSaved }: {
       </div>
       {notice && <p role="status" className="text-[11px]" style={{ color: 'var(--text-dim)' }}>{notice}</p>}
       {error && <p role="alert" className="text-[11px]" style={{ color: 'var(--danger)' }}>{error}</p>}
-    </div>
-  </details>
+    </div>}
+  </>
 }

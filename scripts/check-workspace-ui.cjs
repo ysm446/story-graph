@@ -1102,11 +1102,23 @@ store.save_chat_messages(chat['id'], [
   await click('章「制作で改名した章」をレビュー')
   await assert(`(() => {const v=document.querySelector('textarea[aria-label="制作への依頼"]').value;return v.includes('章ID: ${chapter.id}') && v.includes('保存内容は変更せず') && !window.workspaceSuggestionSent})()`, '章レビューは章IDを含む依頼文を入力するだけで送信しない')
   await input('textarea[aria-label="制作への依頼"]', '')
+  // 条件パネル(指示 / 作業メモ / 変更範囲)は「作業対象を追う」の行に開閉ボタンとして並ぶ
+  const panelButton = (label) => `[...document.querySelectorAll('button[aria-expanded]')].find(e=>e.textContent.startsWith('${label}'))`
+  const followButton = `[...document.querySelectorAll('button')].find(e=>e.textContent.includes('作業対象を追う'))`
+  // 幅が狭いと折り返すので、同じ行の中(2行以内)に収まることを見る
+  await assert(`(() => {const row=${followButton}.parentElement;return [${panelButton('指示')},${panelButton('作業メモ')},${panelButton('範囲: ')}].every(b=>!!b && b.parentElement===row && b.getAttribute('aria-expanded')==='false') && row.getBoundingClientRect().height<64})()`, '条件パネルの3つを作業対象を追うの行にボタンで並べ、既定は閉じて2行以内に収まる')
+  await js(`${panelButton('指示')}.click()`)
+  await pause(200)
+  await js(`${panelButton('作業メモ')}.click()`)
+  await pause(300)
+  await assert(`${panelButton('作業メモ')}.getAttribute('aria-expanded')==='true' && ${panelButton('指示')}.getAttribute('aria-expanded')==='false' && !document.querySelector('textarea[aria-label="制作エージェントへの指示"]')`, '条件パネルは同時に1つだけ開く')
   const memoryToggle = `[...document.querySelectorAll('button')].find(e=>e.textContent.includes('作業メモを使う'))`
-  await assert(`${memoryToggle}.getAttribute('aria-pressed')==='false' && [...document.querySelectorAll('summary')].some(e=>e.textContent==='作業メモ · オフ')`, '作業メモは既定でオフと表示')
+  await assert(`${memoryToggle}.getAttribute('aria-pressed')==='false' && ${panelButton('作業メモ')}.textContent.startsWith('作業メモ · オフ')`, '作業メモは既定でオフと表示')
   await js(`${memoryToggle}.click()`)
   await pause(500)
-  await assert(`${memoryToggle}.getAttribute('aria-pressed')==='true' && ![...document.querySelectorAll('summary')].some(e=>e.textContent.includes('オフ'))`, '作業メモをオンに切り替えて表示へ反映')
+  await assert(`${memoryToggle}.getAttribute('aria-pressed')==='true' && !${panelButton('作業メモ')}.textContent.includes('オフ')`, '作業メモをオンに切り替えて表示へ反映')
+  await js(`${panelButton('作業メモ')}.click()`)
+  await pause(200)
   if ((await (await fetch(base + '/settings')).json()).production_memory_enabled !== '1') errors.push('作業メモの設定が保存されていない')
   await js(`document.querySelector('button[aria-label="設定"]').click()`)
   await pause(400)
@@ -1124,6 +1136,9 @@ store.save_chat_messages(chat['id'], [
   await js(`document.querySelector('textarea[aria-label="制作エージェントへの指示(設定)"]').dispatchEvent(new FocusEvent('focusout',{bubbles:true}))`)
   await pause(600)
   if ((await (await fetch(base + '/settings')).json()).author_chat_rules !== '設定画面から保存した指示') errors.push('設定画面の制作エージェントへの指示が保存されていない')
+  // 指示の入力欄はパネルを開いたときだけ描く(閉じていても下書きは保持している)
+  await js(`${panelButton('指示')}.click()`)
+  await pause(200)
   await assert(`document.querySelector('textarea[aria-label="制作エージェントへの指示"]').value==='設定画面から保存した指示'`, '設定画面で保存した指示を制作チャットのパネルへ反映')
   writeFileSync(join(target, 'settings-prompts.png'), (await win.webContents.capturePage()).toPNG())
   await js(`[...document.querySelectorAll('button[aria-label="閉じる"]')].find(e=>e.textContent.trim()==='✕').click()`)

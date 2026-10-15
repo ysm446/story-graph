@@ -1,12 +1,13 @@
 import { memo, useEffect, useRef, useState } from 'react'
 import { api, productionApi, type ProductionMemory } from './api'
 import { Markdown } from './Markdown'
+import ProductionPanelToggle, { panelBodyClass, panelBodyStyle } from './ProductionPanelToggle'
 
 const memoryDate = (value: string): string => new Date(value).toLocaleString('ja-JP', { hour12: false })
 
 /** ライブラリ共通の方針と、最後に確定した作業の記録。 */
-function ProductionMemoryPanel({ busy, refresh, onDirty, onChanged }: {
-  busy: boolean; refresh: number; onDirty: (dirty: boolean) => void; onChanged: () => void
+function ProductionMemoryPanel({ busy, open, onToggle, refresh, onDirty, onChanged }: {
+  busy: boolean; open: boolean; onToggle: () => void; refresh: number; onDirty: (dirty: boolean) => void; onChanged: () => void
 }): React.JSX.Element {
   const [memory, setMemory] = useState<ProductionMemory | null>(null)
   const [draft, setDraft] = useState('')
@@ -18,11 +19,12 @@ function ProductionMemoryPanel({ busy, refresh, onDirty, onChanged }: {
   const [versions, setVersions] = useState<ProductionMemory[]>([])
   const dirty = editing && draft !== memory?.content
   useEffect(() => { onDirty(dirty || saving) }, [dirty, saving, onDirty])
+  // 開いたときも最新を読み直す(制作中にメモが更新されていることがある)
   useEffect(() => {
     let active = true
     productionApi.memory().then((value) => { if (active) setMemory(value) }).catch((e) => { if (active) setError(String(e)) })
     return () => { active = false }
-  }, [refresh, busy])
+  }, [refresh, busy, open])
   // 編集を始めた時点の版。編集中に制作がメモを更新して再取得が走っても、保存は
   // この版を基準にして競合(409)を検出させる。
   const editBaseRevision = useRef<number | null>(null)
@@ -67,11 +69,10 @@ function ProductionMemoryPanel({ busy, refresh, onDirty, onChanged }: {
   }
   const button = 'rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-50'
   const style = { borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }
-  return <details onToggle={(event) => {
-    if (event.currentTarget.open) void productionApi.memory().then(setMemory).catch((e) => setError(String(e)))
-  }} className="rounded-lg border px-3 py-1.5 text-[12px]" style={{ borderColor: 'var(--border)', background: 'var(--bg-elevated)' }}>
-    <summary className="cursor-pointer" data-tip="新しい制作の会話でも引き継ぐ方針と、前回の作業記録です">作業メモ{memory && !enabled ? ' · オフ' : memory?.revision ? ` · 第${memory.revision}版` : ''}</summary>
-    <div className="inspector-scrollbar mt-2 flex max-h-72 flex-col gap-2 overflow-y-auto">
+  return <>
+    <ProductionPanelToggle open={open} onToggle={onToggle} highlight={dirty}
+      tip="新しい制作の会話でも引き継ぐ方針と、前回の作業記録です">作業メモ{dirty ? ' · 編集中' : memory && !enabled ? ' · オフ' : memory?.revision ? ` · 第${memory.revision}版` : ''}</ProductionPanelToggle>
+    {open && <div className={`inspector-scrollbar ${panelBodyClass} flex max-h-72 flex-col gap-2 overflow-y-auto`} style={panelBodyStyle}>
       <div>
         <button type="button" aria-pressed={enabled} disabled={busy || saving || editing || !memory} onClick={() => void toggle()}
           className="rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-50"
@@ -126,9 +127,9 @@ function ProductionMemoryPanel({ busy, refresh, onDirty, onChanged }: {
         {v.created_at && <p className="text-[11px]" style={{ color: 'var(--text-faint)' }}>{memoryDate(v.created_at)}</p>}
         <Markdown text={v.content || '（空のメモ）'} />
       </details>)}
-    </div>
-  </details>
+    </div>}
+  </>
 }
 
-// 親の入力や進捗表示では描き直さない(閉じていても中身は描画されるため)
+// 親の入力や進捗表示では描き直さない(開いているとメモの本文を Markdown で描くため)
 export default memo(ProductionMemoryPanel)

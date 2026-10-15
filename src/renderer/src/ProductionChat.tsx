@@ -224,12 +224,19 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
     const node = nodes.find((item) => item.id === id)
     return { id, title: node?.title || '(無題)', kind: node?.kind ?? null }
   })
+  // 上段の条件パネル(指示 / 作業メモ / 変更範囲)のうち開いているもの。同時に開くのは 1 つだけ
+  const [openPanel, setOpenPanel] = useState<'rules' | 'memory' | 'policy' | null>(null)
+  const toggleRules = useCallback(() => setOpenPanel((p) => (p === 'rules' ? null : 'rules')), [])
+  const toggleMemory = useCallback(() => setOpenPanel((p) => (p === 'memory' ? null : 'memory')), [])
+  const togglePolicy = useCallback(() => setOpenPanel((p) => (p === 'policy' ? null : 'policy')), [])
   const [follow, setFollow] = useState(true)
   const followRef = useRef(true)
   const followTargetRef = useRef<ProductionTarget | null>(null)
   const task = useTask(taskId)
   const [historyBusy, setHistoryBusy] = useState(false)
   const busy = !!task || historyBusy
+  // 変更範囲は実行中は固定なので、制作が始まったら閉じる(以前の折りたたみと同じ)
+  useEffect(() => { if (busy) setOpenPanel((p) => (p === 'policy' ? null : p)) }, [busy])
   const endRef = useRef<HTMLDivElement>(null)
   const taskRef = useRef<string | null>(null)
   const composerRef = useRef<HTMLDivElement>(null)
@@ -274,6 +281,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
   }, [busy, active, chatId, input, sendMode, policy, rulesRefresh, memoryRefresh, memoryDirty, messages, nodes, groups, selectionKey])
 
   const bumpMemoryRefresh = useCallback((): void => setMemoryRefresh((value) => value + 1), [])
+  const bumpRulesRefresh = useCallback((): void => setRulesRefresh((value) => value + 1), [])
   const refreshHistory = async (): Promise<void> => setHistory(await productionApi.list())
   useEffect(() => {
     void refreshHistory().catch((e) => setError(String(e)))
@@ -587,6 +595,11 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
           className="shrink-0 rounded-md border px-2 py-0.5 text-[11px]"
           style={follow ? { borderColor: 'var(--border-strong)', background: 'var(--accent-soft)', color: 'var(--text)' } : { borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }}
           data-tip="作業対象のシーンへ移動し、キャラクター・場所の編集時は資料庫の対象を開きます">{follow ? '☑' : '☐'} 作業対象を追う</button>
+        {/* 条件パネルはこの行にボタンとして並べ、開いた中身は行の下に全幅で出す(order-1 + basis-full)。
+            以前は 3 つの折りたたみ枠を縦に積んでいて、閉じていても会話の上を 3 段ぶん占めていた */}
+        <ChatRulesPanel busy={busy} open={openPanel === 'rules'} onToggle={toggleRules} onDirty={setRulesDirty} onSaved={bumpRulesRefresh} />
+        <ProductionMemoryPanel busy={busy} open={openPanel === 'memory'} onToggle={toggleMemory} refresh={memoryRefresh} onDirty={setMemoryDirty} onChanged={bumpMemoryRefresh} />
+        <ProductionPolicyPanel value={policy} onChange={setPolicy} nodes={nodes} groups={groups} busy={busy} open={openPanel === 'policy'} onToggle={togglePolicy} />
       </div>
       {busy && runId && <button disabled={!manualReady || switching} onClick={() => void toggleManual()}
         className="rounded-md border px-2 py-0.5 text-[12px] disabled:opacity-50"
@@ -594,9 +607,6 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
         data-tip={!manualReady ? '作業前の保存が終わるまでお待ちください' : manualEditing ? '未保存のシーンを保存してから、最新の構成で制作を再開します' : '制作を一時停止して、シーンと接続を手動で編集します。書きかけの操作は破棄されます。「制作を再開」で続きから進みます'}>
         {switching ? '切り替えています…' : manualEditing ? '制作を再開' : '一時停止して手動編集'}
       </button>}
-      <ChatRulesPanel busy={busy} onDirty={setRulesDirty} onSaved={() => setRulesRefresh((v) => v + 1)} />
-      <ProductionMemoryPanel busy={busy} refresh={memoryRefresh} onDirty={setMemoryDirty} onChanged={bumpMemoryRefresh} />
-      <ProductionPolicyPanel value={policy} onChange={setPolicy} nodes={nodes} groups={groups} busy={busy} />
       {/* スクロールバーは親の右の余白(24px)へ出し、発言との間を 14px 空ける。溝を常に確保するので、
           スクロールの有無にかかわらず発言の右端は上のパネルや入力欄と揃う(24 = バー10 + 余白14) */}
       <div className="inspector-scrollbar -mr-6 min-h-0 flex-1 overflow-y-auto pr-3.5 [scrollbar-gutter:stable]" aria-live="polite">

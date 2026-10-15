@@ -1,6 +1,7 @@
-import { memo, useEffect, useRef, useState } from 'react'
+import { memo, useState } from 'react'
 import type { ProductionPolicy } from './api'
 import type { Group, StoryNode } from './types'
+import ProductionPanelToggle, { panelBodyClass, panelBodyStyle } from './ProductionPanelToggle'
 
 export const defaultProductionPolicy = (): ProductionPolicy => ({ allowed_ids: null, protected_ids: [], group_id: null })
 
@@ -11,16 +12,24 @@ export function policySummary(policy: ProductionPolicy, nodes: StoryNode[], grou
   return `変更範囲: ${scope} / AI編集から保護: ${protectedNames.length ? protectedNames.join('、') : 'なし'}`
 }
 
-function ProductionPolicyPanel({ value, onChange, nodes, groups, busy }: {
+/** 上段のボタン用の短い表記。名前の一覧は policySummary(ツールチップ)で見せる */
+function policyShortLabel(policy: ProductionPolicy, groups: Group[]): string {
+  const scope = policy.group_id ? `章「${groups.find((g) => g.id === policy.group_id)?.title ?? policy.group_id}」`
+    : policy.allowed_ids === null ? '全体' : `個別 ${policy.allowed_ids.length} 件`
+  return `範囲: ${scope} · ${policy.protected_ids.length ? `保護 ${policy.protected_ids.length} 件` : '保護なし'}`
+}
+
+/** 開閉は ProductionChat が持つ(制作が始まったら閉じる) */
+function ProductionPolicyPanel({ value, onChange, nodes, groups, busy, open, onToggle }: {
   value: ProductionPolicy
   onChange: (value: ProductionPolicy) => void
   nodes: StoryNode[]
   groups: Group[]
   busy: boolean
+  open: boolean
+  onToggle: () => void
 }): React.JSX.Element {
   const [search, setSearch] = useState('')
-  const detailsRef = useRef<HTMLDetailsElement>(null)
-  useEffect(() => { if (busy && detailsRef.current) detailsRef.current.open = false }, [busy])
   const mode = value.group_id ? `chapter:${value.group_id}` : value.allowed_ids === null ? 'all' : 'selected'
   const toggle = (field: 'allowed_ids' | 'protected_ids', id: string): void => {
     const ids = value[field] ?? []
@@ -30,9 +39,12 @@ function ProductionPolicyPanel({ value, onChange, nodes, groups, busy }: {
   const visible = nodes.filter((n) => `${n.title ?? ''} ${n.id}`.toLowerCase().includes(search.toLowerCase()))
   const buttonStyle = (on: boolean): React.CSSProperties => ({ borderColor: 'var(--border-strong)',
     ...(on ? { background: 'var(--accent-soft)', color: 'var(--text)' } : { color: 'var(--text-faint)' }) })
-  return <details ref={detailsRef} className="inspector-scrollbar max-h-[50%] shrink-0 overflow-y-auto rounded-lg border px-3 py-1.5 text-[12px]" style={{ borderColor: 'var(--border)', background: 'var(--bg-elevated)' }}>
-    <summary className="cursor-pointer text-[11px]" data-tip="この制作で変更できる範囲と保護するシーンを指定します">{policySummary(value, nodes, groups)}</summary>
-    <div className="mt-2 flex flex-col gap-2">
+  // 範囲を絞った・保護がある・存在しない指定があるときは、閉じていても目に入るようにする(気づかずに実行しないため)
+  const narrowed = mode !== 'all' || value.protected_ids.length > 0 || missing.length > 0
+  return <>
+    <ProductionPanelToggle open={open} onToggle={onToggle} highlight={narrowed}
+      tip={`この制作で変更できる範囲と保護するシーンを指定します\n${policySummary(value, nodes, groups)}`}>{policyShortLabel(value, groups)}</ProductionPanelToggle>
+    {open && <div className={`inspector-scrollbar ${panelBodyClass} flex max-h-[50vh] flex-col gap-2 overflow-y-auto`} style={panelBodyStyle}>
       <select aria-label="制作の変更範囲" value={mode} disabled={busy}
         onChange={(e) => onChange({ ...value, group_id: e.target.value.startsWith('chapter:') ? e.target.value.slice(8) : null,
           allowed_ids: e.target.value === 'selected' ? [] : null })}
@@ -63,9 +75,9 @@ function ProductionPolicyPanel({ value, onChange, nodes, groups, busy }: {
             style={buttonStyle(value.protected_ids.includes(node.id))} data-tip={busy ? '制作を停止してから変更できます' : '制作LLMによる変更・削除・直接の接続変更を防ぎます。手動編集はできます'}>{value.protected_ids.includes(node.id) ? '☑' : '☐'} AI編集から保護</button>
         </div>)}
       </div>
-    </div>
-  </details>
+    </div>}
+  </>
 }
 
-// 親の入力や進捗表示では描き直さない(閉じていても中身は描画されるため)
+// 親の入力や進捗表示では描き直さない(開いているとシーンの一覧を描くため)
 export default memo(ProductionPolicyPanel)
