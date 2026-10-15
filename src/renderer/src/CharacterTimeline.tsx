@@ -11,8 +11,9 @@ import type { Character, Group, StoryNode } from './types'
  * 人物ごとの出番は横線でつなぐ(初登場から最後の出番まで)。
  *
  * 対象は正史パスのみ(関係図・事実タブと同じ扱い)。登場は cast で判定する
- * (fold の「登場」の導出と同じ出どころ)。セルや列の見出しをクリックするとそのシーンを
- * 選択し、編集は下段の詳細欄(ビート編集)で行う。docs/plan/plan.md の計画を参照。
+ * (fold の「登場」の導出と同じ出どころ)。列の見出しをクリックするとそのシーンを選択し、
+ * 編集は下段の詳細欄(ビート編集)で行う。出番のセルをクリックすると、そのシーンの時点の
+ * 人物を詳細欄に出す(フローチャートのシーンカードで人物を押したときと同じ)。docs/plan/plan.md の計画を参照。
  */
 
 const COLUMN_WIDTH = 112
@@ -65,6 +66,7 @@ export default function CharacterTimeline({
   selectedNodeId,
   selectedChapterId,
   onSelectNode,
+  onSelectChar,
   onSelectChapter
 }: {
   path: StoryNode[]
@@ -76,6 +78,8 @@ export default function CharacterTimeline({
   /** 章カードを選んでいるときのその章(章の帯を強調する) */
   selectedChapterId: string | null
   onSelectNode: (nodeId: string) => void
+  /** 出番のセル: その人物を、そのシーンの時点で詳細欄に出す */
+  onSelectChar: (charId: string, sceneId: string) => void
   onSelectChapter: (groupId: string) => void
 }): React.JSX.Element {
   const spans = useMemo(() => chapterSpans(path, groups), [path, groups])
@@ -228,7 +232,7 @@ export default function CharacterTimeline({
             <div
               className="sticky left-0 z-10 flex items-end px-3 pb-1 text-[11px]"
               style={{ background: 'var(--bg-canvas)', color: 'var(--text-faint)', minHeight: TITLE_ROW_HEIGHT }}
-              data-tip="セルや見出しをクリックすると、そのシーンを選択して下の詳細欄に出します"
+              data-tip="見出しをクリックするとそのシーンを、出番のセルをクリックするとその時点の人物を、下の詳細欄に出します"
             >
               {hiddenCount > 0 ? `正史のみ(分岐・島の ${hiddenCount} シーンは非表示)` : '正史のシーン'}
             </div>
@@ -380,7 +384,7 @@ export default function CharacterTimeline({
                         <button
                           key={node.id}
                           data-cast-cell
-                          onClick={() => onSelectNode(node.id)}
+                          onClick={() => onSelectChar(c.id, node.id)}
                           className="absolute rounded-md"
                           style={{
                             left,
@@ -390,7 +394,7 @@ export default function CharacterTimeline({
                             boxShadow: index === selectedIndex ? '0 0 0 2px var(--accent-border)' : undefined
                           }}
                           aria-label={`${c.name}: ${node.title || '(無題)'}`}
-                          data-tip={`${c.name} が「${node.title || '(無題)'}」に登場${runNote}\nクリックで選択(詳細欄で編集できます)`}
+                          data-tip={`${c.name} が「${node.title || '(無題)'}」に登場${runNote}\nクリックでこの時点の${c.name}を詳細欄に表示`}
                         />
                       )
                     })}

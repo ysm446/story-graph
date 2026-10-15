@@ -208,7 +208,12 @@ store.save_chat_messages(chat['id'], [
     const second = example.scenes[1].title
     await js(`${cells}.find(e => e.getAttribute('aria-label') === '老技師: ' + ${JSON.stringify(second)}).click()`)
     await pause(500)
-    await assert(`[...document.querySelectorAll('input')].some(i => i.value === ${JSON.stringify(second)}) && document.body.textContent.includes('キャラクタービュー')`, 'セルをクリックすると、そのシーンが選ばれて下の詳細欄に出る(ビューは開いたまま)')
+    // 出番のセルは、シーンカードで人物を押したときと同じく、その時点の人物を詳細欄に出す
+    const charTabs = `(() => {const tab=[...document.querySelectorAll('button')].find(e=>e.getClientRects().length && e.textContent.trim()==='プロフィール');return tab ? [...tab.parentElement.querySelectorAll('button')].map(e=>e.textContent.trim()).slice(0,4).join('|') + '|' + tab.parentElement.textContent : ''})()`
+    await assert(`${charTabs}.startsWith('プロフィール|状態|関係図|事実の履歴|') && ${charTabs}.includes('老技師') && document.body.textContent.includes('キャラクタービュー')`, 'セルをクリックすると、その人物が詳細欄に出る(ビューは開いたまま)')
+    await click('状態')
+    await pause(300)
+    await assert(`document.body.textContent.includes('「' + ${JSON.stringify(second)} + '」の時点') && !document.body.textContent.includes('(この人物が最後に登場したシーン)')`, '詳細欄の人物は、クリックしたセルのシーンの時点になる')
     writeFileSync(join(target, 'cast-view.png'), (await win.webContents.capturePage()).toPNG())
     // 左ドラッグで表を上下左右に動かす。完成例では画面に収まってしまうので、表の枠を小さくして試す。
     // setPointerCapture は本物のポインタでないと効かないので、合成イベントではなく sendInputEvent で動かす
@@ -229,7 +234,7 @@ store.save_chat_messages(chat['id'], [
     await pause(100)
     let at = await headerAt(example.scenes[0].title)
     await dragBy(at.x, at.y, 60, 0)
-    await assert(`[...document.querySelectorAll('input')].some(i => i.value === ${JSON.stringify(second)})`, '見出しから始めたドラッグではシーンが選ばれない')
+    await assert(`${charTabs}.includes('老技師') && document.body.textContent.includes('「' + ${JSON.stringify(second)} + '」の時点')`, '見出しから始めたドラッグではシーンが選ばれない(セルで出した人物の表示のまま)')
     at = await headerAt(example.scenes[0].title)
     await mouse('mouseDown', at.x, at.y)
     await mouse('mouseUp', at.x, at.y)
@@ -240,10 +245,16 @@ store.save_chat_messages(chat['id'], [
     await js(`[...${table}.querySelectorAll('button')].find(e => e.textContent === '第2章「第二幕 橋」').click()`)
     await pause(500)
     await assert(`(() => {const band=[...${table}.querySelectorAll('button')].find(e => e.textContent === '第2章「第二幕 橋」');const tab=[...document.querySelectorAll('button')].find(e=>e.getClientRects().length && e.textContent.trim()==='関係図');const labels=[...tab.parentElement.querySelectorAll('button')].map(e=>e.textContent.trim());return band.getAttribute('aria-pressed')==='true' && labels.slice(0,3).join('|')==='章|関係図|事実' && tab.closest('aside').textContent.includes('第二幕 橋') && document.body.textContent.includes('キャラクタービュー')})()`, '章の帯をクリックすると、その章が選ばれて詳細欄が章の表示になる(ビューは開いたまま)')
-    // 後の検証のために元に戻す(選択は 2 番目のシーン)
+    // 章の帯のあとにセルを押しても、そのシーンの時点になる(章カードの選択が外れた通知で、選んだシーンが消えない)
     await js(`${cells}.find(e => e.getAttribute('aria-label') === '老技師: ' + ${JSON.stringify(second)}).click()`)
     await pause(400)
-    await assert(`[...document.querySelectorAll('input')].some(i => i.value === ${JSON.stringify(second)})`, '章の帯のあとにセルをクリックしても、そのシーンが選ばれる(章カードの選択が外れても消えない)')
+    await assert(`${charTabs}.includes('老技師') && document.body.textContent.includes('「' + ${JSON.stringify(second)} + '」の時点') && !document.body.textContent.includes('(この人物が最後に登場したシーン)')`, '章の帯のあとにセルをクリックしても、そのシーンの時点の人物が出る(章カードの選択が外れても消えない)')
+    await click('プロフィール') // 人物のタブを既定に戻す(後の人物の鎖の検証はプロフィールから始まる)
+    // 列の見出しは今までどおりシーンを選び、詳細欄はシーンの表示に戻る(後の検証のため選択は 2 番目のシーン)
+    const headerOf = (title) => `[...document.querySelectorAll('[data-cast-table] button[data-tip]')].find(e => e.getAttribute('data-tip').includes('. ' + ${JSON.stringify(title)}))`
+    await js(`${headerOf(second)}.click()`)
+    await pause(400)
+    await assert(`[...document.querySelectorAll('input')].some(i => i.value === ${JSON.stringify(second)}) && !${charTabs}`, '列の見出しをクリックすると、そのシーンが選ばれて詳細欄はシーンの表示に戻る')
     // シーンを選んだ状態で → / ← を押すと、前後のシーンへ移る(キャラクタービューは開いたまま)
     const key = async (keyCode) => { win.webContents.sendInputEvent({ type: 'keyDown', keyCode }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode }); await pause(400) }
     // 前にクリックした見出しにフォーカスを置いておき、キーで移っても枠(:focus-visible)が置き去りにならないことも見る
@@ -256,7 +267,7 @@ store.save_chat_messages(chat['id'], [
     await assert(`[...document.querySelectorAll('input')].some(i => i.value === ${JSON.stringify(example.scenes[0].title)})`, '← キーで前のシーンへ移る')
     await key('Left')
     await assert(`[...document.querySelectorAll('input')].some(i => i.value === ${JSON.stringify(example.scenes[0].title)})`, '最初のシーンで ← を押しても動かない')
-    await js(`${cells}.find(e => e.getAttribute('aria-label') === '老技師: ' + ${JSON.stringify(second)}).click()`)
+    await js(`${headerOf(second)}.click()`)
     await pause(400)
     // 人物の鎖: キャラクター 3 + シーン 4 のノード、線は出番の数(4 + 2 + 2)。線を消すと cast から外れる
     await click('人物の鎖')

@@ -3020,6 +3020,7 @@ function StructureModeInner({
                   selectedNodeId={selectedId}
                   selectedChapterId={selectedChapterId}
                   onSelectNode={selectSceneFromView}
+                  onSelectChar={handleSelectChainChar}
                   onSelectChapter={(groupId) => selectSceneFromView(`chapter:${groupId}`)}
                 />
               )}
