@@ -42,8 +42,10 @@ function edgeColor(score: number): string {
 // marker + markerEnd をやめて自前の三角形にしてある。marker だと線は終点まで
 // 引かれたままなので、三角形の下を線が突き抜けて先端から飛び出して見えた
 // (線の太さが先端付近の三角形の高さを上回るため)。線を矢じりの根元で止める。
-const ARROW_LEN = 4.5 // 矢じりの長さ(線の太さの倍数。旧 marker と同じ比率)
-const ARROW_WIDTH = 4.5 // 矢じりの根元の幅(同上)
+// 大きさは線の太さに比例させない(太い線の矢じりだけが大きく目立つため。2026-10-16 ユーザー依頼)。
+// 太さ 1px で長さ 7px・幅 6px、太さ 3px でも長さ 9px・幅 8px まで
+const ARROW_LEN = 6 // 矢じりの長さ = ARROW_LEN + 線の太さ
+const ARROW_WIDTH = 5 // 矢じりの根元の幅 = ARROW_WIDTH + 線の太さ
 
 /** 折れ線の終端側を len だけ削る */
 function trimEnd(points: Pt[], len: number): Pt[] {
@@ -66,7 +68,7 @@ function trimEnd(points: Pt[], len: number): Pt[] {
 
 /** 終点に置く矢じりの三角形と、その根元で止めた線を返す */
 function arrowHead(points: Pt[], strokeWidth: number): { tri: string; shaft: Pt[] } {
-  const len = ARROW_LEN * strokeWidth
+  const len = ARROW_LEN + strokeWidth
   const end = points[points.length - 1]
   const prev = points[points.length - 2]
   const d = Math.hypot(end.x - prev.x, end.y - prev.y) || 1
@@ -74,7 +76,7 @@ function arrowHead(points: Pt[], strokeWidth: number): { tri: string; shaft: Pt[
   const uy = (end.y - prev.y) / d
   const bx = end.x - ux * len
   const by = end.y - uy * len
-  const hw = (ARROW_WIDTH * strokeWidth) / 2
+  const hw = (ARROW_WIDTH + strokeWidth) / 2
   const tri = [
     `${end.x.toFixed(1)},${end.y.toFixed(1)}`,
     `${(bx - uy * hw).toFixed(1)},${(by + ux * hw).toFixed(1)}`,
@@ -482,7 +484,7 @@ export default function RelationGraph({
           }
           const pointsAttr = pts.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ')
           const isSelected = selectedEdge?.from === edge.from && selectedEdge?.to === edge.to
-          const strokeWidth = 1 + Math.abs(edge.score) * 3
+          const strokeWidth = 1 + Math.abs(edge.score) * 2 // 1〜3px
           const opacity = isSelected ? 1 : 0.4 + Math.abs(edge.score) * 0.5
           const { tri, shaft } = arrowHead(pts, strokeWidth)
           return (
