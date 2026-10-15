@@ -3571,7 +3571,7 @@ function StructureModeInner({
                     />
                   ) : charTab === 'graph' ? (
                     <div data-view-ok className="contents">
-                      <RelationGraph detailLayout autoFit
+                      <RelationGraph detailLayout autoFit orthogonal
                         characters={characters}
                         path={charPointPath}
                         allNodes={graphNodes}
@@ -3608,7 +3608,7 @@ function StructureModeInner({
             ) : shownTab === 'graph' ? (
               // 関係図の絞り込み・履歴は見るための操作(図の上の配置の保存だけ、制作中は行われない)
               <div data-view-ok className="contents">
-              <RelationGraph detailLayout autoFit
+              <RelationGraph detailLayout autoFit orthogonal
                 characters={characters}
                 path={(activeGroup ? chapterEndPath : pathToSelected) ?? canonPath}
                 allNodes={graphNodes}

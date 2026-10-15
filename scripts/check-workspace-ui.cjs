@@ -380,6 +380,96 @@ store.save_chat_messages(chat['id'], [
     win.destroy()
     return
   }
+  if (process.argv.includes('--relations')) {
+    // 資料庫の関係図(直角の線): 線が人物のアイコン・名前を通らず、ラベルが人物・他のラベルに重ならない
+    const { copyFileSync } = require('node:fs')
+    mkdirSync(join(target, 'assets', 'images'), { recursive: true })
+    copyFileSync(join(root, 'resources/icon.png'), join(target, 'assets', 'images', 'test-art.png'))
+    const node = (await (await fetch(base + '/graph')).json()).nodes.find(n => !n.kind)
+    // 名前の長さ・アイコンの有無・退場を混ぜ、上下・左右に近く並べる(名前の上を線が通りやすい配置)
+    const people = [['アリス', 0, 0, true], ['ボブ', 130, 0, false], ['キャロライン', 260, 0, true], ['ダン', 0, 120, true], ['エヴァンジェリン', 130, 120, true], ['フランク', 260, 120, false], ['グレース', 65, 240, true], ['ハル', 195, 240, true]]
+    const ids = []
+    for (const [name, x, y, portrait] of people) {
+      const r = await fetch(base + '/characters', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) })
+      if (!r.ok) throw new Error(await r.text())
+      const c = await r.json()
+      ids.push(c.id)
+      const p = await fetch(base + '/characters/' + c.id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ graph_x: x, graph_y: y, ...(portrait ? { portrait_path: 'test-art.png' } : {}) }) })
+      if (!p.ok) throw new Error(await p.text())
+    }
+    const labels = ['友人', '幼なじみ', '師匠', 'ライバル', '想い人', '仇']
+    const rels = [[0, 1], [1, 0], [0, 4], [4, 0], [3, 1], [2, 3], [5, 0], [6, 2], [7, 3], [4, 7], [6, 5], [1, 6], [2, 4], [3, 5]]
+    const events = [
+      ...ids.map(id => ({ type: 'char_introduce', payload: { char: id } })),
+      ...rels.map(([a, b], i) => ({ type: 'relationship_set', payload: { char: ids[a], target_type: 'char', target: ids[b], value: i % 3 === 2 ? -0.5 : 0.6, reason: '検証用の関係', label: labels[i % labels.length] } })),
+      { type: 'char_retire', payload: { char: ids[4], reason: '検証' } }
+    ]
+    const ev = await fetch(base + '/nodes/' + node.id + '/events', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ events }) })
+    if (!ev.ok) throw new Error(await ev.text())
+    await new Promise((done) => { win.webContents.once('did-finish-load', () => done()); win.webContents.reload() })
+    for (let i = 0; i < 60; i++) { if (await js(`!!document.querySelector('.react-flow')`)) break; await pause(200) }
+    await click('資料庫')
+    await click('関係図')
+    const svg = `[...document.querySelectorAll('main svg')].find(e => e.getClientRects().length && e.querySelectorAll('g[transform]').length >= 8)`
+    for (let i = 0; i < 40; i++) { if (await js(`!!${svg} && ${svg}.querySelectorAll('polyline').length >= ${rels.length * 2}`)) break; await pause(150) }
+    await pause(600) // 線は deferred な座標で引くので一拍待つ
+    // 図の座標系で、人物の形(アイコンの円 + 下の名前・退場の矩形)・線・ラベルの矩形を取り出して重なりを調べる
+    const measure = (svgExpr) => js(`(() => {
+      const svg = ${svgExpr}
+      const nodes = [...svg.querySelectorAll('g[transform]')].filter(g => g.querySelector('circle')).map(g => {
+        const t = g.transform.baseVal.consolidate().matrix
+        const x = t.e, y = t.f
+        const r = Math.max(...[...g.querySelectorAll('circle')].map(c => +c.getAttribute('r'))) + 1
+        const boxes = [...g.querySelectorAll('text')].map(t => t.getBBox()).filter(b => b.y > 5).map(b => ({ x0: x + b.x, x1: x + b.x + b.width, y0: y + b.y, y1: y + b.y + b.height }))
+        return { x, y, r, boxes }
+      })
+      const inside = (n, px, py) => Math.hypot(px - n.x, py - n.y) < n.r || n.boxes.some(b => px > b.x0 && px < b.x1 && py > b.y0 && py < b.y1)
+      const lines = [...svg.querySelectorAll('polyline')].filter(p => p.getAttribute('stroke') !== 'transparent').map(p => p.getAttribute('points').trim().split(/\s+/).map(s => s.split(',').map(Number)))
+      let lineHits = 0, diagonal = 0
+      for (const pts of lines) {
+        if (pts.some((p, i) => i > 0 && Math.abs(p[0] - pts[i - 1][0]) > 0.2 && Math.abs(p[1] - pts[i - 1][1]) > 0.2)) diagonal++
+        let hit = false
+        for (let i = 1; i < pts.length && !hit; i++) {
+          const [ax, ay] = pts[i - 1], [bx, by] = pts[i], n = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay)))
+          for (let k = 0; k <= n && !hit; k++) if (nodes.some(nd => inside(nd, ax + (bx - ax) * k / n, ay + (by - ay) * k / n))) hit = true
+        }
+        if (hit) lineHits++
+      }
+      const labels = [...svg.querySelectorAll('g > rect')].map(r => ({ x0: +r.getAttribute('x'), y0: +r.getAttribute('y'), x1: +r.getAttribute('x') + +r.getAttribute('width'), y1: +r.getAttribute('y') + +r.getAttribute('height') }))
+      const hitsRect = (r, n) => { const cx = Math.min(r.x1, Math.max(r.x0, n.x)), cy = Math.min(r.y1, Math.max(r.y0, n.y)); return Math.hypot(cx - n.x, cy - n.y) < n.r || n.boxes.some(b => r.x0 < b.x1 && r.x1 > b.x0 && r.y0 < b.y1 && r.y1 > b.y0) }
+      const labelHitsNode = labels.filter(r => nodes.some(n => hitsRect(r, n))).length
+      const labelOverlap = labels.filter(r => labels.some(q => q !== r && r.x0 < q.x1 && r.x1 > q.x0 && r.y0 < q.y1 && r.y1 > q.y0)).length
+      return { nodes: nodes.length, lines: lines.length, labels: labels.length, lineHits, diagonal, labelHitsNode, labelOverlap }
+    })()`)
+    const check = async (svgExpr, name, file) => {
+      const report = await measure(svgExpr)
+      console.log(name + ': ' + JSON.stringify(report))
+      writeFileSync(join(target, file + '.png'), (await win.webContents.capturePage()).toPNG())
+      // 細部を目で見る用に、ホイールで 2 倍ほど寄せて図の枠だけを撮る
+      const rect = await js(`(() => { const s = ${svgExpr}; const r = s.getBoundingClientRect(); for (let i = 0; i < 5; i++) s.dispatchEvent(new WheelEvent('wheel', { deltaY: -100, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, bubbles: true, cancelable: true })); return { x: Math.round(r.left), y: Math.round(r.top), width: Math.round(r.width), height: Math.round(r.height) } })()`)
+      await pause(300)
+      writeFileSync(join(target, file + '-zoom.png'), (await win.webContents.capturePage(rect)).toPNG())
+      if (report.nodes !== people.length || report.lines !== rels.length || report.labels !== rels.length) errors.push(name + 'の人物・線・ラベルの数が合わない: ' + JSON.stringify(report))
+      if (report.lineHits || report.diagonal) errors.push(name + 'の線が人物のアイコン・名前を通る、または斜めになっている: ' + JSON.stringify(report))
+      if (report.labelHitsNode || report.labelOverlap) errors.push(name + 'のラベルが人物・他のラベルに重なる: ' + JSON.stringify(report))
+      if (errors.length) throw new Error(errors.join('\n'))
+      console.log('PASS ' + name + ': 線は人物のアイコン・名前を避け、ラベルは人物・他のラベルに重ならない')
+    }
+    await check(svg, '資料庫の関係図', 'relations')
+    // 詳細欄の関係図(シーンを選んだときの関係図タブ)も同じ直角の線(2026-10-15)
+    await click('構造')
+    for (let i = 0; i < 60; i++) { if (await js(`[...document.querySelectorAll('.react-flow__node')].some(e=>e.textContent.includes('検証シーン'))`)) break; await pause(100) }
+    await js(`[...document.querySelectorAll('.react-flow__node')].find(e=>e.textContent.includes('検証シーン')).dispatchEvent(new MouseEvent('click',{bubbles:true}))`)
+    await pause(300)
+    await click('関係図')
+    const detailSvg = `document.querySelector('.scene-detail-main svg')`
+    for (let i = 0; i < 40; i++) { if (await js(`!!${detailSvg} && ${detailSvg}.querySelectorAll('polyline').length >= ${rels.length * 2}`)) break; await pause(150) }
+    await pause(600)
+    await check(detailSvg, '詳細欄の関係図', 'relations-detail')
+    console.log('Screenshots: ' + target)
+    win.destroy()
+    return
+  }
   if (process.argv.includes('--optext')) {
     await click('会話一覧')
     await js(`[...document.querySelectorAll('aside button')].find(e=>e.getClientRects().length && e.textContent.includes('optext-chat')).click()`)

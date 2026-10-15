@@ -12,6 +12,7 @@ import {
 } from 'd3-force'
 import { api, assetUrl } from './api'
 import type { Character, StateSnapshot, StoryNode } from './types'
+import { LABEL_FONT, LABEL_H, labelWidth, nodeShape, routeOrthogonal, type NodeShape, type Pt } from './relationRoute'
 
 interface GraphNode extends SimulationNodeDatum {
   id: string
@@ -35,76 +36,6 @@ interface ReasonEntry {
 function edgeColor(score: number): string {
   if (Math.abs(score) < 0.15) return 'var(--text-faint)'
   return score > 0 ? 'var(--rel-positive)' : 'var(--rel-negative)'
-}
-
-// ---- 直角エッジのルーティング(グリッド A*)---------------------------
-// フル版(orthogonal)用。ノードの周囲を通行止めにしたグリッド上で
-// 上下左右のみの経路を探索する。曲がりと「他のエッジが通済みのセル」に
-// コストを付けることで、直進を好みつつ並走エッジが別レーンに分かれる。
-
-const CELL = 10 // グリッド解像度(px)
-const BLOCK_R = 34 // ノード周りの通行止め半径(アイコン + 名前ラベル分)
-const TRIM_R = 26 // ノード円の縁で線を切る半径(直線版の pad と同じ)
-const TURN_COST = 3
-const USAGE_COST = 4
-const MAX_EXPAND = 20000 // A* の安全弁
-
-interface Pt {
-  x: number
-  y: number
-}
-
-/** 先頭がノード中心にある折れ線を、中心から距離 r の位置まで切り詰める */
-function trimRun(points: Pt[], center: Pt, r: number): Pt[] {
-  const out = points.map((p) => ({ ...p }))
-  while (out.length >= 2) {
-    const a = out[0]
-    const b = out[1]
-    const da = Math.hypot(a.x - center.x, a.y - center.y)
-    const db = Math.hypot(b.x - center.x, b.y - center.y)
-    if (db <= r) {
-      out.shift()
-      continue
-    }
-    if (da >= r) break
-    // 区間はノード中心付近を軸平行に通るため、距離の線形近似で十分
-    const t = (r - da) / (db - da)
-    out[0] = { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t }
-    break
-  }
-  return out
-}
-
-/** 両端をノード円の縁まで切り詰めた直線(ルート失敗時のフォールバック) */
-function straightPts(from: Pt, to: Pt): Pt[] {
-  const dx = to.x - from.x
-  const dy = to.y - from.y
-  const len = Math.hypot(dx, dy) || 1
-  return [
-    { x: from.x + (dx / len) * TRIM_R, y: from.y + (dy / len) * TRIM_R },
-    { x: to.x - (dx / len) * TRIM_R, y: to.y - (dy / len) * TRIM_R }
-  ]
-}
-
-/** 折れ線上の弧長 frac(0〜1)の位置 */
-function pointAt(points: Pt[], frac: number): Pt {
-  let total = 0
-  for (let i = 1; i < points.length; i += 1) {
-    total += Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y)
-  }
-  let target = total * frac
-  for (let i = 1; i < points.length; i += 1) {
-    const seg = Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y)
-    if (target <= seg) {
-      const t = seg === 0 ? 0 : target / seg
-      return {
-        x: points[i - 1].x + (points[i].x - points[i - 1].x) * t,
-        y: points[i - 1].y + (points[i].y - points[i - 1].y) * t
-      }
-    }
-    target -= seg
-  }
-  return points[points.length - 1] ?? { x: 0, y: 0 }
 }
 
 // ---- 終点の矢じり ---------------------------------------------------
@@ -150,201 +81,6 @@ function arrowHead(points: Pt[], strokeWidth: number): { tri: string; shaft: Pt[
     `${(bx + uy * hw).toFixed(1)},${(by - ux * hw).toFixed(1)}`
   ].join(' ')
   return { tri, shaft: trimEnd(points, len) }
-}
-
-function routeOrthogonal(
-  edges: RelEdge[],
-  positions: Record<string, Pt>,
-  nodeIds: string[]
-): Record<string, Pt[]> {
-  const placed = nodeIds.filter((id) => positions[id])
-  if (placed.length === 0) return {}
-  const xs = placed.map((id) => positions[id].x)
-  const ys = placed.map((id) => positions[id].y)
-  const minX = Math.min(...xs) - 100
-  const minY = Math.min(...ys) - 100
-  const cols = Math.max(4, Math.ceil((Math.max(...xs) + 100 - minX) / CELL))
-  const rows = Math.max(4, Math.ceil((Math.max(...ys) + 100 - minY) / CELL))
-  const cellCx = (x: number): number => Math.min(cols - 1, Math.max(0, Math.floor((x - minX) / CELL)))
-  const cellCy = (y: number): number => Math.min(rows - 1, Math.max(0, Math.floor((y - minY) / CELL)))
-  const cellCenter = (cx: number, cy: number): Pt => ({
-    x: minX + (cx + 0.5) * CELL,
-    y: minY + (cy + 0.5) * CELL
-  })
-
-  // 通行止めマップ: -1 = 自由、それ以外 = そのノードの縄張り(当事者のみ通行可)
-  const owner = new Int32Array(cols * rows).fill(-1)
-  placed.forEach((id, i) => {
-    const p = positions[id]
-    for (let cy = cellCy(p.y - BLOCK_R); cy <= cellCy(p.y + BLOCK_R); cy += 1) {
-      for (let cx = cellCx(p.x - BLOCK_R); cx <= cellCx(p.x + BLOCK_R); cx += 1) {
-        const c = cellCenter(cx, cy)
-        if (Math.hypot(c.x - p.x, c.y - p.y) <= BLOCK_R) owner[cy * cols + cx] = i
-      }
-    }
-  })
-  const nodeIndex: Record<string, number> = Object.fromEntries(placed.map((id, i) => [id, i]))
-  const usage = new Uint16Array(cols * rows)
-
-  const DIRS = [
-    [1, 0],
-    [-1, 0],
-    [0, 1],
-    [0, -1]
-  ] as const
-
-  // A* 用バッファ(状態 = セル × 進入方向)。エッジごとの確保を避けて使い回す
-  const stateCount = cols * rows * 4
-  const g = new Float64Array(stateCount)
-  const f = new Float64Array(stateCount)
-  const cameFrom = new Int32Array(stateCount)
-  const closed = new Uint8Array(stateCount)
-
-  const result: Record<string, Pt[]> = {}
-  for (const edge of edges) {
-    const from = positions[edge.from]
-    const to = positions[edge.to]
-    if (!from || !to) continue
-    const fi = nodeIndex[edge.from] ?? -2
-    const ti = nodeIndex[edge.to] ?? -2
-    const scx = cellCx(from.x)
-    const scy = cellCy(from.y)
-    const tcx = cellCx(to.x)
-    const tcy = cellCy(to.y)
-
-    g.fill(Infinity)
-    f.fill(Infinity)
-    cameFrom.fill(-1)
-    closed.fill(0)
-    const heap: number[] = []
-    const push = (s: number): void => {
-      heap.push(s)
-      let i = heap.length - 1
-      while (i > 0) {
-        const parent = (i - 1) >> 1
-        if (f[heap[parent]] <= f[heap[i]]) break
-        ;[heap[parent], heap[i]] = [heap[i], heap[parent]]
-        i = parent
-      }
-    }
-    const pop = (): number | undefined => {
-      const top = heap[0]
-      const last = heap.pop()
-      if (heap.length > 0 && last !== undefined) {
-        heap[0] = last
-        let i = 0
-        for (;;) {
-          const l = i * 2 + 1
-          const r = l + 1
-          let m = i
-          if (l < heap.length && f[heap[l]] < f[heap[m]]) m = l
-          if (r < heap.length && f[heap[r]] < f[heap[m]]) m = r
-          if (m === i) break
-          ;[heap[m], heap[i]] = [heap[i], heap[m]]
-          i = m
-        }
-      }
-      return top
-    }
-    const h = (cx: number, cy: number): number => Math.abs(cx - tcx) + Math.abs(cy - tcy)
-    const passable = (cx: number, cy: number): boolean => {
-      if (cx < 0 || cy < 0 || cx >= cols || cy >= rows) return false
-      const o = owner[cy * cols + cx]
-      return o === -1 || o === fi || o === ti
-    }
-    // 始点セルの 4 方向を g=0 で積む(最初の一歩は曲がりコストなし)
-    for (let d = 0; d < 4; d += 1) {
-      const s = (scy * cols + scx) * 4 + d
-      g[s] = 0
-      f[s] = h(scx, scy)
-      push(s)
-    }
-    let goalState = -1
-    let expanded = 0
-    while (heap.length > 0 && expanded < MAX_EXPAND) {
-      const cur = pop()
-      if (cur === undefined) break
-      if (closed[cur]) continue
-      closed[cur] = 1
-      expanded += 1
-      const cell = cur >> 2
-      const dir = cur & 3
-      const cx = cell % cols
-      const cy = (cell - cx) / cols
-      if (cx === tcx && cy === tcy) {
-        goalState = cur
-        break
-      }
-      for (let d = 0; d < 4; d += 1) {
-        const nx = cx + DIRS[d][0]
-        const ny = cy + DIRS[d][1]
-        if (!passable(nx, ny)) continue
-        const ni = ny * cols + nx
-        const ns = ni * 4 + d
-        const cost = 1 + (d === dir ? 0 : TURN_COST) + usage[ni] * USAGE_COST
-        const ng = g[cur] + cost
-        if (ng < g[ns]) {
-          g[ns] = ng
-          f[ns] = ng + h(nx, ny)
-          cameFrom[ns] = cur
-          push(ns)
-        }
-      }
-    }
-
-    let pts: Pt[]
-    if (goalState >= 0) {
-      const cells: number[] = []
-      let s: number = goalState
-      while (s >= 0) {
-        cells.push(s >> 2)
-        s = cameFrom[s]
-      }
-      cells.reverse()
-      // セル列 → 角の点列(同一直線上の中間セルを畳む)
-      const raw = cells.map((c) => cellCenter(c % cols, Math.floor(c / cols)))
-      const corners: Pt[] = []
-      for (const p of raw) {
-        if (corners.length >= 2) {
-          const a = corners[corners.length - 2]
-          const b = corners[corners.length - 1]
-          if ((a.x === b.x && b.x === p.x) || (a.y === b.y && b.y === p.y)) {
-            corners[corners.length - 1] = p
-            continue
-          }
-        }
-        corners.push(p)
-      }
-      if (corners.length <= 2) {
-        // 曲がりなし = ほぼ一直線に並んでいる。素直に直線で結ぶ
-        pts = straightPts(from, to)
-      } else {
-        // 端の直線区間をノード中心に合わせる(グリッド量子化のずれを消す)
-        if (corners[0].y === corners[1].y) {
-          corners[1] = { ...corners[1], y: from.y }
-        } else {
-          corners[1] = { ...corners[1], x: from.x }
-        }
-        corners[0] = { x: from.x, y: from.y }
-        const n = corners.length
-        if (corners[n - 1].y === corners[n - 2].y) {
-          corners[n - 2] = { ...corners[n - 2], y: to.y }
-        } else {
-          corners[n - 2] = { ...corners[n - 2], x: to.x }
-        }
-        corners[n - 1] = { x: to.x, y: to.y }
-        let trimmed = trimRun(corners, from, TRIM_R)
-        trimmed = trimRun(trimmed.slice().reverse(), to, TRIM_R).reverse()
-        pts = trimmed
-        // 使ったセルに通行税を付けて、後続のエッジを別レーンへ誘導
-        for (const c of cells) usage[c] += 1
-      }
-    } else {
-      pts = straightPts(from, to)
-    }
-    result[`${edge.from}->${edge.to}`] = pts
-  }
-  return result
 }
 
 export default function RelationGraph({
@@ -550,7 +286,7 @@ export default function RelationGraph({
       .force('charge', forceManyBody().strength(-350))
       .force('x', forceX(width / 2).strength(0.06))
       .force('y', forceY(height / 2).strength(0.06))
-      .force('collide', forceCollide(34))
+      .force('collide', forceCollide(44)) // アイコン + 下の名前ぶん
       .stop()
     for (let i = 0; i < 300; i += 1) sim.tick()
     const next = { ...known }
@@ -571,10 +307,24 @@ export default function RelationGraph({
   // A* は全エッジぶん回して重いので、ドラッグ中の毎フレームには追従させず
   // deferred な座標で計算する(ノードは即時に動き、線は半歩遅れて付いてくる)
   const deferredPositions = useDeferredValue(positions)
-  const routes = useMemo(
-    () => (orthogonal ? routeOrthogonal(edges, deferredPositions, visibleChars) : null),
-    [orthogonal, edges, deferredPositions, visibleChars]
-  )
+  // 線は人物の形(アイコン + 名前 + 退場)を避け、ラベルは重ならない位置を選ぶ
+  const routed = useMemo(() => {
+    if (!orthogonal) return null
+    const shapes: Record<string, NodeShape> = {}
+    for (const id of visibleChars) {
+      const p = deferredPositions[id]
+      if (!p) continue
+      const c = charMap[id]
+      const portrait = !!assetUrl(c?.portrait_path)
+      shapes[id] = nodeShape(p, {
+        portrait,
+        retired: state?.chars[id]?.status === 'retired',
+        name: (c?.name ?? id).slice(0, portrait ? 5 : 4)
+      })
+    }
+    return routeOrthogonal(edges, shapes, visibleChars)
+  }, [orthogonal, edges, deferredPositions, visibleChars, charMap, state])
+  const routes = routed?.routes ?? null
 
   // フィット表示: ノード全体の外接矩形が中央に収まるようズーム・パンを合わせる
   const fitView = (): void => {
@@ -710,9 +460,9 @@ export default function RelationGraph({
           if (routes) {
             pts = routes[key] ?? []
             if (pts.length < 2) return null
-            const mid = pointAt(pts, 0.5)
-            labelX = mid.x
-            labelY = mid.y - 4
+            // ラベルは全部の線を描いた後に重ねる(下の routed.labels)
+            labelX = 0
+            labelY = 0
           } else {
             const dx = to.x - from.x
             const dy = to.y - from.y
@@ -747,7 +497,7 @@ export default function RelationGraph({
               />
               {/* 矢じり: 線と同じ不透明度にして色が浮かないようにする */}
               <polygon points={tri} fill={edgeColor(edge.score)} fillOpacity={opacity} />
-              {edge.label && (
+              {edge.label && !routes && (
                 <text
                   x={labelX}
                   y={labelY}
@@ -774,6 +524,22 @@ export default function RelationGraph({
             </g>
           )
         })}
+        {routed &&
+          edges.map((edge) => {
+            const key = `${edge.from}->${edge.to}`
+            const p = routed.labels[key]
+            if (!edge.label || !p) return null
+            const w = labelWidth(edge.label)
+            // 線の上に下地を敷いて置く(線はラベルのところで途切れて見える)
+            return (
+              <g key={`label:${key}`} style={{ pointerEvents: 'none', userSelect: 'none' }}>
+                <rect x={p.x - w / 2} y={p.y - LABEL_H / 2} width={w} height={LABEL_H} rx={3} fill="var(--bg-canvas)" />
+                <text x={p.x} y={p.y} textAnchor="middle" dominantBaseline="central" fontSize={LABEL_FONT} fill="var(--text-dim)">
+                  {edge.label}
+                </text>
+              </g>
+            )
+          })}
         {visibleChars.map((id) => {
           const p = positions[id]
           if (!p) return null
