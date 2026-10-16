@@ -408,8 +408,10 @@ export const api = {
   comfyModels: (folder = 'checkpoints') =>
     request<{ models: string[]; healthy: boolean }>(`/comfy/models?folder=${encodeURIComponent(folder)}`),
   comfyReleases: () => request<{ releases: ComfyRelease[] }>('/comfy/releases'),
-  /** 生成ウインドウで選べるワークフローの組(workflows/variants.json。先頭が既定) */
-  comfyWorkflows: () => request<{ variants: WorkflowVariant[] }>('/comfy/workflows'),
+  /** 生成ウインドウで選べるワークフローの組(workflows/variants.json)と、設定の既定の組の id。
+   *  check = true なら組ごとに使うモデルと、ComfyUI に見つからないモデルを添える */
+  comfyWorkflows: (check = false) =>
+    request<{ variants: WorkflowVariant[]; default: string }>(`/comfy/workflows${check ? '?check=true' : ''}`),
   comfyUninstall: () => request<ComfyStatus>('/comfy/uninstall', { method: 'POST' }),
 
   // ---- TTS(清書の読み上げ。docs/design/voice.md) ----
@@ -683,6 +685,18 @@ export interface GeneratedImage {
 export interface WorkflowVariant {
   id: string
   label: string
+  /** 使うモデルファイル(check = true のときだけ。name が空 = variants.json に書かれていない) */
+  models?: WorkflowModel[]
+  /** ComfyUI のモデルフォルダに見つからないモデル(check = true のときだけ。null = ComfyUI が止まっていて確かめられない) */
+  missing?: WorkflowModel[] | null
+}
+
+export interface WorkflowModel {
+  /** テンプレートの {{key}}(checkpoint / unet / clip / vae / lora …) */
+  key: string
+  /** ComfyUI のモデルフォルダ(checkpoints / diffusion_models / text_encoders / vae / loras) */
+  folder: string
+  name: string
 }
 
 /** 場面プロンプト生成の冒頭で届く情報(どのキャラが image1.. になるか) */

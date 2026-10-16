@@ -1,7 +1,7 @@
 # 画像生成(ComfyUI 連携)— キャラクターの参照画像と場面の挿絵
 
 作成日時: 2026-08-26 15:15
-更新日時: 2026-10-13 23:09
+更新日時: 2026-10-16 17:01
 
 ローカルの ComfyUI で挿絵を作る仕組みの設計メモ。2026-08-26 のユーザー発案
 ([progress.md](../plan/progress.md) の「場面の画像生成」)。画像は**装飾専用**で、
@@ -66,8 +66,8 @@ API 形式の JSON テンプレート `workflows/ref_t2i.json` を `comfy.build_
 ```
 
 - 前提は **VAE とテキストエンコーダを 1 ファイルにまとめた AIO 版**(`Qwen-Rapid-AIO`)。
-  既定値は steps 4 / cfg 1 / shift 3.1(蒸留モデルの推奨)。設定 `comfy_steps` / `comfy_cfg` /
-  `comfy_shift` / `comfy_negative` で上書き。
+  既定値は steps 4 / cfg 1 / shift 3.1(蒸留モデルの推奨)。チェックポイント名と steps / cfg / shift は
+  組の `values` が持つ(§12。2026-10-16 から設定画面には無い)。ネガティブプロンプトだけ設定 `comfy_negative`。
 - 実行は `/prompt` → `/history/{id}` を 1 秒ごとにポーリング → 出力の `images[0]` を `/view` で取得。
   クライアント切断(AbortController)では `/interrupt` を送って GPU を解放する。
 - **場面用の編集ワークフロー** `comfy.build_edit_workflow`(`workflows/scene_edit.json`。同じ AIO チェックポイント。
@@ -111,8 +111,9 @@ API 形式の JSON テンプレート `workflows/ref_t2i.json` を `comfy.build_
 
 - `characters.ref_image_path` — 参照画像のファイル名(`assets/images`)。`gc_assets` の参照保護に含めた。
 - `characters.ref_image_prompt` — 生成に使った人物描写(英語)。画像を外しても残す。
-- settings: `comfy_base_url` / `comfy_models_dir` / `comfy_checkpoint` / `comfy_steps` / `comfy_cfg` /
-  `comfy_shift` / `comfy_negative`(ライブラリごと)。
+- settings: `comfy_base_url` / `comfy_models_dir` / `comfy_workflow`(既定のワークフローの組の id)/
+  `comfy_negative`(アプリ単位。`app_settings` の `comfy_` 接頭辞)。`comfy_checkpoint` は組に checkpoint が
+  書かれていないときの予備としてだけ読む。`comfy_steps` / `comfy_cfg` / `comfy_shift` はもう読まない(§12)。
 
 ## 6. 場面の挿絵
 
@@ -193,20 +194,21 @@ API 形式の JSON テンプレート `workflows/ref_t2i.json` を `comfy.build_
 - `workflows/variants.json` の `variants[]` が「生成ウインドウで選べる組」。各行は
   `{id, label, t2i, edit, values}`。`t2i` はキャラの参照画像と参照画像なしの場面、`edit` は参照画像ありの
   場面に使うテンプレート名(`workflows/<name>.json`)。`values` はテンプレートの `{{name}}` に追加で入る値
-  (LoRA 版なら `lora` / `lora_strength`)。先頭が既定。**`id` は DB に保存されるので変えない。**
+  (LoRA 版なら `lora` / `lora_strength`)。既定は設定の `comfy_workflow`(未設定・不明なら先頭。§12)。
+  **`id` は DB と設定に保存されるので変えない。**
 - LoRA 版のテンプレート `ref_t2i_lora.json` / `scene_edit_lora.json` は、既定の
   `CheckpointLoaderSimple("1")` と `ModelSamplingAuraFlow("2")` の間に `LoraLoaderModelOnly("9")` を挟んだもの
   (CLIP は触らない。Qwen-Image 系の LoRA は model のみが通例)。LoRA ファイルは ComfyUI の `loras/`
   (`D:\ai-models\diffusion\comfyui\loras`)から名前で参照する。
-- `comfy.list_variants()` / `get_variant(id)`(不明な id は既定に落として生成は止めない)。
+- `comfy.list_variants()` / `get_variant(id, default_id)`(不明な id は既定に落として生成は止めない)。
   `build_*_workflow(template=, extra_values=)` に組を渡す。`GET /comfy/workflows` が UI 用の一覧。
 - **組はセットの一部**: LoRA の有無で絵が変わるので、プロンプト・seed と同じく
   `nodes.image_workflow` / `characters.ref_image_workflow` / `media.workflow` に生成時の id を保存し、
   次に開いたとき復元、ストックから選び直したときもそのセットに戻る。手持ちの画像は NULL。
 - UI は `ImageCandidate.WorkflowSelect`(seed 欄の隣のセレクト。両モーダル共用)。組が 1 つしか無ければ
   出さない。一覧は開くたびに読むので、`variants.json` を編集すればアプリを再起動せずに反映される。
-- **組の `values` は設定画面の値より優先**(steps / cfg / shift / checkpoint …)。モデルごとに向く値が
-  違うため(Qwen-Rapid は 4 steps、Krea2 Turbo は 8 steps)。
+- **組の `values` が最後に入る**(steps / cfg / shift / checkpoint …)。モデルごとに向く値が
+  違うため(Qwen-Rapid は 4 steps、Krea2 Turbo は 8 steps)。2026-10-16 からは設定画面に steps などの欄は無い(§12)。
 - **`_optional` ノード**: テンプレートのノードに `"_optional": "<name>"` を書くと、組の `values[name]` が
   空のときそのノードを配線ごと外す(`model` 入力の上流を、そのノードを参照していた入力へ付け替える)。
   「挟むだけ」の LoRA ローダーの有無を、テンプレートを複製せずに組で切り替えるため。
@@ -258,3 +260,26 @@ API 形式の JSON テンプレート `workflows/ref_t2i.json` を `comfy.build_
   2 人の場面(参照 2 枚、1216×832)14.4 秒。2 人とも参照画像どおりの髪・服で描かれた。25 steps でも
   4 steps の Qwen-Rapid-AIO(同じ条件で 3〜8 秒 / 11.4 秒)と大差ない。モデルは 3 ファイルで約 16GB と
   AIO(26GB)より軽い。**31B と同居したときの VRAM、3 人の場面は未確認**。
+
+## 12. 既定のワークフロー(モデルは組が持つ)
+
+2026-10-16 ユーザー要望「既定のチェックポイントのように、既定のワークフローも設定したい」
+「ワークフローを選ぶかたちにすれば、モデルのほうは意識しなくていい」。
+
+- 設定画面の「画像生成」は**既定のワークフロー**(`comfy_workflow`)を選ぶ。チェックポイント・ステップ数・
+  CFG・シフトの欄はなくし、ネガティブプロンプトだけ残した(作品の好みに近いので)。
+- 組の解決は `image_gen.resolve_variant`: 生成ウインドウで選んだ / 保存済みの組 → 設定の既定 → `variants.json` の先頭。
+  生成ウインドウ(`WorkflowSelect`)は、まだ描いていない(保存済みの組が null)ときに既定の組を選んだ状態で開き、
+  null のまま送る(サーバが同じ既定の組で描く)。**描いたことのある絵は、そのとき使った組で開く**(再現のため)。
+  組を記録していない古い絵(null)は、いまの既定の組で開く。
+- Qwen 系の組(`default` / `zeniji`)も `values` に `checkpoint` と steps / cfg / shift を書いた。組に
+  `checkpoint` が無ければ以前の設定 `comfy_checkpoint` を予備として使う(移行前の `variants.json` でも描ける)。
+  書かれなかった steps / cfg / shift は `comfy.DEFAULT_*`(Qwen-Rapid の推奨値)。
+- **値の書き忘れは送る前に止める**: テンプレートに埋まらない `{{name}}` が残ったら `comfy.MissingValuesError`
+  (`_check_filled`)。`image_gen._build` が「ワークフロー「…」で使うモデル(checkpoint)が決まっていません」の
+  ように組の名前を添えて返す。
+- **モデルがそろっているかの確認**: `GET /comfy/workflows?check=true` が組ごとに `models`(`[{key, folder, name}]`)と
+  `missing`(ComfyUI のフォルダに無いもの。ComfyUI が止まっていれば null)を返す。使うモデルは
+  `comfy.variant_models` がテンプレートのローダーの入力名から拾う(`ckpt_name` → checkpoints、`unet_name` →
+  diffusion_models、`clip_name*` → text_encoders、`vae_name` → vae、`lora_name` → loras。`_optional` で外れるノードは除く)。
+  設定画面は選んだ組のモデルを並べ、見つからないものを赤で「見つかりません」と出し、選択肢にも「(モデルが足りません)」を添える。

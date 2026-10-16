@@ -476,6 +476,31 @@ store.save_chat_messages(chat['id'], [
     win.destroy()
     return
   }
+  if (process.argv.includes('--imagegen')) {
+    // 設定の画像生成のページ: 既定のワークフローを選ぶ(モデル名・steps などは組が持つので選ばない)
+    await js(`document.querySelector('button[aria-label="設定"]').click()`)
+    await pause(400)
+    await click('画像生成')
+    await pause(1500)
+    const wf = `document.querySelector('select[aria-label="既定のワークフロー"]')`
+    const models = `[...document.querySelectorAll('[aria-label="このワークフローが使うモデル"] li')].map(e=>e.textContent)`
+    await assert(`${wf}.value==='default' && [...${wf}.options].some(o=>o.textContent.startsWith('Krea2 Turbo')) && ${models}.some(t=>t.startsWith('checkpoints'))`, '既定のワークフローの選択があり、未設定なら先頭の組。選んだ組が使うモデルが出る')
+    await assert(`!document.body.textContent.includes('ステップ数') && !document.body.textContent.includes('チェックポイント(') && document.body.textContent.includes('ネガティブプロンプト')`, 'チェックポイント・ステップ数などの欄は無く、ネガティブプロンプトは残る')
+    await js(`(() => {const s=${wf};Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(s,'krea2');s.dispatchEvent(new Event('change',{bubbles:true}))})()`)
+    await pause(500)
+    const chosen = (await (await fetch(base + '/settings')).json()).comfy_workflow
+    if (chosen !== 'krea2') errors.push('既定のワークフローが保存されていない: ' + JSON.stringify(chosen))
+    else console.log('PASS 既定のワークフローを選ぶと設定が保存される')
+    await assert(`${wf}.value==='krea2' && ${models}.some(t=>t.startsWith('diffusion_models')) && ${models}.some(t=>t.startsWith('text_encoders'))`, '選び直すと、その組が使うモデル(diffusion_models / text_encoders …)に変わる')
+    const listed = (await (await fetch(base + '/comfy/workflows')).json()).default
+    if (listed !== 'krea2') errors.push('生成ウインドウ向けの既定の組が変わっていない: ' + JSON.stringify(listed))
+    else console.log('PASS 生成ウインドウ向けの一覧でも既定の組が変わる')
+    writeFileSync(join(target, 'settings-imagegen.png'), (await win.webContents.capturePage()).toPNG())
+    if (errors.length) throw new Error(errors.join('\n'))
+    console.log('Screenshots: ' + target)
+    win.destroy()
+    return
+  }
   if (process.argv.includes('--target')) {
     // 相談チャットの「話す相手」: アイコンと名前のメニューで選ぶ(標準の select は使わない)
     await click('相談')

@@ -110,31 +110,50 @@ def full_prompt(description: str) -> str:
     return f"{description.strip().rstrip(',')}, {REF_IMAGE_SUFFIX}"
 
 
-def _float(settings: dict[str, str], key: str, default: float) -> float:
+def resolve_variant(settings: dict[str, str], variant: str | None) -> dict[str, Any]:
+    """生成に使う組。variant(生成ウインドウで選んだ / 保存済みの id)→ 設定の「既定のワークフロー」→ 先頭。"""
+    return comfy.get_variant(variant, settings.get("comfy_workflow") or None)
+
+
+def _common_values(settings: dict[str, str], v: dict[str, Any]) -> dict[str, Any]:
+    """組に依らない引数。モデル名・steps / cfg / shift は組の values が持つ(2026-10-16 ユーザー判断
+    「ワークフローを選べばモデルは意識しなくていい」)。checkpoint だけは、組に書かれていなければ
+    以前の設定 `comfy_checkpoint` を使う(移行前の variants.json でも描けるように)。"""
+    return dict(
+        extra_values=v.get("values") or {},
+        checkpoint=(settings.get("comfy_checkpoint") or "").strip(),
+        negative=(settings.get("comfy_negative") or comfy.DEFAULT_NEGATIVE),
+    )
+
+
+def _build(v: dict[str, Any], build: Any, **kwargs: Any) -> dict[str, Any]:
     try:
-        return float(settings.get(key) or default)
-    except ValueError:
-        return default
+        return build(**kwargs)
+    except comfy.MissingValuesError as e:
+        label = v.get("label") or v["id"]
+        if "checkpoint" in e.names:
+            raise RuntimeError(
+                f"ワークフロー「{label}」で使うモデル(checkpoint)が決まっていません。"
+                "workflows/variants.json のこの組の values に checkpoint を書いてください"
+            ) from e
+        raise RuntimeError(
+            f"ワークフロー「{label}」に値がありません: {', '.join(e.names)}"
+            "(workflows/variants.json のこの組の values に書いてください)"
+        ) from e
 
 
 def character_workflow(
     settings: dict[str, str], description: str, seed: int | None = None, variant: str | None = None
 ) -> dict[str, Any]:
-    """variant は workflows/variants.json の id(None / 不明なら既定)。"""
-    checkpoint = (settings.get("comfy_checkpoint") or "").strip()
-    if not checkpoint:
-        raise RuntimeError("設定 →「画像生成」でチェックポイント(モデル)を選んでください")
-    v = comfy.get_variant(variant)
-    return comfy.build_t2i_workflow(
+    """variant は workflows/variants.json の id(None / 不明なら設定の既定の組)。"""
+    v = resolve_variant(settings, variant)
+    return _build(
+        v,
+        comfy.build_t2i_workflow,
         template=v["t2i"],
-        extra_values=v.get("values") or {},
-        checkpoint=checkpoint,
         positive=full_prompt(description),
-        negative=(settings.get("comfy_negative") or comfy.DEFAULT_NEGATIVE),
-        steps=int(_float(settings, "comfy_steps", comfy.DEFAULT_STEPS)),
-        cfg=_float(settings, "comfy_cfg", comfy.DEFAULT_CFG),
-        shift=_float(settings, "comfy_shift", comfy.DEFAULT_SHIFT),
         seed=seed,
+        **_common_values(settings, v),
     )
 
 
@@ -257,28 +276,20 @@ def scene_workflow(
     seed: int | None = None,
     variant: str | None = None,
 ) -> dict[str, Any]:
-    """variant は workflows/variants.json の id(None / 不明なら既定)。"""
-    checkpoint = (settings.get("comfy_checkpoint") or "").strip()
-    if not checkpoint:
-        raise RuntimeError("設定 →「画像生成」でチェックポイント(モデル)を選んでください")
-    v = comfy.get_variant(variant)
+    """variant は workflows/variants.json の id(None / 不明なら設定の既定の組)。"""
+    v = resolve_variant(settings, variant)
     if ref_names:
         description = apply_ref_label(description, v.get("ref_label"))
     common = dict(
-        extra_values=v.get("values") or {},
-        checkpoint=checkpoint,
         positive=f"{description.strip().rstrip(',')}, {SCENE_SUFFIX}",
-        negative=(settings.get("comfy_negative") or comfy.DEFAULT_NEGATIVE),
-        steps=int(_float(settings, "comfy_steps", comfy.DEFAULT_STEPS)),
-        cfg=_float(settings, "comfy_cfg", comfy.DEFAULT_CFG),
-        shift=_float(settings, "comfy_shift", comfy.DEFAULT_SHIFT),
         seed=seed,
         width=1216,
         height=832,
+        **_common_values(settings, v),
     )
     if ref_names:
-        return comfy.build_edit_workflow(template=v["edit"], ref_images=ref_names, **common)
-    return comfy.build_t2i_workflow(template=v["t2i"], filename_prefix="story-graph/scene", **common)
+        return _build(v, comfy.build_edit_workflow, template=v["edit"], ref_images=ref_names, **common)
+    return _build(v, comfy.build_t2i_workflow, template=v["t2i"], filename_prefix="story-graph/scene", **common)
 
 
 async def generate_scene_image(

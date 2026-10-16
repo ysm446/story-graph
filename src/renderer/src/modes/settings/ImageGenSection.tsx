@@ -6,18 +6,18 @@ import {
   type ComfyRelease,
   type ComfyReleaseVariant,
   type ComfyStatus,
-  type LlamaInstallProgress
+  type LlamaInstallProgress,
+  type WorkflowVariant
 } from '../../api'
 import AutoTextarea from '../../AutoTextarea'
 import { useElapsedSeconds } from '../../useElapsed'
 import { describeProgress, fmtBytes } from './format'
 
-// 画像生成の既定値(backend/comfy.py と同じ。Qwen-Image Rapid AIO の推奨値)
-const COMFY_DEFAULTS = { steps: '4', cfg: '1', shift: '3.1' } as const
 const COMFY_DEFAULT_NEGATIVE = 'text, watermark, signature, blurry, low quality, extra limbs, deformed hands'
 
-// ComfyUI の稼働・モデルフォルダ・チェックポイント・生成パラメータ・インストール
-// (docs/design/image-gen.md)。llama の「推論エンジン」と同じ並びにしてある
+// ComfyUI の稼働・モデルフォルダ・既定のワークフロー・ネガティブプロンプト・インストール
+// (docs/design/image-gen.md)。llama の「推論エンジン」と同じ並びにしてある。
+// モデル名と steps / cfg / shift はワークフローの組(workflows/variants.json)が持つので、ここでは選ばない
 export default function ImageGenSection({
   values,
   setValues,
@@ -30,7 +30,9 @@ export default function ImageGenSection({
   const [status, setStatus] = useState<ComfyStatus | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [checkpoints, setCheckpoints] = useState<string[]>([])
+  // ワークフローの組と、組ごとに足りないモデル(ComfyUI が止まっていれば missing は null)
+  const [workflows, setWorkflows] = useState<WorkflowVariant[]>([])
+  const [defaultWorkflow, setDefaultWorkflow] = useState('')
   const [releases, setReleases] = useState<ComfyRelease[]>([])
   const [selectedKey, setSelectedKey] = useState('')
   const [loadingReleases, setLoadingReleases] = useState(false)
@@ -42,14 +44,16 @@ export default function ImageGenSection({
 
   const refresh = async (): Promise<void> => {
     try {
-      const s = await api.comfyStatus()
-      setStatus(s)
-      if (s.healthy) {
-        const r = await api.comfyModels('checkpoints')
-        setCheckpoints(r.models)
-      }
+      setStatus(await api.comfyStatus())
     } catch {
       setStatus(null)
+    }
+    try {
+      const r = await api.comfyWorkflows(true)
+      setWorkflows(r.variants)
+      setDefaultWorkflow(r.default)
+    } catch {
+      setWorkflows([])
     }
   }
 
@@ -150,23 +154,8 @@ export default function ImageGenSection({
     }
   }
 
-  const currentCkpt = values.comfy_checkpoint ?? ''
-  const numField = (key: 'comfy_steps' | 'comfy_cfg' | 'comfy_shift', label: string, fallback: string, hint: string) => (
-    <div className="settings-field" key={key}>
-      <div className="settings-field-header">
-        <span className="settings-field-label">{label}</span>
-      </div>
-      <input
-        value={values[key] ?? ''}
-        placeholder={fallback}
-        onChange={(e) => setValues((v) => ({ ...v, [key]: e.target.value }))}
-        onBlur={() => void save({ [key]: values[key] ?? '' })}
-        className="w-32 rounded-md border px-2 py-0.5 text-[12px] outline-none"
-        style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
-      />
-      <p className="settings-field-hint">{hint}</p>
-    </div>
-  )
+  const selectedWorkflow = workflows.find((w) => w.id === defaultWorkflow)
+  const missingOf = (w: WorkflowVariant): Set<string> => new Set((w.missing ?? []).map((m) => `${m.folder}/${m.key}`))
 
   return (
     <>
@@ -272,40 +261,67 @@ export default function ImageGenSection({
         </div>
         <div className="settings-field">
           <div className="settings-field-header">
-            <span className="settings-field-label">チェックポイント(Qwen-Image 系 AIO)</span>
+            <span className="settings-field-label">既定のワークフロー</span>
             <div className="settings-field-controls">
               <button
                 onClick={() => void refresh()}
-                disabled={!status?.healthy}
-                className="rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-40"
+                className="rounded-md border px-2 py-0.5 text-[11px]"
                 style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-                data-tip={status?.healthy ? 'ComfyUI が見つけているモデルを取り直す' : '一覧は ComfyUI の稼働中だけ取れます'}
+                data-tip="workflows/variants.json を読み直し、モデルがそろっているかを確かめ直す"
               >
-                ⟳ 一覧
+                ⟳ 確かめる
               </button>
             </div>
           </div>
           <select
-            value={currentCkpt}
-            onChange={(e) => void save({ comfy_checkpoint: e.target.value })}
-            className="w-full rounded-lg border px-3 py-2 text-[13px] outline-none"
+            value={selectedWorkflow?.id ?? ''}
+            onChange={(e) => {
+              setDefaultWorkflow(e.target.value)
+              void save({ comfy_workflow: e.target.value })
+            }}
+            disabled={workflows.length === 0}
+            aria-label="既定のワークフロー"
+            className="w-full rounded-lg border px-3 py-2 text-[13px] outline-none disabled:opacity-50"
             style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
           >
-            <option value="">{checkpoints.length ? '(選んでください)' : status?.healthy ? 'checkpoints にモデルがありません' : '(ComfyUI を起動すると一覧が出ます)'}</option>
-            {checkpoints.map((m) => (
-              <option key={m} value={m}>
-                {m}
+            {workflows.length === 0 && <option value="">(ワークフローの一覧を読めません)</option>}
+            {workflows.map((w) => (
+              <option key={w.id} value={w.id}>
+                {w.label}
+                {w.missing && w.missing.length > 0 ? '(モデルが足りません)' : ''}
               </option>
             ))}
-            {currentCkpt && !checkpoints.includes(currentCkpt) && <option value={currentCkpt}>{currentCkpt}</option>}
           </select>
+          {selectedWorkflow?.models && selectedWorkflow.models.length > 0 && (
+            <ul className="flex flex-col gap-0.5 text-[12px]" aria-label="このワークフローが使うモデル">
+              {selectedWorkflow.models.map((m) => {
+                const missing = missingOf(selectedWorkflow).has(`${m.folder}/${m.key}`)
+                return (
+                  <li key={`${m.folder}/${m.key}`} className="flex min-w-0 items-baseline gap-2">
+                    <span className="w-28 shrink-0" style={{ color: 'var(--text-faint)' }}>
+                      {m.folder}
+                    </span>
+                    <span className="min-w-0 truncate" style={{ color: missing ? 'var(--danger)' : 'var(--text-dim)' }} data-tip={m.name || undefined}>
+                      {m.name || `(${m.key} が variants.json に書かれていません)`}
+                    </span>
+                    {missing && m.name && (
+                      <span className="shrink-0" style={{ color: 'var(--danger)' }}>
+                        見つかりません
+                      </span>
+                    )}
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+          {selectedWorkflow && selectedWorkflow.missing === null && (
+            <p className="settings-field-hint">ComfyUI が止まっているので、モデルがそろっているかは確かめていません(起動すると確かめます)。</p>
+          )}
           <p className="settings-field-hint">
-            VAE とテキストエンコーダを 1 ファイルにまとめた AIO 版(Qwen-Rapid-AIO など)を前提にしています。
+            新しく描くとき、生成ウインドウで最初に選ばれている組です(その場で別の組に変えられます)。描いたことのある絵は、そのとき使った組で開きます。
+            使うモデルや steps・CFG は組ごとに workflows/variants.json に書いてあります。
           </p>
         </div>
-        {numField('comfy_steps', 'ステップ数', COMFY_DEFAULTS.steps, 'Rapid AIO は 4〜8。多いほど遅くなります。')}
-        {numField('comfy_cfg', 'CFG', COMFY_DEFAULTS.cfg, '蒸留モデルは 1 固定が前提。上げると破綻しやすくなります。')}
-        {numField('comfy_shift', 'シフト(ModelSamplingAuraFlow)', COMFY_DEFAULTS.shift, 'Qwen-Image の推奨は 3 前後。')}
         <div className="settings-field">
           <div className="settings-field-header">
             <span className="settings-field-label">ネガティブプロンプト</span>

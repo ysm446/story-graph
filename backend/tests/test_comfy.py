@@ -60,20 +60,42 @@ def test_t2i_workflow_wires_nodes():
     assert wf["8"]["class_type"] == "SaveImage"
 
 
-def test_character_workflow_uses_settings_and_suffix():
-    settings = {"comfy_checkpoint": "ckpt.safetensors", "comfy_steps": "8", "comfy_cfg": "1.5", "comfy_shift": "2"}
+def _only_variant(monkeypatch, **values):
+    """variants.json の代わりに組を 1 つだけにする(リポジトリの variants.json のモデル名に依らない)。"""
+    v = {"id": "only", "label": "テスト", "t2i": "ref_t2i", "edit": "scene_edit", "values": values}
+    monkeypatch.setattr(comfy, "list_variants", lambda: [v])
+    return v
+
+
+def test_character_workflow_uses_variant_values_and_suffix(monkeypatch):
+    _only_variant(monkeypatch, checkpoint="ckpt.safetensors", steps=8, cfg=1.5, shift=2.0)
+    # 設定の steps / cfg / shift はもう使わない(組の values が持つ)
+    settings = {"comfy_checkpoint": "old.safetensors", "comfy_steps": "4", "comfy_cfg": "3"}
     wf = image_gen.character_workflow(settings, "red hair, blue eyes,", seed=1)
     pos = wf["3"]["inputs"]["text"]
     assert pos.startswith("red hair, blue eyes, full body standing portrait")
+    assert wf["1"]["inputs"]["ckpt_name"] == "ckpt.safetensors"
     assert wf["6"]["inputs"]["steps"] == 8 and wf["6"]["inputs"]["cfg"] == 1.5
     assert wf["2"]["inputs"]["shift"] == 2.0
 
 
-def test_character_workflow_requires_checkpoint():
+def test_checkpoint_falls_back_to_old_setting_and_reports_when_missing(monkeypatch):
     import pytest
 
-    with pytest.raises(RuntimeError):
+    _only_variant(monkeypatch)
+    wf = image_gen.character_workflow({"comfy_checkpoint": "old.safetensors"}, "x", seed=1)
+    assert wf["1"]["inputs"]["ckpt_name"] == "old.safetensors"
+    assert wf["6"]["inputs"]["steps"] == comfy.DEFAULT_STEPS  # 書いていない steps は既定値
+    with pytest.raises(RuntimeError, match="checkpoint"):
         image_gen.character_workflow({}, "x")
+
+
+def test_unfilled_placeholder_is_reported_before_sending():
+    import pytest
+
+    with pytest.raises(comfy.MissingValuesError) as e:
+        comfy.build_t2i_workflow(positive="p", seed=1)  # checkpoint が無い
+    assert e.value.names == ["checkpoint"]
 
 
 def test_store_keeps_ref_image_columns():
@@ -220,12 +242,33 @@ def test_krea2_edit_workflow_keeps_identity_lora_and_reference_wiring():
     assert wf2["13"]["inputs"]["model"] == ["9", 0] and wf2["2"]["inputs"]["model"] == ["13", 0]
 
 
-def test_variant_values_override_settings():
-    settings = {"comfy_checkpoint": "c.safetensors", "comfy_steps": "4", "comfy_cfg": "2.5"}
-    wf = image_gen.scene_workflow(settings, "x", [], seed=1, variant="krea2")
+def test_variant_values_override_arguments():
+    wf = image_gen.scene_workflow({}, "x", [], seed=1, variant="krea2")
     assert wf["24"]["inputs"]["steps"] == 8 and wf["22"]["inputs"]["cfg"] == 1.0
-    wf_default = image_gen.scene_workflow(settings, "x", [], seed=1)
-    assert wf_default["6"]["inputs"]["steps"] == 4 and wf_default["6"]["inputs"]["cfg"] == 2.5
+
+
+def test_default_workflow_setting_picks_the_variant():
+    settings = {"comfy_workflow": "krea2"}
+    assert image_gen.resolve_variant(settings, None)["id"] == "krea2"
+    assert image_gen.scene_workflow(settings, "x", [], seed=1)["1"]["class_type"] == "UNETLoader"
+    # 生成ウインドウで選んだ組(保存済みの組)が設定より優先
+    assert image_gen.resolve_variant(settings, "zeniji")["id"] == "zeniji"
+    # 不明な id は設定の既定、設定も不明なら先頭
+    assert image_gen.resolve_variant(settings, "missing")["id"] == "krea2"
+    assert image_gen.resolve_variant({"comfy_workflow": "gone"}, None)["id"] == "default"
+
+
+def test_variant_models_lists_loader_files_by_folder():
+    models = comfy.variant_models(comfy.get_variant("krea2"))
+    by_key = {m["key"]: m for m in models}
+    assert by_key["unet"]["folder"] == "diffusion_models" and by_key["unet"]["name"] == "krea2_turbo_bf16.safetensors"
+    assert by_key["clip"]["folder"] == "text_encoders" and by_key["vae"]["folder"] == "vae"
+    assert by_key["identity_lora"]["folder"] == "loras"
+    assert "lora" not in by_key  # 画風 LoRA は _optional で外れる組
+    assert "lora" in {m["key"] for m in comfy.variant_models(comfy.get_variant("krea2_zeniji"))}
+    v = {"id": "x", "t2i": "ref_t2i", "edit": "scene_edit", "values": {}}
+    assert comfy.variant_models(v) == [{"key": "checkpoint", "folder": "checkpoints", "name": ""}]
+    assert comfy.variant_models(v, {"checkpoint": "old.safetensors"})[0]["name"] == "old.safetensors"
 
 
 def test_qwen21_workflows_use_single_encoder_and_angle_labels():

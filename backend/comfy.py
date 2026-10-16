@@ -2,7 +2,7 @@
 
 - `/prompt` に投げて prompt_id を受け取り、`/history/{id}` を待って `/view` で画像を取る
 - ワークフローの本体は `workflows/*.json`(リポジトリ直下)(ComfyUI の「Save (API Format)」と同じ形。
-  値が `{{name}}` の欄をここで埋める)。Qwen-Image 系の AIO チェックポイント(Qwen-Rapid-AIO)前提。
+  値が `{{name}}` の欄をここで埋める)。モデル名や steps などは `variants.json` の組の values が持つ。
   ノード ID は文字列で固定し、テストで参照できるようにしてある
 """
 
@@ -73,13 +73,59 @@ def list_variants() -> list[dict[str, Any]]:
     return variants or [dict(DEFAULT_VARIANT)]
 
 
-def get_variant(variant_id: str | None) -> dict[str, Any]:
-    """id の組。無い / 消えた id は既定(先頭)に落とす(保存済みの id が古くても生成は止めない)。"""
+def get_variant(variant_id: str | None, default_id: str | None = None) -> dict[str, Any]:
+    """id の組。無い / 消えた id は既定に落とす(保存済みの id が古くても生成は止めない)。
+    既定は default_id(設定の「既定のワークフロー」`comfy_workflow`)、それも無ければ先頭。"""
     variants = list_variants()
-    for v in variants:
-        if v["id"] == variant_id:
-            return v
+    for wanted in (variant_id, default_id):
+        for v in variants:
+            if v["id"] == wanted:
+                return v
     return variants[0]
+
+
+# ローダーの入力名 → ComfyUI のモデルフォルダ(`/models/{folder}`)。組が使うモデルがそろっているかを見るのに使う
+LOADER_FOLDERS = {
+    "ckpt_name": "checkpoints",
+    "unet_name": "diffusion_models",
+    "clip_name": "text_encoders",
+    "clip_name1": "text_encoders",
+    "clip_name2": "text_encoders",
+    "clip_name3": "text_encoders",
+    "vae_name": "vae",
+    "lora_name": "loras",
+}
+
+
+def variant_models(variant: dict[str, Any], fallback: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    """組が使うモデルファイル `[{key, folder, name}]`(t2i と edit のテンプレートの和。重複は除く)。
+
+    ローダーの入力に `{{key}}` だけが書かれている欄を拾い、値は組の values(無ければ fallback)から引く。
+    `_optional` で外れるノードは数えない。値が決まっていなければ name は空文字。"""
+    values = {**(fallback or {}), **(variant.get("values") or {})}
+    out: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for name in (variant.get("t2i"), variant.get("edit")):
+        if not name:
+            continue
+        try:
+            wf = json.loads(_load_template(name))
+        except (OSError, ValueError):
+            continue
+        for node in wf.values():
+            if not isinstance(node, dict) or (node.get("_optional") and not values.get(node["_optional"])):
+                continue
+            for input_name, val in (node.get("inputs") or {}).items():
+                folder = LOADER_FOLDERS.get(input_name)
+                m = _PLACEHOLDER.fullmatch(val) if isinstance(val, str) else None
+                if not folder or not m:
+                    continue
+                key = m.group(1)
+                if (folder, key) in seen:
+                    continue
+                seen.add((folder, key))
+                out.append({"key": key, "folder": folder, "name": str(values.get(key) or "")})
+    return out
 
 
 def _fill(obj: Any, values: dict[str, Any]) -> Any:
@@ -123,6 +169,22 @@ def _drop_optional_nodes(wf: dict[str, Any], values: dict[str, Any]) -> None:
                     other["inputs"][key] = list(upstream)
 
 
+class MissingValuesError(RuntimeError):
+    """テンプレートの `{{name}}` に入れる値が無い(組の values にモデル名を書き忘れたなど)。"""
+
+    def __init__(self, names: list[str]):
+        super().__init__("ワークフローに値がありません: " + ", ".join(names))
+        self.names = names
+
+
+def _check_filled(wf: dict[str, Any]) -> None:
+    """埋まらずに残った `{{name}}` があれば MissingValuesError。ComfyUI に送ってから分かりにくい
+    エラーになるより、どの値が足りないかを先に知らせる。"""
+    left = sorted(set(_PLACEHOLDER.findall(json.dumps(wf, ensure_ascii=False))))
+    if left:
+        raise MissingValuesError(left)
+
+
 def load_workflow(name: str, values: dict[str, Any]) -> dict[str, Any]:
     """テンプレートを読んでプレースホルダを埋めた API 形式の dict を返す(`_comment` は落とす)。"""
     wf = _fill(json.loads(_load_template(name)), values)
@@ -133,7 +195,7 @@ def load_workflow(name: str, values: dict[str, Any]) -> dict[str, Any]:
 
 def build_t2i_workflow(
     *,
-    checkpoint: str,
+    checkpoint: str = "",
     positive: str,
     negative: str = DEFAULT_NEGATIVE,
     width: int = 832,
@@ -150,13 +212,14 @@ def build_t2i_workflow(
 ) -> dict[str, Any]:
     """AIO チェックポイント 1 本で完結する text-to-image(既定は `workflows/ref_t2i.json`)。
     CheckpointLoaderSimple → ModelSamplingAuraFlow(shift) → KSampler → VAEDecode → SaveImage。
-    template / extra_values は variants.json の組(LoRA 版・Krea2 など)から来る。組の値は設定画面の値より優先。"""
+    template / extra_values は variants.json の組(LoRA 版・Krea2 など)から来る。組の値は引数の値より優先。
+    checkpoint は空なら渡さない(組の values に無ければ、使うテンプレートでは MissingValuesError)。"""
     if seed is None:
         seed = random.randint(0, 2**53 - 1)
-    return load_workflow(
+    wf = load_workflow(
         template,
         {
-            "checkpoint": checkpoint,
+            **({"checkpoint": checkpoint} if checkpoint else {}),
             "positive": positive,
             "negative": negative,
             "width": width,
@@ -168,15 +231,17 @@ def build_t2i_workflow(
             "sampler": sampler,
             "scheduler": scheduler,
             "filename_prefix": filename_prefix,
-            # 組の値が最後(モデルごとに向く steps / cfg / shift が違うので、設定画面の値より優先)
+            # 組の値が最後(モデルごとに向く steps / cfg / shift が違うので、引数の値より優先)
             **(extra_values or {}),
         },
     )
+    _check_filled(wf)
+    return wf
 
 
 def build_edit_workflow(
     *,
-    checkpoint: str,
+    checkpoint: str = "",
     positive: str,
     ref_images: list[str],
     negative: str = DEFAULT_NEGATIVE,
@@ -206,7 +271,7 @@ def build_edit_workflow(
     if seed is None:
         seed = random.randint(0, 2**53 - 1)
     values: dict[str, Any] = {
-        "checkpoint": checkpoint,
+        **({"checkpoint": checkpoint} if checkpoint else {}),
         "positive": positive,
         "negative": negative,
         "width": width,
@@ -218,7 +283,7 @@ def build_edit_workflow(
         "sampler": sampler,
         "scheduler": scheduler,
         "filename_prefix": filename_prefix,
-        **(extra_values or {}),  # 組の値が最後(設定画面の値より優先)
+        **(extra_values or {}),  # 組の値が最後(引数の値より優先)
     }
     for i, name in enumerate(ref_images):
         values[f"ref_image_{i + 1}"] = name
@@ -231,6 +296,7 @@ def build_edit_workflow(
         inputs = node.get("inputs", {})
         for key in [k for k, v in inputs.items() if isinstance(v, list) and len(v) == 2 and v[0] in unused]:
             del inputs[key]
+    _check_filled(wf)
     return wf
 
 

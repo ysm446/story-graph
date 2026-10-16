@@ -3,24 +3,29 @@ import { api, assetUrl, isVideoAsset, type GeneratedImage, type WorkflowVariant 
 
 /** ワークフローの組(既定 / LoRA 版など。workflows/variants.json)を選ぶ。
  *  seed・プロンプトと同じく「生成に使ったセット」の一部なので、SeedField の隣に置く。
- *  一覧は開くたびに読む(variants.json を編集して試せるように)。組が 1 つしか無ければ出さない */
+ *  一覧は開くたびに読む(variants.json を編集して試せるように)。組が 1 つしか無ければ出さない。
+ *  value が null(まだ描いていない)なら、設定の「既定のワークフロー」を選んだ状態で出す
+ *  (生成のときも null のまま送り、サーバが同じ既定の組で描く) */
 export function WorkflowSelect({
   value,
   onChange,
   disabled
 }: {
-  /** variants.json の id。null = 既定(先頭) */
+  /** variants.json の id。null = 設定の既定の組 */
   value: string | null
   onChange: (id: string) => void
   disabled: boolean
 }): React.JSX.Element | null {
   const [variants, setVariants] = useState<WorkflowVariant[]>([])
+  const [defaultId, setDefaultId] = useState<string | null>(null)
   useEffect(() => {
     let alive = true
     api
       .comfyWorkflows()
       .then((r) => {
-        if (alive) setVariants(r.variants)
+        if (!alive) return
+        setVariants(r.variants)
+        setDefaultId(r.default)
       })
       .catch(() => undefined)
     return () => {
@@ -28,7 +33,11 @@ export function WorkflowSelect({
     }
   }, [])
   if (variants.length < 2) return null
-  const current = variants.some((v) => v.id === value) ? value! : variants[0].id
+  const current = variants.some((v) => v.id === value)
+    ? value!
+    : variants.some((v) => v.id === defaultId)
+      ? defaultId!
+      : variants[0].id
   return (
     <label className="inline-flex items-center gap-1 text-[11px]" style={{ color: 'var(--text-dim)' }}>
       ワークフロー

@@ -1809,11 +1809,44 @@ class RefImageGenerateIn(BaseModel):
 
 
 @app.get("/comfy/workflows")
-async def comfy_workflows() -> dict[str, Any]:
-    """生成ウインドウで選べるワークフローの組(workflows/variants.json)。"""
-    import comfy
+async def comfy_workflows(check: bool = False) -> dict[str, Any]:
+    """生成ウインドウで選べるワークフローの組(workflows/variants.json)と、設定の既定の組の id。
 
-    return {"variants": [{"id": v["id"], "label": v.get("label") or v["id"]} for v in comfy.list_variants()]}
+    check=true なら組ごとに使うモデル(`models`)と、ComfyUI のモデルフォルダに見つからないもの
+    (`missing`)を添える。ComfyUI が止まっていて確かめられなければ `missing` は null。"""
+    import comfy
+    import comfy_manager
+    import image_gen
+
+    settings = store.get_settings()
+    variants = comfy.list_variants()
+    default_id = image_gen.resolve_variant(settings, None)["id"]
+    out: list[dict[str, Any]] = [{"id": v["id"], "label": v.get("label") or v["id"]} for v in variants]
+    if check:
+        # checkpoint は組に書かれていなければ以前の設定を使う(image_gen._common_values と同じ)
+        fallback = {"checkpoint": (settings.get("comfy_checkpoint") or "").strip()}
+        models = [comfy.variant_models(v, fallback) for v in variants]
+        available: dict[str, set[str] | None] = {}
+        base_url = comfy_manager.resolve_base_url(settings)
+        if await comfy.health(base_url):
+            for folder in sorted({m["folder"] for ms in models for m in ms}):
+                try:
+                    found = await comfy.list_models(base_url, folder)
+                    # サブフォルダの区切りは OS によって違うので / にそろえて比べる
+                    available[folder] = {x.replace("\\", "/") for x in found}
+                except Exception:  # noqa: BLE001 — 確かめられないフォルダは「不明」にして一覧は返す
+                    available[folder] = None
+        for row, ms in zip(out, models):
+            row["models"] = ms
+            if not available:
+                row["missing"] = None
+                continue
+            row["missing"] = [
+                m for m in ms
+                if not m["name"]
+                or (available.get(m["folder"]) is not None and m["name"].replace("\\", "/") not in available[m["folder"]])
+            ]
+    return {"variants": out, "default": default_id}
 
 
 @app.post("/characters/{char_id}/ref_image/generate")

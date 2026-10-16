@@ -1,9 +1,11 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-07-24 22:38
-更新日時: 2026-10-16 16:31
+更新日時: 2026-10-16 17:01
 
 ## 現在の状態
+
+- 2026-10-16 17:01 **既定のワークフロー**(ユーザー要望「ワークフローを選べばモデルは意識しなくていい」)。設定 `comfy_workflow` を追加し、`image_gen.resolve_variant`(選んだ組 → 設定の既定 → 先頭)で描く。設定画面のチェックポイント・steps・CFG・シフトの欄を外し、Qwen 系の組の `values` に `checkpoint`(`Qwen-Rapid-AIO-NSFW-v23.safetensors`)と steps / cfg / shift を書いた。`comfy_checkpoint` は組に無いときの予備としてだけ読む。埋まらない `{{name}}` は送る前に `MissingValuesError`。`GET /comfy/workflows?check=true` で組ごとの使うモデルと見つからないモデルを返し、設定画面に並べる。生成ウインドウは保存済みの組が無ければ既定の組を選んだ状態で開く。設計は `docs/design/image-gen.md` §12。検証: pytest 678 件成功(既定の組の解決・予備の checkpoint・値の書き忘れ・使うモデルの抽出を追加)、typecheck・build 成功、実際の ComfyUI(稼働中)で全組のモデルが見つかること・存在しない vae を足した組だけ不足になることを確認、隔離 Electron に `--imagegen`(5 項目)を追加して成功、既定の検証は 58 項目 + 既知の 1 項目で停止。**未確認**: 実アプリでの生成(既定を Krea2 にして新しいシーンを描く)。組を記録していない古い絵は、いまの既定の組で開く。
 
 - 2026-10-16 16:31 **人物の鎖を削除**(ユーザー依頼「やはり使いづらい」)。`CastChainGraph.tsx` を削除し、`StructureMode.tsx` から出番表 / 人物の鎖の切替・「⟲ 整列」・`handleChainPositions` / `handleCastChange` / `openSceneInFlow` を外した(`castView` は `null | 'table'`)。人物の選択は `handleSelectChainChar` → `handleSelectCharacter` に改名して、出番表のセルとフローチャートのカードの札で使い続ける。API の `/layout/chain-positions`・`/layout/chain-reset`、`store.set_chain_positions` / `reset_chain_positions`、`.cast-chain` の CSS、型の `chain_x / chain_y` も削除。DB の `chain_x / chain_y` 列は既存 DB との整合のため追加の移行だけ残した(今は読み書きしない)。`--cast` の鎖の検証は、出番表のセルから人物専用の表示(プロフィールの保存・状態・事実の履歴)を確かめる形に置き換えた(フローチャートの札の確認は「⊞ 全シーン」にしてから)。検証: typecheck・build 成功、pytest 675 件成功、`--cast` 全項目成功、既定の検証は 58 項目 + 既知の 1 項目で停止。
 
