@@ -265,8 +265,20 @@ export default function SceneImageModal({
           </p>
         )}
 
-        {/* 生成 → プレビュー。ここで気に入らなければ seed を変えて引き直す */}
+        {/* 生成 → プレビュー。ここで気に入らなければ seed を変えて引き直す。
+            作業の順に左から: プロンプトの書き直し → 組 → seed → 生成 */}
         <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => void buildPrompt(selected)}
+            disabled={busy}
+            className="rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-50"
+            style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+            data-tip="今の選択と追加指示で LLM にプロンプトを書き直させます"
+          >
+            書き直す
+          </button>
+          <WorkflowSelect value={workflow} onChange={setWorkflow} disabled={busy} />
+          <SeedField seed={seed} onChange={setSeed} disabled={busy} />
           <button
             onClick={() => void generate()}
             disabled={busy || !prompt.trim() || stale}
@@ -280,17 +292,6 @@ export default function SceneImageModal({
             }
           >
             {phase === 'generate' ? '生成中…' : candidate ? 'もう一度生成' : '生成'}
-          </button>
-          <SeedField seed={seed} onChange={setSeed} disabled={busy} />
-          <WorkflowSelect value={workflow} onChange={setWorkflow} disabled={busy} />
-          <button
-            onClick={() => void buildPrompt(selected)}
-            disabled={busy}
-            className="rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-50"
-            style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-            data-tip="今の選択と追加指示で LLM にプロンプトを書き直させます"
-          >
-            書き直す
           </button>
           {phase && phase !== 'apply' && (
             <span className="text-[12px]" style={{ color: 'var(--text-dim)' }}>
@@ -308,29 +309,32 @@ export default function SceneImageModal({
           </p>
         )}
 
+        {/* 最後に押す「決定」は右端 */}
         <div className="mt-3 flex items-center gap-2">
           <button
-            onClick={() => void apply()}
-            disabled={busy || !candidate}
-            className="rounded-md px-3 py-1 text-[12px] font-medium text-white disabled:opacity-50"
-            style={{ background: 'var(--accent)' }}
-            data-tip={candidate ? 'この画像をシーンの挿絵にして閉じます' : '先に生成してください'}
-          >
-            {phase === 'apply' ? '設定中…' : '決定'}
-          </button>
-          {candidate && (
-            <span className="text-[11px] tabular-nums" style={{ color: 'var(--text-faint)' }}>
-              seed {candidate.seed}
-            </span>
-          )}
-          <button
             onClick={close}
-            className="ml-auto rounded-md border px-2 py-0.5 text-[11px]"
+            className="rounded-md border px-2 py-0.5 text-[11px]"
             style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
             data-tip={candidate ? '生成した画像は採用せずに閉じます(ストックには残りません)' : '閉じるだけでは設定を保存しません(生成したときに保存されます)'}
           >
             {phase === 'generate' ? 'キャンセル' : '閉じる'}
           </button>
+          <div className="ml-auto flex items-center gap-2">
+            {candidate && (
+              <span className="text-[11px] tabular-nums" style={{ color: 'var(--text-faint)' }}>
+                seed {candidate.seed}
+              </span>
+            )}
+            <button
+              onClick={() => void apply()}
+              disabled={busy || !candidate}
+              className="rounded-md px-3 py-1 text-[12px] font-medium text-white disabled:opacity-50"
+              style={{ background: 'var(--accent)' }}
+              data-tip={candidate ? 'この画像をシーンの挿絵にして閉じます' : '先に生成してください'}
+            >
+              {phase === 'apply' ? '設定中…' : '決定'}
+            </button>
+          </div>
         </div>
       </div>
     </div>

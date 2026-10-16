@@ -157,7 +157,19 @@ export default function PlaceImageModal({
             追加指示が変わりました。「説明から書き直す」でプロンプトを作り直してください。
           </p>
         )}
+        {/* 作業の順に左から: プロンプトの書き直し → 組 → seed → 生成 */}
         <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => void buildPrompt()}
+            disabled={phase !== null}
+            className="rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-50"
+            style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+            data-tip="今の説明・雰囲気・追加指示から LLM にプロンプトを書き直させます"
+          >
+            説明から書き直す
+          </button>
+          <WorkflowSelect value={workflow} onChange={setWorkflow} disabled={phase !== null} />
+          <SeedField seed={seed} onChange={setSeed} disabled={phase !== null} />
           <button
             onClick={() => void generate()}
             disabled={phase !== null || !prompt.trim() || instructions.trim() !== promptBasis.trim()}
@@ -169,17 +181,6 @@ export default function PlaceImageModal({
             }
           >
             {phase === 'generate' ? '生成中…' : candidate ? 'もう一度生成' : '生成'}
-          </button>
-          <SeedField seed={seed} onChange={setSeed} disabled={phase !== null} />
-          <WorkflowSelect value={workflow} onChange={setWorkflow} disabled={phase !== null} />
-          <button
-            onClick={() => void buildPrompt()}
-            disabled={phase !== null}
-            className="rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-50"
-            style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-            data-tip="今の説明・雰囲気・追加指示から LLM にプロンプトを書き直させます"
-          >
-            説明から書き直す
           </button>
           {phase === 'prompt' && (
             <span className="text-[12px]" style={{ color: 'var(--text-dim)' }}>
@@ -202,29 +203,32 @@ export default function PlaceImageModal({
             {error}
           </p>
         )}
+        {/* 最後に押す「決定」は右端 */}
         <div className="mt-3 flex items-center gap-2">
           <button
-            onClick={() => void apply()}
-            disabled={phase !== null || !candidate}
-            className="rounded-md px-3 py-1 text-[12px] font-medium text-white disabled:opacity-50"
-            style={{ background: 'var(--accent)' }}
-            data-tip={candidate ? 'この画像を場所の画像にして閉じます' : '先に生成してください'}
-          >
-            {phase === 'apply' ? '設定中…' : '決定'}
-          </button>
-          {candidate && (
-            <span className="text-[11px] tabular-nums" style={{ color: 'var(--text-faint)' }}>
-              seed {candidate.seed}
-            </span>
-          )}
-          <button
             onClick={close}
-            className="ml-auto rounded-md border px-2 py-0.5 text-[11px]"
+            className="rounded-md border px-2 py-0.5 text-[11px]"
             style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
             data-tip={candidate ? '生成した画像は採用せずに閉じます(ストックには残りません)' : '閉じるだけでは設定を保存しません(生成したときに保存されます)'}
           >
             {phase === 'generate' ? 'キャンセル' : '閉じる'}
           </button>
+          <div className="ml-auto flex items-center gap-2">
+            {candidate && (
+              <span className="text-[11px] tabular-nums" style={{ color: 'var(--text-faint)' }}>
+                seed {candidate.seed}
+              </span>
+            )}
+            <button
+              onClick={() => void apply()}
+              disabled={phase !== null || !candidate}
+              className="rounded-md px-3 py-1 text-[12px] font-medium text-white disabled:opacity-50"
+              style={{ background: 'var(--accent)' }}
+              data-tip={candidate ? 'この画像を場所の画像にして閉じます' : '先に生成してください'}
+            >
+              {phase === 'apply' ? '設定中…' : '決定'}
+            </button>
+          </div>
         </div>
       </div>
     </div>

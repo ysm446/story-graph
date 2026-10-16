@@ -259,19 +259,8 @@ export default function PlaceEditor({
           >
             ストック
           </button>
-          <button
-            onClick={() => setGenerateOpen(true)}
-            className="accent-action inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[12px] font-medium"
-            data-tip={
-              place.image_prompt
-                ? '保存済みのプロンプト・追加指示・seed を開きます(説明を変えたら中の「説明から書き直す」で作り直せます)'
-                : '保存済みの説明・雰囲気から英語のプロンプトを作り(確認・手直しできます)、ComfyUI で人物なしの全景を生成します'
-            }
-          >
-            <Icon name="sparkle" size={12} /> {draft.image_path ? '作り直す' : '説明から生成'}
-          </button>
           {draft.image_path && (
-            <div className="ml-auto flex items-center gap-2 text-[11px]" style={{ color: 'var(--text-faint)' }}>
+            <div className="flex items-center gap-2 text-[11px]" style={{ color: 'var(--text-faint)' }}>
               <button onClick={() => fileInputRef.current?.click()} data-tip="別の画像に差し替える(前の画像はストックに残ります)">
                 {uploading ? 'アップロード中…' : '画像を差し替え'}
               </button>
@@ -281,6 +270,18 @@ export default function PlaceEditor({
               </button>
             </div>
           )}
+          {/* 左から確かめて、最後に押す「生成」は右端(生成ウインドウと同じ並び) */}
+          <button
+            onClick={() => setGenerateOpen(true)}
+            className="accent-action ml-auto inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[12px] font-medium"
+            data-tip={
+              place.image_prompt
+                ? '保存済みのプロンプト・追加指示・seed を開きます(説明を変えたら中の「説明から書き直す」で作り直せます)'
+                : '保存済みの説明・雰囲気から英語のプロンプトを作り(確認・手直しできます)、ComfyUI で人物なしの全景を生成します'
+            }
+          >
+            <Icon name="sparkle" size={12} /> {draft.image_path ? '作り直す' : '説明から生成'}
+          </button>
         </div>
         {unsavedDescription && (
           <p className="text-[11px]" style={{ color: '#f2a3a3' }}>

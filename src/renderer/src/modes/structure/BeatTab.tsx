@@ -424,14 +424,8 @@ export function BeatTab({
               <span className="text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
                 挿絵
               </span>
-              <div className="flex flex-wrap gap-1.5">
-                <button
-                  onClick={() => setSceneImageOpen(true)}
-                  className="accent-action inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium"
-                  data-tip="ビート・場所・登場人物(参照画像)から ComfyUI でこの場面の画像を生成します"
-                >
-                  <Icon name="sparkle" size={11} /> 生成
-                </button>
+              {/* 左から確かめて、最後に押す「生成」は右端(生成ウインドウと同じ並び) */}
+              <div className="flex flex-1 flex-wrap gap-1.5">
                 <button
                   onClick={() => setStockOpen(true)}
                   className="rounded-md border px-2 py-0.5 text-[11px]"
@@ -457,6 +451,13 @@ export function BeatTab({
                     外す
                   </button>
                 )}
+                <button
+                  onClick={() => setSceneImageOpen(true)}
+                  className="accent-action ml-auto inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium"
+                  data-tip="ビート・場所・登場人物(参照画像)から ComfyUI でこの場面の画像を生成します"
+                >
+                  <Icon name="sparkle" size={11} /> 生成
+                </button>
               </div>
             </div>
             <input
