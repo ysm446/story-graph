@@ -1,7 +1,7 @@
 # 画像生成(ComfyUI 連携)— キャラクターの参照画像・場面の挿絵・場所の画像
 
 作成日時: 2026-08-26 15:15
-更新日時: 2026-10-16 18:56
+更新日時: 2026-10-16 19:19
 
 ローカルの ComfyUI で挿絵を作る仕組みの設計メモ。2026-08-26 のユーザー発案
 ([progress.md](../plan/progress.md) の「場面の画像生成」)。画像は**装飾専用**で、
@@ -348,7 +348,8 @@ Pillow も顔検出も要らない)。実装は `backend/auto_images.py`。
   `add_media("place", select)`。
 - **画面**: 進捗は `stage`(「「名前」の参照画像を描いています…」など)で流し、資料ごとの結果は
   会話の本文(`delta`、履歴に `auto_image: true`)に残す。画像が入ったら `image_changed {kind, id}` を送り、
-  `ProductionChat` が `notifyGraphChanged()` で資料(アイコン)を読み直す。あわせて `active_library`
+  `ProductionChat` が `notifyGraphChanged()`(フローチャート)と `workspace.changed()`(資料庫。`revision` でしか
+  読み直さないので必須。2026-10-16 にユーザー報告「何かをしたら急に更新された」で判明)で資料(アイコン)を読み直す。あわせて `active_library`
   で作業対象を追っていればその資料を開く。
 - **失敗**: ComfyUI を起動できなければ 1 件の知らせで終える。資料ごとの失敗(VRAM 不足など)はその資料の
   知らせにして次へ進む。外見もプロフィールも(説明も雰囲気も)無い資料は知らせるだけ。どの場合も資料の

@@ -1,6 +1,6 @@
 import ChatHistoryPanel from './ChatHistoryPanel'
 import { productionSuggestions, type ProductionSuggestion } from './productionSuggestions'
-import type { ProductionTarget } from './Workspace'
+import { useWorkspace, type ProductionTarget } from './Workspace'
 import ChatRulesPanel from './ChatRulesPanel'
 import ProductionPreviewPanel from './ProductionPreviewPanel'
 import AutoTextarea from './AutoTextarea'
@@ -182,6 +182,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
   onChanged: (operation: ProductionOperation) => Promise<void>
   onFollowTarget: (target: ProductionTarget | null) => void
 }): React.JSX.Element {
+  const workspace = useWorkspace()
   const [chatId, setChatId] = useState<string | null>(null)
   const [history, setHistory] = useState<ChatSummary[]>([])
   const [messages, setMessages] = useState<Message[]>([])
@@ -488,8 +489,9 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
               followTargetRef.current = { kind: event.active_library.kind, id: event.active_library.id }
               if (followRef.current && !manualRef.current) onFollowTarget(followTargetRef.current)
             }
-            // 自動生成した画像は operation ではないので、グラフの購読側(人物の一覧を含む)に読み直してもらう
-            if (event.image_changed) notifyGraphChanged()
+            // 描いた画像は operation ではないので、フローチャート(notifyGraphChanged)と資料庫(workspace.revision)の
+            // 両方に読み直してもらう。資料庫は revision が進んだときだけ読み直すので、これが無いと次の操作まで古い画像のまま
+            if (event.image_changed) { notifyGraphChanged(); workspace.changed() }
             if ('preview' in event && !manualRef.current) setProductionPreview(event.preview ?? null)
             if (event.snapshot) {
               const snapshot = event.snapshot
