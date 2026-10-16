@@ -29,7 +29,8 @@ export function ChapterTab({
   characters: Character[]
   onSelectScene: (nodeId: string) => void
   onChanged: () => void
-  onRename: () => void
+  /** 章名をその場で変更して保存する(変更なし・空は呼ばれない) */
+  onRename: (title: string) => void
   onDissolve: () => void
   /** 章カードの表紙にするシーン(null = 自動に戻す) */
   onSetCover: (nodeId: string | null) => void
@@ -41,6 +42,14 @@ export function ChapterTab({
   const [dirty, setDirty] = useState(false) // ローカル編集が未保存
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // 章名のその場編集。null = 表示中、文字列 = 入力中の値
+  const [renameText, setRenameText] = useState<string | null>(null)
+  const finishRename = (): void => {
+    if (renameText === null) return
+    const title = renameText.trim()
+    setRenameText(null)
+    if (title && title !== group.title) onRename(title)
+  }
   // まとめの生成は LLM キューに積む(他の生成と同じ 1 件ずつの逐次実行)。
   // ラベルだけで見ると別の章の生成待ちでもこの章のボタンが待機中になる
   const generateQueued = useTasks().some(
@@ -141,22 +150,51 @@ export function ChapterTab({
         <span className="shrink-0 text-[10px] uppercase tracking-[0.2em]" style={{ color: 'var(--text-faint)' }}>
           {group.on_canon ? `第${number}章` : '別ルートの章'}
         </span>
-        <span className="min-w-0 flex-1 truncate text-[14px] font-semibold" style={{ color: 'var(--text)' }}>
-          {group.title}
-        </span>
-        <button
-          onClick={onRename}
-          aria-label="章の名前を変更"
-          data-tip="章の名前を変更"
-          className="rounded p-0.5 hover:bg-[var(--accent-soft)]"
-          style={{ color: 'var(--text-faint)' }}
-        >
-          ✎
-        </button>
+        {renameText !== null ? (
+          // その場編集。Enter / 欄を離れると保存、Escape で取り消し(会話履歴の名前変更と同じ型)
+          <input
+            autoFocus
+            onFocus={(e) => e.currentTarget.select()}
+            value={renameText}
+            onChange={(e) => setRenameText(e.target.value)}
+            onBlur={finishRename}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+                e.preventDefault()
+                finishRename()
+              }
+              if (e.key === 'Escape') setRenameText(null)
+            }}
+            aria-label="章の名前"
+            className="min-w-0 flex-1 rounded-md border px-1.5 py-1 text-[14px] font-semibold outline-none"
+            style={{ background: 'var(--bg-input)', borderColor: 'var(--accent-border)', color: 'var(--text)' }}
+          />
+        ) : (
+          <>
+            {/* 鉛筆は章名のすぐ右に寄せる(flex-1 は付けない)。ダブルクリックでも編集に入る */}
+            <span
+              className="min-w-0 truncate text-[14px] font-semibold"
+              style={{ color: 'var(--text)' }}
+              onDoubleClick={() => setRenameText(group.title)}
+              data-tip="ダブルクリックで名前を変更"
+            >
+              {group.title}
+            </span>
+            <button
+              onClick={() => setRenameText(group.title)}
+              aria-label="章の名前を変更"
+              data-tip="章の名前をその場で変更"
+              className="shrink-0 rounded p-0.5 hover:bg-[var(--accent-soft)]"
+              style={{ color: 'var(--text-faint)' }}
+            >
+              ✎
+            </button>
+          </>
+        )}
         <button
           onClick={onDissolve}
           data-tip="章を解除する(シーンは残る)"
-          className="rounded p-0.5 text-[11px] hover:bg-[var(--accent-soft)]"
+          className="ml-auto shrink-0 rounded p-0.5 text-[11px] hover:bg-[var(--accent-soft)]"
           style={{ color: 'var(--text-faint)' }}
         >
           解除

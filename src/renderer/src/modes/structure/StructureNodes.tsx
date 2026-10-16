@@ -1,5 +1,5 @@
 import { memo, useSyncExternalStore } from 'react'
-import { Handle, Position, type Node, type NodeProps } from '@xyflow/react'
+import { Handle, Position, useStore, type Node, type NodeProps, type ReactFlowState } from '@xyflow/react'
 import { assetUrl, isVideoAsset } from '../../api'
 import { useProductionPreview } from '../../productionPreview'
 import type { Character, Group, StoryNode } from '../../types'
@@ -49,6 +49,36 @@ export type BeatNodeData = {
 
 export type BeatFlowNode = Node<BeatNodeData, 'beatNode'>
 
+// ---- ズームアウト時のタイトル表示 ----------------------------------------
+//
+// 引いて全体を眺めるとカード内の 13px 文字は読めなくなるので、しきい値を下回ったら
+// カードの上に画面上で一定サイズのラベルを出す(1/zoom で拡大して打ち消す)。
+// カード本体やハンドルの位置は変えないので、レイアウトや線は影響を受けない。
+
+/** これ以下に引いたらカードの上にタイトルを出す */
+const ZOOMED_OUT_TITLE_ZOOM = 0.5
+const selectZoom = (s: ReactFlowState): number => s.transform[2]
+
+function ZoomedOutTitle({ title }: { title: string }): React.JSX.Element | null {
+  const zoom = useStore(selectZoom)
+  if (zoom > ZOOMED_OUT_TITLE_ZOOM || !title) return null
+  const scale = 1 / zoom
+  return (
+    <div
+      className="pointer-events-none absolute bottom-full left-1/2 mb-2 max-w-[640px] truncate rounded-lg px-3 py-1 text-[13px] font-semibold"
+      style={{
+        transform: `translateX(-50%) scale(${scale})`,
+        transformOrigin: 'bottom center',
+        background: 'color-mix(in srgb, var(--bg-card) 85%, transparent)',
+        color: 'var(--text)',
+        whiteSpace: 'nowrap'
+      }}
+    >
+      {title}
+    </div>
+  )
+}
+
 export function BeatNodeCard({ data, selected }: NodeProps<BeatFlowNode>): React.JSX.Element {
   const { storyNode, characters, place, busy, connected, onSelectChar } = data
   const preview = useProductionPreview(storyNode.id)
@@ -73,6 +103,7 @@ export function BeatNodeCard({ data, selected }: NodeProps<BeatFlowNode>): React
             : '章の出口。ここに繋がっている道が、この章の読む道になる'
         }
       >
+        <ZoomedOutTitle title={isIn ? '章の入口' : '章の出口'} />
         <Handle type="target" position={Position.Left} />
         <div className="text-[15px]">{isIn ? '⇥' : '↦'}</div>
         <div className="mt-0.5 text-[11px] font-semibold" style={{ color: 'var(--text-dim)' }}>
@@ -108,6 +139,7 @@ export function BeatNodeCard({ data, selected }: NodeProps<BeatFlowNode>): React
       >
         {/* はじまりに親は繋げず、結末から先も繋げない(サーバーが拒否する)。
             不可能な側のハンドルは出さず、ドラッグ自体を始めさせない */}
+        <ZoomedOutTitle title={storyNode.title || (isEnding ? '結末' : 'はじまり')} />
         {isEnding && <Handle type="target" position={Position.Left} />}
         <div className="text-[16px]">{isEnding ? '🏁' : '📖'}</div>
         <div className="mt-0.5 truncate text-[12px] font-semibold" style={{ color: 'var(--text)' }}>
@@ -136,6 +168,7 @@ export function BeatNodeCard({ data, selected }: NodeProps<BeatFlowNode>): React
         ['--tw-ring-color' as string]: 'var(--accent-border)'
       }}
     >
+      <ZoomedOutTitle title={storyNode.title || '(無題のシーン)'} />
       {/* 当たり判定と見た目は index.css の .react-flow__handle で調整している */}
       <Handle type="target" position={Position.Left} />
       <NodeThumb node={storyNode} className="mx-auto mb-2 max-h-40 max-w-full rounded-xl" />
@@ -245,7 +278,7 @@ export function ChapterNodeCard({ data, selected }: NodeProps<ChapterFlowNode>):
   const { group, number, cover, dropTarget, onOpen } = data
   return (
     <div
-      className={`w-64 rounded-3xl border-2 px-5 py-5 shadow-lg shadow-black/30 ${
+      className={`relative w-64 rounded-3xl border-2 px-5 py-5 shadow-lg shadow-black/30 ${
         selected || dropTarget ? 'ring-4' : ''
       }`}
       style={{
@@ -263,6 +296,7 @@ export function ChapterNodeCard({ data, selected }: NodeProps<ChapterFlowNode>):
         onOpen(group.id)
       }}
     >
+      <ZoomedOutTitle title={group.on_canon ? `第${number}章 ${group.title}` : group.title} />
       <Handle type="target" position={Position.Left} />
       {/* 表紙。シーンカードと同じく、切り抜かずに元の比率のまま収める */}
       {cover && <NodeThumb node={cover} className="mx-auto mb-3 max-h-40 max-w-full rounded-xl" />}

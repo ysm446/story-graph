@@ -2066,21 +2066,22 @@ function StructureModeInner({
     })
   }
 
+  /** 章名を保存する(下段の章の詳細のその場編集と、右クリックのモーダルの両方から使う) */
+  const saveChapterTitle = async (group: Group, title: string): Promise<void> => {
+    if (title === group.title) return
+    try {
+      await api.updateGroup(group.id, { title })
+      await reload()
+    } catch (e) {
+      setGenStatus(`名前を変更できません: ${String(e)}`)
+    }
+  }
+
   const renameChapter = (group: Group): void => {
     setNamePrompt({
       label: '章の名前を変更',
       value: group.title,
-      onSubmit: (title) => {
-        if (title === group.title) return
-        void (async () => {
-          try {
-            await api.updateGroup(group.id, { title })
-            await reload()
-          } catch (e) {
-            setGenStatus(`名前を変更できません: ${String(e)}`)
-          }
-        })()
-      }
+      onSubmit: (title) => void saveChapterTitle(group, title)
     })
   }
 
@@ -3534,7 +3535,7 @@ function StructureModeInner({
                   focusWhenReady(nodeId)
                 }}
                 onChanged={() => void reload()}
-                onRename={() => void renameChapter(activeGroup)}
+                onRename={(title) => void saveChapterTitle(activeGroup, title)}
                 onDissolve={() => void dissolveChapter(activeGroup)}
                 onSetCover={(nodeId) => void setChapterCover(activeGroup.id, nodeId)}
               />
