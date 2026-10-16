@@ -141,15 +141,16 @@ async def _prompt(messages: list[dict[str, Any]], base_url: str, label: str) -> 
 async def _draw_character(store: Any, settings: dict[str, str], char: dict[str, Any], *, assets: str, llm_base_url: str,
                           comfy_base_url: str, variant: str) -> AsyncIterator[dict[str, Any]]:
     label = _label(char)
-    yield {"stage": f"{label}の画像プロンプトを書いています…"}
+    target = {"kind": "character", "id": char["id"]}
+    yield {"stage": f"{label}の画像プロンプトを書いています…", **target}
     prompt = await _prompt(image_gen.character_prompt_messages(char), llm_base_url, "auto_ref_image_prompt")
-    yield {"stage": f"{label}の参照画像を描いています…"}
+    yield {"stage": f"{label}の参照画像を描いています…", **target}
     ref_png, ref_seed = await image_gen.generate_character_image(settings, prompt, comfy_base_url=comfy_base_url, variant=variant)
     ref_name = await _write_asset(assets, ref_png)
     # 手動の「生成 → 決定」と同じ形でストックに入れて選択する(プロンプト・seed・組を 1 セットで)
     media = store.add_media("character", char["id"], ref_name, prompt=prompt, seed=ref_seed, workflow=variant)
     store.select_media(media["id"])
-    yield {"stage": f"{label}のプロフィール画像を描いています…"}
+    yield {"stage": f"{label}のプロフィール画像を描いています…", **target}
     portrait_png, _ = await generate_portrait(settings, prompt, (ref_name, ref_png), comfy_base_url=comfy_base_url, variant=variant)
     portrait_name = await _write_asset(assets, portrait_png)
     store.update_character(char["id"], {"portrait_path": portrait_name, "portrait_source_path": None, "portrait_crop": None})
@@ -159,9 +160,10 @@ async def _draw_character(store: Any, settings: dict[str, str], char: dict[str, 
 async def _draw_place(store: Any, settings: dict[str, str], place: dict[str, Any], *, assets: str, llm_base_url: str,
                       comfy_base_url: str, variant: str) -> AsyncIterator[dict[str, Any]]:
     label = _label(place)
-    yield {"stage": f"{label}の画像プロンプトを書いています…"}
+    target = {"kind": "place", "id": place["id"]}
+    yield {"stage": f"{label}の画像プロンプトを書いています…", **target}
     prompt = await _prompt(image_gen.place_prompt_messages(place), llm_base_url, "auto_place_image_prompt")
-    yield {"stage": f"{label}の画像を描いています…"}
+    yield {"stage": f"{label}の画像を描いています…", **target}
     png, seed = await image_gen.generate_place_image(settings, prompt, comfy_base_url=comfy_base_url, variant=variant)
     name = await _write_asset(assets, png)
     media = store.add_media("place", place["id"], name, prompt=prompt, seed=seed, workflow=variant)
@@ -177,7 +179,8 @@ async def _draw_scene(store: Any, settings: dict[str, str], node: dict[str, Any]
     place_id, _ = store.effective_location(node["id"])
     place = store.get_place(place_id) if place_id else None
     refs = image_gen.select_scene_refs(chars)
-    yield {"stage": f"{label}の挿絵のプロンプトを書いています…"}
+    target = {"kind": "scene", "id": node["id"]}
+    yield {"stage": f"{label}の挿絵のプロンプトを書いています…", **target}
     res = await llm.chat(image_gen.scene_prompt_messages(node, chars, refs, place), base_url=llm_base_url,
                          max_tokens=500, temperature=0.5, label="auto_scene_image_prompt")
     prompt = image_gen._clean_prompt(res.get("content") or "")
@@ -188,7 +191,7 @@ async def _draw_scene(store: Any, settings: dict[str, str], node: dict[str, Any]
         p = Path(assets) / c["ref_image_path"]
         if p.is_file():
             ref_files.append((p.name, await asyncio.to_thread(p.read_bytes)))
-    yield {"stage": f"{label}の挿絵を描いています…"}
+    yield {"stage": f"{label}の挿絵を描いています…", **target}
     png, seed = await image_gen.generate_scene_image(settings, prompt, ref_files, comfy_base_url=comfy_base_url, variant=variant)
     name = await _write_asset(assets, png)
     media = store.add_media("node", node["id"], name, prompt=prompt, seed=seed, ref_chars=[c["id"] for c in refs], workflow=variant)
@@ -205,7 +208,8 @@ async def run(
 ) -> AsyncIterator[dict[str, Any]]:
     """requests(`requests_for` の形)の資料を順に描く。
 
-    流すもの: `{"stage": 進捗}` と、資料・シーンごと(または全体)の `{"notice": 会話に残す文, "kind", "id"}`
+    流すもの: `{"stage": 進捗}`(対象が決まっているものは kind / id 付き。画面の「作業対象を追う」用)と、
+    資料・シーンごと(または全体)の `{"notice": 会話に残す文, "kind", "id"}`
     (全体の知らせは kind / id が None)。自動の分は設定がオフ・画像が既にあるなら飛ばし、
     外見(説明)が無い資料は知らせるだけ。ComfyUI が起動できなければ 1 件の notice で終える。
     資料ごとの失敗はその資料の notice にして次へ進む。

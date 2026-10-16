@@ -1,7 +1,7 @@
 # 画像生成(ComfyUI 連携)— キャラクターの参照画像・場面の挿絵・場所の画像
 
 作成日時: 2026-08-26 15:15
-更新日時: 2026-10-16 20:06
+更新日時: 2026-10-16 22:04
 
 ローカルの ComfyUI で挿絵を作る仕組みの設計メモ。2026-08-26 のユーザー発案
 ([progress.md](../plan/progress.md) の「場面の画像生成」)。画像は**装飾専用**で、
@@ -356,6 +356,9 @@ Pillow も顔検出も要らない)。実装は `backend/auto_images.py`。
 - **候補ボタン**: 相談モードで画像の依頼(`productionSuggestions.ts` の `IMAGE_REQUEST`。backend の
   `IMAGE_REQUEST_PATTERN` と同じ形)をした後は、LLM の候補に任せず固定で「この画像を制作を実行で作る」
   (作者の依頼文をそのまま「制作を実行」で送る)を先頭に出す。このとき固定の「この案で進めて」は出さない。
+- **作業対象を追う**(2026-10-16 22:04 ユーザー要望): 対象が決まった `stage` には kind / id が付き、`production_agent` は
+  シーンなら `active_node`(フローチャートでそのシーンを選んで枠が光る)、人物・場所なら `active_library`(資料庫のページを開く)を
+  添えて流す。描き終わりの知らせの後に `active_node: null` で枠の光を消す。
 - **画面**: 進捗は `stage`(「「名前」の参照画像を描いています…」など)で流し、資料ごとの結果は
   会話の本文(`delta`、履歴に `auto_image: true`)に残す。画像が入ったら `image_changed {kind, id}` を送り、
   `ProductionChat` が `notifyGraphChanged()`(フローチャート)と `workspace.changed()`(資料庫。`revision` でしか

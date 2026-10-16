@@ -1069,7 +1069,15 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
                 async with aclosing(image_hook(image_requests)) as image_events:
                     async for event in image_events:
                         if "stage" in event:
-                            yield _sse({"stage": event["stage"], "active_node": None})
+                            # 描いている対象へ「作業対象を追う」(シーンは active_node でフローチャートの枠が光る、資料は active_library)
+                            target = event.get("id")
+                            if target and event.get("kind") == "scene":
+                                yield _sse({"stage": event["stage"], "active_node": target})
+                            elif target and event.get("kind") in ("character", "place"):
+                                yield _sse({"stage": event["stage"], "active_node": None,
+                                            "active_library": {"kind": event["kind"], "id": target}})
+                            else:
+                                yield _sse({"stage": event["stage"], "active_node": None})
                             continue
                         if event.get("id") and auto_images.get_item(store, event["kind"], event["id"]) is not None:
                             # 画面は image_changed で資料・シーンを読み直し(アイコン・挿絵が差し替わる)、作業対象を追っていれば資料を開く
@@ -1078,7 +1086,7 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
                         history.append({"role": "assistant", "content": event["notice"], "auto_image": True})
                         store.save_chat_messages(chat_id, history)
                         yield _sse({"delta": event["notice"]})
-                        yield _sse({"response_end": True})
+                        yield _sse({"response_end": True, "active_node": None})
             except (asyncio.CancelledError, GeneratorExit):
                 raise
             except Exception as e:  # noqa: BLE001 — 画像は装飾。人物の設定と確定済みの変更は残す

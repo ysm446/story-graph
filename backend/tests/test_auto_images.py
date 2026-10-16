@@ -234,14 +234,20 @@ def test_production_stream_runs_image_hook_after_creating_characters(store, monk
 
     async def hook(requests):
         seen.append(requests)
-        yield {"stage": "描いています…"}
+        yield {"stage": "準備しています…"}
+        yield {"stage": "描いています…", "kind": "character", "id": requests[0]["id"]}
         yield {"notice": "「アヤ」の参照画像とプロフィール画像を作りました。", "kind": "character", "id": requests[0]["id"]}
 
     events = _collect_stream(store, True, hook)
     created = next(e["changed"] for e in events if "changed" in e)
     assert seen == [[{"kind": "character", "id": created["entity_id"], "explicit": False}]]
-    assert any(e.get("stage") == "描いています…" for e in events)
+    # 描いている間は資料へ追従し、描き終わったら active_node を外す(枠の光を消す)
+    drawing = next(e for e in events if e.get("stage") == "描いています…")
+    assert drawing["active_library"] == {"kind": "character", "id": created["entity_id"]} and drawing["active_node"] is None
+    assert "active_library" not in next(e for e in events if e.get("stage") == "準備しています…")
     changed = next(e for e in events if "image_changed" in e)
+    assert events[events.index(changed) + 2] == {"response_end": True, "active_node": None} or any(
+        e.get("response_end") and "active_node" in e for e in events[events.index(changed):])
     assert changed["image_changed"] == {"kind": "character", "id": created["entity_id"]}
     assert changed["active_library"] == {"kind": "character", "id": created["entity_id"]}
     deltas = [e["delta"] for e in events if "delta" in e]
@@ -295,6 +301,7 @@ def test_generate_images_tool_reserves_and_runs_at_end(store, monkeypatch):
 
     async def hook(requests):
         seen.append(requests)
+        yield {"stage": "描いています…", "kind": "scene", "id": "first"}
         yield {"notice": "「港」の画像を作りました。", "kind": "place", "id": "port"}
 
     execute_flag = [True]
@@ -304,6 +311,7 @@ def test_generate_images_tool_reserves_and_runs_at_end(store, monkeypatch):
     assert seen == [[{"kind": "character", "id": "aya", "explicit": True}, {"kind": "place", "id": "port", "explicit": True}]]
     assert [e["delta"] for e in events if "delta" in e][0].startswith("画像の生成を予約しました: 「アヤ」")
     assert next(e for e in events if "image_changed" in e)["image_changed"] == {"kind": "place", "id": "port"}
+    assert next(e for e in events if e.get("stage") == "描いています…")["active_node"] == "first"  # シーンはフローチャートで追う
     messages = store.get_chat(events[0]["chat_id"])["messages"]
     assert [m["image_request"] for m in messages if m.get("image_request")] == [
         {"kind": "character", "ids": ["aya"]}, {"kind": "place", "ids": ["port"]}]
@@ -375,7 +383,7 @@ def test_scene_request_draws_illustration_with_cast_references(store, fake_comfy
     assert collect(store, [auto("scene", "first")], fake_comfy["ensure_comfy"]) == []
     events = collect(store, [explicit("scene", "first")], fake_comfy["ensure_comfy"])
     assert [e for e in events if "notice" in e] == [{"notice": "「出発」の挿絵を作りました。", "kind": "scene", "id": "first"}]
-    assert any("挿絵を描いています" in e.get("stage", "") for e in events)
+    assert any("挿絵を描いています" in e.get("stage", "") and e.get("id") == "first" and e.get("kind") == "scene" for e in events)
     got = store.get_node("first")
     assert got["image_path"] and got["image_prompt"] == "two people on a pier, image1 waving" and got["image_ref_chars"] == ["aya"]
     media = store.list_media("node", "first")

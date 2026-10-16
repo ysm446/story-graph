@@ -1,9 +1,11 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-07-24 22:38
-更新日時: 2026-10-16 20:06
+更新日時: 2026-10-16 22:04
 
 ## 現在の状態
+
+- 2026-10-16 22:04 **画像を描いている間も作業対象を追う**(ユーザー質問「挿絵を作ってもらっているが作業対象を追うようになっているか」→ シーンは追っていなかった)。`auto_images` の対象ごとの stage に kind / id を付け、`production_agent` がシーンは `active_node`、人物・場所は `active_library` を添える。描き終わりの `response_end` に `active_node: null` を付けて枠の光を消す。pytest 695 件成功(追従の合図の検証を追加)。画面側の変更は無し。
 
 - 2026-10-16 20:06 **シーンの挿絵の予約と画像の候補ボタン**(ユーザー要望「シーンの画像を作るツールは?」「候補ボタンは画像の相談に対応しているか」)。`generate_images` に `kind: scene` を足し、`auto_images._draw_scene`(cast の参照画像を手本に場面のプロンプト → `generate_scene_image` → ストックに入れて挿絵に)。自動生成はせず予約だけ。候補ボタンは `productionSuggestions.ts` で、相談モードの画像の依頼の後に固定の「この画像を制作を実行で作る」を先頭に出す。実機で、予約の返事を作るところがシーンの `name` 不在で KeyError になり制作が停止扱いになる不具合を見つけて直した(テストも outcome=completed と tool_error の件数を見るようにした)。検証: pytest 695 件、typecheck・build 成功、実 LLM + ComfyUI で「出発の挿絵を作って」→ 予約 1 回 → 挿絵(ケンの参照画像を手本)が入り completed。設計は `docs/design/image-gen.md` §14。**未確認**: 実アプリでの候補ボタンの表示。
 
