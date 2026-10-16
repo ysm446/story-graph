@@ -316,3 +316,42 @@ def test_generate_images_tool_reserves_and_runs_at_end(store, monkeypatch):
     events = _collect_stream(store, False, hook, "アヤの画像を作って")
     assert seen == [] and any("相談モード" in e.get("delta", "") for e in events)
     assert aya["id"] == "aya" and port["id"] == "port"
+
+
+def test_image_request_guidance_in_consult_mode():
+    import production_guard as guard
+    assert guard.wants_images("製塩工場の画像をつくって")
+    assert guard.wants_images("アヤの立ち絵を描いてほしい") and guard.wants_images("港のイラストを生成して")
+    assert not guard.wants_images("製塩工場の描写を詳しくして")
+    assert guard.consult_guidance_for("製塩工場の画像をつくって", "画像を生成する機能は持っておりません") == guard.CONSULT_IMAGE_GUIDANCE
+    assert guard.consult_guidance_for("製塩工場の画像をつくって", "送信モードを「制作を実行」に切り替えてください") is None
+
+
+def test_execute_mode_reminds_once_when_image_request_has_no_reservation(store, monkeypatch):
+    store.create_place({"id": "salt", "name": "製塩工場", "description": "海辺の工場"})
+    store.append_node({"id": "first", "beat": "出発", "cast": []})
+    notes_seen = []
+    step = 0
+
+    async def stream(messages, **kwargs):
+        nonlocal step
+        step += 1
+        notes_seen.append(any("generate_imagesの予約がありません" in (m.get("content") or "") for m in messages))
+        if step == 1:
+            yield "done", {"content": "申し訳ありませんが、画像を生成する機能は持っておりません。"}
+            return
+        yield "done", {"tool_calls": [{"function": {"name": "generate_images", "arguments": json.dumps(
+            {"kind": "place", "ids": ["salt"], "reason": "依頼"})}}]} if step == 2 else {"content": "予約しました。"}
+
+    monkeypatch.setattr(llm, "chat_stream_tools", stream)
+    seen = []
+
+    async def hook(requests):
+        seen.append(requests)
+        return
+        yield
+
+    events = _collect_stream(store, True, hook, "製塩工場の画像をつくって")
+    assert notes_seen == [False, True, False]  # 注記は 1 回だけ渡り、予約の後は消える
+    assert seen == [[{"kind": "place", "id": "salt", "explicit": True}]]
+    assert next(e for e in events if e.get("done"))["outcome"] == "completed"

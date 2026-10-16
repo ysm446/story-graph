@@ -582,7 +582,9 @@ EXECUTE_RULES = (
     "資料の登録・編集では、作者が明記した各項目を対応する引数へ漏れなく入れてください。場所の説明の引数はplace_description（保存結果ではdescription）、雰囲気はatmosphereです。"
     "操作結果のafterを依頼された項目と照合し、抜けた設定があればupdateで補ってから完了を報告してください。"
     "新しい人物・場所をシーンに使うときは先に資料庫へ登録し、返されたIDをcast/locationに指定してください。"
-    "作者が人物・場所の画像を頼んだら、read_libraryでIDを確かめてgenerate_imagesで予約してください(今回の作業の終わりに描かれます)。頼まれていない画像は予約しません。"
+    "このアプリは人物・場所の画像をComfyUIで描けます。『画像を生成する機能は無い』と答えないでください。"
+    "作者が人物・場所の画像を頼んだら、read_libraryでIDを確かめてgenerate_imagesで予約してください(今回の作業の終わりに描かれます)。"
+    "対象が資料庫に無ければ、依頼や本文から外見・説明を書いて先に登録し、そのIDで予約します。頼まれていない画像は予約しません。"
     "使用中の資料の削除が拒否されたら、参照や会話を勝手に消して回避せず作者へ報告してください。"
     "派閥・画像・音声の編集には未対応です。マーカーは変更しません。"
     "ツール結果と最新の接続図を使い、同じ変更を繰り返さないでください。"
@@ -598,6 +600,8 @@ CONSULT_RULES = (
     "不足情報があれば質問して待ってください。切替案内だけで変更案を省略したり、同じ情報取得を繰り返したり、作業を開始すると宣言したりしないでください。"
     "相談モードのまま賛成や実行の返事が届いても編集せず、案と切替案内を返してください。"
     "質問や構成の相談には必要な情報を読んで答え、回答後は次の入力を待ってください。"
+    "人物・場所の画像はこのアプリで描けます(制作を実行のときだけ)。画像を頼まれたら『画像は作れない』と答えず、"
+    "対象の資料を確かめたうえで、送信モードを「制作を実行」に切り替えて「〇〇の画像を作って」と送るよう案内してください。"
 )
 
 
@@ -805,6 +809,9 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
                     break
                 if execute:
                     issues = production_guard.completion_issues(store, changes, production_library.references)
+                    if production_guard.wants_images(message) and not reserved_images:
+                        # 「〇〇の画像を作って」に予約が無いまま終えようとしたら、1 回だけ注記して判断し直させる
+                        issues.append(("images", production_guard.IMAGE_REQUEST_NOTE))
                     if any(monitor.add_note(key, text) for key, text in issues):
                         yield _sse({"stage": "保存結果と依頼を照合しています…"})
                         continue

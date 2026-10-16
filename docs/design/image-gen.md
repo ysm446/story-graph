@@ -1,7 +1,7 @@
 # 画像生成(ComfyUI 連携)— キャラクターの参照画像・場面の挿絵・場所の画像
 
 作成日時: 2026-08-26 15:15
-更新日時: 2026-10-16 18:16
+更新日時: 2026-10-16 18:56
 
 ローカルの ComfyUI で挿絵を作る仕組みの設計メモ。2026-08-26 のユーザー発案
 ([progress.md](../plan/progress.md) の「場面の画像生成」)。画像は**装飾専用**で、
@@ -325,6 +325,13 @@ Pillow も顔検出も要らない)。実装は `backend/auto_images.py`。
      予約は DB の変更ではないので `changes`(スナップショット・件数)には数えない。
      **設定がオフでも描き、画像があっても描き直す**(前の参照画像・場所の画像はストックに残る。
      プロフィール画像は差し替え)。
+- **「画像は作れない」と答えさせない**(2026-10-16。gemma 4 31B が「製塩工場の画像をつくって」に
+  「画像を生成する機能は持っておりません」と答えた): `EXECUTE_RULES` / `CONSULT_RULES` に「このアプリは人物・場所の
+  画像を ComfyUI で描ける」と明記。加えてサーバー側で `production_guard.wants_images`(「画像 / イラスト / 絵 /
+  アイコン / 立ち絵」+「作 / 描 / 生成 …」)を見て、相談モードは返答に「制作を実行」が無ければ
+  `CONSULT_IMAGE_GUIDANCE` を添え、実行モードは予約が無いまま終えようとしたら `IMAGE_REQUEST_NOTE` を
+  1 回だけ注記して判断し直させる(`monitor.add_note("images")`)。実 LLM で確認: 実行は `read_library` →
+  `generate_images`、相談は切替案内。
 - **タイミング**: `production_agent.stream` が判断ループを抜け、まとめ・作業メモの見直しまで終わった後、
   `done` の前に `image_hook`(`auto_images.run`。`app.py` の `/production/send` が渡す)を呼ぶ。
   描く一覧は `auto_images.requests_for(created, reserved)`(同じ資料は予約を優先、最初に出た順)。
