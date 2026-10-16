@@ -17,7 +17,8 @@ DEFAULT_DB_PATH = REPO_ROOT / "data" / "story-graph.db"
 
 # 2: nodes.location を自由テキストから places.id 参照に変える(docs/design/places.md)
 # 3: 挿絵・参照画像のストック(media)を作り、設定済みの 1 枚を初期の候補として登録する(docs/design/image-gen.md §7)
-SCHEMA_VERSION = 3
+# 4: 場所の画像もストックに載せる(設定済みの 1 枚を初期の候補として登録する)
+SCHEMA_VERSION = 4
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS production_memory(
@@ -164,7 +165,7 @@ CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT);
 -- (再現用)。手持ちの画像はどれも NULL。削除は作者の明示操作だけ(ファイルは gc_assets が回収)
 CREATE TABLE IF NOT EXISTS media(
   id TEXT PRIMARY KEY,
-  owner_type TEXT NOT NULL,        -- 'node' | 'character'
+  owner_type TEXT NOT NULL,        -- 'node' | 'character' | 'place'
   owner_id TEXT NOT NULL,
   path TEXT NOT NULL,              -- assets/images 内のファイル名(画像 / 動画)
   thumb_path TEXT,                 -- 動画のサムネイル(nodes.thumb_path と同じもの。選び直しで使い回す)
@@ -331,6 +332,11 @@ def init_schema(conn: sqlite3.Connection) -> None:
         # 名前の読み(ひらがな)。読み上げで、合成の直前に名前をこの読みに置き換える(docs/design/voice.md §4.5)
         "ALTER TABLE characters ADD COLUMN reading TEXT",
         "ALTER TABLE places ADD COLUMN reading TEXT",
+        # 場所の画像の生成ウインドウの状態(キャラの ref_image_* と同じ。docs/design/image-gen.md §13)
+        "ALTER TABLE places ADD COLUMN image_prompt TEXT",
+        "ALTER TABLE places ADD COLUMN image_instructions TEXT",
+        "ALTER TABLE places ADD COLUMN image_seed INTEGER",
+        "ALTER TABLE places ADD COLUMN image_workflow TEXT",
         # キャラ同士の会話室(mode='room')の参加者(JSON 配列の char_id。docs/design/chat.md §8)。
         # 会話室は char_id NULL のまま participants で見分ける
         "ALTER TABLE chats ADD COLUMN participants TEXT",
@@ -354,6 +360,8 @@ def init_schema(conn: sqlite3.Connection) -> None:
             _migrate_locations_to_places(conn)
         if version < 3:
             _migrate_images_to_media(conn)
+        if version < 4:
+            _migrate_place_images_to_media(conn)
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
     conn.commit()
 
@@ -384,6 +392,17 @@ def _migrate_images_to_media(conn: sqlite3.Connection) -> None:
             "INSERT INTO media(id, owner_type, owner_id, path, thumb_path, prompt, instructions, seed, ref_chars, created_at)"
             " VALUES(?,?,?,?,?,?,?,?,?,?)",
             (uuid.uuid4().hex[:12], "character", r[0], r[1], None, r[2], r[3], r[4], None, now),
+        )
+
+
+def _migrate_place_images_to_media(conn: sqlite3.Connection) -> None:
+    """設定済みの場所の画像を、その場所のストックの最初の 1 枚として登録する(手持ちの画像なのでセットは空)。"""
+    now = datetime.now(timezone.utc).isoformat()
+    rows = conn.execute("SELECT id, image_path FROM places WHERE image_path IS NOT NULL").fetchall()
+    for r in rows:
+        conn.execute(
+            "INSERT INTO media(id, owner_type, owner_id, path, created_at) VALUES(?,?,?,?,?)",
+            (uuid.uuid4().hex[:12], "place", r[0], r[1], now),
         )
 
 

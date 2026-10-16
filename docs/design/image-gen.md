@@ -1,7 +1,7 @@
-# 画像生成(ComfyUI 連携)— キャラクターの参照画像と場面の挿絵
+# 画像生成(ComfyUI 連携)— キャラクターの参照画像・場面の挿絵・場所の画像
 
 作成日時: 2026-08-26 15:15
-更新日時: 2026-10-16 17:01
+更新日時: 2026-10-16 17:28
 
 ローカルの ComfyUI で挿絵を作る仕組みの設計メモ。2026-08-26 のユーザー発案
 ([progress.md](../plan/progress.md) の「場面の画像生成」)。画像は**装飾専用**で、
@@ -150,7 +150,7 @@ API 形式の JSON テンプレート `workflows/ref_t2i.json` を `comfy.build_
 `gc_assets` に回収されていた(= 入れ替えは事実上の削除)。ストックは「参照を残す」ことで、
 削除を作者の明示操作だけにする。seed を変えて何枚か引き、あとで見比べて選ぶ使い方にも合う。
 
-1. **データ**: `media(id, owner_type: node|character, owner_id, path, thumb_path, prompt, instructions,
+1. **データ**: `media(id, owner_type: node|character|place, owner_id, path, thumb_path, prompt, instructions,
    seed, ref_chars, created_at)`。`nodes.image_path` / `characters.ref_image_path` は
    **「選択中の 1 枚」としてそのまま残す**ので、読み手モード・カード・場面生成の参照画像渡しは変わらない。
    生成物は**生成に使ったプロンプト・追加指示・seed(・参照キャラ)を 1 セット**で持つ(再現用)。
@@ -283,3 +283,24 @@ API 形式の JSON テンプレート `workflows/ref_t2i.json` を `comfy.build_
   `comfy.variant_models` がテンプレートのローダーの入力名から拾う(`ckpt_name` → checkpoints、`unet_name` →
   diffusion_models、`clip_name*` → text_encoders、`vae_name` → vae、`lora_name` → loras。`_optional` で外れるノードは除く)。
   設定画面は選んだ組のモデルを並べ、見つからないものを赤で「見つかりません」と出し、選択肢にも「(モデルが足りません)」を添える。
+
+## 13. 場所の画像
+
+2026-10-16 ユーザー発案「場所の画像も説明から画像生成できるように」。あわせて「シーンの画像を作るときに
+背景の画像があると良い」という話があり、**場所の画像は人物なし・横長の全景**で作る(背景の手本に回せる形)。
+場面生成へ背景の手本として渡すのは別の作業(手本は合計 3 枚までで人物と枠を取り合い、構図が背景の画像に
+引っ張られるおそれもあるので、場面の生成ウインドウのオン/オフで試す予定)。
+
+- **流れ**: キャラの参照画像と同じ 2 段。`POST /places/{id}/image/prompt`(SSE。説明・雰囲気 + 追加指示 →
+  LLM → 風景描写の英語タグ)→ 確認・手直し → `POST /places/{id}/image/generate`(候補として assets に保存)→
+  「決定」で `POST /media {owner_type: 'place'}`。
+- **プロンプト**: `image_gen.PLACE_PROMPT_SYSTEM`(見えるものだけ。人物・名前・出来事・カメラや画風の語は書かない。
+  画風の指定があれば先頭のタグに)。後ろに `PLACE_IMAGE_SUFFIX`(scenery, establishing shot, wide view,
+  no people …)を機械的に足す。
+- **生成**: 組の `t2i` テンプレートで **1216×832**(場面の挿絵と同じ横長)、`filename_prefix = story-graph/place`。
+- **データ**: `places.image_prompt / image_instructions / image_seed / image_workflow`(生成ウインドウの
+  保存状態。キャラの `ref_image_*` と同じく「生成」したときにサーバが 1 セットで書く)。`places.image_path` は
+  ストックの「選択中の 1 枚」。`SCHEMA_VERSION = 4` の移行で、設定済みの場所の画像を最初の候補(手持ち)として
+  登録する。場所を消すとストックの行も消える。場所の画像は装飾専用のままなので、差し替えても清書は stale にしない。
+- **UI**: 場所のページの画像の下に「ストック」「説明から生成」(画像があれば「作り直す」)。生成ウインドウは
+  `PlaceImageModal.tsx`。ドロップ / ファイル選択もストックに足してから選択する(前の画像は消えない)。

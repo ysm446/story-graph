@@ -49,7 +49,7 @@ ASSET_REF_SQLS = (
 # 参照音声(assets/voices)を参照する SQL。gc_voices がスナップショット DB にも同じものを流す
 VOICE_REF_SQLS = ("SELECT j.value FROM voice_profiles p, json_each(p.ref_paths) j",)
 
-MEDIA_OWNER_TYPES = ("node", "character")
+MEDIA_OWNER_TYPES = ("node", "character", "place")
 
 
 def _is_turn_start(message: dict[str, Any]) -> bool:
@@ -191,7 +191,10 @@ class Store:
         return self.get_place(place_id)  # type: ignore[return-value]
 
     def update_place(self, place_id: str, data: dict[str, Any]) -> dict[str, Any] | None:
-        fields = ["name", "description", "atmosphere", "color", "image_path", "reading"]
+        fields = [
+            "name", "description", "atmosphere", "color", "image_path", "reading",
+            "image_prompt", "image_instructions", "image_seed", "image_workflow",
+        ]
         updates = {k: data[k] for k in fields if k in data}
         if updates:
             sets = ", ".join(f"{k} = ?" for k in updates)
@@ -240,6 +243,7 @@ class Store:
         node_ids = self._nodes_using_place(place_id)
         self.conn.execute("UPDATE nodes SET location = NULL WHERE location = ?", (place_id,))
         self.conn.execute("DELETE FROM places WHERE id = ?", (place_id,))
+        self.conn.execute("DELETE FROM media WHERE owner_type = 'place' AND owner_id = ?", (place_id,))
         self.conn.executemany(
             "UPDATE renders SET stale = 1 WHERE node_id = ?", [(n,) for n in node_ids]
         )
@@ -1369,6 +1373,9 @@ class Store:
         if owner_type == "node":
             row = self.conn.execute("SELECT image_path FROM nodes WHERE id = ?", (owner_id,)).fetchone()
             return row["image_path"] if row else None
+        if owner_type == "place":
+            row = self.conn.execute("SELECT image_path FROM places WHERE id = ?", (owner_id,)).fetchone()
+            return row["image_path"] if row else None
         row = self.conn.execute("SELECT ref_image_path FROM characters WHERE id = ?", (owner_id,)).fetchone()
         return row["ref_image_path"] if row else None
 
@@ -1396,6 +1403,15 @@ class Store:
                         json.dumps(m["ref_chars"]) if m["ref_chars"] is not None else None,
                         m.get("workflow"), m["owner_id"],
                     ),
+                )
+        elif m["owner_type"] == "place":
+            # 場所の画像は装飾専用(清書に渡らない)ので、差し替えても renders は stale にしない
+            self.conn.execute("UPDATE places SET image_path = ? WHERE id = ?", (m["path"], m["owner_id"]))
+            if m["prompt"]:
+                self.conn.execute(
+                    "UPDATE places SET image_prompt = ?, image_instructions = ?, image_seed = ?, image_workflow = ?"
+                    " WHERE id = ?",
+                    (m["prompt"], m["instructions"], m["seed"], m.get("workflow"), m["owner_id"]),
                 )
         else:
             self.conn.execute(

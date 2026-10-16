@@ -1,4 +1,4 @@
-"""キャラクターの参照画像(全身の立ち絵)の生成。
+"""キャラクターの参照画像(全身の立ち絵)・場面の挿絵・場所の画像の生成。
 
 外見の記述 → LLM で英語の画像プロンプト → ComfyUI(text-to-image)→ assets へ保存。
 参照画像は後で場面生成の画像編集モデルの入力(input1 / input2)に回す前提なので、
@@ -176,6 +176,87 @@ async def generate_character_image(
     if seed is None or seed < 0:
         seed = new_seed()
     return await comfy.run_workflow(comfy_base_url, character_workflow(settings, description, seed, variant)), seed
+
+
+# ---- 場所の画像 -------------------------------------------------------
+# 説明・雰囲気 → LLM で英語の風景プロンプト → ComfyUI(text-to-image、横長)。
+# 後で場面生成の背景の手本にも回せるよう、人物なしの全景に固定する(docs/design/image-gen.md §13)
+
+PLACE_IMAGE_SUFFIX = (
+    "scenery, establishing shot, wide view, no people, nobody, empty scene, "
+    "detailed environment, natural lighting, no text, no watermark"
+)
+
+PLACE_PROMPT_SYSTEM = (
+    "You write image-generation prompts in English for an illustration of a location (background art).\n"
+    "Given a place's name, description, and atmosphere notes (may be in Japanese), "
+    "describe ONLY what is visible as a comma-separated list of concrete visual tags: "
+    "type of place, architecture or terrain, key objects and landmarks, materials and colors, "
+    "time of day, weather, lighting, and mood conveyed through visuals.\n"
+    "Rules: 40-90 words. No people or characters, no names, no story events, "
+    "no camera or style words (they are added separately). If the notes give an art style "
+    "(e.g. anime, watercolor), include it as the first tag. Do not invent details that contradict the notes; "
+    "fill unspecified basics with plausible choices that fit the description.\n"
+    "Output ONLY the prompt text itself — no preamble, no quotes, no markdown, no explanation."
+)
+
+
+def _place_notes(place: dict[str, Any]) -> str:
+    parts = [f"Name: {place.get('name') or ''}"]
+    if place.get("description"):
+        parts.append(f"Description:\n{place['description']}")
+    if place.get("atmosphere"):
+        parts.append(f"Atmosphere:\n{place['atmosphere']}")
+    return "\n\n".join(parts)
+
+
+def place_prompt_messages(place: dict[str, Any], instructions: str | None = None) -> list[dict[str, Any]]:
+    return [
+        {"role": "system", "content": PLACE_PROMPT_SYSTEM},
+        {"role": "user", "content": _with_instructions(_place_notes(place), instructions)},
+    ]
+
+
+def stream_place_prompt(
+    place: dict[str, Any], *, base_url: str, instructions: str | None = None
+) -> AsyncIterator[str]:
+    """説明・雰囲気(+ 作者の追加指示)から英語プロンプト(風景描写部分のみ)をストリーミングで作る。"""
+    return _stream_prompt(
+        place_prompt_messages(place, instructions),
+        base_url=base_url, label="place_image_prompt", max_tokens=400, temperature=0.4,
+    )
+
+
+def place_workflow(
+    settings: dict[str, str], description: str, seed: int | None = None, variant: str | None = None
+) -> dict[str, Any]:
+    """場面の挿絵と同じ横長(1216×832)。variant は workflows/variants.json の id。"""
+    v = resolve_variant(settings, variant)
+    return _build(
+        v,
+        comfy.build_t2i_workflow,
+        template=v["t2i"],
+        positive=f"{description.strip().rstrip(',')}, {PLACE_IMAGE_SUFFIX}",
+        seed=seed,
+        width=1216,
+        height=832,
+        filename_prefix="story-graph/place",
+        **_common_values(settings, v),
+    )
+
+
+async def generate_place_image(
+    settings: dict[str, str],
+    description: str,
+    *,
+    comfy_base_url: str,
+    seed: int | None = None,
+    variant: str | None = None,
+) -> tuple[bytes, int]:
+    """(PNG, 使った seed)。seed が None または負数ならランダム。"""
+    if seed is None or seed < 0:
+        seed = new_seed()
+    return await comfy.run_workflow(comfy_base_url, place_workflow(settings, description, seed, variant)), seed
 
 
 # ---- 場面の挿絵 -------------------------------------------------------

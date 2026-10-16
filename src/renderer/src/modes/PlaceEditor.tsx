@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, assetUrl, uploadAsset } from '../api'
 import { EditActions, EditPencil, ReadText, editKeys, focusEditGroup } from '../FieldEdit'
+import { Icon } from '../icons'
+import MediaPicker from '../MediaPicker'
+import PlaceImageModal from '../PlaceImageModal'
 import ProofreadTextarea from '../ProofreadTextarea'
 import type { Place } from '../types'
 
@@ -56,9 +59,14 @@ export default function PlaceEditor({
   // 深さを数えて 0 になったときだけハイライトを消す(シーンの挿絵と同じ作り)
   const [imageDragOver, setImageDragOver] = useState(false)
   const imageDragDepth = useRef(0)
+  // 画像のストック(候補の一覧)と生成ウインドウ
+  const [stockOpen, setStockOpen] = useState(false)
+  const [generateOpen, setGenerateOpen] = useState(false)
 
   useEffect(() => {
     setDraft(place)
+    setStockOpen(false)
+    setGenerateOpen(false)
   }, [place.id])
 
   const dirty = EDITABLE_FIELDS.some(
@@ -143,13 +151,14 @@ export default function PlaceEditor({
   const shownColor = editing.has('identity') ? draft.color : place.color
 
   /** 参考画像を設定・差し替える。装飾専用(LLM には渡らない)なので清書は stale にならない。
-   *  名前や説明と違って保存ボタンは待たず、キャラのプロフィール画像と同じく即保存する。 */
+   *  名前や説明と違って保存ボタンは待たず、キャラのプロフィール画像と同じく即保存する。
+   *  前の画像はストックに残る(手持ちの画像としてストックに足し、そのまま選択する) */
   const acceptImageFile = async (file: File | undefined): Promise<void> => {
     if (!file || !file.type.startsWith('image/')) return
     setUploading(true)
     try {
       const { path } = await uploadAsset(file)
-      await api.updatePlace(place.id, { image_path: path })
+      await api.addMedia('place', place.id, path)
       // draft は place.id が変わるまで同期しないので、ここでも反映する
       setDraft((d) => ({ ...d, image_path: path }))
       await onChanged()
@@ -165,6 +174,15 @@ export default function PlaceEditor({
     setDraft((d) => ({ ...d, image_path: null }))
     await onChanged()
   }
+
+  // 画像は即保存なので、保存値が変わったら(ストックの選び直し・生成の決定など)下書きにも写す
+  useEffect(() => {
+    setDraft((d) => ({ ...d, image_path: place.image_path }))
+  }, [place.image_path])
+  // 生成のプロンプトは保存済みの説明・雰囲気から作るので、編集中の変更があれば知らせる
+  const unsavedDescription = (['description', 'atmosphere'] as const).some(
+    (key) => editing.has(key) && groupDirty(key)
+  )
 
   const handleDelete = async (): Promise<void> => {
     if (!window.confirm(`「${place.name}」を削除しますか?\nこの場所を使っているシーンは「引き継ぐ」に戻ります。`))
@@ -232,18 +250,62 @@ export default function PlaceEditor({
             void acceptImageFile(file)
           }}
         />
-        {draft.image_path && (
-          <div className="flex items-center gap-2 text-[11px]" style={{ color: 'var(--text-faint)' }}>
-            <button onClick={() => fileInputRef.current?.click()} data-tip="別の画像に差し替える">
-              {uploading ? 'アップロード中…' : '画像を差し替え'}
-            </button>
-            <span>・</span>
-            <button onClick={() => void removeImage()} data-tip="画像を外す">
-              画像を外す
-            </button>
-          </div>
+        <div className="flex w-full flex-wrap items-center gap-2">
+          <button
+            onClick={() => setStockOpen(true)}
+            className="rounded-md border px-2 py-0.5 text-[11px]"
+            style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+            data-tip="生成した候補と手持ちの画像の一覧。ここから 1 枚を選び直したり、いらない候補を削除したりできます"
+          >
+            ストック
+          </button>
+          <button
+            onClick={() => setGenerateOpen(true)}
+            className="accent-action inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[12px] font-medium"
+            data-tip={
+              place.image_prompt
+                ? '保存済みのプロンプト・追加指示・seed を開きます(説明を変えたら中の「説明から書き直す」で作り直せます)'
+                : '保存済みの説明・雰囲気から英語のプロンプトを作り(確認・手直しできます)、ComfyUI で人物なしの全景を生成します'
+            }
+          >
+            <Icon name="sparkle" size={12} /> {draft.image_path ? '作り直す' : '説明から生成'}
+          </button>
+          {draft.image_path && (
+            <div className="ml-auto flex items-center gap-2 text-[11px]" style={{ color: 'var(--text-faint)' }}>
+              <button onClick={() => fileInputRef.current?.click()} data-tip="別の画像に差し替える(前の画像はストックに残ります)">
+                {uploading ? 'アップロード中…' : '画像を差し替え'}
+              </button>
+              <span>・</span>
+              <button onClick={() => void removeImage()} data-tip="画像を外す(ストックとプロンプトは残ります)">
+                画像を外す
+              </button>
+            </div>
+          )}
+        </div>
+        {unsavedDescription && (
+          <p className="text-[11px]" style={{ color: '#f2a3a3' }}>
+            説明・雰囲気に未保存の変更があります。プロンプトは保存済みの内容から作るので、先に「確定」してください。
+          </p>
+        )}
+        {!(place.description ?? '').trim() && !(place.atmosphere ?? '').trim() && !draft.image_path && (
+          <p className="text-[11px]" style={{ color: 'var(--text-faint)' }}>
+            説明・雰囲気が空のままだと、名前だけから景色を想像して描きます。先に説明を書いて確定してから生成すると狙いどおりになります。
+          </p>
         )}
       </div>
+      {stockOpen && (
+        <MediaPicker
+          ownerType="place"
+          ownerId={place.id}
+          aspect="1216 / 832"
+          accept="image/png,image/jpeg,image/gif,image/webp"
+          onChanged={() => void onChanged()}
+          onClose={() => setStockOpen(false)}
+        />
+      )}
+      {generateOpen && (
+        <PlaceImageModal place={place} onChanged={onChanged} onClose={() => setGenerateOpen(false)} />
+      )}
       <div className="mb-5" data-edit-group={groupName('identity')} onKeyDown={keys('identity')}>
         {editing.has('identity') ? (
           <>

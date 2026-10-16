@@ -923,7 +923,7 @@ async def set_node_thumb(node_id: str, body: NodeThumbIn) -> dict[str, str]:
 
 
 class MediaIn(BaseModel):
-    owner_type: str  # 'node' | 'character'
+    owner_type: str  # 'node' | 'character' | 'place'
     owner_id: str
     path: str  # /assets/upload または generate の戻り値
     select: bool = True  # 足した画像をそのまま現在の画像にする(ドロップ / ファイル選択の既定)
@@ -942,6 +942,9 @@ def _check_media_owner(owner_type: str, owner_id: str) -> None:
     elif owner_type == "character":
         if store.get_character(owner_id) is None:
             raise HTTPException(404, "character not found")
+    elif owner_type == "place":
+        if store.get_place(owner_id) is None:
+            raise HTTPException(404, "place not found")
     else:
         raise HTTPException(400, f"unknown owner_type: {owner_type}")
 
@@ -1888,6 +1891,71 @@ async def character_ref_image_generate(char_id: str, body: RefImageGenerateIn) -
             "ref_image_prompt": body.prompt, "ref_image_instructions": instructions,
             "ref_image_seed": seed, "ref_image_workflow": workflow,
         },
+    )
+    return {
+        "image_path": name, "seed": seed, "prompt": body.prompt, "instructions": instructions,
+        "ref_chars": None, "workflow": workflow,
+    }
+
+
+@app.post("/places/{place_id}/image/prompt")
+async def place_image_prompt(place_id: str, body: RefImagePromptIn | None = None) -> StreamingResponse:
+    """説明・雰囲気(+ 追加指示)から、場所の画像の英語プロンプト(風景描写)を LLM でストリーミング生成する。
+    SSE: {meta:{suffix}} → {delta}… → {done, prompt} / {error}。保存はしない。"""
+    import image_gen
+
+    place = store.get_place(place_id)
+    if place is None:
+        raise HTTPException(404, "place not found")
+    instructions = body.instructions if body else None
+
+    async def stream():
+        yield image_gen._sse({"meta": {"suffix": image_gen.PLACE_IMAGE_SUFFIX}})
+        try:
+            base_url = await llama.ensure_running(store.get_settings())
+        except Exception as e:
+            yield image_gen._sse({"error": str(e)})
+            return
+        async for chunk in image_gen.stream_place_prompt(place, base_url=base_url, instructions=instructions):
+            yield chunk
+
+    return StreamingResponse(stream(), media_type="text/event-stream")
+
+
+@app.post("/places/{place_id}/image/generate")
+async def place_image_generate(place_id: str, body: RefImageGenerateIn) -> dict[str, Any]:
+    """ComfyUI で場所の画像を生成し、assets に**候補として**保存する(キャラの参照画像と同じ流れ)。
+
+    採用は UI の「決定」→ POST /media(owner_type='place'、生成に使ったセット付き、select)。
+    使ったプロンプト・追加指示・seed・組は場所の生成ウインドウの保存状態に 1 セットで写す。"""
+    import uuid
+    from pathlib import Path as _Path
+
+    import comfy
+    import image_gen
+
+    if store.get_place(place_id) is None:
+        raise HTTPException(404, "place not found")
+    assets = store.assets_dir()
+    if assets is None:
+        raise HTTPException(500, "ライブラリが未設定です")
+    if not body.prompt.strip():
+        raise HTTPException(400, "プロンプトが空です")
+    settings = store.get_settings()
+    try:
+        base_url = await comfy_mgr.ensure_running(settings)
+        data, seed = await image_gen.generate_place_image(
+            settings, body.prompt, comfy_base_url=base_url, seed=body.seed, variant=body.workflow
+        )
+    except RuntimeError as e:
+        raise HTTPException(500, str(e))
+    name = f"{uuid.uuid4().hex[:12]}.png"
+    await asyncio.to_thread((_Path(assets) / name).write_bytes, data)
+    instructions = (body.instructions or "").strip() or None
+    workflow = comfy.get_variant(body.workflow)["id"]
+    store.update_place(
+        place_id,
+        {"image_prompt": body.prompt, "image_instructions": instructions, "image_seed": seed, "image_workflow": workflow},
     )
     return {
         "image_path": name, "seed": seed, "prompt": body.prompt, "instructions": instructions,

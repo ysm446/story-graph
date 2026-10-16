@@ -4,7 +4,7 @@ import type { MediaItem } from './types'
 
 /** 挿絵 / 参照画像のストック(docs/design/image-gen.md §7)。
  *
- *  持ち主(シーン / キャラ)に溜まった候補を並べ、クリックで 1 枚を「選択中」にする。
+ *  持ち主(シーン / キャラ / 場所)に溜まった候補を並べ、クリックで 1 枚を「選択中」にする。
  *  差し替えで前の画像が消えることはなく、消すのはここの「削除」だけ。選択中の 1 枚は消せない
  *  (先に別の候補を選ぶか、インスペクタで画像を外す)。生成物は seed とプロンプトを持つので、
  *  選び直すと生成ウインドウの保存状態もその画像のセットに戻る。 */
@@ -92,7 +92,7 @@ export default function MediaPicker({
   }
 
   const unselectedCount = items ? items.filter((m) => m.path !== selected).length : 0
-  const label = ownerType === 'node' ? '挿絵' : '参照画像'
+  const label = ownerType === 'node' ? '挿絵' : ownerType === 'place' ? '場所の画像' : '参照画像'
 
   return (
     <div
@@ -154,7 +154,7 @@ export default function MediaPicker({
             まだ候補がありません。生成して「決定」するか、「+ 追加」で手持ちのファイルを足してください。
           </div>
         ) : (
-          <div className={`grid gap-3 ${ownerType === 'node' ? 'grid-cols-3' : 'grid-cols-4'}`}>
+          <div className={`grid gap-3 ${ownerType === 'character' ? 'grid-cols-4' : 'grid-cols-3'}`}>
             {items.map((m) => {
               const isSelected = m.path === selected
               const url = assetUrl(m.thumb_path ?? m.path)

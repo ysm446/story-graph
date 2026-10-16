@@ -146,3 +146,33 @@ def test_migration_registers_existing_images_as_media(tmp_path):
     # 二度開いても増えない
     store2 = Store(db.connect(str(path)))
     assert len(store2.list_media("node", "n1")) == 1
+
+
+def test_select_place_media_and_delete_place():
+    store = _store()
+    p = store.create_place({"name": "港"})
+    m = store.add_media("place", p["id"], "harbor.png", prompt="harbor", instructions="夜", seed=4, workflow="zeniji")
+    store.select_media(m["id"])
+    got = store.get_place(p["id"])
+    assert got["image_path"] == "harbor.png" and got["image_prompt"] == "harbor"
+    assert got["image_instructions"] == "夜" and got["image_seed"] == 4 and got["image_workflow"] == "zeniji"
+    with pytest.raises(ValueError):
+        store.delete_media(m["id"])  # 選択中は消せない
+    store.delete_place(p["id"])
+    assert store.list_media("place", p["id"]) == []
+
+
+def test_migration_registers_existing_place_images_as_media(tmp_path):
+    """場所のストック導入前の DB(user_version 3)を開くと、設定済みの場所の画像が最初の候補になる。"""
+    path = tmp_path / "old.db"
+    conn = db.connect(str(path))
+    conn.execute("PRAGMA user_version = 3")
+    conn.execute("INSERT INTO places(id, name, image_path, created_at) VALUES('p1', '港', 'harbor.png', 'x')")
+    conn.commit()
+    conn.close()
+    store = Store(db.connect(str(path)))
+    media = store.list_media("place", "p1")
+    assert len(media) == 1 and media[0]["path"] == "harbor.png" and media[0]["prompt"] is None
+    assert store._selected_media_path("place", "p1") == "harbor.png"
+    store2 = Store(db.connect(str(path)))
+    assert len(store2.list_media("place", "p1")) == 1

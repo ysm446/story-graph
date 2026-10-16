@@ -455,6 +455,21 @@ export const api = {
       body: JSON.stringify({ prompt, instructions, seed, workflow }),
       signal
     }),
+  /** ComfyUI で場所の画像(人物なしの横長の全景)を生成し、候補として保存する(採用は addMedia)。
+   *  使ったプロンプト・追加指示・seed は場所の保存状態に 1 セットで書かれ、戻り値にも入る */
+  placeImageGenerate: (
+    id: string,
+    prompt: string,
+    instructions: string | null,
+    seed: number | null,
+    workflow: string | null,
+    signal?: AbortSignal
+  ) =>
+    request<GeneratedImage>(`/places/${id}/image/generate`, {
+      method: 'POST',
+      body: JSON.stringify({ prompt, instructions, seed, workflow }),
+      signal
+    }),
   /** ComfyUI で場面の挿絵を生成し、候補として保存する(ストックにも挿絵にも入れない。採用は addMedia)。
    *  使ったプロンプト・追加指示・seed・参照キャラはシーンの保存状態に 1 セットで書かれ、戻り値にも入る */
   nodeImageGenerate: (
@@ -764,6 +779,16 @@ export function characterRefImagePromptStream(
   signal?: AbortSignal
 ): Promise<void> {
   return postSse(`/characters/${id}/ref_image/prompt`, { instructions }, onEvent, signal)
+}
+
+/** 場所の説明・雰囲気(+ 追加指示)から場所の画像の英語プロンプトをストリーミングで作る。保存はしない */
+export function placeImagePromptStream(
+  id: string,
+  instructions: string | null,
+  onEvent: (e: ImagePromptStreamEvent) => void,
+  signal?: AbortSignal
+): Promise<void> {
+  return postSse(`/places/${id}/image/prompt`, { instructions }, onEvent, signal)
 }
 
 /** ビート・場所・cast(+ 追加指示)から場面の英語プロンプトをストリーミングで作る。保存はしない。
