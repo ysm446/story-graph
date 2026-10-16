@@ -303,7 +303,8 @@ SCENE_PROMPT_SYSTEM = (
     "time of day, the mood, and the camera framing. 50-110 words, plain prose or comma-separated phrases.\n"
     "Rules: choose ONE moment from the scene, no dialogue, no character names, no story explanation, "
     "no style words (added separately), do not invent characters not in the cast.\n"
-    "Put in the frame ONLY the people who speak or act in that moment - usually one or two, at most three. "
+    "Put in the frame ONLY the people who speak or act in that moment, or who are the object of the action "
+    "(a body, someone unconscious, someone being carried or held) - usually one or two, at most three. "
     "Leave every other cast member out entirely, even if they are present in the scene: no bystanders, "
     "no background figures. Show only what the moment requires: the minimum exchange between the people in the "
     "frame, or the specific action being taken. Do not stage a cheerful group discussion unless the text says so; "
@@ -321,7 +322,8 @@ def select_scene_refs(cast_chars: list[dict[str, Any]], limit: int = MAX_SCENE_R
 # 必要最低限の会話か、その場面に適した行動を描く」)。手本(参照画像)はここで選んだ人物から取る
 FOCUS_SYSTEM = (
     "物語のシーンの本文と登場人物の一覧から、挿絵 1 枚に描く中心の人物を選びます。\n"
-    "その場面で話す・行動する人物だけを、重要な順に最大 3 人まで選んでください。"
+    "その場面で話す・行動する人物、または出来事の対象になっている人物(倒れている・運ばれている・遺体として見つかる・"
+    "抱き起こされる、など)を、重要な順に最大 3 人まで選んでください。"
     "その場にいるだけ・黙って聞いているだけの人物は入れません。ふつうは 1〜2 人です。"
     "一覧に無い人物は選べません。本文から判断できなければ一覧の先頭の人物を 1 人選びます。"
 )

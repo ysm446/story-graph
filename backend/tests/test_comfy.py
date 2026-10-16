@@ -326,6 +326,12 @@ def test_choose_scene_focus_keeps_only_known_ids_and_falls_back(monkeypatch):
     assert asyncio.run(image_gen.choose_scene_focus(node, chars[:1], base_url="x")) == chars[:1]  # 1 人以下なら呼ばない
 
 
+def test_focus_rules_include_the_object_of_the_action():
+    """退場した人物(遺体など)も出来事の対象なら描く(2026-10-17 ユーザー指摘「他人の死体が描かれるのは変」)。"""
+    assert "出来事の対象" in image_gen.FOCUS_SYSTEM and "遺体" in image_gen.FOCUS_SYSTEM
+    assert "object of the action" in image_gen.SCENE_PROMPT_SYSTEM and "a body" in image_gen.SCENE_PROMPT_SYSTEM
+
+
 def test_scene_notes_lists_left_out_cast():
     node = {"title": "t", "beat": "b"}
     chars = [{"id": "a", "name": "A", "ref_image_path": "a.png"}, {"id": "b", "name": "B"}]
