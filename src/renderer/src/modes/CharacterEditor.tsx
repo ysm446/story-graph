@@ -97,6 +97,14 @@ export default function CharacterEditor({
     setCropTarget({ source: url, isNewFile: false, initial })
   }
 
+  /** 参照画像(全身の立ち絵)から顔を切り抜いてプロフィール画像にする。元画像は参照画像そのものを指す */
+  const cropFromRefImage = (): void => {
+    const sourcePath = character.ref_image_path
+    const url = assetUrl(sourcePath)
+    if (!sourcePath || !url) return
+    setCropTarget({ source: url, isNewFile: false, initial: null, sourcePath })
+  }
+
   const handleCropped = async (blob: Blob, state: CropState): Promise<void> => {
     const target = cropTarget
     if (!target) {
@@ -299,27 +307,39 @@ export default function CharacterEditor({
             acceptPortraitFile(file)
           }}
         />
-        {/* 画像のすぐ下に画像操作(画像があるときだけ) */}
-        {draft.portrait_path && (
+        {/* 画像のすぐ下に画像操作(差し替え・外すは画像があるとき、参照画像からは参照画像があるとき) */}
+        {(draft.portrait_path || character.ref_image_path) && (
           <div className="flex items-center gap-2 text-[11px]" style={{ color: 'var(--text-faint)' }}>
-            <button onClick={() => fileInputRef.current?.click()} data-tip="別の画像に差し替える">
-              画像を差し替え
-            </button>
-            <span>・</span>
-            <button
-              onClick={() => {
-                const patch = { portrait_path: null, portrait_source_path: null, portrait_crop: null }
-                void api.updateCharacter(character.id, patch)
-                  .then(async () => {
-                    setDraft((d) => ({ ...d, ...patch }))
-                    await onChanged()
-                  })
-                  .catch((e) => window.alert(`画像を外せませんでした: ${String(e)}`))
-              }}
-              data-tip="画像を外す"
-            >
-              画像を外す
-            </button>
+            {draft.portrait_path && (
+              <>
+                <button onClick={() => fileInputRef.current?.click()} data-tip="別の画像に差し替える">
+                  画像を差し替え
+                </button>
+                <span>・</span>
+              </>
+            )}
+            {character.ref_image_path && (
+              <button onClick={cropFromRefImage} data-tip="参照画像から顔を切り抜いてプロフィール画像にします">
+                参照画像から
+              </button>
+            )}
+            {draft.portrait_path && character.ref_image_path && <span>・</span>}
+            {draft.portrait_path && (
+              <button
+                onClick={() => {
+                  const patch = { portrait_path: null, portrait_source_path: null, portrait_crop: null }
+                  void api.updateCharacter(character.id, patch)
+                    .then(async () => {
+                      setDraft((d) => ({ ...d, ...patch }))
+                      await onChanged()
+                    })
+                    .catch((e) => window.alert(`画像を外せませんでした: ${String(e)}`))
+                }}
+                data-tip="画像を外す"
+              >
+                画像を外す
+              </button>
+            )}
           </div>
         )}
         </div>
@@ -398,11 +418,6 @@ export default function CharacterEditor({
         onChanged={async (patch) => {
           setDraft((d) => ({ ...d, ...patch }))
           await onChanged()
-        }}
-        onCropPortrait={(path) => {
-          const url = assetUrl(path)
-          if (!url) return
-          setCropTarget({ source: url, isNewFile: false, initial: null, sourcePath: path })
         }}
       />
       </div>

@@ -11,19 +11,17 @@ import { useElapsedSeconds } from './useElapsed'
  *
  *  - 外見の記述 → LLM が英語プロンプトを作る → 確認・手直し → ComfyUI で生成、の 2 段
  *  - 手持ちの画像のドロップ / ファイル選択も同じ枠で受ける(内部生成と外部読み込みの両立)
- *  - 参照画像から顔を切り抜いてプロフィール画像にする導線を持つ(逆方向は無い)
+ *  - 顔を切り抜いてプロフィール画像にする導線はプロフィール画像の側(CharacterEditor)に置く
  *  場面画像の編集モデルへ input として渡す前提なので、生成側は無地背景・全身・正面に固定している。 */
 export default function RefImagePanel({
   character,
   appearance,
-  onChanged,
-  onCropPortrait
+  onChanged
 }: {
   character: Character | null
   /** 編集中(未保存)の外見。生成前の注意表示にだけ使う */
   appearance: string
   onChanged: (patch: Partial<Character>) => Promise<void>
-  onCropPortrait: (path: string) => void
 }): React.JSX.Element | null {
   const [modal, setModal] = useState<null | { prompt: string; suffix: string }>(null)
   // 作者の追加指示(日本語可)。LLM に渡してプロンプトへ織り込む。キャラに保存して次回復元
@@ -299,14 +297,6 @@ export default function RefImagePanel({
             </button>
             {url && (
               <>
-                <button
-                  onClick={() => path && onCropPortrait(path)}
-                  className="rounded-md border px-2 py-0.5 text-[11px]"
-                  style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-                  data-tip="この画像から顔を切り抜いてプロフィール画像にします"
-                >
-                  顔をプロフィール画像に
-                </button>
                 <button
                   onClick={() => void remove()}
                   className="rounded-md border px-2 py-0.5 text-[11px]"
