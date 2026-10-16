@@ -2751,9 +2751,9 @@ async def production_send(body: ProductionIn) -> StreamingResponse:
         return _sse_error_response(str(e))
     import auto_images
 
-    def image_hook(char_ids: list[str]):
-        # 制作で作った人物の参照画像とプロフィール画像(docs/design/image-gen.md §14)。設定がオフなら何もしない
-        return auto_images.run(store, char_ids, llm_base_url=base_url, ensure_comfy=comfy_mgr.ensure_running)
+    def image_hook(requests: list[dict[str, Any]]):
+        # 制作で作った人物・場所の画像と generate_images の予約(docs/design/image-gen.md §14)
+        return auto_images.run(store, requests, llm_base_url=base_url, ensure_comfy=comfy_mgr.ensure_running)
 
     return StreamingResponse(
         production_agent.stream(store, base_url, body.chat_id, body.message, body.execute, _schedule_audio_gc, policy=policy, selection=selection,

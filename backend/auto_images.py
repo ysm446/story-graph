@@ -1,14 +1,18 @@
-"""制作モードで人物を作ったときの画像の自動生成(docs/design/image-gen.md §14)。
+"""制作モードでの人物・場所の画像生成(docs/design/image-gen.md §14)。
 
-制作 LLM が `create_character` で人物を作ると、作業の終わりに人物ごとに
-外見 → 英語プロンプト(LLM)→ 参照画像(全身。ストックに入れて選択)→ プロフィール画像(顔のアップ)
-の順に描く。顔は参照画像を手本に画像編集ワークフローで描くので、全身像と同じ人物になる
+制作チャットの作業の終わりに、次の資料の画像をまとめて描く。
+
+- 制作 LLM が `create_character` / `create_place` で作った資料(設定のトグルがオンのときだけ。画像があれば飛ばす)
+- 制作 LLM が `generate_images` で予約した資料(作者の「〇〇の画像を作って」。設定に関わらず描き、
+  画像があっても描き直す。前の画像はストックに残る)
+
+人物は 外見 → 英語プロンプト(LLM)→ 参照画像(全身。ストックに入れて選択)→ プロフィール画像(顔のアップ)。
+顔は参照画像を手本に画像編集ワークフローで描くので、全身像と同じ人物になる
 (2026-10-16 ユーザー発案「顔画像だけ別で生成して作ってしまう」。切り抜きより顔の描き込みが良く、
-Pillow も顔検出も要らない)。
+Pillow も顔検出も要らない)。場所は 説明 → 英語プロンプト → 全景(横長。ストックに入れて選択)。
 
-- 設定 `comfy_auto_character_images`("1" でオン。アプリ単位)で切り替える。既定はオフ。
-- 画像は装飾専用。失敗しても人物の設定は残し、会話に知らせるだけ(例外を外へ出さない)。
-- 人物の確定後にまとめて走らせるのは、画像 1 枚に 10〜30 秒かかり、制作の流れを止めないため。
+- 画像は装飾専用。失敗しても資料は残し、会話に知らせるだけ(例外を外へ出さない)。
+- 確定の中で待たず作業の終わりにまとめるのは、1 件に 10〜60 秒かかり、制作の流れを止めないため。
 """
 
 from __future__ import annotations
@@ -22,7 +26,10 @@ import comfy
 import image_gen
 import llm
 
-SETTING_KEY = "comfy_auto_character_images"
+KINDS = ("character", "place")
+# 作った資料の画像を自動で描くか(アプリ単位。"1" でオン)
+SETTING_KEYS = {"character": "comfy_auto_character_images", "place": "comfy_auto_place_images"}
+SETTING_KEY = SETTING_KEYS["character"]
 
 # 顔(プロフィール画像)の共通指示。正方形で顔を大きく描く
 PORTRAIT_SUFFIX = (
@@ -35,8 +42,8 @@ PORTRAIT_REF_PROMPT = "close-up portrait of the person from image1, same face, s
 PORTRAIT_SIZE = 1024
 
 
-def enabled(settings: dict[str, str]) -> bool:
-    return (settings.get(SETTING_KEY) or "").strip() == "1"
+def enabled(settings: dict[str, str], kind: str = "character") -> bool:
+    return (settings.get(SETTING_KEYS[kind]) or "").strip() == "1"
 
 
 def portrait_workflow(
@@ -86,78 +93,122 @@ async def _write_asset(assets: str, data: bytes) -> str:
     return name
 
 
-def _label(char: dict[str, Any]) -> str:
-    return f"「{char.get('name') or '(無名)'}」"
+def _label(item: dict[str, Any]) -> str:
+    return f"「{item.get('name') or '(無名)'}」"
+
+
+def _has_image(kind: str, item: dict[str, Any]) -> bool:
+    if kind == "character":
+        return bool(item.get("ref_image_path") or item.get("portrait_path"))
+    return bool(item.get("image_path"))
+
+
+def _has_notes(kind: str, item: dict[str, Any]) -> bool:
+    keys = ("appearance", "profile") if kind == "character" else ("description", "atmosphere")
+    return any((item.get(k) or "").strip() for k in keys)
+
+
+def requests_for(created: list[tuple[str, str]], reserved: list[tuple[str, str]]) -> list[dict[str, Any]]:
+    """作業の終わりに描く一覧。created は制作で作った (kind, id)(設定がオンのときだけ描く)、
+    reserved は generate_images で予約した (kind, id)(必ず描く)。同じ資料は予約を優先し、順は最初に出た順。"""
+    order: list[tuple[str, str]] = []
+    explicit: set[tuple[str, str]] = set()
+    for key in [*created, *reserved]:
+        if key not in order:
+            order.append(key)
+    explicit.update(reserved)
+    return [{"kind": kind, "id": item_id, "explicit": (kind, item_id) in explicit} for kind, item_id in order]
+
+
+async def _prompt(messages: list[dict[str, Any]], base_url: str, label: str) -> str:
+    res = await llm.chat(messages, base_url=base_url, max_tokens=400, temperature=0.4, label=label)
+    prompt = image_gen._clean_prompt(res.get("content") or "")
+    if not prompt:
+        raise RuntimeError("画像プロンプトが空でした")
+    return prompt
+
+
+async def _draw_character(store: Any, settings: dict[str, str], char: dict[str, Any], *, assets: str, llm_base_url: str,
+                          comfy_base_url: str, variant: str) -> AsyncIterator[dict[str, Any]]:
+    label = _label(char)
+    yield {"stage": f"{label}の画像プロンプトを書いています…"}
+    prompt = await _prompt(image_gen.character_prompt_messages(char), llm_base_url, "auto_ref_image_prompt")
+    yield {"stage": f"{label}の参照画像を描いています…"}
+    ref_png, ref_seed = await image_gen.generate_character_image(settings, prompt, comfy_base_url=comfy_base_url, variant=variant)
+    ref_name = await _write_asset(assets, ref_png)
+    # 手動の「生成 → 決定」と同じ形でストックに入れて選択する(プロンプト・seed・組を 1 セットで)
+    media = store.add_media("character", char["id"], ref_name, prompt=prompt, seed=ref_seed, workflow=variant)
+    store.select_media(media["id"])
+    yield {"stage": f"{label}のプロフィール画像を描いています…"}
+    portrait_png, _ = await generate_portrait(settings, prompt, (ref_name, ref_png), comfy_base_url=comfy_base_url, variant=variant)
+    portrait_name = await _write_asset(assets, portrait_png)
+    store.update_character(char["id"], {"portrait_path": portrait_name, "portrait_source_path": None, "portrait_crop": None})
+    yield {"notice": f"{label}の参照画像とプロフィール画像を作りました。", "kind": "character", "id": char["id"]}
+
+
+async def _draw_place(store: Any, settings: dict[str, str], place: dict[str, Any], *, assets: str, llm_base_url: str,
+                      comfy_base_url: str, variant: str) -> AsyncIterator[dict[str, Any]]:
+    label = _label(place)
+    yield {"stage": f"{label}の画像プロンプトを書いています…"}
+    prompt = await _prompt(image_gen.place_prompt_messages(place), llm_base_url, "auto_place_image_prompt")
+    yield {"stage": f"{label}の画像を描いています…"}
+    png, seed = await image_gen.generate_place_image(settings, prompt, comfy_base_url=comfy_base_url, variant=variant)
+    name = await _write_asset(assets, png)
+    media = store.add_media("place", place["id"], name, prompt=prompt, seed=seed, workflow=variant)
+    store.select_media(media["id"])
+    yield {"notice": f"{label}の画像を作りました。", "kind": "place", "id": place["id"]}
 
 
 async def run(
     store: Any,
-    char_ids: list[str],
+    requests: list[dict[str, Any]],
     *,
     llm_base_url: str,
     ensure_comfy: Callable[[dict[str, str]], Awaitable[str]],
 ) -> AsyncIterator[dict[str, Any]]:
-    """人物ごとに参照画像とプロフィール画像を作る。
+    """requests(`requests_for` の形)の資料を順に描く。
 
-    流すもの: `{"stage": 進捗}` と、人物ごと(または全体)の `{"notice": 会話に残す文, "character_id": id | None}`。
-    設定がオフなら何も流さない。画像が既にある人物・外見もプロフィールも無い人物は飛ばす。
-    ComfyUI が起動できなければ 1 件の notice で終える。人物ごとの失敗はその人物の notice にして次へ進む。
+    流すもの: `{"stage": 進捗}` と、資料ごと(または全体)の `{"notice": 会話に残す文, "kind", "id"}`
+    (全体の知らせは kind / id が None)。自動の分は設定がオフ・画像が既にあるなら飛ばし、
+    外見(説明)が無い資料は知らせるだけ。ComfyUI が起動できなければ 1 件の notice で終える。
+    資料ごとの失敗はその資料の notice にして次へ進む。
     """
     settings = store.get_settings()
-    if not enabled(settings):
-        return
     assets = store.assets_dir()
     if assets is None:
         return
-    targets = []
-    for char_id in char_ids:
-        char = store.get_character(char_id)
-        if char is None or char.get("ref_image_path") or char.get("portrait_path"):
+    targets: list[tuple[str, dict[str, Any]]] = []
+    for req in requests:
+        kind = req["kind"]
+        if kind not in KINDS:
             continue
-        if not ((char.get("appearance") or "").strip() or (char.get("profile") or "").strip()):
-            yield {"notice": f"{_label(char)}は外見もプロフィールも書かれていないので、画像は作りませんでした。",
-                   "character_id": char_id}
+        item = getattr(store, f"get_{kind}")(req["id"])
+        if item is None:
             continue
-        targets.append(char)
+        if not req.get("explicit") and (not enabled(settings, kind) or _has_image(kind, item)):
+            continue
+        if not _has_notes(kind, item):
+            what = "外見もプロフィールも" if kind == "character" else "説明も雰囲気も"
+            yield {"notice": f"{_label(item)}は{what}書かれていないので、画像は作りませんでした。", "kind": kind, "id": item["id"]}
+            continue
+        targets.append((kind, item))
     if not targets:
         return
     yield {"stage": "画像生成の準備をしています(ComfyUI を起動中…)"}
     try:
         comfy_base_url = await ensure_comfy(settings)
-    except Exception as e:  # noqa: BLE001 — 画像は装飾なので、人物の設定だけ残して知らせる
-        yield {"notice": f"人物の画像を作れませんでした(ComfyUI を起動できません: {e})。人物の設定は残しています。",
-               "character_id": None}
+    except Exception as e:  # noqa: BLE001 — 画像は装飾なので、資料だけ残して知らせる
+        yield {"notice": f"画像を作れませんでした(ComfyUI を起動できません: {e})。資料の設定は残しています。",
+               "kind": None, "id": None}
         return
     variant = image_gen.resolve_variant(settings, None)["id"]
-    for char in targets:
-        label = _label(char)
+    for kind, item in targets:
+        draw = _draw_character if kind == "character" else _draw_place
         try:
-            yield {"stage": f"{label}の画像プロンプトを書いています…"}
-            res = await llm.chat(
-                image_gen.character_prompt_messages(char), base_url=llm_base_url,
-                max_tokens=400, temperature=0.4, label="auto_ref_image_prompt",
-            )
-            prompt = image_gen._clean_prompt(res.get("content") or "")
-            if not prompt:
-                raise RuntimeError("画像プロンプトが空でした")
-            yield {"stage": f"{label}の参照画像を描いています…"}
-            ref_png, ref_seed = await image_gen.generate_character_image(
-                settings, prompt, comfy_base_url=comfy_base_url, variant=variant
-            )
-            ref_name = await _write_asset(assets, ref_png)
-            # 手動の「生成 → 決定」と同じ形でストックに入れて選択する(プロンプト・seed・組を 1 セットで)
-            media = store.add_media("character", char["id"], ref_name, prompt=prompt, seed=ref_seed, workflow=variant)
-            store.select_media(media["id"])
-            yield {"stage": f"{label}のプロフィール画像を描いています…"}
-            portrait_png, _ = await generate_portrait(
-                settings, prompt, (ref_name, ref_png), comfy_base_url=comfy_base_url, variant=variant
-            )
-            portrait_name = await _write_asset(assets, portrait_png)
-            store.update_character(
-                char["id"], {"portrait_path": portrait_name, "portrait_source_path": None, "portrait_crop": None}
-            )
-            yield {"notice": f"{label}の参照画像とプロフィール画像を作りました。", "character_id": char["id"]}
+            async for event in draw(store, settings, item, assets=assets, llm_base_url=llm_base_url,
+                                    comfy_base_url=comfy_base_url, variant=variant):
+                yield event
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001
-            yield {"notice": f"{label}の画像を作れませんでした: {e}。人物の設定は残しています。", "character_id": char["id"]}
+            yield {"notice": f"{_label(item)}の画像を作れませんでした: {e}。資料の設定は残しています。", "kind": kind, "id": item["id"]}

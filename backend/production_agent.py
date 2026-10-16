@@ -25,6 +25,7 @@ import production_library
 import production_chapters
 import production_continuity
 import production_guard
+import auto_images
 from store import Store
 from generated_text import normalize_scene_text
 from production_policy import CONTENT_FIELDS, ProductionPolicy
@@ -38,6 +39,7 @@ TOOL_LABELS = {
     "branch_scene": "分岐シーンを追加しています…",
     "reconnect_scene": "シーンをつなぎ替えています…",
     "update_work_memory": "作業メモを更新しています…",
+    "generate_images": "画像の生成を予約しています…",
     "update_scene": "シーンを編集しています…", "delete_scene": "シーンを削除しています…",
     "patch_scene": "シーンの指定箇所を編集しています…",
     "read_library": "資料庫を読んでいます…",
@@ -308,6 +310,17 @@ def tools(allow_write: bool, memory: bool = True):
                 "content": {"type": "string"}, "reason": {"type": "string"}
             }, "required": ["content", "reason"], "additionalProperties": False}
         }})
+    result.append({"type": "function", "function": {
+        "name": "generate_images",
+        "description": "資料庫の人物・場所の画像を描く予約をする。作者が画像を頼んだときだけ使う。人物は外見から参照画像(全身)とプロフィール画像(顔)、"
+                       "場所は説明から全景を描く。実際に描くのは今回の作業の終わり(1件 30〜60 秒)で、予約の結果はすぐには返らない。"
+                       "画像がある資料でも頼まれたら描き直す(前の画像はストックに残る)。外見(説明)が空の資料は描けないので、先に資料を補う。",
+        "parameters": {"type": "object", "properties": {
+            "kind": {"type": "string", "enum": [*auto_images.KINDS], "description": "character(人物)か place(場所)"},
+            "ids": {"type": "array", "items": {"type": "string"}, "description": "read_libraryで確認した資料のID"},
+            "reason": {"type": "string", "description": "依頼に対する理由"},
+        }, "required": ["kind", "ids", "reason"], "additionalProperties": False}
+    }})
     scene = {
         "title": {"type": "string"},
         "beat": {"type": "string", "description": "シーンの本文全文"},
@@ -569,6 +582,7 @@ EXECUTE_RULES = (
     "資料の登録・編集では、作者が明記した各項目を対応する引数へ漏れなく入れてください。場所の説明の引数はplace_description（保存結果ではdescription）、雰囲気はatmosphereです。"
     "操作結果のafterを依頼された項目と照合し、抜けた設定があればupdateで補ってから完了を報告してください。"
     "新しい人物・場所をシーンに使うときは先に資料庫へ登録し、返されたIDをcast/locationに指定してください。"
+    "作者が人物・場所の画像を頼んだら、read_libraryでIDを確かめてgenerate_imagesで予約してください(今回の作業の終わりに描かれます)。頼まれていない画像は予約しません。"
     "使用中の資料の削除が拒否されたら、参照や会話を勝手に消して回避せず作者へ報告してください。"
     "派閥・画像・音声の編集には未対応です。マーカーは変更しません。"
     "ツール結果と最新の接続図を使い、同じ変更を繰り返さないでください。"
@@ -669,6 +683,7 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
     monitor = production_guard.RunMonitor()
     recent_results = []
     changes = []
+    reserved_images = []  # generate_images で予約した (kind, id)。作業の終わりに描く
     snapshot = None
     completed = False
     finished_outcome = None  # 判断ループを抜けた理由(completed / stalled / empty / truncated)。None のまま尽きたら limit
@@ -847,7 +862,7 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
                 completed = True
                 break
             # 相談中の編集試行は再判断ループへ返さず、案内を保存して入力待ちへ戻す。
-            if not execute and any(c.get("function", {}).get("name") in WRITE_TOOLS | {"update_work_memory"} for c in calls):
+            if not execute and any(c.get("function", {}).get("name") in WRITE_TOOLS | {"update_work_memory", "generate_images"} for c in calls):
                 notice = "現在は相談モードのため、変更は行っていません。実行する場合は「制作を実行」に切り替えて、変更依頼をもう一度送ってください。"
                 history.append({"role": "assistant", "content": notice})
                 store.save_chat_messages(chat_id, history)
@@ -896,6 +911,32 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
                         store.save_chat_messages(chat_id, history)
                         yield _sse({"memory": payload})
                         payload = {"revision": payload["revision"], "saved": True}
+                        monitor.note_success()
+                    elif name == "generate_images":
+                        if not execute:
+                            raise ValueError("相談中は画像を作れません。「制作を実行」から依頼してください")
+                        kind = args.get("kind")
+                        ids = args.get("ids")
+                        if kind not in auto_images.KINDS or not isinstance(ids, list) or not ids or not all(isinstance(i, str) for i in ids):
+                            raise ValueError("kind(character / place)と資料のIDの配列を指定してください")
+                        items = []
+                        for item_id in ids:
+                            item = getattr(store, f"get_{kind}")(item_id)
+                            if item is None:
+                                raise ValueError(f"指定した資料がありません: {item_id}。read_libraryでIDを確認してください")
+                            if not auto_images._has_notes(kind, item):
+                                raise ValueError(f"「{item['name']}」は{'外見もプロフィールも' if kind == 'character' else '説明も雰囲気も'}空なので描けません。先に資料を補ってください")
+                            items.append(item)
+                            if (kind, item_id) not in reserved_images:
+                                reserved_images.append((kind, item_id))
+                        names = "、".join(f"「{item['name']}」" for item in items)
+                        notice = f"画像の生成を予約しました: {names}(作業の終わりに描きます)"
+                        history.append({"role": "assistant", "content": notice, "image_request": {"kind": kind, "ids": ids}})
+                        store.save_chat_messages(chat_id, history)
+                        yield _sse({"delta": notice})
+                        yield _sse({"response_end": True})
+                        payload = {"reserved": [{"id": item["id"], "name": item["name"]} for item in items],
+                                   "note": "画像は今回の作業の終わりに描かれ、終了報告の後に結果が出ます。報告では画像が描かれた・入ったとは書かず、終了後に描かれると伝えてください"}
                         monitor.note_success()
                     elif name in WRITE_TOOLS:
                         if not execute:
@@ -1010,20 +1051,21 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
             history.append({"role": "assistant", "content": notice, "outcome": outcome})
             yield _sse({"delta": notice})
             yield _sse({"response_end": True, "active_node": None})
-        # 制作で作った人物の画像(参照画像とプロフィール画像)は、確定した変更の後にまとめて描く
-        # (auto_images.run。設定がオフなら何も流れない)。失敗しても人物は残し、会話に知らせるだけ。
-        created_chars = [c["entity_id"] for c in changes if c.get("action") == "create_character"] if execute else []
-        if created_chars and image_hook is not None:
+        # 制作で作った人物・場所の画像と generate_images の予約は、確定した変更の後にまとめて描く
+        # (auto_images.run。自動の分は設定がオフなら飛ぶ)。失敗しても資料は残し、会話に知らせるだけ。
+        created = [(c["entity_type"], c["entity_id"]) for c in changes if c.get("action") in ("create_character", "create_place")] if execute else []
+        image_requests = auto_images.requests_for(created, reserved_images) if execute else []
+        if image_requests and image_hook is not None:
             try:
-                async with aclosing(image_hook(created_chars)) as image_events:
+                async with aclosing(image_hook(image_requests)) as image_events:
                     async for event in image_events:
                         if "stage" in event:
                             yield _sse({"stage": event["stage"], "active_node": None})
                             continue
-                        if event.get("character_id") and store.get_character(event["character_id"]) is not None:
-                            # 画面は image_changed で人物を読み直し(アイコンが差し替わる)、作業対象を追っていればその人物を開く
-                            yield _sse({"image_changed": {"kind": "character", "id": event["character_id"]},
-                                        "active_library": {"kind": "character", "id": event["character_id"]}})
+                        if event.get("id") and getattr(store, f"get_{event['kind']}")(event["id"]) is not None:
+                            # 画面は image_changed で資料を読み直し(アイコンが差し替わる)、作業対象を追っていればその資料を開く
+                            yield _sse({"image_changed": {"kind": event["kind"], "id": event["id"]},
+                                        "active_library": {"kind": event["kind"], "id": event["id"]}})
                         history.append({"role": "assistant", "content": event["notice"], "auto_image": True})
                         store.save_chat_messages(chat_id, history)
                         yield _sse({"delta": event["notice"]})
@@ -1031,7 +1073,7 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
             except (asyncio.CancelledError, GeneratorExit):
                 raise
             except Exception as e:  # noqa: BLE001 — 画像は装飾。人物の設定と確定済みの変更は残す
-                notice = f"人物の画像の自動生成に失敗しました。人物の設定は残しています: {e}"
+                notice = f"画像の生成に失敗しました。資料の設定と確定済みの変更は残しています: {e}"
                 history.append({"role": "assistant", "content": notice, "auto_image": True})
                 store.save_chat_messages(chat_id, history)
                 yield _sse({"delta": notice})
