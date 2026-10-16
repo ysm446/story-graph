@@ -300,7 +300,8 @@ def init_schema(conn: sqlite3.Connection) -> None:
         # 章ビューでの章カードの手動配置(NULL = 導出位置。正史章は専用レーン、島章は先頭シーンの位置)
         "ALTER TABLE groups ADD COLUMN pos_x REAL",
         "ALTER TABLE groups ADD COLUMN pos_y REAL",
-        # キャラクタービュー「人物の鎖」での手動配置(NULL = 自動配置)。フローチャートの pos_x / pos_y とは別
+        # キャラクタービュー「人物の鎖」での手動配置だった列。人物の鎖は 2026-10-16 に廃止し、今は使っていない
+        # (既存の DB との整合のため、列の追加だけ残す)
         "ALTER TABLE nodes ADD COLUMN chain_x REAL",
         "ALTER TABLE nodes ADD COLUMN chain_y REAL",
         "ALTER TABLE characters ADD COLUMN chain_x REAL",

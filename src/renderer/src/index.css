@@ -671,24 +671,9 @@ input[type='range']:focus-visible {
   height: 10px;
   transform: translate(-50%, -50%);
   border-radius: 50%;
-  /* 点の色は --handle-color で差し替えられる(人物の鎖では人物の色) */
+  /* 点の色は --handle-color で差し替えられる */
   background: var(--handle-color, #6a728f);
   transition: background 0.15s, width 0.15s, height 0.15s;
-}
-
-/* 人物の鎖(CastChainGraph)はピンが人物ごとに並ぶので、点を一回り小さくする(当たり判定は同じ 22px) */
-.cast-chain .react-flow__handle {
-  width: 8px;
-  height: 8px;
-  min-width: 8px;
-  min-height: 8px;
-}
-.cast-chain .react-flow__handle::before {
-  inset: -7px;
-}
-.cast-chain .react-flow__handle::after {
-  width: 8px;
-  height: 8px;
 }
 
 .react-flow .react-flow__handle:hover::after,

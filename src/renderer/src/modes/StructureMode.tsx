@@ -34,7 +34,6 @@ import { defaultProductionPolicy } from '../ProductionPolicyPanel'
 import type { ProductionPolicy } from '../api'
 import FactTimeline from '../FactTimeline'
 import CharacterTimeline from '../CharacterTimeline'
-import CastChainGraph from '../CastChainGraph'
 import CharacterEditor from './CharacterEditor'
 import CharAvatar from '../CharAvatar'
 import { Icon } from '../icons'
@@ -60,7 +59,7 @@ import type {
   StoryGraph,
   StoryNode
 } from '../types'
-import { beatDraftCache, deleteBeatDraft, setBeatDraft } from './structure/beatDrafts'
+import { beatDraftCache, deleteBeatDraft } from './structure/beatDrafts'
 import {
   avoidingOverlap,
   COLUMN_GAP_X,
@@ -117,17 +116,17 @@ function StructureModeInner({
   // 章がひとつも無い間は常に flat(書き始めの体験を変えない)
   const [chapterView, setChapterView] = useState<string>('chapters')
   // キャラクタービュー。フローチャートの上に重ねて出す(docs/plan/plan.md)。
-  // null = 出さない、table = 出番表(CharacterTimeline)、chain = 人物の鎖(CastChainGraph)
-  const [castView, setCastView] = useState<null | 'table' | 'chain'>(null)
-  // 人物の鎖でクリックした人物(詳細欄のキャラタブに出す)。seq は同じ人物の連打でも効かせるため
+  // null = 出さない、table = 出番表(CharacterTimeline)
+  const [castView, setCastView] = useState<null | 'table'>(null)
+  // クリックした人物(詳細欄のキャラタブに出す)。seq は同じ人物の連打でも効かせるため
   const [focusChar, setFocusChar] = useState<{ id: string; seq: number } | null>(null)
-  /** キャラクター(鎖のノード・登場人物の行・フローチャートのカードの札)をクリック → 詳細欄を人物専用の表示にする
+  /** キャラクター(出番表の人物・フローチャートのカードの札)をクリック → 詳細欄を人物専用の表示にする
    *  (プロフィール / 状態 / 関係図 / 事実の履歴。シーンや清書のタブは出さない)。
    *  フローチャートのノードの data にも渡すので、他の state より先に定義しておく */
   // focusNodeOnCanvas は後ろで定義される(React Flow の instance が要る)ので、ref を介して呼ぶ
   const focusNodeOnCanvasRef = useRef<(nodeId: string) => void>(() => undefined)
   const ignoreEmptySelection = useRef(false)
-  const handleSelectChainChar = useCallback((charId: string, sceneId?: string): void => {
+  const handleSelectCharacter = useCallback((charId: string, sceneId?: string): void => {
     // どのシーンの札を押したかが分かるときは、そのシーンも選ぶ(人物の詳細の「時点」になる)。
     // 詳細欄は人物専用の表示のまま(onNodeClick を通らないので scene には戻らない)
     if (sceneId) focusNodeOnCanvasRef.current(sceneId)
@@ -147,7 +146,7 @@ function StructureModeInner({
   const focusDoneRef = useRef(!focusNodeId)
   const [inspectorTab, setInspectorTab] = useState<'beat' | 'render' | 'char' | 'graph' | 'facts'>('beat')
   // 詳細欄の対象。scene = 選択中のシーン(章・マーカー)のタブ、character = 人物専用のタブ
-  // (人物の鎖でキャラクターや登場人物の行をクリックすると character、シーンを選ぶと scene に戻る)
+  // (人物をクリックすると character、シーンを選ぶと scene に戻る)
   const [inspectorFocus, setInspectorFocus] = useState<'scene' | 'character'>('scene')
   const [libraryCharId, setLibraryCharId] = useState<string | null>(null)
   const [charTab, setCharTab] = useState<'profile' | 'state' | 'graph' | 'facts'>('profile')
@@ -469,7 +468,7 @@ function StructureModeInner({
             d.storyNode === n &&
             d.connected === connected &&
             d.characters === charMap &&
-            d.onSelectChar === handleSelectChainChar &&
+            d.onSelectChar === handleSelectCharacter &&
             d.busy === busy &&
             samePlace &&
             existing.position.x === nextPosition.x &&
@@ -494,12 +493,12 @@ function StructureModeInner({
             characters: charMap,
             place: eff ? { name: placeName as string, inherited: eff.inherited } : undefined,
             busy,
-            onSelectChar: handleSelectChainChar
+            onSelectChar: handleSelectCharacter
           }
         }
       })
     })
-  }, [graphNodes, graphEdges, charMap, placeMap, effectiveLocations, busyNodeIds, handleSelectChainChar])
+  }, [graphNodes, graphEdges, charMap, placeMap, effectiveLocations, busyNodeIds, handleSelectCharacter])
 
   // 実測高さが揃ったら、まだ置き場所が決まっていないノードだけ位置を組み直す
   // (初回マウント直後は高さ未測定のため、測定後に一度リフローする)。
@@ -1863,18 +1862,6 @@ function StructureModeInner({
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [workspace.mode, castView, reactFlow, displayNodes, selectedId, selectedEdgeId, detachEdge, deleteNodeById, deleteNodes, navigateSelection, productionEditingLocked, copyNodes, pasteNodes, nodeClipboard])
 
-  /** 人物の鎖でノードを動かした → 配置を保存する(画面は先に書き換える) */
-  const handleChainPositions = useCallback(
-    (scenes: Array<{ id: string; x: number; y: number }>, chars: Array<{ id: string; x: number; y: number }>): void => {
-      const sceneMap = new Map(scenes.map((p) => [p.id, p]))
-      const charMap = new Map(chars.map((p) => [p.id, p]))
-      if (scenes.length) setGraphNodes((prev) => prev.map((n) => (sceneMap.has(n.id) ? { ...n, chain_x: sceneMap.get(n.id)!.x, chain_y: sceneMap.get(n.id)!.y } : n)))
-      if (chars.length) setCharacters((prev) => prev.map((c) => (charMap.has(c.id) ? { ...c, chain_x: charMap.get(c.id)!.x, chain_y: charMap.get(c.id)!.y } : c)))
-      void api.setChainPositions(scenes, chars).catch((e) => setGenStatus(`配置を保存できません: ${String(e)}`))
-    },
-    []
-  )
-
   /** キャラクタービューからシーンを選んだとき: 詳細欄を人物専用の表示からシーンの表示に戻す。
    *  シーン側のタブ(キャラ・関係図・事実)は前のまま(選んだシーンの内容に変わる) */
   const selectSceneFromView = useCallback(
@@ -1884,15 +1871,6 @@ function StructureModeInner({
     },
     [focusNodeOnCanvas]
   )
-
-  /** 人物の鎖でシーンをダブルクリック → フローチャートに戻ってそのシーンへ寄せる
-   *  (章に畳まれていれば章の中まで開く。pendingFocusId の仕組みを使う) */
-  const openSceneInFlow = useCallback((nodeId: string): void => {
-    setCastView(null)
-    setInspectorFocus('scene')
-    focusDoneRef.current = false
-    setPendingFocusId(nodeId)
-  }, [])
 
   // 人物専用の表示で見ている人物と、その「時点」のシーン。選択中のシーンにその人物が居ればそのシーン、
   // 居なければ正史で最後に登場したシーン(どこにも居なければ null = 状態・関係図・事実は出せない)
@@ -1907,26 +1885,6 @@ function StructureModeInner({
     return [...canonPath].reverse().find((n) => (n.cast ?? []).includes(libraryCharId)) ?? null
   }, [libraryCharId, selectedId, graphNodes, canonPath])
   const charPointPath = useMemo(() => (charPointNode ? pathToNode(charPointNode.id) : null), [charPointNode, pathToNode])
-
-  /** 人物の鎖で線を差す / 消す → そのシーンの cast を付け替えて保存する。
-   *  画面は先に書き換え(楽観更新)、保存後に読み直す。詳細欄に未保存の下書きが
-   *  残っていれば、その cast も合わせる(あとで保存したときに巻き戻さないように) */
-  const handleCastChange = useCallback(
-    (sceneId: string, charId: string, op: 'add' | 'remove'): void => {
-      const node = graphNodes.find((n) => n.id === sceneId)
-      if (!node) return
-      const current = node.cast ?? []
-      const cast = op === 'add' ? (current.includes(charId) ? current : [...current, charId]) : current.filter((c) => c !== charId)
-      setGraphNodes((prev) => prev.map((n) => (n.id === sceneId ? { ...n, cast } : n)))
-      const draft = beatDraftCache.get(sceneId)
-      if (draft) setBeatDraft(sceneId, { ...draft, cast })
-      void api
-        .updateNode(sceneId, { cast })
-        .then(() => reload())
-        .catch((e) => setGenStatus(`登場人物を保存できません: ${String(e)}`))
-    },
-    [graphNodes, reload]
-  )
 
   // Ctrl+S: 選択中のシーンのうち、未保存の下書きが残っているものをまとめて保存する。
   // 下書きはシーンタブを離れてもシーンごとに残る(beatDraftCache)ので、どのタブを開いていても、
@@ -2961,69 +2919,21 @@ function StructureModeInner({
                   ⊞ フローチャート
                 </button>
                 <span className="shrink-0 whitespace-nowrap text-[13px] font-medium" style={{ color: 'var(--text)' }}>キャラクタービュー</span>
-                <div className="flex shrink-0 overflow-hidden rounded-md border" style={{ borderColor: 'var(--border-strong)' }}>
-                  {([['table', '出番表'], ['chain', '人物の鎖']] as const).map(([value, label]) => (
-                    <button
-                      key={value}
-                      onClick={() => setCastView(value)}
-                      className="whitespace-nowrap px-2.5 py-0.5 text-[12px]"
-                      style={castView === value ? { background: 'var(--accent-soft)', color: 'var(--text)' } : { color: 'var(--text-faint)' }}
-                      data-tip={value === 'table' ? '人物ごとの出番を表にして見る' : '人物の線がシーンを通り抜けていくノード図。線を差して登場させる'}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
                 <span className="min-w-0 truncate text-[11px]" style={{ color: 'var(--text-faint)' }}>
-                  {castView === 'chain'
-                    ? productionEditingLocked
-                      ? '制作中は見るだけです(線の差し替えは制作が終わってから)'
-                      : 'キャラクターやシーンの出口から入口へ線を引くと登場。線を選んで Delete かダブルクリックで外す。灰色の点線はシーンの順番(見るだけ。シーンをダブルクリックでフローチャートへ)'
-                    : '横がシーン、縦が人物。縦線でつながっているセルは同じシーンに一緒に登場しています'}
+                  横がシーン、縦が人物。縦線でつながっているセルは同じシーンに一緒に登場しています
                 </span>
-                {castView === 'chain' && !productionEditingLocked && (
-                  <button
-                    onClick={() => {
-                      if (!window.confirm('人物の鎖の配置をすべて自動配置に戻します。よろしいですか?')) return
-                      void api.resetChainLayout().then(() => reload()).catch((e) => setGenStatus(`配置を戻せません: ${String(e)}`))
-                    }}
-                    className="ml-auto shrink-0 rounded-md border px-2 py-0.5 text-[11px]"
-                    style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-                    data-tip="手で動かした配置を捨てて、自動配置(左にキャラクター、正史順にシーン)に戻す"
-                  >
-                    ⟲ 整列
-                  </button>
-                )}
               </div>
-              {castView === 'chain' ? (
-                <div data-cast-chain className="min-h-0 flex-1">
-                  <CastChainGraph
-                    path={canonPath}
-                    characters={characters}
-                    groups={groups}
-                    selectedNodeId={selectedId}
-                    selectedCharId={inspectorFocus === 'character' ? libraryCharId : null}
-                    readOnly={productionEditingLocked}
-                    onSelectNode={selectSceneFromView}
-                    onSelectChar={handleSelectChainChar}
-                    onOpenInFlow={openSceneInFlow}
-                    onCastChange={handleCastChange}
-                    onPositionsChange={handleChainPositions}
-                  />
-                </div>
-              ) : (
-                <CharacterTimeline
-                  path={canonPath}
-                  hiddenCount={graphNodes.filter((n) => !n.kind).length - canonPath.length}
-                  characters={characters}
-                  groups={groups}
-                  selectedNodeId={selectedId}
-                  selectedChapterId={selectedChapterId}
-                  onSelectNode={selectSceneFromView}
-                  onSelectChar={handleSelectChainChar}
-                  onSelectChapter={(groupId) => selectSceneFromView(`chapter:${groupId}`)}
-                />
-              )}
+              <CharacterTimeline
+                path={canonPath}
+                hiddenCount={graphNodes.filter((n) => !n.kind).length - canonPath.length}
+                characters={characters}
+                groups={groups}
+                selectedNodeId={selectedId}
+                selectedChapterId={selectedChapterId}
+                onSelectNode={selectSceneFromView}
+                onSelectChar={handleSelectCharacter}
+                onSelectChapter={(groupId) => selectSceneFromView(`chapter:${groupId}`)}
+              />
             </div>
           )}
           {/* 右クリックメニュー: 選択したシーンへの一括操作。説明はホバーのツールチップ、
@@ -3483,7 +3393,7 @@ function StructureModeInner({
               <>
                 {/* 人物専用の表示: 誰を見ているかを先頭に出し、タブは人物のもの(シーン・清書は出さない) */}
                 <span className="mr-2 flex min-w-0 items-center gap-1.5 text-[12px] font-medium" style={{ color: 'var(--text)' }}
-                  data-tip="人物の鎖で選んだ人物。シーンを選ぶとシーンの表示に戻ります">
+                  data-tip="選んだ人物。シーンを選ぶとシーンの表示に戻ります">
                   <CharAvatar char={focusCharacter} size={20} />
                   <span className="max-w-40 truncate">{focusCharacter.name}</span>
                 </span>
@@ -3549,7 +3459,7 @@ function StructureModeInner({
                 <div className="pt-8 text-center text-[12px]" style={{ color: 'var(--text-faint)' }}>
                   {focusCharacter.name}はまだ正史のシーンに登場していません。
                   <br />
-                  人物の鎖でシーンの入口へ線を引くと、その時点の{charTab === 'state' ? '状態' : charTab === 'graph' ? '関係' : '事実'}が見られます
+                  シーンの登場人物に加えると、その時点の{charTab === 'state' ? '状態' : charTab === 'graph' ? '関係' : '事実'}が見られます
                 </div>
               ) : (
                 <>

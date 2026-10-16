@@ -32,7 +32,7 @@ export function CharTab({
   memoryContents: Record<string, MemorySource>
   onChanged: () => void
   onSelectNode: (nodeId: string) => void
-  /** 外から人物を指定する(人物の鎖でキャラクターをクリックしたとき)。
+  /** 外から人物を指定する(出番表やカードの札で人物をクリックしたとき)。
    *  同じ人物を続けて指しても効くよう、押すたびに増える番号を添える */
   focusChar?: { id: string; seq: number } | null
   /** 人物を固定する(左の登場人物の一覧を出さない)。詳細欄の人物専用の表示で使う */

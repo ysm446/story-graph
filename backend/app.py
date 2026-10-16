@@ -846,17 +846,6 @@ class PositionsIn(BaseModel):
     positions: list[NodePositionIn]
 
 
-class ChainPositionIn(BaseModel):
-    id: str
-    x: float | None = None  # None = 自動配置に戻す
-    y: float | None = None
-
-
-class ChainPositionsIn(BaseModel):
-    nodes: list[ChainPositionIn] = Field(default_factory=list)
-    characters: list[ChainPositionIn] = Field(default_factory=list)
-
-
 class NodeImageIn(BaseModel):
     image_path: str | None = None
 
@@ -1042,25 +1031,6 @@ async def set_node_positions(body: PositionsIn) -> dict[str, int]:
     """
     updated = store.set_node_positions([(p.id, p.x, p.y) for p in body.positions])
     return {"updated": updated}
-
-
-@app.post("/layout/chain-positions")
-async def set_chain_positions(body: ChainPositionsIn) -> dict[str, int]:
-    """人物の鎖(キャラクタービュー)でのノードの配置を保存する。
-
-    フローチャートの配置(/layout/positions)とは別の列に持つ。
-    シーンとキャラクターの両方を 1 リクエストでまとめて更新する。
-    """
-    updated = store.set_chain_positions(
-        [(p.id, p.x, p.y) for p in body.nodes], [(p.id, p.x, p.y) for p in body.characters]
-    )
-    return {"updated": updated}
-
-
-@app.post("/layout/chain-reset")
-async def reset_chain_layout() -> dict[str, str]:
-    store.reset_chain_positions()
-    return {"status": "ok"}
 
 
 @app.post("/layout/reset")

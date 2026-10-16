@@ -163,16 +163,6 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ positions })
     }),
-  // 人物の鎖(キャラクタービュー)の配置。シーンとキャラクターをまとめて保存する(x / y が null で自動配置に戻す)
-  setChainPositions: (
-    nodes: Array<{ id: string; x: number | null; y: number | null }>,
-    characters: Array<{ id: string; x: number | null; y: number | null }>
-  ) =>
-    request<{ updated: number }>('/layout/chain-positions', {
-      method: 'POST',
-      body: JSON.stringify({ nodes, characters })
-    }),
-  resetChainLayout: () => request<unknown>('/layout/chain-reset', { method: 'POST' }),
   setNodeImage: (id: string, imagePath: string | null) =>
     request<unknown>(`/nodes/${id}/image`, { method: 'POST', body: JSON.stringify({ image_path: imagePath }) }),
   // このシーンだけの清書の目安の字数(null / 0 で共通の設定に従う)。

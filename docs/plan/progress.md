@@ -1,9 +1,11 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-07-24 22:38
-更新日時: 2026-10-16 02:24
+更新日時: 2026-10-16 16:31
 
 ## 現在の状態
+
+- 2026-10-16 16:31 **人物の鎖を削除**(ユーザー依頼「やはり使いづらい」)。`CastChainGraph.tsx` を削除し、`StructureMode.tsx` から出番表 / 人物の鎖の切替・「⟲ 整列」・`handleChainPositions` / `handleCastChange` / `openSceneInFlow` を外した(`castView` は `null | 'table'`)。人物の選択は `handleSelectChainChar` → `handleSelectCharacter` に改名して、出番表のセルとフローチャートのカードの札で使い続ける。API の `/layout/chain-positions`・`/layout/chain-reset`、`store.set_chain_positions` / `reset_chain_positions`、`.cast-chain` の CSS、型の `chain_x / chain_y` も削除。DB の `chain_x / chain_y` 列は既存 DB との整合のため追加の移行だけ残した(今は読み書きしない)。`--cast` の鎖の検証は、出番表のセルから人物専用の表示(プロフィールの保存・状態・事実の履歴)を確かめる形に置き換えた(フローチャートの札の確認は「⊞ 全シーン」にしてから)。検証: typecheck・build 成功、pytest 675 件成功、`--cast` 全項目成功、既定の検証は 58 項目 + 既知の 1 項目で停止。
 
 - 2026-10-16 02:24 **関係図の矢印を細く・矢じりを小さく**(ユーザー依頼。太さの係数はユーザー指定の ×2)。`RelationGraph.tsx` の線の太さ `1 + |score| × 3` → `× 2`(1〜3px)、矢じりは太さの 4.5 倍 → 長さ 6 + 太さ・幅 5 + 太さ。`--relations`・`--tabs` 23 項目成功、スクリーンショット目視。
 
