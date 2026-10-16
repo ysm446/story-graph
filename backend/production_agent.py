@@ -312,12 +312,13 @@ def tools(allow_write: bool, memory: bool = True):
         }})
     result.append({"type": "function", "function": {
         "name": "generate_images",
-        "description": "資料庫の人物・場所の画像を描く予約をする。作者が画像を頼んだときだけ使う。人物は外見から参照画像(全身)とプロフィール画像(顔)、"
-                       "場所は説明から全景を描く。実際に描くのは今回の作業の終わり(1件 30〜60 秒)で、予約の結果はすぐには返らない。"
-                       "画像がある資料でも頼まれたら描き直す(前の画像はストックに残る)。外見(説明)が空の資料は描けないので、先に資料を補う。",
+        "description": "人物・場所の画像やシーンの挿絵を描く予約をする。作者が画像を頼んだときだけ使う。人物は外見から参照画像(全身)とプロフィール画像(顔)、"
+                       "場所は説明から全景、シーンは本文・登場人物・場所から場面の挿絵(参照画像のある人物を手本にする)を描く。"
+                       "実際に描くのは今回の作業の終わり(1件 15〜60 秒)で、予約の結果はすぐには返らない。"
+                       "画像がある資料・シーンでも頼まれたら描き直す(前の画像はストックに残る)。外見(説明・本文)が空だと描けないので、先に補う。",
         "parameters": {"type": "object", "properties": {
-            "kind": {"type": "string", "enum": [*auto_images.KINDS], "description": "character(人物)か place(場所)"},
-            "ids": {"type": "array", "items": {"type": "string"}, "description": "read_libraryで確認した資料のID"},
+            "kind": {"type": "string", "enum": [*auto_images.KINDS], "description": "character(人物)/ place(場所)/ scene(シーンの挿絵)"},
+            "ids": {"type": "array", "items": {"type": "string"}, "description": "read_libraryで確認した資料のID、またはシーンのID(node_id)"},
             "reason": {"type": "string", "description": "依頼に対する理由"},
         }, "required": ["kind", "ids", "reason"], "additionalProperties": False}
     }})
@@ -582,8 +583,8 @@ EXECUTE_RULES = (
     "資料の登録・編集では、作者が明記した各項目を対応する引数へ漏れなく入れてください。場所の説明の引数はplace_description（保存結果ではdescription）、雰囲気はatmosphereです。"
     "操作結果のafterを依頼された項目と照合し、抜けた設定があればupdateで補ってから完了を報告してください。"
     "新しい人物・場所をシーンに使うときは先に資料庫へ登録し、返されたIDをcast/locationに指定してください。"
-    "このアプリは人物・場所の画像をComfyUIで描けます。『画像を生成する機能は無い』と答えないでください。"
-    "作者が人物・場所の画像を頼んだら、read_libraryでIDを確かめてgenerate_imagesで予約してください(今回の作業の終わりに描かれます)。"
+    "このアプリは人物・場所の画像とシーンの挿絵をComfyUIで描けます。『画像を生成する機能は無い』と答えないでください。"
+    "作者が人物・場所の画像を頼んだらread_libraryでIDを確かめて、シーンの挿絵を頼んだらそのシーンのIDで、generate_imagesで予約してください(今回の作業の終わりに描かれます)。"
     "対象が資料庫に無ければ、依頼や本文から外見・説明を書いて先に登録し、そのIDで予約します。頼まれていない画像は予約しません。"
     "使用中の資料の削除が拒否されたら、参照や会話を勝手に消して回避せず作者へ報告してください。"
     "派閥・画像・音声の編集には未対応です。マーカーは変更しません。"
@@ -600,7 +601,7 @@ CONSULT_RULES = (
     "不足情報があれば質問して待ってください。切替案内だけで変更案を省略したり、同じ情報取得を繰り返したり、作業を開始すると宣言したりしないでください。"
     "相談モードのまま賛成や実行の返事が届いても編集せず、案と切替案内を返してください。"
     "質問や構成の相談には必要な情報を読んで答え、回答後は次の入力を待ってください。"
-    "人物・場所の画像はこのアプリで描けます(制作を実行のときだけ)。画像を頼まれたら『画像は作れない』と答えず、"
+    "人物・場所の画像とシーンの挿絵はこのアプリで描けます(制作を実行のときだけ)。画像を頼まれたら『画像は作れない』と答えず、"
     "対象の資料を確かめたうえで、送信モードを「制作を実行」に切り替えて「〇〇の画像を作って」と送るよう案内してください。"
 )
 
@@ -925,24 +926,25 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
                         kind = args.get("kind")
                         ids = args.get("ids")
                         if kind not in auto_images.KINDS or not isinstance(ids, list) or not ids or not all(isinstance(i, str) for i in ids):
-                            raise ValueError("kind(character / place)と資料のIDの配列を指定してください")
+                            raise ValueError("kind(character / place / scene)とIDの配列を指定してください")
                         items = []
                         for item_id in ids:
-                            item = getattr(store, f"get_{kind}")(item_id)
-                            if item is None:
-                                raise ValueError(f"指定した資料がありません: {item_id}。read_libraryでIDを確認してください")
+                            item = auto_images.get_item(store, kind, item_id)
+                            if item is None or (kind == "scene" and item.get("kind")):
+                                raise ValueError(f"指定した{'シーン' if kind == 'scene' else '資料'}がありません: {item_id}。"
+                                                 + ("get_beats" if kind == "scene" else "read_library") + "でIDを確認してください")
                             if not auto_images._has_notes(kind, item):
-                                raise ValueError(f"「{item['name']}」は{'外見もプロフィールも' if kind == 'character' else '説明も雰囲気も'}空なので描けません。先に資料を補ってください")
+                                raise ValueError(f"{auto_images._label(item)}は{auto_images.NOTES_LABEL[kind]}空なので描けません。先に補ってください")
                             items.append(item)
                             if (kind, item_id) not in reserved_images:
                                 reserved_images.append((kind, item_id))
-                        names = "、".join(f"「{item['name']}」" for item in items)
+                        names = "、".join(auto_images._label(item) for item in items)
                         notice = f"画像の生成を予約しました: {names}(作業の終わりに描きます)"
                         history.append({"role": "assistant", "content": notice, "image_request": {"kind": kind, "ids": ids}})
                         store.save_chat_messages(chat_id, history)
                         yield _sse({"delta": notice})
                         yield _sse({"response_end": True})
-                        payload = {"reserved": [{"id": item["id"], "name": item["name"]} for item in items],
+                        payload = {"reserved": [{"id": item["id"], "name": item.get("name") or item.get("title") or ""} for item in items],
                                    "note": "画像は今回の作業の終わりに描かれ、終了報告の後に結果が出ます。報告では画像が描かれた・入ったとは書かず、終了後に描かれると伝えてください"}
                         monitor.note_success()
                     elif name in WRITE_TOOLS:
@@ -1069,10 +1071,10 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
                         if "stage" in event:
                             yield _sse({"stage": event["stage"], "active_node": None})
                             continue
-                        if event.get("id") and getattr(store, f"get_{event['kind']}")(event["id"]) is not None:
-                            # 画面は image_changed で資料を読み直し(アイコンが差し替わる)、作業対象を追っていればその資料を開く
+                        if event.get("id") and auto_images.get_item(store, event["kind"], event["id"]) is not None:
+                            # 画面は image_changed で資料・シーンを読み直し(アイコン・挿絵が差し替わる)、作業対象を追っていれば資料を開く
                             yield _sse({"image_changed": {"kind": event["kind"], "id": event["id"]},
-                                        "active_library": {"kind": event["kind"], "id": event["id"]}})
+                                        **({"active_library": {"kind": event["kind"], "id": event["id"]}} if event["kind"] != "scene" else {})})
                         history.append({"role": "assistant", "content": event["notice"], "auto_image": True})
                         store.save_chat_messages(chat_id, history)
                         yield _sse({"delta": event["notice"]})

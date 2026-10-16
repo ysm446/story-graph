@@ -12,6 +12,9 @@ interface ContextMessage {
 /** 候補は押した時点でそのまま送る。execute は「制作を実行」として送るもの(作品を書き換える) */
 export interface ProductionSuggestion { label: string; text: string; execute: boolean }
 
+/** 画像の依頼(backend の production_guard.IMAGE_REQUEST_PATTERN と同じ形) */
+const IMAGE_REQUEST = /(画像|イラスト|絵|アイコン|立ち絵|ポートレート|挿絵).{0,12}?(作|つく|描|生成|出し|用意)/
+
 /**
  * 初期版は選択・開いている章・直近の応答・確定済み操作から候補を組み立てる。
  * 選択と章のレビューは会話の起点になるので、会話が空でも出す。章はシーンを選択していないときだけ。
@@ -28,7 +31,16 @@ export function productionSuggestions(messages: ContextMessage[], selection: Pro
   const reply = [...recent].reverse().find((message) => message.role === 'assistant' && !message.operation && !message.snapshot && !message.instruction && message.content.trim())
   const changes = recent.flatMap((message) => message.operation ? [message.operation] : [])
   const result: ProductionSuggestion[] = []
-  if (reply && proceedFallback && messages[lastUser]?.execute !== true) result.push({
+  const request = messages[lastUser]?.content ?? ''
+  // 相談モードで「〇〇の画像を作って」と頼んだ後は、同じ依頼を「制作を実行」で送るボタンを先頭に出す
+  // (LLM の候補に任せない。画像の依頼は変更案ではないので候補にならない)
+  const imageRequest = messages[lastUser]?.execute !== true && IMAGE_REQUEST.test(request)
+  if (reply && imageRequest) result.push({
+    label: 'この画像を制作を実行で作る', execute: true,
+    text: `${request.trim()}
+対象はこの依頼のとおりにし、画面の選択だけを理由に変更しないでください。generate_imagesで予約してください。`
+  })
+  if (reply && proceedFallback && !imageRequest && messages[lastUser]?.execute !== true) result.push({
     label: 'この案で進めて', execute: true,
     text: 'この会話の直前の回答で提示された案で進めてください。対象と作業範囲はその案に従い、画面の選択だけを理由に変更しないでください。完了済みの変更は繰り返さず、残りの作業を進めてください。複数の案があり採用案が特定できない場合は確認してください。'
   })

@@ -355,3 +355,69 @@ def test_execute_mode_reminds_once_when_image_request_has_no_reservation(store, 
     assert notes_seen == [False, True, False]  # 注記は 1 回だけ渡り、予約の後は消える
     assert seen == [[{"kind": "place", "id": "salt", "explicit": True}]]
     assert next(e for e in events if e.get("done"))["outcome"] == "completed"
+
+
+def test_scene_request_draws_illustration_with_cast_references(store, fake_comfy, monkeypatch):
+    aya = store.create_character({"id": "aya", "name": "アヤ", "appearance": "黒髪"})
+    store.create_character({"id": "bob", "name": "ボブ", "appearance": "金髪"})
+    port = store.create_place({"id": "port", "name": "港", "description": "古い港"})
+    (Path(store.assets_dir()) / "aya-ref.png").write_bytes(b"REF")
+    store.update_character("aya", {"ref_image_path": "aya-ref.png"})
+    node = store.append_node({"id": "first", "title": "出発", "beat": "アヤとボブが港を出る。", "cast": ["aya", "bob"], "location": "port"})
+    prompts = []
+
+    async def chat(messages, **kwargs):
+        prompts.append(messages)
+        return {"content": "two people on a pier, image1 waving", "usage": {}}
+
+    monkeypatch.setattr(llm, "chat", chat)
+    # 自動の予約はシーンには無い(explicit でないものは描かない)
+    assert collect(store, [auto("scene", "first")], fake_comfy["ensure_comfy"]) == []
+    events = collect(store, [explicit("scene", "first")], fake_comfy["ensure_comfy"])
+    assert [e for e in events if "notice" in e] == [{"notice": "「出発」の挿絵を作りました。", "kind": "scene", "id": "first"}]
+    assert any("挿絵を描いています" in e.get("stage", "") for e in events)
+    got = store.get_node("first")
+    assert got["image_path"] and got["image_prompt"] == "two people on a pier, image1 waving" and got["image_ref_chars"] == ["aya"]
+    media = store.list_media("node", "first")
+    assert [m["path"] for m in media] == [got["image_path"]] and media[0]["ref_chars"] == ["aya"]
+    # プロンプトは本文・登場人物(参照画像のあるアヤは image1)・場所から書く
+    user = prompts[0][1]["content"]
+    assert prompts[0][0]["content"] == image_gen.SCENE_PROMPT_SYSTEM
+    assert "アヤ: image1" in user and "ボブ: no reference image" in user and "港" in user and "港を出る" in user
+    # 参照画像を上げてから編集ワークフローで描く
+    assert fake_comfy["uploads"] == [("aya-ref.png", b"REF")]
+    assert fake_comfy["workflows"][0]["10"]["inputs"]["image"] == "story-graph/aya-ref.png"
+    assert aya["id"] == "aya" and port["id"] == "port" and node["id"] == "first"
+
+
+def test_generate_images_tool_accepts_scenes_and_rejects_empty_or_marker(store, monkeypatch):
+    store.append_node({"id": "first", "title": "出発", "beat": "出発する。", "cast": []})
+    store.append_node({"id": "blank", "title": "空", "beat": "", "cast": []})
+    marker = next(n["id"] for n in store.graph()["nodes"] if n.get("kind"))
+    step = 0
+
+    async def stream(messages, **kwargs):
+        nonlocal step
+        step += 1
+        calls = {1: ["blank"], 2: [marker], 3: ["first"]}
+        if step in calls:
+            yield "done", {"tool_calls": [{"function": {"name": "generate_images", "arguments": json.dumps(
+                {"kind": "scene", "ids": calls[step], "reason": "依頼"})}}]}
+            return
+        yield "done", {"content": "予約しました。"}
+
+    monkeypatch.setattr(llm, "chat_stream_tools", stream)
+    seen = []
+
+    async def hook(requests):
+        seen.append(requests)
+        return
+        yield
+
+    events = _collect_stream(store, True, hook, "出発の挿絵を作って")
+    errors = [e["tool_error"] for e in events if "tool_error" in e]
+    assert any("本文が空" in t for t in errors) and any("シーンがありません" in t for t in errors)
+    assert len(errors) == 2  # 正しい予約はエラーにならない(シーンには name が無い)
+    assert seen == [[{"kind": "scene", "id": "first", "explicit": True}]]
+    assert next(e for e in events if e.get("done"))["outcome"] == "completed"
+    assert [e["delta"] for e in events if "delta" in e][0].startswith("画像の生成を予約しました: 「出発」")

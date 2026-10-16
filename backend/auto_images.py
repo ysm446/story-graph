@@ -1,10 +1,11 @@
-"""制作モードでの人物・場所の画像生成(docs/design/image-gen.md §14)。
+"""制作モードでの人物・場所・シーンの画像生成(docs/design/image-gen.md §14)。
 
-制作チャットの作業の終わりに、次の資料の画像をまとめて描く。
+制作チャットの作業の終わりに、次の画像をまとめて描く。
 
 - 制作 LLM が `create_character` / `create_place` で作った資料(設定のトグルがオンのときだけ。画像があれば飛ばす)
-- 制作 LLM が `generate_images` で予約した資料(作者の「〇〇の画像を作って」。設定に関わらず描き、
-  画像があっても描き直す。前の画像はストックに残る)
+- 制作 LLM が `generate_images` で予約した資料・シーン(作者の「〇〇の画像を作って」「〇〇の挿絵を作って」。
+  設定に関わらず描き、画像があっても描き直す。前の画像はストックに残る)。シーンの挿絵は予約だけで、
+  シーンを作ったときの自動生成は無い(1 枚 15〜30 秒かかり、本文を直した後に描き直すことが多いため)
 
 人物は 外見 → 英語プロンプト(LLM)→ 参照画像(全身。ストックに入れて選択)→ プロフィール画像(顔のアップ)。
 顔は参照画像を手本に画像編集ワークフローで描くので、全身像と同じ人物になる
@@ -26,10 +27,15 @@ import comfy
 import image_gen
 import llm
 
-KINDS = ("character", "place")
-# 作った資料の画像を自動で描くか(アプリ単位。"1" でオン)
+KINDS = ("character", "place", "scene")
+GETTERS = {"character": "get_character", "place": "get_place", "scene": "get_node"}
+# 作った資料の画像を自動で描くか(アプリ単位。"1" でオン)。シーンに自動は無い(予約だけ)
 SETTING_KEYS = {"character": "comfy_auto_character_images", "place": "comfy_auto_place_images"}
 SETTING_KEY = SETTING_KEYS["character"]
+
+
+def get_item(store: Any, kind: str, item_id: str) -> dict[str, Any] | None:
+    return getattr(store, GETTERS[kind])(item_id) if kind in GETTERS else None
 
 # 顔(プロフィール画像)の共通指示。正方形で顔を大きく描く
 PORTRAIT_SUFFIX = (
@@ -43,7 +49,8 @@ PORTRAIT_SIZE = 1024
 
 
 def enabled(settings: dict[str, str], kind: str = "character") -> bool:
-    return (settings.get(SETTING_KEYS[kind]) or "").strip() == "1"
+    key = SETTING_KEYS.get(kind)
+    return bool(key) and (settings.get(key) or "").strip() == "1"
 
 
 def portrait_workflow(
@@ -94,7 +101,7 @@ async def _write_asset(assets: str, data: bytes) -> str:
 
 
 def _label(item: dict[str, Any]) -> str:
-    return f"「{item.get('name') or '(無名)'}」"
+    return f"「{item.get('name') or item.get('title') or '(無題)'}」"
 
 
 def _has_image(kind: str, item: dict[str, Any]) -> bool:
@@ -103,9 +110,12 @@ def _has_image(kind: str, item: dict[str, Any]) -> bool:
     return bool(item.get("image_path"))
 
 
+NOTES_KEYS = {"character": ("appearance", "profile"), "place": ("description", "atmosphere"), "scene": ("beat",)}
+NOTES_LABEL = {"character": "外見もプロフィールも", "place": "説明も雰囲気も", "scene": "本文が"}
+
+
 def _has_notes(kind: str, item: dict[str, Any]) -> bool:
-    keys = ("appearance", "profile") if kind == "character" else ("description", "atmosphere")
-    return any((item.get(k) or "").strip() for k in keys)
+    return any((item.get(k) or "").strip() for k in NOTES_KEYS[kind])
 
 
 def requests_for(created: list[tuple[str, str]], reserved: list[tuple[str, str]]) -> list[dict[str, Any]]:
@@ -159,6 +169,33 @@ async def _draw_place(store: Any, settings: dict[str, str], place: dict[str, Any
     yield {"notice": f"{label}の画像を作りました。", "kind": "place", "id": place["id"]}
 
 
+async def _draw_scene(store: Any, settings: dict[str, str], node: dict[str, Any], *, assets: str, llm_base_url: str,
+                      comfy_base_url: str, variant: str) -> AsyncIterator[dict[str, Any]]:
+    """挿絵。手動の生成ウインドウの既定と同じく、cast の順に参照画像のある人物を 3 人まで手本にする。"""
+    label = _label(node)
+    chars = [c for c in (store.get_character(cid) for cid in node.get("cast") or []) if c]
+    place_id, _ = store.effective_location(node["id"])
+    place = store.get_place(place_id) if place_id else None
+    refs = image_gen.select_scene_refs(chars)
+    yield {"stage": f"{label}の挿絵のプロンプトを書いています…"}
+    res = await llm.chat(image_gen.scene_prompt_messages(node, chars, refs, place), base_url=llm_base_url,
+                         max_tokens=500, temperature=0.5, label="auto_scene_image_prompt")
+    prompt = image_gen._clean_prompt(res.get("content") or "")
+    if not prompt:
+        raise RuntimeError("画像プロンプトが空でした")
+    ref_files = []
+    for c in refs:
+        p = Path(assets) / c["ref_image_path"]
+        if p.is_file():
+            ref_files.append((p.name, await asyncio.to_thread(p.read_bytes)))
+    yield {"stage": f"{label}の挿絵を描いています…"}
+    png, seed = await image_gen.generate_scene_image(settings, prompt, ref_files, comfy_base_url=comfy_base_url, variant=variant)
+    name = await _write_asset(assets, png)
+    media = store.add_media("node", node["id"], name, prompt=prompt, seed=seed, ref_chars=[c["id"] for c in refs], workflow=variant)
+    store.select_media(media["id"])
+    yield {"notice": f"{label}の挿絵を作りました。", "kind": "scene", "id": node["id"]}
+
+
 async def run(
     store: Any,
     requests: list[dict[str, Any]],
@@ -168,7 +205,7 @@ async def run(
 ) -> AsyncIterator[dict[str, Any]]:
     """requests(`requests_for` の形)の資料を順に描く。
 
-    流すもの: `{"stage": 進捗}` と、資料ごと(または全体)の `{"notice": 会話に残す文, "kind", "id"}`
+    流すもの: `{"stage": 進捗}` と、資料・シーンごと(または全体)の `{"notice": 会話に残す文, "kind", "id"}`
     (全体の知らせは kind / id が None)。自動の分は設定がオフ・画像が既にあるなら飛ばし、
     外見(説明)が無い資料は知らせるだけ。ComfyUI が起動できなければ 1 件の notice で終える。
     資料ごとの失敗はその資料の notice にして次へ進む。
@@ -182,14 +219,13 @@ async def run(
         kind = req["kind"]
         if kind not in KINDS:
             continue
-        item = getattr(store, f"get_{kind}")(req["id"])
+        item = get_item(store, kind, req["id"])
         if item is None:
             continue
         if not req.get("explicit") and (not enabled(settings, kind) or _has_image(kind, item)):
             continue
         if not _has_notes(kind, item):
-            what = "外見もプロフィールも" if kind == "character" else "説明も雰囲気も"
-            yield {"notice": f"{_label(item)}は{what}書かれていないので、画像は作りませんでした。", "kind": kind, "id": item["id"]}
+            yield {"notice": f"{_label(item)}は{NOTES_LABEL[kind]}書かれていないので、画像は作りませんでした。", "kind": kind, "id": item["id"]}
             continue
         targets.append((kind, item))
     if not targets:
@@ -203,7 +239,7 @@ async def run(
         return
     variant = image_gen.resolve_variant(settings, None)["id"]
     for kind, item in targets:
-        draw = _draw_character if kind == "character" else _draw_place
+        draw = {"character": _draw_character, "place": _draw_place, "scene": _draw_scene}[kind]
         try:
             async for event in draw(store, settings, item, assets=assets, llm_base_url=llm_base_url,
                                     comfy_base_url=comfy_base_url, variant=variant):

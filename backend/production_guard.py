@@ -214,12 +214,12 @@ CONSULT_SWITCH_GUIDANCE = ("変更を実行する場合は、送信モードを�
 
 # 画像の依頼(「製塩工場の画像をつくって」など)。モデルが「画像生成の機能は無い」と答えてしまうのを
 # サーバー側で補う(2026-10-16。gemma 4 31B がそう答えた)
-IMAGE_REQUEST_PATTERN = re.compile(r"(画像|イラスト|絵|アイコン|立ち絵|ポートレート).{0,12}?(作|つく|描|生成|出し|用意)")
-CONSULT_IMAGE_GUIDANCE = ("人物・場所の画像はこのアプリで描けます(ComfyUI)。送信モードを「制作を実行」に切り替えて、"
+IMAGE_REQUEST_PATTERN = re.compile(r"(画像|イラスト|絵|アイコン|立ち絵|ポートレート|挿絵).{0,12}?(作|つく|描|生成|出し|用意)")
+CONSULT_IMAGE_GUIDANCE = ("人物・場所の画像とシーンの挿絵はこのアプリで描けます(ComfyUI)。送信モードを「制作を実行」に切り替えて、"
                           "「〇〇の画像を作って」と送ってください。相談モードでは描きません。")
-IMAGE_REQUEST_NOTE = ("作者の依頼は画像の生成を含みますが、generate_imagesの予約がありません。このアプリは人物・場所の画像を"
-                      "ComfyUIで描けます。画像を作れないとは答えず、対象の資料をread_libraryで確かめ(無ければ外見や説明を付けて"
-                      "登録し)、generate_imagesで予約してから完了を報告してください")
+IMAGE_REQUEST_NOTE = ("作者の依頼は画像の生成を含みますが、generate_imagesの予約がありません。このアプリは人物・場所の画像と"
+                      "シーンの挿絵をComfyUIで描けます。画像を作れないとは答えず、対象の資料をread_libraryで(シーンはget_beatsで)確かめ"
+                      "(資料が無ければ外見や説明を付けて登録し)、generate_imagesで予約してから完了を報告してください")
 
 
 def wants_images(message: str) -> bool:

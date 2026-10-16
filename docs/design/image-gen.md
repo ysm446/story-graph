@@ -1,7 +1,7 @@
 # 画像生成(ComfyUI 連携)— キャラクターの参照画像・場面の挿絵・場所の画像
 
 作成日時: 2026-08-26 15:15
-更新日時: 2026-10-16 19:19
+更新日時: 2026-10-16 20:06
 
 ローカルの ComfyUI で挿絵を作る仕組みの設計メモ。2026-08-26 のユーザー発案
 ([progress.md](../plan/progress.md) の「場面の画像生成」)。画像は**装飾専用**で、
@@ -346,6 +346,16 @@ Pillow も顔検出も要らない)。実装は `backend/auto_images.py`。
   `t2i` で人物描写 + 顔の接尾辞にフォールバックする(いまは参照画像を先に作るので通らない)。
 - **場所 1 件の流れ**: `image_gen.PLACE_PROMPT_SYSTEM` で風景描写 → `generate_place_image`(1216×832、§13)→
   `add_media("place", select)`。
+- **シーンの挿絵**(2026-10-16 20:06 ユーザー要望「シーンの画像を作るツールは?」): `generate_images {kind: "scene", ids: [node_id]}`
+  で予約だけ(シーンを作ったときの自動生成は無い。1 枚 15〜30 秒かかり、本文を直した後に描き直すことが多いため)。
+  `auto_images._draw_scene`: cast の順に参照画像のある人物を 3 人まで手本に(`select_scene_refs`。手動の生成ウインドウの既定と同じ)、
+  実効ロケーションの場所と本文から `SCENE_PROMPT_SYSTEM` で場面のプロンプトを書き(`llm.chat`)、`generate_scene_image`(§6)→
+  `add_media("node", select, ref_chars)`。目印のノード・本文が空のシーンは予約の時点で拒否。画面へは `image_changed {kind: "scene"}`
+  だけ(`active_library` は無し)。実 LLM で確認: 「出発の挿絵を作って」→ `generate_images(scene)` 1 回で予約 → 作業の終わりに
+  参照画像のケンを手本にした挿絵(1216×832)が入り、outcome は completed。
+- **候補ボタン**: 相談モードで画像の依頼(`productionSuggestions.ts` の `IMAGE_REQUEST`。backend の
+  `IMAGE_REQUEST_PATTERN` と同じ形)をした後は、LLM の候補に任せず固定で「この画像を制作を実行で作る」
+  (作者の依頼文をそのまま「制作を実行」で送る)を先頭に出す。このとき固定の「この案で進めて」は出さない。
 - **画面**: 進捗は `stage`(「「名前」の参照画像を描いています…」など)で流し、資料ごとの結果は
   会話の本文(`delta`、履歴に `auto_image: true`)に残す。画像が入ったら `image_changed {kind, id}` を送り、
   `ProductionChat` が `notifyGraphChanged()`(フローチャート)と `workspace.changed()`(資料庫。`revision` でしか
