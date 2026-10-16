@@ -1686,10 +1686,44 @@ function StructureModeInner({
         if (index < 0) return
         targetId = siblings[index + (direction === 'down' ? 1 : -1)]
       }
+      // 章の入口 / 出口は配線点で読む中身が無いので、← → では止まらず同じ向きへもう一歩進む
+      // (2026-10-17 ユーザー判断)。出口の先・入口の手前は章の外にあって画面に無いことが
+      // 多いので、ここからは生のエッジで辿る(出口は正史の子を優先)。
+      // 先に何も無ければ、マーカーの手前(章の最後 / 最初のシーン)で止まる
+      if (direction === 'left' || direction === 'right') {
+        const byId = new Map(graphNodes.map((n) => [n.id, n]))
+        const isMarker = (id: string): boolean => {
+          const kind = byId.get(id)?.kind
+          return kind === 'chapter_in' || kind === 'chapter_out'
+        }
+        const step = (id: string): string | undefined => {
+          if (direction === 'right') {
+            const edges = graphEdges.filter((e) => e.from_node === id)
+            return (edges.find((e) => e.is_canon) ?? edges[0])?.to_node
+          }
+          return graphEdges.find((e) => e.to_node === id)?.from_node
+        }
+        // マーカー自身を選んでいるとき(クリックで選べる)は、画面に無い先でも生のエッジで進む
+        if (!targetId && isMarker(currentId)) targetId = step(currentId)
+        let guard = 0
+        while (targetId && isMarker(targetId) && guard++ < 8) targetId = step(targetId)
+        if (!targetId) return
+        if (!displayNodes.some((n) => n.id === targetId)) {
+          // 別の章の中、または章の外のシーン。表示を切り替えてから寄せる
+          // (pendingFocus の仕組み。制作・鑑賞からの復帰と同じ)
+          setSelectedChapterId(null)
+          setSelectedEdgeId(null)
+          setSelectedId(targetId)
+          setInspectorFocus('scene')
+          focusDoneRef.current = false
+          setPendingFocusId(targetId)
+          return
+        }
+      }
       if (!targetId) return
       focus(targetId)
     },
-    [displayNodes, selectedId, navGraph, focusNodeOnCanvas]
+    [displayNodes, selectedId, navGraph, focusNodeOnCanvas, graphNodes, graphEdges]
   )
 
   const copyNodes = useCallback(async (ids: string[]): Promise<void> => {
