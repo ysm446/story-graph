@@ -355,6 +355,25 @@ store.save_chat_messages(chat['id'], [
     win.destroy()
     return
   }
+  if (process.argv.includes('--imageprompts')) {
+    // 設定 → システムプロンプト → 画像生成プロンプト: 4 つの編集欄(既定がプレースホルダ)と固定部分、保存
+    await js(`document.querySelector('button[aria-label="設定"]').click()`)
+    await pause(400)
+    await assert(`(() => {const items=[...document.querySelectorAll('aside button')].map(e=>e.textContent.trim());const i=items.indexOf('シーン生成');return i>0 && items.slice(i,i+6).join('|')==='シーン生成|清書(スタイルプリセット)|校正|制作エージェントへの指示|画像生成プロンプト|書き出し / 読み込み'})()`, '設定の左一覧のシステムプロンプトに「画像生成プロンプト」が並ぶ')
+  await click('画像生成プロンプト')
+  await pause(400)
+  await assert(`[...document.querySelectorAll('textarea[aria-label^="画像生成プロンプト: "]')].length === 4 && document.body.textContent.includes('機械的に付く部分') && [...document.querySelectorAll('textarea[aria-label^="画像生成プロンプト: "]')].every(t => t.placeholder.length > 40)`, '画像生成プロンプトに 4 つの編集欄(既定がプレースホルダ)と固定部分を表示')
+  await input('textarea[aria-label="画像生成プロンプト: 人物の参照画像"]', '設定から変えた人物の指示')
+  await js(`document.querySelector('textarea[aria-label="画像生成プロンプト: 人物の参照画像"]').dispatchEvent(new FocusEvent('focusout',{bubbles:true}))`)
+  await pause(500)
+  if ((await (await fetch(base + '/settings')).json()).image_prompt_character !== '設定から変えた人物の指示') errors.push('画像生成プロンプトの人物の指示が保存されていない')
+  else console.log('PASS 画像生成プロンプトの編集欄が保存される')
+  writeFileSync(join(target, 'settings-image-prompts.png'), (await win.webContents.capturePage()).toPNG())
+    if (errors.length) throw new Error(errors.join('\n'))
+    console.log('Screenshots: ' + target)
+    win.destroy()
+    return
+  }
   if (process.argv.includes('--relations')) {
     // 資料庫の関係図(直角の線): 線が人物のアイコン・名前を通らず、ラベルが人物・他のラベルに重ならない
     const { copyFileSync } = require('node:fs')
@@ -1223,7 +1242,7 @@ store.save_chat_messages(chat['id'], [
   if ((await (await fetch(base + '/settings')).json()).production_memory_enabled !== '1') errors.push('作業メモの設定が保存されていない')
   await js(`document.querySelector('button[aria-label="設定"]').click()`)
   await pause(400)
-  await assert(`(() => {const items=[...document.querySelectorAll('aside button')].map(e=>e.textContent.trim());const i=items.indexOf('シーン生成');return [...document.querySelectorAll('aside div')].some(e=>e.textContent==='システムプロンプト') && i>0 && items.slice(i,i+5).join('|')==='シーン生成|清書(スタイルプリセット)|校正|制作エージェントへの指示|書き出し / 読み込み'})()`, '設定の左一覧でシステムプロンプトの5項目をまとめて表示')
+  await assert(`(() => {const items=[...document.querySelectorAll('aside button')].map(e=>e.textContent.trim());const i=items.indexOf('シーン生成');return [...document.querySelectorAll('aside div')].some(e=>e.textContent==='システムプロンプト') && i>0 && items.slice(i,i+6).join('|')==='シーン生成|清書(スタイルプリセット)|校正|制作エージェントへの指示|画像生成プロンプト|書き出し / 読み込み'})()`, '設定の左一覧でシステムプロンプトの6項目をまとめて表示')
   await click('シーン生成')
   await pause(300)
   await assert(`document.body.textContent.includes('適用先: 構造モードの「生成」') && document.body.textContent.includes('beat は出来事の記述に徹する')`, 'シーン生成に適用先と必ず付くルールを表示')

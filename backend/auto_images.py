@@ -143,7 +143,7 @@ async def _draw_character(store: Any, settings: dict[str, str], char: dict[str, 
     label = _label(char)
     target = {"kind": "character", "id": char["id"]}
     yield {"stage": f"{label}の画像プロンプトを書いています…", **target}
-    prompt = await _prompt(image_gen.character_prompt_messages(char), llm_base_url, "auto_ref_image_prompt")
+    prompt = await _prompt(image_gen.character_prompt_messages(char, settings=settings), llm_base_url, "auto_ref_image_prompt")
     yield {"stage": f"{label}の参照画像を描いています…", **target}
     ref_png, ref_seed = await image_gen.generate_character_image(settings, prompt, comfy_base_url=comfy_base_url, variant=variant)
     ref_name = await _write_asset(assets, ref_png)
@@ -162,7 +162,7 @@ async def _draw_place(store: Any, settings: dict[str, str], place: dict[str, Any
     label = _label(place)
     target = {"kind": "place", "id": place["id"]}
     yield {"stage": f"{label}の画像プロンプトを書いています…", **target}
-    prompt = await _prompt(image_gen.place_prompt_messages(place), llm_base_url, "auto_place_image_prompt")
+    prompt = await _prompt(image_gen.place_prompt_messages(place, settings=settings), llm_base_url, "auto_place_image_prompt")
     yield {"stage": f"{label}の画像を描いています…", **target}
     png, seed = await image_gen.generate_place_image(settings, prompt, comfy_base_url=comfy_base_url, variant=variant)
     name = await _write_asset(assets, png)
@@ -181,11 +181,11 @@ async def _draw_scene(store: Any, settings: dict[str, str], node: dict[str, Any]
     target = {"kind": "scene", "id": node["id"]}
     yield {"stage": f"{label}の挿絵に描く人物を選んでいます…", **target}
     # 本文で話す・動く人物だけを絵に入れる(cast 順ではない)。手本もその人物から取る
-    focus = await image_gen.choose_scene_focus(node, chars, base_url=llm_base_url)
+    focus = await image_gen.choose_scene_focus(node, chars, base_url=llm_base_url, settings=settings)
     others = [c for c in chars if c not in focus]
     refs = image_gen.select_scene_refs(focus)
     yield {"stage": f"{label}の挿絵のプロンプトを書いています…", **target}
-    res = await llm.chat(image_gen.scene_prompt_messages(node, focus, refs, place, others=others), base_url=llm_base_url,
+    res = await llm.chat(image_gen.scene_prompt_messages(node, focus, refs, place, others=others, settings=settings), base_url=llm_base_url,
                          max_tokens=500, temperature=0.5, label="auto_scene_image_prompt")
     prompt = image_gen._clean_prompt(res.get("content") or "")
     if not prompt:

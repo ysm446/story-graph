@@ -332,3 +332,14 @@ def test_scene_notes_lists_left_out_cast():
     notes = image_gen._scene_notes(node, chars[:1], image_gen.select_scene_refs(chars[:1]), None, others=chars[1:])
     assert "- A: image1" in notes and "NOT in the picture (leave them out): B" in notes and "- B:" not in notes
     assert "NOT in the picture" not in image_gen._scene_notes(node, chars, image_gen.select_scene_refs(chars), None)
+
+
+def test_image_prompts_can_be_overridden_by_settings():
+    custom = {"image_prompt_character": " 人物の指示 ", "image_prompt_scene": "", "image_prompt_scene_focus": "中心の指示"}
+    assert image_gen.character_prompt_messages({"name": "A"}, settings=custom)[0]["content"] == "人物の指示"
+    assert image_gen.character_prompt_messages({"name": "A"})[0]["content"] == image_gen.PROMPT_SYSTEM
+    # 空は既定
+    assert image_gen.scene_prompt_messages({"beat": "b"}, [], [], None, settings=custom)[0]["content"] == image_gen.SCENE_PROMPT_SYSTEM
+    assert image_gen.focus_messages({"beat": "b"}, [], custom)[0]["content"] == "中心の指示"
+    assert image_gen.place_prompt_messages({"name": "P"}, settings={})[0]["content"] == image_gen.PLACE_PROMPT_SYSTEM
+    assert set(image_gen.default_prompts()) == set(image_gen.PROMPT_SETTING_KEYS) == {"character", "place", "scene_focus", "scene"}

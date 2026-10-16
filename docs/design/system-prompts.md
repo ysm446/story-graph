@@ -1,7 +1,7 @@
 # システムプロンプト設計
 
 作成日時: 2026-07-25 01:34
-更新日時: 2026-10-13 06:32
+更新日時: 2026-10-16 23:40
 
 本アプリが LLM(llama.cpp / Gemma4)に送るプロンプトの構成と、編集可能な範囲のまとめ。
 「また後々も考えましょう」の検討候補は末尾の「今後の検討事項」に集約する。
@@ -17,8 +17,11 @@ LLM への指示がどこに書いてあるかを 1 か所で探せるように�
 | 清書(スタイルプリセット) | 鑑賞モード・清書タブ | プリセット本文 | `rendering.fixed_rules`(厳守事項) |
 | 校正 | シーンタブの校正 | `proofread_custom_prompt` | 組み込みプリセット |
 | 制作エージェントへの指示 | 制作チャット(相談・実行) | `author_chat_rules`(制作チャットのパネルと同じ値) | `production_agent.EXECUTE_RULES` / `CONSULT_RULES` |
+| 画像生成プロンプト | 人物の参照画像・場所の画像・シーンの挿絵(手動の生成ウインドウと制作チャットの予約) | `image_prompt_character` / `image_prompt_place` / `image_prompt_scene_focus` / `image_prompt_scene`(空なら既定。`GET /image_prompts` の `defaults`) | 接尾辞(`REF_IMAGE_SUFFIX` / `PLACE_IMAGE_SUFFIX` / `SCENE_SUFFIX`)と顔の本文(`auto_images.PORTRAIT_*`。`GET /image_prompts` の `fixed`) |
 | 書き出し / 読み込み | シーン生成・カスタム校正・スタイルプリセット | - | - |
 
+- 画像生成プロンプトは 2026-10-16 23:40 に追加(ユーザー要望「このあたりのプロンプトも設定のシステムプロンプトに置いてほしい」)。ライブラリ単位の設定で、
+  `image_gen.system_prompt(settings, kind)` が空なら既定の定数を返す。書き出し / 読み込みには含めていない。
 - 固定部分は `GET /prompts/fixed` で返す。画面に出す文面と実際に送る文面がずれないよう、送信に使う定数・関数をそのまま返す。
 - 制作エージェントへの指示は設定画面とチャットのパネルの両方で編集できる。設定画面で保存すると `CHAT_RULES_EVENT` で
   パネルを読み直す(パネルに未保存の下書きがあれば残し、「元に戻す」の戻り先だけ更新する)。

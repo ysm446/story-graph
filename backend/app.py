@@ -1107,6 +1107,25 @@ async def get_fixed_prompts() -> dict[str, str]:
     }
 
 
+@app.get("/image_prompts")
+async def get_image_prompts() -> dict[str, Any]:
+    """画像生成の英語プロンプトを LLM に書かせるときのシステムプロンプトの既定(設定画面の「画像生成プロンプト」)。
+    `defaults` は設定 `image_prompt_*` が空のときに使う文面、`fixed` は機械的に後ろへ足す接尾辞など(編集不可)。"""
+    import auto_images
+    import image_gen
+
+    return {
+        "keys": image_gen.PROMPT_SETTING_KEYS,
+        "defaults": image_gen.default_prompts(),
+        "fixed": {
+            "character_suffix": image_gen.REF_IMAGE_SUFFIX,
+            "portrait": f"{auto_images.PORTRAIT_REF_PROMPT}, {auto_images.PORTRAIT_SUFFIX}",
+            "place_suffix": image_gen.PLACE_IMAGE_SUFFIX,
+            "scene_suffix": image_gen.SCENE_SUFFIX,
+        },
+    }
+
+
 @app.get("/models")
 async def list_models() -> dict[str, Any]:
     import system_info
@@ -1798,7 +1817,9 @@ async def character_ref_image_prompt(char_id: str, body: RefImagePromptIn | None
         except Exception as e:
             yield image_gen._sse({"error": str(e)})
             return
-        async for chunk in image_gen.stream_character_prompt(char, base_url=base_url, instructions=instructions):
+        async for chunk in image_gen.stream_character_prompt(
+            char, base_url=base_url, instructions=instructions, settings=store.get_settings()
+        ):
             yield chunk
 
     return StreamingResponse(stream(), media_type="text/event-stream")
@@ -1916,7 +1937,9 @@ async def place_image_prompt(place_id: str, body: RefImagePromptIn | None = None
         except Exception as e:
             yield image_gen._sse({"error": str(e)})
             return
-        async for chunk in image_gen.stream_place_prompt(place, base_url=base_url, instructions=instructions):
+        async for chunk in image_gen.stream_place_prompt(
+            place, base_url=base_url, instructions=instructions, settings=store.get_settings()
+        ):
             yield chunk
 
     return StreamingResponse(stream(), media_type="text/event-stream")
@@ -1992,10 +2015,11 @@ async def node_image_prompt(node_id: str, body: SceneImagePromptIn) -> Streaming
     import image_gen
 
     node, chars, place = _scene_context(node_id)
+    settings = store.get_settings()
 
     async def stream():
         try:
-            base_url = await llama.ensure_running(store.get_settings())
+            base_url = await llama.ensure_running(settings)
         except Exception as e:
             yield image_gen._sse({"error": str(e)})
             return
@@ -2006,7 +2030,7 @@ async def node_image_prompt(node_id: str, body: SceneImagePromptIn) -> Streaming
             refs = [c for c in focus if c.get("ref_image_path")][: image_gen.MAX_SCENE_REFS]
         else:
             # 既定: 本文から中心の人物(話す・動く人)を選び、その人物の参照画像を手本にする
-            focus = await image_gen.choose_scene_focus(node, chars, base_url=base_url)
+            focus = await image_gen.choose_scene_focus(node, chars, base_url=base_url, settings=settings)
             refs = image_gen.select_scene_refs(focus)
         others = [c for c in chars if c not in focus]
         yield image_gen._sse({"meta": {
@@ -2015,7 +2039,7 @@ async def node_image_prompt(node_id: str, body: SceneImagePromptIn) -> Streaming
             "cast": [{"char_id": c["id"], "name": c["name"], "has_ref": bool(c.get("ref_image_path"))} for c in chars],
         }})
         async for chunk in image_gen.stream_scene_prompt(
-            node, focus, refs, place, base_url=base_url, instructions=body.instructions, others=others
+            node, focus, refs, place, base_url=base_url, instructions=body.instructions, others=others, settings=settings
         ):
             yield chunk
 

@@ -34,6 +34,52 @@ export function FixedPrompt({ label, text, hint, collapsed = false }: {
   )
 }
 
+// 空欄なら既定(プレースホルダ)が使われる編集欄。シーン生成プロンプトの欄と同じ見た目で、
+// 値があるときだけ「デフォルトに戻す」(ごみ箱)を見出しの右端に出す
+export function EditablePrompt({ label, value, placeholder, rows = 6, hint, ariaLabel, onChange, onBlur, onReset }: {
+  label: string
+  value: string
+  placeholder: string
+  rows?: number
+  hint: string
+  ariaLabel?: string
+  onChange: (next: string) => void
+  onBlur: () => void
+  onReset: () => void
+}): React.JSX.Element {
+  return (
+    <div className="settings-field">
+      <div className="settings-field-header">
+        <span className="settings-field-label">{label}</span>
+        <div className="settings-field-controls">
+          {value !== '' && (
+            <button className="settings-reset-btn" aria-label="デフォルトに戻す" data-tip="デフォルトに戻す" onClick={onReset}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="3 6 5 6 21 6" />
+                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                <path d="M10 11v6" />
+                <path d="M14 11v6" />
+                <path d="M9 6V4h6v2" />
+              </svg>
+            </button>
+          )}
+        </div>
+      </div>
+      <textarea
+        rows={rows}
+        value={value}
+        placeholder={placeholder}
+        aria-label={ariaLabel ?? label}
+        onChange={(e) => onChange(e.target.value)}
+        onBlur={onBlur}
+        className="w-full rounded-lg border px-3 py-2 text-[13px] leading-relaxed outline-none"
+        style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
+      />
+      <p className="settings-field-hint">{hint}</p>
+    </div>
+  )
+}
+
 // 組み込みの校正プリセット(軽く / 標準 / 積極的)の中身。どれを選ぶかは
 // プロンプトの文面を見ないと判断できないので、読み取り専用で表示する
 export function BuiltinProofreadPrompts(): React.JSX.Element {

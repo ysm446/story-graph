@@ -358,6 +358,9 @@ export const api = {
     >('/debug/prompts'),
   getGenerationPrompt: () =>
     request<{ default: string; rules: string; current: string }>('/generation_prompt'),
+  /** 画像生成の英語プロンプトを書かせる指示の既定と、機械的に付く接尾辞(設定画面の「画像生成プロンプト」) */
+  getImagePrompts: () =>
+    request<{ keys: Record<string, string>; defaults: Record<string, string>; fixed: Record<string, string> }>('/image_prompts'),
   /** 設定では変えられず、システムプロンプトに必ず付く部分(設定画面の読み取り専用表示用) */
   getFixedPrompts: () =>
     request<{ generation: string; rendering: string; production_execute: string; production_consult: string }>('/prompts/fixed'),

@@ -12,7 +12,7 @@ import ImportSection from './settings/ImportSection'
 import LlamaInstaller from './settings/LlamaInstaller'
 import PromptIoSection from './settings/PromptIoSection'
 import PromptLogViewer from './settings/PromptLogViewer'
-import { BuiltinProofreadPrompts, FixedPrompt } from './settings/prompts'
+import { BuiltinProofreadPrompts, EditablePrompt, FixedPrompt } from './settings/prompts'
 import SnapshotsSection from './settings/SnapshotsSection'
 import StylePresetsSection from './settings/StylePresetsSection'
 
@@ -81,6 +81,7 @@ const SECTIONS = [
   { id: 'presets', label: '清書(スタイルプリセット)', group: 'work' },
   { id: 'proofread', label: '校正', group: 'work' },
   { id: 'agent', label: '制作エージェントへの指示', group: 'work' },
+  { id: 'imageprompts', label: '画像生成プロンプト', group: 'work' },
   { id: 'promptio', label: '書き出し / 読み込み', group: 'work' },
   { id: 'memory', label: '記憶の検索', group: 'work' },
   { id: 'import', label: '取り込み', group: 'work' },
@@ -117,7 +118,7 @@ const SAVED_HINT_OVERRIDE: Partial<Record<SectionId, string | null>> = {
 // 左ナビで「システムプロンプト」の見出しの下にまとめる項目(SECTIONS では連続して並べる)。
 // LLM への指示がどこに書いてあるかを 1 か所で探せるようにする
 const PROMPT_GROUP_LABEL = 'システムプロンプト'
-const PROMPT_GROUP: ReadonlySet<SectionId> = new Set<SectionId>(['generation', 'presets', 'proofread', 'agent', 'promptio'])
+const PROMPT_GROUP: ReadonlySet<SectionId> = new Set<SectionId>(['generation', 'presets', 'proofread', 'agent', 'imageprompts', 'promptio'])
 
 /** 選択中のセクションだけを描く(見出し + 中身)。
  *  非表示のセクションはマウントしないので、一覧の取得も開いたときだけ走る */
@@ -170,6 +171,7 @@ export default function SettingsMode({ onImported }: {
   const [modelsDirError, setModelsDirError] = useState<string | null>(null)
   const [genPromptDefault, setGenPromptDefault] = useState('')
   const [fixedPrompts, setFixedPrompts] = useState<Awaited<ReturnType<typeof api.getFixedPrompts>> | null>(null)
+  const [imagePrompts, setImagePrompts] = useState<Awaited<ReturnType<typeof api.getImagePrompts>> | null>(null)
   const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const busyElapsed = useElapsedSeconds(busy !== null)
 
@@ -211,6 +213,7 @@ export default function SettingsMode({ onImported }: {
     void loadModels().catch(report('モデル一覧'))
     void api.getGenerationPrompt().then((r) => setGenPromptDefault(r.default)).catch(report('生成プロンプト'))
     void api.getFixedPrompts().then(setFixedPrompts).catch(() => undefined)
+    void api.getImagePrompts().then(setImagePrompts).catch(() => undefined)
   }, [])
 
   const showSaved = (): void => {
@@ -700,6 +703,45 @@ export default function SettingsMode({ onImported }: {
                 text={fixedPrompts?.production_consult}
                 hint="「相談する」で送ったときに必ず付きます。どちらのモードでも、この前に相談チャットと共通の基本指示(物語の読み方とツールの使い方)が付きます。"
                 collapsed
+              />
+            </div>
+          </Section>
+
+          <Section id="imageprompts" current={section} title="画像生成プロンプト"
+            scope="人物の参照画像・場所の画像・シーンの挿絵の英語プロンプトを LLM に書かせるときの指示。手動の生成ウインドウと制作チャットの予約の両方に使います。描く側(ComfyUI)の設定は「画像生成」にあります。">
+            <div className="settings-card">
+              {([
+                ['character', '人物の参照画像', '外見・プロフィールから、人物の見た目だけを英語のタグ列で書かせる指示。'],
+                ['place', '場所の画像', '説明・雰囲気から、人物なしの風景を英語のタグ列で書かせる指示。'],
+                ['scene_focus', 'シーンの挿絵: 描く人物の選び方', '本文から、その瞬間に話す・動く中心の人物(最大 3 人)を選ばせる指示。参照画像の手本もここで選んだ人物から取ります。'],
+                ['scene', 'シーンの挿絵: 場面の描写', '本文・中心の人物・場所から、1 つの瞬間を英語で描写させる指示。人数と構図の規則もここにあります。']
+              ] as const).map(([kind, label, hint]) => {
+                const key = imagePrompts?.keys[kind] ?? `image_prompt_${kind}`
+                return (
+                  <EditablePrompt
+                    key={kind}
+                    label={label}
+                    ariaLabel={`画像生成プロンプト: ${label}`}
+                    value={values[key] ?? ''}
+                    placeholder={imagePrompts?.defaults[kind] ?? ''}
+                    rows={kind === 'scene' ? 10 : 6}
+                    hint={`${hint} 空欄ならプレースホルダのデフォルトが使われます。`}
+                    onChange={(next) => setValues((v) => ({ ...v, [key]: next }))}
+                    onBlur={() => void save({ [key]: values[key] ?? '' })}
+                    onReset={() => void save({ [key]: '' })}
+                  />
+                )
+              })}
+              <FixedPrompt
+                label="機械的に付く部分(編集不可)"
+                collapsed
+                text={imagePrompts ? [
+                  `人物の参照画像の後ろ: ${imagePrompts.fixed.character_suffix}`,
+                  `プロフィール画像(顔。参照画像を手本に描く): ${imagePrompts.fixed.portrait}`,
+                  `場所の画像の後ろ: ${imagePrompts.fixed.place_suffix}`,
+                  `シーンの挿絵の後ろ: ${imagePrompts.fixed.scene_suffix}`
+                ].join('\n\n') : undefined}
+                hint="LLM が書いた描写の後ろに必ず足す接尾辞(全身・正面・無地背景、人物なしの全景、など)と、顔のアップの本文。上の指示に食い違う語を書いても残ります。"
               />
             </div>
           </Section>

@@ -46,6 +46,25 @@ INSTRUCTIONS_HEADER = (
 )
 
 
+# 設定(ライブラリ単位)で差し替えられるシステムプロンプト。空なら既定(このファイルの定数)。
+# 設定画面の「画像生成プロンプト」(docs/design/system-prompts.md)
+PROMPT_SETTING_KEYS = {
+    "character": "image_prompt_character",
+    "place": "image_prompt_place",
+    "scene_focus": "image_prompt_scene_focus",
+    "scene": "image_prompt_scene",
+}
+
+
+def default_prompts() -> dict[str, str]:
+    return {"character": PROMPT_SYSTEM, "place": PLACE_PROMPT_SYSTEM, "scene_focus": FOCUS_SYSTEM, "scene": SCENE_PROMPT_SYSTEM}
+
+
+def system_prompt(settings: dict[str, str] | None, kind: str) -> str:
+    custom = ((settings or {}).get(PROMPT_SETTING_KEYS[kind]) or "").strip()
+    return custom or default_prompts()[kind]
+
+
 def _with_instructions(notes: str, instructions: str | None) -> str:
     text = (instructions or "").strip()
     return f"{notes}\n\n{INSTRUCTIONS_HEADER}\n{text}" if text else notes
@@ -60,9 +79,11 @@ def _character_notes(char: dict[str, Any]) -> str:
     return "\n\n".join(parts)
 
 
-def character_prompt_messages(char: dict[str, Any], instructions: str | None = None) -> list[dict[str, Any]]:
+def character_prompt_messages(
+    char: dict[str, Any], instructions: str | None = None, settings: dict[str, str] | None = None
+) -> list[dict[str, Any]]:
     return [
-        {"role": "system", "content": PROMPT_SYSTEM},
+        {"role": "system", "content": system_prompt(settings, "character")},
         {"role": "user", "content": _with_instructions(_character_notes(char), instructions)},
     ]
 
@@ -97,11 +118,11 @@ async def _stream_prompt(
 
 
 def stream_character_prompt(
-    char: dict[str, Any], *, base_url: str, instructions: str | None = None
+    char: dict[str, Any], *, base_url: str, instructions: str | None = None, settings: dict[str, str] | None = None
 ) -> AsyncIterator[str]:
     """外見・プロフィール(+ 作者の追加指示)から英語プロンプト(人物描写部分のみ)をストリーミングで作る。"""
     return _stream_prompt(
-        character_prompt_messages(char, instructions),
+        character_prompt_messages(char, instructions, settings),
         base_url=base_url, label="ref_image_prompt", max_tokens=400, temperature=0.4,
     )
 
@@ -210,19 +231,21 @@ def _place_notes(place: dict[str, Any]) -> str:
     return "\n\n".join(parts)
 
 
-def place_prompt_messages(place: dict[str, Any], instructions: str | None = None) -> list[dict[str, Any]]:
+def place_prompt_messages(
+    place: dict[str, Any], instructions: str | None = None, settings: dict[str, str] | None = None
+) -> list[dict[str, Any]]:
     return [
-        {"role": "system", "content": PLACE_PROMPT_SYSTEM},
+        {"role": "system", "content": system_prompt(settings, "place")},
         {"role": "user", "content": _with_instructions(_place_notes(place), instructions)},
     ]
 
 
 def stream_place_prompt(
-    place: dict[str, Any], *, base_url: str, instructions: str | None = None
+    place: dict[str, Any], *, base_url: str, instructions: str | None = None, settings: dict[str, str] | None = None
 ) -> AsyncIterator[str]:
     """説明・雰囲気(+ 作者の追加指示)から英語プロンプト(風景描写部分のみ)をストリーミングで作る。"""
     return _stream_prompt(
-        place_prompt_messages(place, instructions),
+        place_prompt_messages(place, instructions, settings),
         base_url=base_url, label="place_image_prompt", max_tokens=400, temperature=0.4,
     )
 
@@ -310,16 +333,18 @@ FOCUS_SCHEMA = {
 }
 
 
-def focus_messages(node: dict[str, Any], cast_chars: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def focus_messages(
+    node: dict[str, Any], cast_chars: list[dict[str, Any]], settings: dict[str, str] | None = None
+) -> list[dict[str, Any]]:
     cast = "\n".join(f"- {c['id']}: {c.get('name') or ''}" for c in cast_chars)
     return [
-        {"role": "system", "content": FOCUS_SYSTEM},
+        {"role": "system", "content": system_prompt(settings, "scene_focus")},
         {"role": "user", "content": f"登場人物(id: 名前):\n{cast}\n\n本文:\n{node.get('beat') or ''}"},
     ]
 
 
 async def choose_scene_focus(
-    node: dict[str, Any], cast_chars: list[dict[str, Any]], *, base_url: str
+    node: dict[str, Any], cast_chars: list[dict[str, Any]], *, base_url: str, settings: dict[str, str] | None = None
 ) -> list[dict[str, Any]]:
     """挿絵に入れる中心の人物(cast の部分集合。選んだ順)。1 人以下なら LLM を呼ばない。
     失敗・空・一覧に無い id だけのときは cast の並びのまま返す(今までの cast 順と同じ結果)。"""
@@ -328,7 +353,7 @@ async def choose_scene_focus(
     by_id = {c["id"]: c for c in cast_chars}
     try:
         result = await llm.chat_json(
-            focus_messages(node, cast_chars), base_url=base_url, schema=FOCUS_SCHEMA,
+            focus_messages(node, cast_chars, settings), base_url=base_url, schema=FOCUS_SCHEMA,
             max_tokens=200, temperature=0.2, label="scene_image_focus",
         )
         ids = result.get("character_ids") if isinstance(result, dict) else None
@@ -375,9 +400,10 @@ def scene_prompt_messages(
     place: dict[str, Any] | None,
     instructions: str | None = None,
     others: list[dict[str, Any]] | None = None,
+    settings: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     return [
-        {"role": "system", "content": SCENE_PROMPT_SYSTEM},
+        {"role": "system", "content": system_prompt(settings, "scene")},
         {"role": "user", "content": _with_instructions(_scene_notes(node, cast_chars, refs, place, others), instructions)},
     ]
 
@@ -391,9 +417,10 @@ def stream_scene_prompt(
     base_url: str,
     instructions: str | None = None,
     others: list[dict[str, Any]] | None = None,
+    settings: dict[str, str] | None = None,
 ) -> AsyncIterator[str]:
     return _stream_prompt(
-        scene_prompt_messages(node, cast_chars, refs, place, instructions, others),
+        scene_prompt_messages(node, cast_chars, refs, place, instructions, others, settings),
         base_url=base_url, label="scene_image_prompt", max_tokens=500, temperature=0.5,
     )
 

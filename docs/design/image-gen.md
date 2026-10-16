@@ -1,7 +1,7 @@
 # 画像生成(ComfyUI 連携)— キャラクターの参照画像・場面の挿絵・場所の画像
 
 作成日時: 2026-08-26 15:15
-更新日時: 2026-10-16 23:06
+更新日時: 2026-10-16 23:40
 
 ローカルの ComfyUI で挿絵を作る仕組みの設計メモ。2026-08-26 のユーザー発案
 ([progress.md](../plan/progress.md) の「場面の画像生成」)。画像は**装飾専用**で、
@@ -108,6 +108,10 @@ API 形式の JSON テンプレート `workflows/ref_t2i.json` を `comfy.build_
 `ImageCropModal` に `sourcePath` を渡し、`portrait_source_path` を参照画像にする。
 
 ## 5. データ
+
+- **システムプロンプトは設定で差し替え可**(2026-10-16 23:40)。`image_gen.PROMPT_SETTING_KEYS`(人物 / 場所 / 挿絵の人物選び / 挿絵の描写)。
+  空なら既定の定数。設定画面 → システムプロンプト → 「画像生成プロンプト」。接尾辞と顔の本文は編集不可で読み取り専用に見せる
+  (`GET /image_prompts`)。[system-prompts.md](system-prompts.md) を参照。
 
 - `characters.ref_image_path` — 参照画像のファイル名(`assets/images`)。`gc_assets` の参照保護に含めた。
 - `characters.ref_image_prompt` — 生成に使った人物描写(英語)。画像を外しても残す。
