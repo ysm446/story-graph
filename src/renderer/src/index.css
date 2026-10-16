@@ -121,9 +121,11 @@ select:focus-visible,
 .chat-composer textarea:focus-visible {
   outline: none;
 }
-/* 入力の案内(プレースホルダ)は控えめにする。箱の中に実際の文字(選択中・送信モード)が並ぶので、
-   既定の色だと入力済みの文章のように見える */
-.chat-composer textarea::placeholder {
+/* 入力の案内(プレースホルダ)は控えめにする。既定の色だと入力済みの文章のように見える
+   (2026-10-16 まで相談チャットの入力欄だけだったが、設定の「画像生成プロンプト」の既定の文面が
+   書き込み済みに見えたので全部の入力欄にそろえた。ユーザー指摘) */
+textarea::placeholder,
+input::placeholder {
   color: var(--text-faint);
   opacity: 1;
 }
