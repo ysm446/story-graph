@@ -1280,6 +1280,8 @@ export interface ProductionEvent {
   stage?: string
   active_node?: string | null
   active_library?: { kind: 'character' | 'place' | 'setting_document'; id: string }
+  /** 制作で作った人物の画像(参照画像・プロフィール画像)が入った。人物を読み直す */
+  image_changed?: { kind: 'character'; id: string }
   changed?: ProductionOperation
   snapshot?: Snapshot
   error?: string

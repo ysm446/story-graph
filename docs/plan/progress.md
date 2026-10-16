@@ -1,9 +1,11 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-07-24 22:38
-更新日時: 2026-10-16 17:35
+更新日時: 2026-10-16 18:04
 
 ## 現在の状態
+
+- 2026-10-16 18:04 **制作モードで人物を作ったら画像も作る**(ユーザー要望「制作モードの LLM がキャラクターを作成するときに画像も生成して、アイコンにセットしてほしい」。顔は切り抜かず別に描く案はユーザー発案)。設定 → 画像生成に「人物を作ったら画像も作る」トグル(`comfy_auto_character_images`。既定オフ)。`backend/auto_images.py` を追加: 制作チャットの作業の終わり(`production_agent.stream` の `done` の前。`image_hook` 引数で `app.py` から渡す)に、この作業で `create_character` した人物ごとに「外見 → プロンプト(`llm.chat`)→ 参照画像(ストックに入れて選択)→ 参照画像を手本に顔(edit ワークフロー、1024×1024)→ `portrait_path`」。進捗は `stage`、結果は会話の本文に残し、`image_changed` で画面が人物を読み直す。ComfyUI の失敗は人物ごとの知らせにして人物は残す。設計は `docs/design/image-gen.md` §14。検証: pytest 687 件成功(auto_images 7 件を追加)、typecheck・build 成功、実際の ComfyUI で既存の参照画像から顔を描き、既定の組・zeniji とも同じ人物・顔が枠いっぱいで 11〜13 秒。**未確認**: 実アプリで制作チャットから人物を作って画像が入るまでの通し(LLM のプロンプト生成を含む)。**保留**: 場所の画像も同じ形で(`create_place`)— ユーザーに確認中。
 
 - 2026-10-16 17:01 **既定のワークフロー**(ユーザー要望「ワークフローを選べばモデルは意識しなくていい」)。設定 `comfy_workflow` を追加し、`image_gen.resolve_variant`(選んだ組 → 設定の既定 → 先頭)で描く。設定画面のチェックポイント・steps・CFG・シフトの欄を外し、Qwen 系の組の `values` に `checkpoint`(`Qwen-Rapid-AIO-NSFW-v23.safetensors`)と steps / cfg / shift を書いた。`comfy_checkpoint` は組に無いときの予備としてだけ読む。埋まらない `{{name}}` は送る前に `MissingValuesError`。`GET /comfy/workflows?check=true` で組ごとの使うモデルと見つからないモデルを返し、設定画面に並べる。生成ウインドウは保存済みの組が無ければ既定の組を選んだ状態で開く。設計は `docs/design/image-gen.md` §12。検証: pytest 678 件成功(既定の組の解決・予備の checkpoint・値の書き忘れ・使うモデルの抽出を追加)、typecheck・build 成功、実際の ComfyUI(稼働中)で全組のモデルが見つかること・存在しない vae を足した組だけ不足になることを確認、隔離 Electron に `--imagegen`(5 項目)を追加して成功、既定の検証は 58 項目 + 既知の 1 項目で停止。**未確認**: 実アプリでの生成(既定を Krea2 にして新しいシーンを描く)。組を記録していない古い絵は、いまの既定の組で開く。
 

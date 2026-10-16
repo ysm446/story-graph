@@ -488,6 +488,8 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
               followTargetRef.current = { kind: event.active_library.kind, id: event.active_library.id }
               if (followRef.current && !manualRef.current) onFollowTarget(followTargetRef.current)
             }
+            // 自動生成した画像は operation ではないので、グラフの購読側(人物の一覧を含む)に読み直してもらう
+            if (event.image_changed) notifyGraphChanged()
             if ('preview' in event && !manualRef.current) setProductionPreview(event.preview ?? null)
             if (event.snapshot) {
               const snapshot = event.snapshot

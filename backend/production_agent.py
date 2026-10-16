@@ -651,7 +651,9 @@ async def context_usage(store, base_url, messages, execute):
             "estimated": counted is None, "ctx_size": int(store.get_settings().get("llm_ctx_size") or 16384)}
 
 
-async def stream(store: Store, base_url: str, chat_id: str | None, message: str, execute: bool, on_delete, policy=None, selection=None):
+async def stream(store: Store, base_url: str, chat_id: str | None, message: str, execute: bool, on_delete, policy=None, selection=None,
+                 image_hook=None):
+    """image_hook(char_ids) は制作で作った人物の画像を描く非同期生成器(auto_images.run)。作業の終わりに呼ぶ。"""
     policy = policy or ProductionPolicy(store)
     chat = store.get_chat(chat_id) if chat_id else store.create_chat(None, "all", mode="production")
     if chat is None or chat.get("mode") != "production":
@@ -1008,6 +1010,32 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
             history.append({"role": "assistant", "content": notice, "outcome": outcome})
             yield _sse({"delta": notice})
             yield _sse({"response_end": True, "active_node": None})
+        # 制作で作った人物の画像(参照画像とプロフィール画像)は、確定した変更の後にまとめて描く
+        # (auto_images.run。設定がオフなら何も流れない)。失敗しても人物は残し、会話に知らせるだけ。
+        created_chars = [c["entity_id"] for c in changes if c.get("action") == "create_character"] if execute else []
+        if created_chars and image_hook is not None:
+            try:
+                async with aclosing(image_hook(created_chars)) as image_events:
+                    async for event in image_events:
+                        if "stage" in event:
+                            yield _sse({"stage": event["stage"], "active_node": None})
+                            continue
+                        if event.get("character_id") and store.get_character(event["character_id"]) is not None:
+                            # 画面は image_changed で人物を読み直し(アイコンが差し替わる)、作業対象を追っていればその人物を開く
+                            yield _sse({"image_changed": {"kind": "character", "id": event["character_id"]},
+                                        "active_library": {"kind": "character", "id": event["character_id"]}})
+                        history.append({"role": "assistant", "content": event["notice"], "auto_image": True})
+                        store.save_chat_messages(chat_id, history)
+                        yield _sse({"delta": event["notice"]})
+                        yield _sse({"response_end": True})
+            except (asyncio.CancelledError, GeneratorExit):
+                raise
+            except Exception as e:  # noqa: BLE001 — 画像は装飾。人物の設定と確定済みの変更は残す
+                notice = f"人物の画像の自動生成に失敗しました。人物の設定は残しています: {e}"
+                history.append({"role": "assistant", "content": notice, "auto_image": True})
+                store.save_chat_messages(chat_id, history)
+                yield _sse({"delta": notice})
+                yield _sse({"response_end": True})
         # doneを送った後に届く途中指示を受け付けないよう、通知の前に閉じる。
         run.close()
         summary = ((production_guard.OUTCOME_LABELS[outcome] + f"（変更 {len(changes)} 件"

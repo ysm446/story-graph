@@ -155,6 +155,7 @@ export default function ImageGenSection({
   }
 
   const selectedWorkflow = workflows.find((w) => w.id === defaultWorkflow)
+  const autoCharacterImages = (values.comfy_auto_character_images ?? '') === '1'
   const missingOf = (w: WorkflowVariant): Set<string> => new Set((w.missing ?? []).map((m) => `${m.folder}/${m.key}`))
 
   return (
@@ -320,6 +321,33 @@ export default function ImageGenSection({
           <p className="settings-field-hint">
             新しく描くとき、生成ウインドウで最初に選ばれている組です(その場で別の組に変えられます)。描いたことのある絵は、そのとき使った組で開きます。
             使うモデルや steps・CFG は組ごとに workflows/variants.json に書いてあります。
+          </p>
+        </div>
+        <div className="settings-field">
+          <div className="settings-field-header">
+            <span className="settings-field-label">制作モードの自動生成</span>
+            <div className="settings-field-controls">
+              <button
+                onClick={() => {
+                  const next = autoCharacterImages ? '' : '1'
+                  setValues((v) => ({ ...v, comfy_auto_character_images: next }))
+                  void save({ comfy_auto_character_images: next })
+                }}
+                aria-pressed={autoCharacterImages}
+                className="rounded-md border px-2 py-0.5 text-[11px]"
+                style={
+                  autoCharacterImages
+                    ? { borderColor: 'var(--border-strong)', background: 'var(--accent-soft)', color: 'var(--text)' }
+                    : { borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }
+                }
+              >
+                {autoCharacterImages ? '☑' : '☐'} 人物を作ったら画像も作る
+              </button>
+            </div>
+          </div>
+          <p className="settings-field-hint">
+            制作チャットが人物を作ると、作業の終わりに外見から参照画像(全身)を描いてストックに入れ、それを手本に顔のアップを描いてプロフィール画像にします。
+            既定のワークフローで描き、人物 1 人あたり 30〜60 秒かかります。気に入らなければ人物のページで作り直せます。
           </p>
         </div>
         <div className="settings-field">

@@ -2749,8 +2749,15 @@ async def production_send(body: ProductionIn) -> StreamingResponse:
     except Exception as e:
         production_agent.gate.active = False
         return _sse_error_response(str(e))
+    import auto_images
+
+    def image_hook(char_ids: list[str]):
+        # 制作で作った人物の参照画像とプロフィール画像(docs/design/image-gen.md §14)。設定がオフなら何もしない
+        return auto_images.run(store, char_ids, llm_base_url=base_url, ensure_comfy=comfy_mgr.ensure_running)
+
     return StreamingResponse(
-        production_agent.stream(store, base_url, body.chat_id, body.message, body.execute, _schedule_audio_gc, policy=policy, selection=selection),
+        production_agent.stream(store, base_url, body.chat_id, body.message, body.execute, _schedule_audio_gc, policy=policy, selection=selection,
+                                image_hook=image_hook),
         media_type="text/event-stream",
     )
 
