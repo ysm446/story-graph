@@ -5,6 +5,7 @@ import ImageCropModal, { type CropState } from '../ImageCropModal'
 import RefImagePanel from '../RefImagePanel'
 import ProofreadTextarea from '../ProofreadTextarea'
 import type { Character } from '../types'
+import SceneUsage, { type SceneUsageProps } from '../SceneUsage'
 import { EditActions, EditPencil, ReadText, editKeys as fieldEditKeys, focusEditGroup } from '../FieldEdit'
 
 /** キャラクターの編集(プロフィール・画像・声)。資料庫と、構造モードの詳細欄「資料」タブで共用する。
@@ -34,6 +35,7 @@ const ALL_GROUPS: EditGroup[] = ['identity', 'profile', 'appearance', 'voice']
 
 export default function CharacterEditor({
   character,
+  usage,
   onChanged,
   onDirty,
   onDeleted,
@@ -41,6 +43,8 @@ export default function CharacterEditor({
   onStartedEditing
 }: {
   character: Character
+  /** 出番の図(登場するシーン)。資料庫だけが渡す(詳細欄の人物専用の表示では出さない) */
+  usage?: SceneUsageProps
   /** 保存・画像の変更のあとに呼ぶ(親が一覧を読み直す) */
   onChanged: () => Promise<void>
   /** 未保存の下書き・保存中・切り抜き中のどれかがあるか(親の未保存ガード用) */
@@ -454,6 +458,9 @@ export default function CharacterEditor({
           </section>
         )
       })}
+      {usage && (
+        <SceneUsage kind="character" entityId={character.id} name={character.name || '(名前なし)'} color={character.color} {...usage} />
+      )}
       {/* 読み上げの声(docs/design/voice.md §5)。選んだその場で保存する */}
       <CharacterVoicePanel character={character} onChanged={onChanged} />
       {onDeleted && (

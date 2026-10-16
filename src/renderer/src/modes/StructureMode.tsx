@@ -1,5 +1,6 @@
 import { createPortal } from 'react-dom'
 import { useWorkspace, type ProductionTarget } from '../Workspace'
+import { resolveEffectiveLocations } from '../effectiveLocations'
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   applyNodeChanges,
@@ -96,12 +97,15 @@ const ProductionChat = memo(ProductionChatBase)
 function StructureModeInner({
   settingsVersion,
   focusNodeId,
+  jumpTo,
   onSelectedNodeChange,
   onSelectionCountChange,
   onReaderScopeChange
 }: {
   settingsVersion: number
   focusNodeId?: string | null
+  /** 資料庫などから「このシーンを開く」と頼まれた印(同じシーンでも seq が変われば寄せ直す) */
+  jumpTo?: { id: string; seq: number } | null
   onSelectedNodeChange?: (nodeId: string | null) => void
   onSelectionCountChange?: (count: number) => void
   onReaderScopeChange?: (groupId: string | null) => void
@@ -321,32 +325,7 @@ function StructureModeInner({
   // 実効ロケーション: location が空欄なら親を遡って直近の場所を使う
   // (backend の Store.effective_location と同じ規則。グラフは手元にあるので
   //  ここで解決して、ノード 1 つずつ問い合わせない)
-  const effectiveLocations = useMemo(() => {
-    const parentOf: Record<string, string> = {}
-    for (const e of graphEdges) parentOf[e.to_node] = e.from_node
-    const own: Record<string, string | null> = {}
-    for (const n of graphNodes) own[n.id] = n.location || null
-    const resolved: Record<string, { placeId: string; inherited: boolean } | null> = {}
-    for (const n of graphNodes) {
-      if (own[n.id]) {
-        resolved[n.id] = { placeId: own[n.id]!, inherited: false }
-        continue
-      }
-      let current: string | undefined = parentOf[n.id]
-      const seen = new Set<string>([n.id])
-      let found: string | null = null
-      while (current && !seen.has(current)) {
-        seen.add(current)
-        if (own[current]) {
-          found = own[current]
-          break
-        }
-        current = parentOf[current]
-      }
-      resolved[n.id] = found ? { placeId: found, inherited: true } : null
-    }
-    return resolved
-  }, [graphNodes, graphEdges])
+  const effectiveLocations = useMemo(() => resolveEffectiveLocations(graphNodes, graphEdges), [graphNodes, graphEdges])
 
   // 「次のシーン」の解決(補間生成の対象。docs/design/interpolation.md §3)。
   // 子の選び方はサーバーの next_scene_after / insert_node_after と同じ規則:
@@ -1565,6 +1544,13 @@ function StructureModeInner({
     },
     []
   )
+
+  // 資料庫の「出番の図」からシーンを開いたとき(workspace.openScene)。制作の追従(章カードなど)とは別の経路
+  useEffect(() => {
+    if (!jumpTo || workspace.mode !== 'structure') return
+    focusDoneRef.current = false
+    setPendingFocusId(jumpTo.id)
+  }, [jumpTo, workspace.mode])
 
   const previousMode = useRef(workspace.mode)
   useEffect(() => {
@@ -3651,6 +3637,7 @@ export default memo(StructureMode)
 function StructureMode({
   settingsVersion = 0,
   focusNodeId,
+  jumpTo,
   onSelectedNodeChange,
   onSelectionCountChange,
   onReaderScopeChange
@@ -3658,6 +3645,8 @@ function StructureMode({
   settingsVersion?: number
   /** 開いたときにフォーカスするシーン(鑑賞モードで読んでいたシーン) */
   focusNodeId?: string | null
+  /** 資料庫の「出番の図」から開くシーン(workspace.openScene) */
+  jumpTo?: { id: string; seq: number } | null
   /** 選択シーンを親に伝える(鑑賞モードを開いたときにそこへ飛ぶため) */
   onSelectedNodeChange?: (nodeId: string | null) => void
   /** 範囲選択しているシーン数を親に伝える(ステータスバーの表示用) */
@@ -3670,6 +3659,7 @@ function StructureMode({
       <StructureModeInner
         settingsVersion={settingsVersion}
         focusNodeId={focusNodeId}
+        jumpTo={jumpTo}
         onSelectedNodeChange={onSelectedNodeChange}
         onSelectionCountChange={onSelectionCountChange}
         onReaderScopeChange={onReaderScopeChange}

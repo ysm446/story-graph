@@ -34,7 +34,7 @@ interface ChapterSpan {
 }
 
 /** 正史パス上で連続する同じ章を 1 つの帯にまとめる */
-function chapterSpans(path: StoryNode[], groups: Group[]): ChapterSpan[] {
+export function chapterSpans(path: StoryNode[], groups: Group[]): ChapterSpan[] {
   const byId = new Map(groups.map((g) => [g.id, g]))
   const spans: ChapterSpan[] = []
   path.forEach((node, index) => {
@@ -48,7 +48,7 @@ function chapterSpans(path: StoryNode[], groups: Group[]): ChapterSpan[] {
 }
 
 /** 出番の列(昇順)を、隣り合う列ごとのまとまり [start, end](両端を含む)に分ける */
-function consecutiveRuns(cols: number[]): Array<[number, number]> {
+export function consecutiveRuns(cols: number[]): Array<[number, number]> {
   const runs: Array<[number, number]> = []
   for (const col of cols) {
     const last = runs[runs.length - 1]

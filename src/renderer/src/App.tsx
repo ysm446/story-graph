@@ -189,6 +189,12 @@ export default function App(): React.JSX.Element {
     setProductionTarget((prev) => (prev && target && prev.kind === target.kind && prev.id === target.id ? prev : target))
     if (target) setMode(target.kind === 'scene' || target.kind === 'chapter' ? 'structure' : 'characters')
   }, [])
+  const [jumpTo, setJumpTo] = useState<{ id: string; seq: number } | null>(null)
+  const openScene = useCallback((nodeId: string) => {
+    setSelectedNodeId(nodeId)
+    setJumpTo({ id: nodeId, seq: Date.now() })
+    setMode('structure')
+  }, [])
   const changed = useCallback(() => setRevision((value) => value + 1), [])
   const toggleChat = useCallback(() => setChatOpen((value) => {
     localStorage.setItem('chatDrawerOpen', value ? '0' : '1')
@@ -312,8 +318,8 @@ export default function App(): React.JSX.Element {
   // Context の値は中身が変わったときだけ作り直す。毎レンダー新しいオブジェクトを渡すと、
   // シーンの選択や通知で App が再レンダーされるたびに全モードが再レンダーされる
   const workspaceValue = useMemo(
-    () => ({ mode, chatHost, chatOpen, toggleChat, manual, setManual, revision, changed, libraryDirty, productionTarget, followTarget }),
-    [mode, chatHost, chatOpen, toggleChat, manual, revision, changed, productionTarget, followTarget]
+    () => ({ mode, chatHost, chatOpen, toggleChat, manual, setManual, revision, changed, libraryDirty, productionTarget, followTarget, openScene }),
+    [mode, chatHost, chatOpen, toggleChat, manual, revision, changed, productionTarget, followTarget, openScene]
   )
 
   return (
@@ -394,6 +400,7 @@ export default function App(): React.JSX.Element {
               <StructureMode
                 settingsVersion={settingsVersion}
                 focusNodeId={selectedNodeId}
+                jumpTo={jumpTo}
                 onSelectedNodeChange={setSelectedNodeId}
                 onSelectionCountChange={setSelectedCount}
                 onReaderScopeChange={setReaderScopeGroupId}

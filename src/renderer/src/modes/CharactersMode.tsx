@@ -3,7 +3,7 @@ import { api, assetUrl } from '../api'
 import CharacterEditor from './CharacterEditor'
 import PlaceEditor from './PlaceEditor'
 import RelationGraph from '../RelationGraph'
-import type { Character, Place, StoryGraph, StoryNode } from '../types'
+import type { Character, Group, Place, StoryGraph, StoryNode } from '../types'
 import { useWorkspace } from '../Workspace'
 import UnsavedBadge from '../UnsavedBadge'
 import CharAvatar from '../CharAvatar'
@@ -49,6 +49,7 @@ function CharactersMode(): React.JSX.Element {
   const [places, setPlaces] = useState<Place[]>([])
   // 関係図用: ノードグラフ(正史パスの導出と履歴表示に使う)とエゴ選択
   const [graph, setGraph] = useState<StoryGraph | null>(null)
+  const [groups, setGroups] = useState<Group[]>([])
   const [egoCharId, setEgoCharId] = useState<string | null>(null)
   const [selectedPlaceId, setSelectedPlaceId] = useState<string | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -91,17 +92,19 @@ function CharactersMode(): React.JSX.Element {
 
   const reload = async (refreshDraft = false): Promise<void> => {
     const sequence = ++reloadSequence.current
-    const [chars, placeList, g, documentList] = await Promise.all([
+    const [chars, placeList, g, documentList, groupList] = await Promise.all([
       api.listCharacters(),
       api.listPlaces(),
       api.getGraph(),
-      api.listSettingDocuments()
+      api.listSettingDocuments(),
+      api.listGroups()
     ])
     if (sequence !== reloadSequence.current) return
     setCharacters(chars)
     setPlaces(placeList)
     setDocuments(documentList)
     setGraph(g)
+    setGroups(groupList)
     // 未保存が無ければ編集欄を作り直して最新の値にする(PlaceEditor と同じ作法)
     if (refreshDraft && selectedId === selectedIdRef.current && !workspace.libraryDirty.current) {
       setLibraryVersion((value) => value + 1)
@@ -312,6 +315,7 @@ function CharactersMode(): React.JSX.Element {
             <PlaceEditor
               key={`${selectedPlace.id}:${libraryVersion}`}
               place={selectedPlace}
+              usage={graph ? { graph, groups, onOpenScene: workspace.openScene } : undefined}
               onChanged={reload}
               onDirty={setPlaceDirty}
               onUnsavedChange={setPlaceUnsaved}
@@ -345,6 +349,7 @@ function CharactersMode(): React.JSX.Element {
           <CharacterEditor
             key={`${selected.id}:${libraryVersion}`}
             character={selected}
+            usage={graph ? { graph, groups, onOpenScene: workspace.openScene } : undefined}
             onChanged={() => reload()}
             onDirty={setCharDirty}
             onDeleted={() => setSelectedId(null)}

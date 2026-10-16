@@ -15,6 +15,8 @@ export const WorkspaceContext = createContext<{
   changed: () => void
   productionTarget: ProductionTarget | null
   followTarget: (target: ProductionTarget | null) => void
+  /** 資料庫などからシーンを開く(構造モードへ移り、そのシーンを選んで寄せる) */
+  openScene: (nodeId: string) => void
   libraryDirty: React.MutableRefObject<boolean>
 } | null>(null)
 

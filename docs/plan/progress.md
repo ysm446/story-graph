@@ -1,9 +1,11 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-07-24 22:38
-更新日時: 2026-10-16 19:19
+更新日時: 2026-10-16 19:33
 
 ## 現在の状態
+
+- 2026-10-16 19:33 **資料庫の出番の図**(ユーザー要望「背景が使われている場面を知りたい」「人物も登場するシーンを図にして各人物のページに」。引き継ぎも含める判断はユーザー)。`SceneUsage.tsx` を追加し、人物のページ(文章の下)と場所のページ(説明の下)に、正史のシーンを横一列に並べて出番を色の帯で示す 1 行の出番表を置いた。人物は cast、場所は実効ロケーション(空欄を親から引き継いだシーンは破線)。分岐はその資料が出る枝だけを下に並べる。クリックで `workspace.openScene`(App が `jumpTo` を `StructureMode` に渡し、構造モードへ移ってそのシーンに寄せる。制作の追従とは別経路。最初は鑑賞モードからの復帰と同じ `focusNodeId` を流用したが、制作の章カードの追従を上書きして既定の検証が落ちたので分けた)。実効ロケーションの解決は `effectiveLocations.ts` に出して `StructureMode` と共用。`CharactersMode` が章(`listGroups`)も読む。検証: typecheck・build 成功、`check-workspace-ui.cjs --usage`(8 項目。完成例 + 引き継ぎのシーン + 分岐)成功、既定の検証は 58 項目 + 既知の 1 項目で停止、`--cast` 成功。スクリーンショット目視。
 
 - 2026-10-16 18:16 **制作モードの画像生成(自動と「〇〇の画像を作って」)**(ユーザー要望「制作モードの LLM がキャラクターを作成するときに画像も生成してアイコンにセット」「背景も」「画像のない人物に『〇〇の画像を作って』」。顔は切り抜かず別に描く案はユーザー発案。描き直し可・場所も同じツールはユーザー了承)。設定 → 画像生成に「人物を作ったら画像も作る」「場所を作ったら画像も作る」トグル(`comfy_auto_character_images` / `comfy_auto_place_images`。既定オフ)。`backend/auto_images.py` を追加: 制作チャットの作業の終わり(`production_agent.stream` の `done` の前。`image_hook` 引数で `app.py` から渡す)に、この作業で `create_character` / `create_place` した資料(トグルがオンのとき)と `generate_images` ツールで予約した資料(設定に関わらず。画像があっても描き直し)を順に描く。人物は「外見 → プロンプト(`llm.chat`)→ 参照画像(ストックに入れて選択)→ 参照画像を手本に顔(edit ワークフロー、1024×1024)→ `portrait_path`」、場所は「説明 → プロンプト → 全景(ストックに入れて選択)」。進捗は `stage`、結果は会話の本文に残し、`image_changed` で画面が資料を読み直す。ComfyUI の失敗は資料ごとの知らせにして資料は残す。設計は `docs/design/image-gen.md` §14。検証: pytest 691 件成功(auto_images 11 件)、typecheck・build 成功、実際の ComfyUI で既存の参照画像から顔(既定・zeniji とも同じ人物、11〜13 秒)、llama-server を起動して通し(`data/test/auto-images-smoke`): 場所 12 秒・人物 24 秒で指定どおりの絵。**追記 2026-10-16 18:56**: ユーザーが実アプリで「製塩工場の画像をつくって」と送ると 31B が「画像を生成する機能は持っておりません」と答えた。指示文(`EXECUTE_RULES` / `CONSULT_RULES`)に「このアプリは画像を描ける」と明記し、`production_guard.wants_images` で相談モードには切替案内を添え、実行モードで予約が無いまま終えようとしたら 1 回だけ注記して判断し直させる。pytest 693 件成功。実 LLM(31B、`data/test/auto-images-llm`)で、実行は `read_library` → `generate_images` で予約、相談は切替案内を確認。**追記 2026-10-16 19:19**: ユーザーが実アプリで試し、画像は描けたが資料庫のページが次の操作まで更新されなかった。`image_changed` で `notifyGraphChanged()`(フローチャート)しか呼んでおらず、資料庫(`CharactersMode`)は `workspace.revision` でしか読み直さないため。`ProductionChat` に `useWorkspace()` を入れ、`image_changed` で `workspace.changed()` も呼ぶようにした。typecheck・build 成功。**未確認**: 実アプリでの自動更新の目視。
 

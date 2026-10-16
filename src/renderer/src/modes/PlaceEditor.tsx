@@ -6,6 +6,7 @@ import MediaPicker from '../MediaPicker'
 import PlaceImageModal from '../PlaceImageModal'
 import ProofreadTextarea from '../ProofreadTextarea'
 import type { Place } from '../types'
+import SceneUsage, { type SceneUsageProps } from '../SceneUsage'
 
 const EDITABLE_FIELDS = ['name', 'color', 'description', 'atmosphere', 'reading'] as const
 
@@ -29,6 +30,7 @@ const groupName = (group: EditGroup): string => `place-${group}`
  *  説明と雰囲気は清書プロンプトに毎回渡るので、背景描写の一貫性に直結する。 */
 export default function PlaceEditor({
   place,
+  usage,
   onChanged,
   onDirty,
   onUnsavedChange,
@@ -37,6 +39,8 @@ export default function PlaceEditor({
   onStartedEditing
 }: {
   place: Place
+  /** 出番の図(使われている場面。引き継ぎを含む)。資料庫だけが渡す */
+  usage?: SceneUsageProps
   onChanged: () => Promise<void>
   onDirty?: (dirty: boolean) => void
   onUnsavedChange?: (dirty: boolean) => void
@@ -396,6 +400,11 @@ export default function PlaceEditor({
       <p className="text-[11px] leading-relaxed" style={{ color: 'var(--text-faint)' }}>
         説明と雰囲気は、この場所を舞台にするシーンの清書に毎回渡されます。
       </p>
+      {usage && (
+        <div className="mt-5">
+          <SceneUsage kind="place" entityId={place.id} name={place.name || '(名前なし)'} color={place.color} {...usage} />
+        </div>
+      )}
       <div className="mt-6 flex border-t pt-3" style={{ borderColor: 'var(--border)' }}>
         <button onClick={() => void handleDelete()} className="delete-action ml-auto text-[12px]">
           この場所を削除

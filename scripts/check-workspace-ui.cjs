@@ -43,7 +43,7 @@ async function main() {
   }
   if (!ready) throw new Error('検証用バックエンドを起動できませんでした')
   trace('backend ready ' + base)
-  for (const [path, value] of process.argv.includes('--import') || process.argv.includes('--cast') ? [] : [['/characters', { name: '検証キャラ', profile: '保存済みプロフィール' }], ['/nodes', { title: '検証シーン', beat: '保存済みの本文。' }]]) {
+  for (const [path, value] of process.argv.includes('--import') || process.argv.includes('--cast') || process.argv.includes('--usage') ? [] : [['/characters', { name: '検証キャラ', profile: '保存済みプロフィール' }], ['/nodes', { title: '検証シーン', beat: '保存済みの本文。' }]]) {
     const response = await fetch(base + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(value) })
     if (!response.ok) throw new Error(await response.text())
   }
@@ -304,6 +304,52 @@ store.save_chat_messages(chat['id'], [
     await js(`[...document.querySelectorAll('.react-flow__node button[data-tip$="この人物を出す"]')].find(e => e.getAttribute('data-tip').startsWith('アヤ') && e.getClientRects().length).click()`)
     await pause(500)
     await assert(`(() => { const name = [...document.querySelectorAll('[data-character-name]')].find(e => e.getClientRects().length); const chip = [...document.querySelectorAll('.react-flow__node button[data-tip$="この人物を出す"]')].find(e => e.getAttribute('data-tip').startsWith('アヤ') && e.getClientRects().length); return !!name && name.textContent.trim() === 'アヤ' && ${tabLabels}.includes('プロフィール') && chip.closest('.react-flow__node').classList.contains('selected') })()`, 'フローチャートのカードの登場人物の札をクリックすると、そのシーンが選ばれ、詳細欄が人物専用の表示になる')
+    if (errors.length) throw new Error(errors.join('\n'))
+    console.log('Screenshots: ' + target)
+    win.destroy()
+    return
+  }
+  if (process.argv.includes('--usage')) {
+    // 資料庫の「出番の図」(SceneUsage): 人物は登場するシーン、場所は使われている場面(引き継ぎを含む)を正史の順に並べ、分岐は別の行。クリックでフローチャートへ
+    const { readFileSync } = require('node:fs')
+    const example = JSON.parse(readFileSync(join(root, 'docs/reference/import-example.json'), 'utf8'))
+    const applied = await fetch(base + '/import/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data: example }) })
+    if (!applied.ok) throw new Error(await applied.text())
+    const post = async (path, body) => { const r = await fetch(base + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); if (!r.ok) throw new Error(await r.text()); return r.json() }
+    const graph0 = await (await fetch(base + '/graph')).json()
+    const chars = await (await fetch(base + '/characters')).json()
+    const places = await (await fetch(base + '/places')).json()
+    const byTitle = (t) => graph0.nodes.find((n) => n.title === t).id
+    const charId = (n) => chars.find((c) => c.name === n).id
+    const placeId = (n) => places.find((p) => p.name === n).id
+    // 正史の末尾に場所を空欄にしたシーン(港を引き継ぐ)、2 番目のシーンから分岐(老技師だけ)
+    await post('/nodes/' + byTitle(example.scenes[3].title) + '/insert_after', { title: '翌朝', beat: '翌朝の港。', cast: [charId('ケン')] })
+    await post('/nodes', { title: '別の道', beat: '橋を迂回する。', cast: [charId('老技師')], location: placeId('北の橋'), parent_id: byTitle(example.scenes[1].title) })
+    await new Promise((done) => { win.webContents.once('did-finish-load', () => done()); win.webContents.reload() })
+    for (let i = 0; i < 60; i++) { if (await js(`[...document.querySelectorAll('.react-flow__node')].some(e=>e.textContent.includes('第一幕'))`)) break; await pause(200) }
+    await pause(400)
+    await click('資料庫')
+    await pause(400)
+    const clickRow = async (name) => { await js(`[...document.querySelectorAll('button')].find(e => e.getClientRects().length && e.textContent.trim().endsWith(${JSON.stringify(name)}) && e.closest('nav, aside, [class*="list"]') !== null).click()`); await pause(500) }
+    const section = (label) => `document.querySelector('section[aria-label=${JSON.stringify(label)}]')`
+    const cols = (label) => `[...${section(label)}.querySelectorAll('button[aria-label]')].map(e => e.getAttribute('aria-label'))`
+    await clickRow('ケン')
+    await assert(`!!${section('登場するシーン')} && ${cols('登場するシーン')}.join('|') === '1. ${example.scenes[0].title}|2. ${example.scenes[1].title}|3. ${example.scenes[2].title}|4. ${example.scenes[3].title}|5. 翌朝'`, '人物のページに「登場するシーン」の図が出て、正史の 5 シーンが順に並ぶ')
+    await assert(`${section('登場するシーン')}.textContent.includes('登場するシーン3') && !${section('登場するシーン')}.textContent.includes('分岐:')`, 'ケンの出番は 3(分岐には出ていないので分岐の行は無い)')
+    await assert(`['第一幕 出発','第二幕 橋','第三幕 帰港'].every(t => ${section('登場するシーン')}.textContent.includes(t))`, '図の上に章の帯が出る')
+    writeFileSync(join(target, 'usage-character.png'), (await win.webContents.capturePage()).toPNG())
+    await clickRow('老技師')
+    await assert(`${section('登場するシーン')}.textContent.includes('登場するシーン3') && ${section('登場するシーン')}.textContent.includes('分岐: 「${example.scenes[1].title}」から') && ${cols('登場するシーン')}.includes('1. 別の道')`, '老技師は正史 2 + 分岐 1 で、分岐の行に「別の道」が出る')
+    await clickRow('港')
+    await assert(`!!${section('使われている場面')} && ${section('使われている場面')}.textContent.includes('使われている場面3(うち引き継ぎ 1)')`, '場所のページに「使われている場面」が出て、引き継ぎを含めて数える(港: 3、うち引き継ぎ 1)')
+    await assert(`[...${section('使われている場面')}.querySelectorAll('div')].some(e => e.style.borderStyle === 'dashed') && [...${section('使われている場面')}.querySelectorAll('div')].some(e => e.style.borderStyle === 'solid')`, '引き継ぎのシーンは破線の帯、直接指定は実線の帯')
+    await assert(`[...${section('使われている場面')}.querySelectorAll('button[data-tip]')].find(e => e.getAttribute('aria-label') === '5. 翌朝').getAttribute('data-tip').includes('引き継ぎ')`, '引き継ぎのセルのツールチップに「引き継ぎ」と出る')
+    writeFileSync(join(target, 'usage-place.png'), (await win.webContents.capturePage()).toPNG())
+    // 図のセルをクリックすると、フローチャートに移ってそのシーンが選ばれる
+    await js(`[...${section('使われている場面')}.querySelectorAll('button[aria-label]')].find(e => e.getAttribute('aria-label') === '5. 翌朝').click()`)
+    await pause(1200)
+    await assert(`!!document.querySelector('.react-flow') && document.querySelector('.react-flow').getClientRects().length > 0 && [...document.querySelectorAll('input')].some(i => i.value === '翌朝')`, 'セルをクリックすると、フローチャートに移ってそのシーンが選ばれる')
+    writeFileSync(join(target, 'usage-jump.png'), (await win.webContents.capturePage()).toPNG())
     if (errors.length) throw new Error(errors.join('\n'))
     console.log('Screenshots: ' + target)
     win.destroy()
