@@ -178,10 +178,14 @@ async def _draw_scene(store: Any, settings: dict[str, str], node: dict[str, Any]
     chars = [c for c in (store.get_character(cid) for cid in node.get("cast") or []) if c]
     place_id, _ = store.effective_location(node["id"])
     place = store.get_place(place_id) if place_id else None
-    refs = image_gen.select_scene_refs(chars)
     target = {"kind": "scene", "id": node["id"]}
+    yield {"stage": f"{label}の挿絵に描く人物を選んでいます…", **target}
+    # 本文で話す・動く人物だけを絵に入れる(cast 順ではない)。手本もその人物から取る
+    focus = await image_gen.choose_scene_focus(node, chars, base_url=llm_base_url)
+    others = [c for c in chars if c not in focus]
+    refs = image_gen.select_scene_refs(focus)
     yield {"stage": f"{label}の挿絵のプロンプトを書いています…", **target}
-    res = await llm.chat(image_gen.scene_prompt_messages(node, chars, refs, place), base_url=llm_base_url,
+    res = await llm.chat(image_gen.scene_prompt_messages(node, focus, refs, place, others=others), base_url=llm_base_url,
                          max_tokens=500, temperature=0.5, label="auto_scene_image_prompt")
     prompt = image_gen._clean_prompt(res.get("content") or "")
     if not prompt:

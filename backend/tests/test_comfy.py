@@ -297,3 +297,38 @@ def test_ref_label_is_only_applied_when_variant_asks():
     )
     wf = image_gen.scene_workflow({"comfy_checkpoint": "c"}, "the man from image1", ["a.png"], seed=1)
     assert wf["3"]["inputs"]["prompt"].startswith("the man from image1, ")
+
+
+def test_choose_scene_focus_keeps_only_known_ids_and_falls_back(monkeypatch):
+    import asyncio
+    import llm
+
+    chars = [{"id": "a", "name": "A"}, {"id": "b", "name": "B"}, {"id": "c", "name": "C"}, {"id": "d", "name": "D"}]
+    node = {"beat": "B と D が言い争う。A は黙って見ている。"}
+
+    def run(answer):
+        async def chat_json(messages, **kwargs):
+            assert messages[0]["content"] == image_gen.FOCUS_SYSTEM
+            if isinstance(answer, Exception):
+                raise answer
+            return answer
+        monkeypatch.setattr(llm, "chat_json", chat_json)
+        return [c["id"] for c in asyncio.run(image_gen.choose_scene_focus(node, chars, base_url="x"))]
+
+    assert run({"character_ids": ["d", "zzz", "b", "d"]}) == ["d", "b"]  # 選んだ順、重複と不明は捨てる
+    assert run({"character_ids": ["a", "b", "c", "d"]}) == ["a", "b", "c"]  # 手本の上限まで
+    assert run({"character_ids": []}) == ["a", "b", "c", "d"]  # 空なら cast 順のまま
+    assert run(RuntimeError("down")) == ["a", "b", "c", "d"]  # 失敗しても描ける
+
+    async def never(*args, **kwargs):
+        raise AssertionError("called")
+    monkeypatch.setattr(llm, "chat_json", never)
+    assert asyncio.run(image_gen.choose_scene_focus(node, chars[:1], base_url="x")) == chars[:1]  # 1 人以下なら呼ばない
+
+
+def test_scene_notes_lists_left_out_cast():
+    node = {"title": "t", "beat": "b"}
+    chars = [{"id": "a", "name": "A", "ref_image_path": "a.png"}, {"id": "b", "name": "B"}]
+    notes = image_gen._scene_notes(node, chars[:1], image_gen.select_scene_refs(chars[:1]), None, others=chars[1:])
+    assert "- A: image1" in notes and "NOT in the picture (leave them out): B" in notes and "- B:" not in notes
+    assert "NOT in the picture" not in image_gen._scene_notes(node, chars, image_gen.select_scene_refs(chars), None)

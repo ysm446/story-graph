@@ -373,12 +373,18 @@ def test_scene_request_draws_illustration_with_cast_references(store, fake_comfy
     store.update_character("aya", {"ref_image_path": "aya-ref.png"})
     node = store.append_node({"id": "first", "title": "出発", "beat": "アヤとボブが港を出る。", "cast": ["aya", "bob"], "location": "port"})
     prompts = []
+    focus_calls = []
 
     async def chat(messages, **kwargs):
         prompts.append(messages)
         return {"content": "two people on a pier, image1 waving", "usage": {}}
 
+    async def chat_json(messages, **kwargs):
+        focus_calls.append(messages)
+        return {"character_ids": ["aya", "nobody"]}  # 中心はアヤだけ。一覧に無い id は無視
+
     monkeypatch.setattr(llm, "chat", chat)
+    monkeypatch.setattr(llm, "chat_json", chat_json)
     # 自動の予約はシーンには無い(explicit でないものは描かない)
     assert collect(store, [auto("scene", "first")], fake_comfy["ensure_comfy"]) == []
     events = collect(store, [explicit("scene", "first")], fake_comfy["ensure_comfy"])
@@ -388,10 +394,14 @@ def test_scene_request_draws_illustration_with_cast_references(store, fake_comfy
     assert got["image_path"] and got["image_prompt"] == "two people on a pier, image1 waving" and got["image_ref_chars"] == ["aya"]
     media = store.list_media("node", "first")
     assert [m["path"] for m in media] == [got["image_path"]] and media[0]["ref_chars"] == ["aya"]
-    # プロンプトは本文・登場人物(参照画像のあるアヤは image1)・場所から書く
+    # 中心の人物を本文から選び(LLM に cast と本文を渡す)、プロンプトは中心の人物だけを cast にして書く。
+    # 外した人物は「絵に入れない」と知らせる
+    assert len(focus_calls) == 1 and "aya: アヤ" in focus_calls[0][1]["content"] and "港を出る" in focus_calls[0][1]["content"]
     user = prompts[0][1]["content"]
     assert prompts[0][0]["content"] == image_gen.SCENE_PROMPT_SYSTEM
-    assert "アヤ: image1" in user and "ボブ: no reference image" in user and "港" in user and "港を出る" in user
+    assert "アヤ: image1" in user and "ボブ: no reference image" not in user and "NOT in the picture (leave them out): ボブ" in user
+    assert "港" in user and "港を出る" in user
+    assert any("人物を選んでいます" in e.get("stage", "") for e in events)
     # 参照画像を上げてから編集ワークフローで描く
     assert fake_comfy["uploads"] == [("aya-ref.png", b"REF")]
     assert fake_comfy["workflows"][0]["10"]["inputs"]["image"] == "story-graph/aya-ref.png"

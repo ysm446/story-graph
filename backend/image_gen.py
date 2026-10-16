@@ -280,17 +280,70 @@ SCENE_PROMPT_SYSTEM = (
     "time of day, the mood, and the camera framing. 50-110 words, plain prose or comma-separated phrases.\n"
     "Rules: choose ONE moment from the scene, no dialogue, no character names, no story explanation, "
     "no style words (added separately), do not invent characters not in the cast.\n"
+    "Put in the frame ONLY the people who speak or act in that moment - usually one or two, at most three. "
+    "Leave every other cast member out entirely, even if they are present in the scene: no bystanders, "
+    "no background figures. Show only what the moment requires: the minimum exchange between the people in the "
+    "frame, or the specific action being taken. Do not stage a cheerful group discussion unless the text says so; "
+    "keep poses, distance and expressions true to the text (someone turned away, alone, mid-action).\n"
     "Output ONLY the prompt text itself — no preamble, no quotes, no markdown, no explanation."
 )
 
 
 def select_scene_refs(cast_chars: list[dict[str, Any]], limit: int = MAX_SCENE_REFS) -> list[dict[str, Any]]:
-    """cast の並び(主役から)で参照画像のあるキャラを最大 limit 人選ぶ。"""
+    """渡した並び(主役から、または中心の人物の順)で参照画像のあるキャラを最大 limit 人選ぶ。"""
     return [c for c in cast_chars if c.get("ref_image_path")][:limit]
 
 
+# 挿絵に入れる中心の人物を本文から選ぶ(2026-10-16 ユーザー判断「話す・動く人だけ。3 人目でも黙っていれば省く。
+# 必要最低限の会話か、その場面に適した行動を描く」)。手本(参照画像)はここで選んだ人物から取る
+FOCUS_SYSTEM = (
+    "物語のシーンの本文と登場人物の一覧から、挿絵 1 枚に描く中心の人物を選びます。\n"
+    "その場面で話す・行動する人物だけを、重要な順に最大 3 人まで選んでください。"
+    "その場にいるだけ・黙って聞いているだけの人物は入れません。ふつうは 1〜2 人です。"
+    "一覧に無い人物は選べません。本文から判断できなければ一覧の先頭の人物を 1 人選びます。"
+)
+FOCUS_SCHEMA = {
+    "type": "object",
+    "properties": {"character_ids": {"type": "array", "items": {"type": "string"}, "maxItems": MAX_SCENE_REFS}},
+    "required": ["character_ids"],
+    "additionalProperties": False,
+}
+
+
+def focus_messages(node: dict[str, Any], cast_chars: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    cast = "\n".join(f"- {c['id']}: {c.get('name') or ''}" for c in cast_chars)
+    return [
+        {"role": "system", "content": FOCUS_SYSTEM},
+        {"role": "user", "content": f"登場人物(id: 名前):\n{cast}\n\n本文:\n{node.get('beat') or ''}"},
+    ]
+
+
+async def choose_scene_focus(
+    node: dict[str, Any], cast_chars: list[dict[str, Any]], *, base_url: str
+) -> list[dict[str, Any]]:
+    """挿絵に入れる中心の人物(cast の部分集合。選んだ順)。1 人以下なら LLM を呼ばない。
+    失敗・空・一覧に無い id だけのときは cast の並びのまま返す(今までの cast 順と同じ結果)。"""
+    if len(cast_chars) <= 1:
+        return list(cast_chars)
+    by_id = {c["id"]: c for c in cast_chars}
+    try:
+        result = await llm.chat_json(
+            focus_messages(node, cast_chars), base_url=base_url, schema=FOCUS_SCHEMA,
+            max_tokens=200, temperature=0.2, label="scene_image_focus",
+        )
+        ids = result.get("character_ids") if isinstance(result, dict) else None
+    except Exception:  # noqa: BLE001 — 選べなければ従来どおり cast 順
+        ids = None
+    chosen = []
+    for cid in ids if isinstance(ids, list) else []:
+        if isinstance(cid, str) and cid in by_id and by_id[cid] not in chosen:
+            chosen.append(by_id[cid])
+    return chosen[:MAX_SCENE_REFS] or list(cast_chars)
+
+
 def _scene_notes(
-    node: dict[str, Any], cast_chars: list[dict[str, Any]], refs: list[dict[str, Any]], place: dict[str, Any] | None
+    node: dict[str, Any], cast_chars: list[dict[str, Any]], refs: list[dict[str, Any]], place: dict[str, Any] | None,
+    others: list[dict[str, Any]] | None = None,
 ) -> str:
     ref_ids = {c["id"]: i + 1 for i, c in enumerate(refs)}
     lines = []
@@ -308,6 +361,10 @@ def _scene_notes(
         appearance = (c.get("appearance") or "").strip().replace("\n", " ")
         cast_lines.append(f"- {c.get('name')}: {label}" + (f"; appearance: {appearance}" if appearance else ""))
     lines.append("Cast:\n" + ("\n".join(cast_lines) if cast_lines else "(nobody — a landscape / establishing shot)"))
+    if others:
+        # 中心から外した人物。描かせないが、名前を知らないと別人として作り直すことがあるので知らせる
+        lines.append("Also present in the scene but NOT in the picture (leave them out): "
+                     + ", ".join(c.get("name") or "" for c in others))
     return "\n\n".join(lines)
 
 
@@ -317,10 +374,11 @@ def scene_prompt_messages(
     refs: list[dict[str, Any]],
     place: dict[str, Any] | None,
     instructions: str | None = None,
+    others: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     return [
         {"role": "system", "content": SCENE_PROMPT_SYSTEM},
-        {"role": "user", "content": _with_instructions(_scene_notes(node, cast_chars, refs, place), instructions)},
+        {"role": "user", "content": _with_instructions(_scene_notes(node, cast_chars, refs, place, others), instructions)},
     ]
 
 
@@ -332,9 +390,10 @@ def stream_scene_prompt(
     *,
     base_url: str,
     instructions: str | None = None,
+    others: list[dict[str, Any]] | None = None,
 ) -> AsyncIterator[str]:
     return _stream_prompt(
-        scene_prompt_messages(node, cast_chars, refs, place, instructions),
+        scene_prompt_messages(node, cast_chars, refs, place, instructions, others),
         base_url=base_url, label="scene_image_prompt", max_tokens=500, temperature=0.5,
     )
 

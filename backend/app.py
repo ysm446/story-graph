@@ -1992,25 +1992,30 @@ async def node_image_prompt(node_id: str, body: SceneImagePromptIn) -> Streaming
     import image_gen
 
     node, chars, place = _scene_context(node_id)
-    if body.char_ids is not None:
-        refs = [c for c in chars if c["id"] in set(body.char_ids) and c.get("ref_image_path")][: image_gen.MAX_SCENE_REFS]
-    else:
-        refs = image_gen.select_scene_refs(chars)
-    meta = {
-        "suffix": image_gen.SCENE_SUFFIX,
-        "refs": [{"char_id": c["id"], "name": c["name"], "label": f"image{i + 1}"} for i, c in enumerate(refs)],
-        "cast": [{"char_id": c["id"], "name": c["name"], "has_ref": bool(c.get("ref_image_path"))} for c in chars],
-    }
 
     async def stream():
-        yield image_gen._sse({"meta": meta})
         try:
             base_url = await llama.ensure_running(store.get_settings())
         except Exception as e:
             yield image_gen._sse({"error": str(e)})
             return
+        if body.char_ids is not None:
+            # 作者が手本を選び直したとき: その人物を中心にし、選ばなかった人物は絵から外す
+            wanted = set(body.char_ids)
+            focus = [c for c in chars if c["id"] in wanted] or chars
+            refs = [c for c in focus if c.get("ref_image_path")][: image_gen.MAX_SCENE_REFS]
+        else:
+            # 既定: 本文から中心の人物(話す・動く人)を選び、その人物の参照画像を手本にする
+            focus = await image_gen.choose_scene_focus(node, chars, base_url=base_url)
+            refs = image_gen.select_scene_refs(focus)
+        others = [c for c in chars if c not in focus]
+        yield image_gen._sse({"meta": {
+            "suffix": image_gen.SCENE_SUFFIX,
+            "refs": [{"char_id": c["id"], "name": c["name"], "label": f"image{i + 1}"} for i, c in enumerate(refs)],
+            "cast": [{"char_id": c["id"], "name": c["name"], "has_ref": bool(c.get("ref_image_path"))} for c in chars],
+        }})
         async for chunk in image_gen.stream_scene_prompt(
-            node, chars, refs, place, base_url=base_url, instructions=body.instructions
+            node, focus, refs, place, base_url=base_url, instructions=body.instructions, others=others
         ):
             yield chunk
 
