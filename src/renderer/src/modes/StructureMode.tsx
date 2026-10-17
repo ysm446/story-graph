@@ -389,14 +389,18 @@ function StructureModeInner({
             kind: 'scene',
             content: String(e.payload.content ?? e.payload.summary ?? ''),
             nodeId: node.id,
-            title: node.title || '(無題)'
+            title: node.title || '(無題)',
+            sourceKey: node.id,
+            thumb: node.image_path ? node : null
           }
         }
       }
     }
     // 章のまとめ(digest)の記憶。ノードの events には居ないので groups から拾う。
     // これを入れないと、まとめ済みの章より後ろのシーンでイベント ID が並んでしまう
+    const nodeById = new Map(graphNodes.map((n) => [n.id, n]))
     for (const group of groups) {
+      const cover = chapterCoverNode(group, nodeById)
       for (const e of group.digest_events ?? []) {
         if (e.type !== 'memory_compress') continue
         map[e.id] = {
@@ -404,7 +408,10 @@ function StructureModeInner({
           content: String(e.payload.summary ?? ''),
           // クリックの行き先は章の最後のシーン(まとめはそこまでの記憶なので)
           nodeId: group.route[group.route.length - 1] ?? null,
-          title: group.title
+          title: group.title,
+          sourceKey: 'chapter:' + group.id,
+          // まとめは章の最後のシーン 1 つで得た記憶ではないので、そのシーンの挿絵ではなく章の表紙を出す
+          thumb: cover
         }
       }
     }

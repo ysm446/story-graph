@@ -4,6 +4,7 @@ import { api } from '../../api'
 import CharAvatar from '../../CharAvatar'
 import type { Character, StateSnapshot, StoryEvent, StoryNode } from '../../types'
 import { latestEventInputs } from './events'
+import { NodeThumb } from './StructureNodes'
 
 // ---- キャラタブ(状態閲覧 + 手動イベント化する編集) -------------------
 
@@ -15,6 +16,32 @@ export type MemorySource = {
   nodeId: string | null
   /** シーン名(kind: 'scene')または章名(kind: 'digest') */
   title: string
+  /** 出どころの単位(シーン ID、まとめは 'chapter:<章 ID>')。続けて同じ出どころの記憶を 1 枚にまとめる */
+  sourceKey: string
+  /** カードに出す挿絵のシーン(シーンはその挿絵、まとめは章の表紙。無ければ null) */
+  thumb: StoryNode | null
+}
+
+type MemoryGroup = { key: string; memory: MemorySource | undefined; eventIds: string[] }
+
+/** 並び順のまま、隣り合っていて出どころが同じ記憶をひとまとめにする
+ *  (シーンごとに集め直さない。並びが物語の順からずれて見えないように)。
+ *  本文が引けない記憶は 1 件ずつ */
+function groupMemories(eventIds: string[], memoryContents: Record<string, MemorySource>): MemoryGroup[] {
+  const groups: MemoryGroup[] = []
+  for (const eventId of eventIds) {
+    const memory = memoryContents[eventId]
+    const last = groups[groups.length - 1]
+    if (memory && last?.memory?.sourceKey === memory.sourceKey) last.eventIds.push(eventId)
+    else groups.push({ key: eventId, memory, eventIds: [eventId] })
+  }
+  return groups
+}
+
+function memorySourceTip(memory: MemorySource): string {
+  return memory.kind === 'digest'
+    ? `章「${memory.title}」のまとめ(クリックでその章の最後のシーンへ)`
+    : `「${memory.title}」で得た記憶(クリックでそのシーンへ)`
 }
 
 export function CharTab({
@@ -166,49 +193,80 @@ export function CharTab({
                 </button>
               )}
             </div>
-            {/* fold の積み順が古い順なので、新しい順は反転して出す */}
-            {(memNewestFirst ? [...charState.memories].reverse() : charState.memories).map((eventId) => {
-              const memory = memoryContents[eventId]
-              return (
-                <div
-                  key={eventId}
-                  className="mb-1 rounded-lg border px-3 py-1.5 text-[12px] leading-relaxed"
-                  style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-dim)' }}
-                >
-                  {/* 本文が引けないときも ID は出さない(読めない文字列が並ぶだけなので) */}
-                  {memory?.content || (
-                    <span style={{ color: 'var(--text-faint)' }} data-tip={eventId}>
-                      (本文が見つかりません)
-                    </span>
-                  )}
-                  {/* どこで得た記憶か。シーンなら押すとそのシーンへ、章のまとめなら章の最後のシーンへ */}
-                  {memory &&
-                    (memory.nodeId ? (
-                      <button
-                        onClick={() => onSelectNode(memory.nodeId!)}
-                        className="mt-0.5 block max-w-full truncate text-left text-[10px] hover:underline"
-                        style={{ color: memory.nodeId === node.id ? 'var(--accent)' : 'var(--text-faint)' }}
-                        data-tip={
-                          memory.kind === 'digest'
-                            ? `章「${memory.title}」のまとめ(クリックでその章の最後のシーンへ)`
-                            : `「${memory.title}」で得た記憶(クリックでそのシーンへ)`
-                        }
-                      >
-                        ← {memory.kind === 'digest' ? `${memory.title}(章のまとめ)` : memory.title}
-                        {memory.nodeId === node.id ? '(このシーン)' : ''}
-                      </button>
-                    ) : (
-                      <span
-                        className="mt-0.5 block max-w-full truncate text-[10px]"
-                        style={{ color: 'var(--text-faint)' }}
-                        data-tip={`章「${memory.title}」のまとめ`}
-                      >
-                        ← {memory.title}(章のまとめ)
-                      </span>
-                    ))}
-                </div>
-              )
-            })}
+            {/* fold の積み順が古い順なので、新しい順は反転して出す。続けて同じシーン(章のまとめは同じ章)
+                から得た記憶は 1 枚のカードにまとめ、挿絵と出どころは 1 回だけ出す */}
+            {groupMemories(memNewestFirst ? [...charState.memories].reverse() : charState.memories, memoryContents).map(
+              ({ key, memory, eventIds }) => {
+                const current = !!memory?.nodeId && memory.nodeId === node.id
+                return (
+                  <div
+                    key={key}
+                    data-memory-group
+                    className="mb-1 flex gap-2.5 rounded-lg border px-3 py-1.5 text-[12px] leading-relaxed"
+                    style={{
+                      background: 'var(--bg-elevated)',
+                      borderColor: current ? 'var(--accent-border)' : 'var(--border)',
+                      color: 'var(--text-dim)'
+                    }}
+                  >
+                    {/* 挿絵は高さを揃えて中央で切り抜く(キャラクタービューの見出しと同じ)。記憶が多くても伸ばさない */}
+                    {memory?.thumb &&
+                      (memory.nodeId ? (
+                        <button
+                          onClick={() => onSelectNode(memory.nodeId!)}
+                          className="mt-1 shrink-0 self-start"
+                          aria-label={memorySourceTip(memory)}
+                          data-tip={memorySourceTip(memory)}
+                        >
+                          <NodeThumb node={memory.thumb} className="block h-10 w-16 rounded-md object-cover" />
+                        </button>
+                      ) : (
+                        <NodeThumb
+                          node={memory.thumb}
+                          className="mt-1 block h-10 w-16 shrink-0 self-start rounded-md object-cover"
+                        />
+                      ))}
+                    <div className="min-w-0 flex-1">
+                      {eventIds.map((eventId, i) => (
+                        <div
+                          key={eventId}
+                          className={i > 0 ? 'mt-1 border-t pt-1' : undefined}
+                          style={i > 0 ? { borderColor: 'var(--border)' } : undefined}
+                        >
+                          {/* 本文が引けないときも ID は出さない(読めない文字列が並ぶだけなので) */}
+                          {memoryContents[eventId]?.content || (
+                            <span style={{ color: 'var(--text-faint)' }} data-tip={eventId}>
+                              (本文が見つかりません)
+                            </span>
+                          )}
+                        </div>
+                      ))}
+                      {/* どこで得た記憶か。シーンなら押すとそのシーンへ、章のまとめなら章の最後のシーンへ */}
+                      {memory &&
+                        (memory.nodeId ? (
+                          <button
+                            onClick={() => onSelectNode(memory.nodeId!)}
+                            className="mt-0.5 block max-w-full truncate text-left text-[10px] hover:underline"
+                            style={{ color: current ? 'var(--accent)' : 'var(--text-faint)' }}
+                            data-tip={memorySourceTip(memory)}
+                          >
+                            ← {memory.kind === 'digest' ? `${memory.title}(章のまとめ)` : memory.title}
+                            {current ? '(このシーン)' : ''}
+                          </button>
+                        ) : (
+                          <span
+                            className="mt-0.5 block max-w-full truncate text-[10px]"
+                            style={{ color: 'var(--text-faint)' }}
+                            data-tip={`章「${memory.title}」のまとめ`}
+                          >
+                            ← {memory.title}(章のまとめ)
+                          </span>
+                        ))}
+                    </div>
+                  </div>
+                )
+              }
+            )}
             <div className="mt-1 flex gap-1">
               <input
                 placeholder="記憶を追加(このキャラ視点で)"

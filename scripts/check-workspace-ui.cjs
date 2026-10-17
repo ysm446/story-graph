@@ -43,7 +43,7 @@ async function main() {
   }
   if (!ready) throw new Error('検証用バックエンドを起動できませんでした')
   trace('backend ready ' + base)
-  for (const [path, value] of process.argv.includes('--import') || process.argv.includes('--cast') || process.argv.includes('--usage') ? [] : [['/characters', { name: '検証キャラ', profile: '保存済みプロフィール' }], ['/nodes', { title: '検証シーン', beat: '保存済みの本文。' }]]) {
+  for (const [path, value] of process.argv.includes('--import') || process.argv.includes('--cast') || process.argv.includes('--usage') || process.argv.includes('--memories') ? [] : [['/characters', { name: '検証キャラ', profile: '保存済みプロフィール' }], ['/nodes', { title: '検証シーン', beat: '保存済みの本文。' }]]) {
     const response = await fetch(base + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(value) })
     if (!response.ok) throw new Error(await response.text())
   }
@@ -330,6 +330,48 @@ store.save_chat_messages(chat['id'], [
     await js(`[...document.querySelectorAll('.react-flow__node button[data-tip$="この人物を出す"]')].find(e => e.getAttribute('data-tip').startsWith('アヤ') && e.getClientRects().length).click()`)
     await pause(500)
     await assert(`(() => { const name = [...document.querySelectorAll('[data-character-name]')].find(e => e.getClientRects().length); const chip = [...document.querySelectorAll('.react-flow__node button[data-tip$="この人物を出す"]')].find(e => e.getAttribute('data-tip').startsWith('アヤ') && e.getClientRects().length); return !!name && name.textContent.trim() === 'アヤ' && ${tabLabels}.includes('プロフィール') && chip.closest('.react-flow__node').classList.contains('selected') })()`, 'フローチャートのカードの登場人物の札をクリックすると、そのシーンが選ばれ、詳細欄が人物専用の表示になる')
+    if (errors.length) throw new Error(errors.join('\n'))
+    console.log('Screenshots: ' + target)
+    win.destroy()
+    return
+  }
+  if (process.argv.includes('--memories')) {
+    // 人物の状態の Memories: 続けて同じシーンから得た記憶は 1 枚のカードにまとまり、そのシーンの挿絵を先頭に 1 回だけ出す
+    const { readFileSync } = require('node:fs')
+    const example = JSON.parse(readFileSync(join(root, 'docs/reference/import-example.json'), 'utf8'))
+    const applied = await fetch(base + '/import/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data: example }) })
+    if (!applied.ok) throw new Error(await applied.text())
+    // 最初と最後のシーンにだけ挿絵(アプリのアイコン)を付ける
+    const graph = await (await fetch(base + '/graph')).json()
+    const idOf = (title) => graph.nodes.find((n) => n.title === title).id
+    const [firstTitle, lastTitle] = [example.scenes[0].title, example.scenes[3].title]
+    const seeded = spawnSync(join(root, '.venv/Scripts/python.exe'), ['-c', 'import sys, shutil, os, db; from store import Store; s = Store(db.connect(sys.argv[1]), root=sys.argv[2]); shutil.copy(sys.argv[3], os.path.join(s.assets_dir(), "test-art.png")); [s.set_node_image(n, "test-art.png") for n in sys.argv[4:]]; s.conn.commit()', join(target, 'story-graph.db'), target, join(root, 'resources/icon.png'), idOf(firstTitle), idOf(lastTitle)], { cwd: join(root, 'backend'), encoding: 'utf8' })
+    if (seeded.status !== 0) throw new Error(seeded.stderr)
+    await new Promise((done) => { win.webContents.once('did-finish-load', () => done()); win.webContents.reload() })
+    for (let i = 0; i < 60; i++) { if (await js(`[...document.querySelectorAll('.react-flow__node')].some(e=>e.textContent.includes('第一幕'))`)) break; await pause(200) }
+    await pause(400)
+    // 最後のシーンの時点のアヤを出す(キャラクタービューの出番のセルから)
+    await click('人物')
+    await pause(400)
+    await js(`[...document.querySelectorAll('button[aria-label]')].find(e => e.getAttribute('aria-label') === 'アヤ: ' + ${JSON.stringify(lastTitle)}).click()`)
+    await pause(500)
+    await click('状態')
+    await pause(600)
+    const groups = `[...document.querySelectorAll('[data-memory-group]')]`
+    await assert(`${groups}.length === 4 && ${groups}.filter(e => e.querySelector('img')).length === 2 && ${groups}[0].textContent.includes('(このシーン)') && ${groups}[3].textContent.includes(${JSON.stringify(firstTitle)})`, '記憶はシーンごとのカードで新しい順に並び、挿絵のあるシーンのカードにだけサムネイルが出る')
+    // 同じシーンに記憶を足すと、同じカードにまとまる(出どころの行は 1 回だけ)
+    await js(`(() => { const el = document.querySelector('input[placeholder^="記憶を追加"]'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, '検証で足した記憶'); el.dispatchEvent(new Event('input', { bubbles: true })) })()`)
+    await pause(100)
+    await js(`document.querySelector('button[aria-label="memory_add イベントとして記録"]').click()`)
+    for (let i = 0; i < 30; i++) { if (await js(`document.body.textContent.includes('Memories(5)')`)) break; await pause(200) }
+    await assert(`${groups}.length === 4 && ${groups}[0].textContent.includes('検証で足した記憶') && ${groups}[0].querySelectorAll('img').length === 1 && (${groups}[0].textContent.match(/← /g) || []).length === 1`, '同じシーンの記憶は 1 枚のカードにまとまり、挿絵と出どころは 1 回だけ出る')
+    writeFileSync(join(target, 'memories.png'), (await win.webContents.capturePage()).toPNG())
+    const rect = await js(`(() => { const r = document.querySelector('[data-memory-group]').parentElement.getBoundingClientRect(); return { x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(Math.min(r.height, 420)) } })()`)
+    writeFileSync(join(target, 'memories-zoom.png'), (await win.webContents.capturePage(rect)).toPNG())
+    // サムネイルを押すと、そのシーンへ移る
+    await js(`${groups}[3].querySelector('button img').closest('button').click()`)
+    await pause(600)
+    await assert(`[...document.querySelectorAll('input')].some(i => i.value === ${JSON.stringify(firstTitle)})`, 'サムネイルをクリックすると、出どころの行と同じくそのシーンが選ばれる')
     if (errors.length) throw new Error(errors.join('\n'))
     console.log('Screenshots: ' + target)
     win.destroy()
