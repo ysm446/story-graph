@@ -20,6 +20,7 @@ import { useChatVoice } from './useChatVoice'
 import type { Character, StoryNode } from './types'
 import { ElapsedSeconds } from './ElapsedLabel'
 import { frameSetter } from './frameSetter'
+import { useWorkspace } from './Workspace'
 
 // 旧形式の会話履歴に保存された提案を文章として復元するための型。
 interface LegacyProposal {
@@ -224,6 +225,7 @@ export default function ChatDrawer({
   // 設定「内容から質問候補を作る」。オフなら生成も表示もしない
   dynamicSuggestions: boolean
 }): React.JSX.Element | null {
+  const workspace = useWorkspace()
   const [chatId, setChatId] = useState<string | null>(null)
   const [anchorNode, setAnchorNode] = useState<string | null>(null)
   const [scope, setScope] = useState<'upto' | 'all'>('upto')
@@ -932,7 +934,21 @@ export default function ChatDrawer({
               onChange={switchTarget}
             />
             <span>
-              アンカー: <span style={{ color: 'var(--text-dim)' }}>{anchorTitle(liveAnchor)}</span> まで
+              アンカー:{' '}
+              {liveAnchor && nodesById[liveAnchor] ? (
+                // 押すと構造モードでそのシーンを選んで寄せる(資料庫の出番の図と同じ経路)
+                <button
+                  onClick={() => workspace.openScene(liveAnchor)}
+                  className="rounded px-1 hover:bg-[var(--accent-soft)]"
+                  style={{ color: 'var(--text-dim)' }}
+                  data-tip="このシーンへ移動"
+                >
+                  {anchorTitle(liveAnchor)}
+                </button>
+              ) : (
+                <span style={{ color: 'var(--text-dim)' }}>{anchorTitle(liveAnchor)}</span>
+              )}{' '}
+              まで
             </span>
             {room ? (
               // 参加者。会話が始まるまでは出し入れでき、始まったら固定(chats.participants)
