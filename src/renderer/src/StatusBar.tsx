@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { api } from './api'
 import { cancelTask, useTasks } from './tasks'
 import { useStatusNotice } from './statusNotice'
+import { Icon } from './icons'
 
 interface SystemResources {
   cpu_usage: number
@@ -60,6 +61,24 @@ export default function StatusBar({
   selectedCount?: number
 }): React.JSX.Element {
   const [res, setRes] = useState<SystemResources | null>(null)
+  // リソース表示(CPU / RAM / GPU / VRAM)を出すか。右端のアイコンで切り替え、覚えておく
+  const [resourcesVisible, setResourcesVisible] = useState(() => {
+    try {
+      return localStorage.getItem('statusResourcesVisible') !== '0'
+    } catch {
+      return true
+    }
+  })
+  const toggleResources = (): void => {
+    setResourcesVisible((v) => {
+      try {
+        localStorage.setItem('statusResourcesVisible', v ? '0' : '1')
+      } catch {
+        // 保存できなくても表示の切り替えはする
+      }
+      return !v
+    })
+  }
   const tasks = useTasks()
   const notice = useStatusNotice()
   const [now, setNow] = useState(() => Date.now())
@@ -80,7 +99,7 @@ export default function StatusBar({
   }, [pending.length])
 
   useEffect(() => {
-    if (!backendReady) return
+    if (!backendReady || !resourcesVisible) return // 隠している間は問い合わせもしない
     let cancelled = false
     const pollResources = async (): Promise<void> => {
       // ウィンドウが隠れている間は問い合わせない
@@ -104,7 +123,7 @@ export default function StatusBar({
       clearInterval(resTimer)
       document.removeEventListener('visibilitychange', onVisible)
     }
-  }, [backendReady])
+  }, [backendReady, resourcesVisible])
 
   return (
     <footer
@@ -197,7 +216,7 @@ export default function StatusBar({
         </span>
       )}
       <div className="ml-auto flex items-center gap-3">
-        {res && (
+        {resourcesVisible && res && (
           <>
             <ResourceBar label="CPU" pct={res.cpu_usage} detail={`${res.cpu_usage}%`} />
             <ResourceBar
@@ -217,6 +236,21 @@ export default function StatusBar({
             )}
           </>
         )}
+        {/* 右端のトグル。開いている間は会話一覧ボタンと同じオンの見た目(--accent-soft + --text) */}
+        <button
+          onClick={toggleResources}
+          aria-pressed={resourcesVisible}
+          aria-label="システムリソースの表示"
+          className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md border hover:bg-[var(--accent-soft)]"
+          style={
+            resourcesVisible
+              ? { borderColor: 'var(--border-strong)', background: 'var(--accent-soft)', color: 'var(--text)' }
+              : { borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }
+          }
+          data-tip={resourcesVisible ? 'CPU / RAM / GPU / VRAM の表示を隠す' : 'CPU / RAM / GPU / VRAM を表示'}
+        >
+          <Icon name="activity" size={13} />
+        </button>
       </div>
     </footer>
   )

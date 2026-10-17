@@ -26,6 +26,7 @@ export type IconName =
   | 'skipBack' // 読み上げの前の行へ
   | 'skipForward' // 読み上げの次の行へ
   | 'users' // 人が二人(キャラ同士の会話室)
+  | 'activity' // 脈拍の折れ線(システムリソース表示の切り替え)
 
 const PATHS: Record<IconName, React.JSX.Element> = {
   alignNodes: (
@@ -175,7 +176,9 @@ const PATHS: Record<IconName, React.JSX.Element> = {
       <path d="m5 4 10 8-10 8z" />
       <path d="M19 5v14" />
     </>
-  )
+  ),
+  // lucide の activity
+  activity: <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
 }
 
 export function Icon({
