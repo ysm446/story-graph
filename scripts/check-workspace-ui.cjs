@@ -197,9 +197,25 @@ store.save_chat_messages(chat['id'], [
     await new Promise((done) => { win.webContents.once('did-finish-load', () => done()); win.webContents.reload() })
     for (let i = 0; i < 60; i++) { if (await js(`[...document.querySelectorAll('.react-flow__node')].some(e=>e.textContent.includes('第一幕'))`)) break; await pause(200) }
     await pause(400)
+    // 章カードに、読む道のシーンの登場人物が出るシーンの多い順(同数は初登場順)で並ぶ
+    const chapterCast = (title) => `(() => {const card=[...document.querySelectorAll('.react-flow__node')].find(e=>e.textContent.includes(${JSON.stringify(title)}));return card ? [...card.querySelectorAll('img[alt], span[aria-label]')].map(e=>e.getAttribute('alt') ?? e.getAttribute('aria-label')).join('|') : ''})()`
+    await assert(`${chapterCast('第一幕')} === 'アヤ|ケン' && ${chapterCast('第二幕')} === 'アヤ|老技師' && ${chapterCast('第三幕')} === 'アヤ|ケン'`, '章カードに章の登場人物のアイコンが並ぶ')
+    writeFileSync(join(target, 'cast-chapter-cards.png'), (await win.webContents.capturePage()).toPNG())
+    // 全体表示ではカードが小さすぎて目視できないので、第二幕のカードに寄って切り抜く
+    const cardRect = async () => js(`(() => {const r=[...document.querySelectorAll('.react-flow__node')].find(e=>e.textContent.includes('第二幕')).getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height}})()`)
+    for (let i = 0; i < 12; i++) {
+      const r = await cardRect()
+      win.webContents.sendInputEvent({ type: 'mouseWheel', x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2), deltaX: 0, deltaY: 120, wheelTicksY: 1, canScroll: true })
+      await pause(60)
+    }
+    await pause(400)
+    {
+      const r = await cardRect()
+      writeFileSync(join(target, 'cast-chapter-card-zoom.png'), (await win.webContents.capturePage({ x: Math.max(0, Math.round(r.x - 20)), y: Math.max(0, Math.round(r.y - 60)), width: Math.round(r.width + 40), height: Math.round(r.height + 80) })).toPNG())
+    }
     await click('人物')
     await pause(400)
-    const cells = `[...document.querySelectorAll('button[aria-label]')].filter(e => /^(アヤ|ケン|老技師): /.test(e.getAttribute('aria-label')))`
+    const cells =`[...document.querySelectorAll('button[aria-label]')].filter(e => /^(アヤ|ケン|老技師): /.test(e.getAttribute('aria-label')))`
     await assert(`document.body.textContent.includes('キャラクタービュー') && ${cells}.length === 8 && ${cells}.filter(e=>e.getAttribute('aria-label').startsWith('アヤ:')).length === 4`, 'キャラクタービューに、cast どおりの出番のセルが並ぶ(アヤ 4・ケン 2・老技師 2)')
     // 続けて出ているシーンは 1 本の帯にまとまる: アヤは 1〜4 で 1 本、ケンは 1 と 4 で 2 本、老技師は 2〜3 で 1 本
     await assert(`(() => {const runs=[...document.querySelectorAll('[data-cast-run]')];const n=(id)=>runs.filter(e=>e.getAttribute('data-cast-run')===id).length;const ids=[...new Set(runs.map(e=>e.getAttribute('data-cast-run')))];return runs.length===4 && ids.map(n).sort().join()==='1,1,2' && Math.max(...runs.map(e=>e.offsetWidth))===${4 * 112 - 20}})()`, '続けて出ているシーンの出番は 1 本の帯にまとまる(帯は 4 本、いちばん長いのはアヤの 4 シーン分)')

@@ -1,6 +1,7 @@
 import { memo, useSyncExternalStore } from 'react'
 import { Handle, Position, useStore, type Node, type NodeProps, type ReactFlowState } from '@xyflow/react'
 import { assetUrl, isVideoAsset } from '../../api'
+import CharAvatar from '../../CharAvatar'
 import { useProductionPreview } from '../../productionPreview'
 import type { Character, Group, StoryNode } from '../../types'
 import { beatDraftCache, subscribeBeatDrafts } from './beatDrafts'
@@ -257,6 +258,8 @@ export type ChapterNodeData = {
   dropTarget?: boolean
   /** 表紙にするシーン(cover_node_id の指定 → 無ければ章内で最初に挿絵があるシーン) */
   cover: StoryNode | null
+  /** 章の登場人物(読む道のシーンの cast を合わせたもの。出るシーンの多い順) */
+  cast: Character[]
   onOpen: (groupId: string) => void
 }
 export type ChapterFlowNode = Node<ChapterNodeData, 'chapterNode'>
@@ -274,8 +277,33 @@ export function chapterCoverNode(group: Group, nodeById: Map<string, StoryNode>)
   return null
 }
 
+/** 章カードに並べる登場人物の上限。超えた分は「+N」にまとめる */
+const CHAPTER_CAST_MAX = 6
+
+/** 章の登場人物を、読む道(route)のシーンの cast から集める。分岐・島のシーンは数えない
+ *  (試しに書いた枝の人物まで章の顔ぶれに出さないため)。出るシーンの多い順で、
+ *  同数なら先に出た順。資料庫に無い人物 ID は飛ばす */
+export function chapterCast(
+  group: Group,
+  nodeById: Map<string, StoryNode>,
+  characters: Record<string, Character>
+): Character[] {
+  const counts = new Map<string, number>()
+  for (const id of group.route) {
+    for (const charId of nodeById.get(id)?.cast ?? []) {
+      counts.set(charId, (counts.get(charId) ?? 0) + 1)
+    }
+  }
+  // Map は挿入順を保つので、安定ソートで同数のときは初登場の順になる
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .flatMap(([charId]) => (characters[charId] ? [characters[charId]] : []))
+}
+
 export function ChapterNodeCard({ data, selected }: NodeProps<ChapterFlowNode>): React.JSX.Element {
-  const { group, number, cover, dropTarget, onOpen } = data
+  const { group, number, cover, cast, dropTarget, onOpen } = data
+  const shownCast = cast.slice(0, CHAPTER_CAST_MAX)
+  const hiddenCast = cast.slice(CHAPTER_CAST_MAX)
   return (
     <div
       className={`relative w-64 rounded-3xl border-2 px-5 py-5 shadow-lg shadow-black/30 ${
@@ -335,6 +363,22 @@ export function ChapterNodeCard({ data, selected }: NodeProps<ChapterFlowNode>):
             </span>
           ))}
       </div>
+      {cast.length > 0 && (
+        <div className="mt-2 flex items-center gap-1">
+          {shownCast.map((c) => (
+            <CharAvatar key={c.id} char={c} size={18} />
+          ))}
+          {hiddenCast.length > 0 && (
+            <span
+              className="text-[11px] tabular-nums"
+              style={{ color: 'var(--text-faint)' }}
+              data-tip={hiddenCast.map((c) => c.name).join('、')}
+            >
+              +{hiddenCast.length}
+            </span>
+          )}
+        </div>
+      )}
       <Handle type="source" position={Position.Right} />
     </div>
   )

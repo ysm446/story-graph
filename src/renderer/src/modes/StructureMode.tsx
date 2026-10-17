@@ -71,6 +71,7 @@ import {
   snapped
 } from './structure/layout'
 import {
+  chapterCast,
   chapterCoverNode,
   nodeTypes,
   PAN_ON_DRAG,
@@ -1224,6 +1225,7 @@ function StructureModeInner({
             group: g,
             number: gi + 1,
             cover: chapterCoverNode(g, nodeById),
+            cast: chapterCast(g, nodeById, charMap),
             onOpen: openChapter
           }
         }
@@ -1231,7 +1233,7 @@ function StructureModeInner({
     })
     // chapterAnchorSig は flowNodes の位置を畳んだ署名(毎フレーム作り直さないため)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [groups, chapterAnchorSig, graphNodes, openChapter])
+  }, [groups, chapterAnchorSig, graphNodes, charMap, openChapter])
 
   // シーンを章カードの上へ運んでいるか(離すとその章に入る)
   const [dropTargetGroupId, setDropTargetGroupId] = useState<string | null>(null)
