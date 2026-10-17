@@ -212,25 +212,22 @@ function stopSidecar(): void {
 
 /** F12 で画面を PNG に保存する。
  *
- *  capturePage は物理ピクセルで撮るので、Windows の表示が 150% なら PNG も 1.5 倍の
- *  大きさの UI で写る。`native` のとき(Shift+F12)は撮る直前だけ 1/倍率 に縮小して、
- *  CSS の 1px = 物理 1px、つまり **100% 表示で撮ったのと同じ絵** にする(画素数は
- *  そのまま。一瞬だけ画面が縮んで戻る)。倍率はウィンドウのあるディスプレイから取る
+ *  capturePage は物理ピクセルで撮るので、Windows の表示が 150% なら PNG は 1.5 倍の
+ *  画素数(1920×1080 のウィンドウで 2880×1620)になる。`logical` のとき(Shift+F12)は
+ *  倍率で割った大きさに縮めて保存し、**100% のディスプレイで同じ大きさのウィンドウを
+ *  撮ったのと同じ絵**(構図はそのまま、1920×1080)にする。倍率はウィンドウのある
+ *  ディスプレイから取る。ズームはいじらないので画面はちらつかない
  */
-async function captureScreenshot(native = false): Promise<void> {
+async function captureScreenshot(logical = false): Promise<void> {
   const win = mainWindow
   if (!win) return
-  const contents = win.webContents
-  const scale = native ? screen.getDisplayMatching(win.getBounds()).scaleFactor : 1
-  const previousZoom = contents.getZoomFactor()
   try {
+    let image = await win.webContents.capturePage()
+    const scale = logical ? screen.getDisplayMatching(win.getBounds()).scaleFactor : 1
     if (scale !== 1) {
-      contents.setZoomFactor(previousZoom / scale)
-      // レイアウトが縮んで描き直されるのを待つ(1 フレームでは古い絵を撮ることがある)
-      await new Promise((resolve) => setTimeout(resolve, 120))
+      const { width, height } = image.getSize()
+      image = image.resize({ width: Math.round(width / scale), height: Math.round(height / scale), quality: 'best' })
     }
-    const image = await contents.capturePage()
-    if (scale !== 1) contents.setZoomFactor(previousZoom)
     const dir = join(currentLibraryRoot(), 'screenshot')
     mkdirSync(dir, { recursive: true })
     const now = new Date()
@@ -242,7 +239,6 @@ async function captureScreenshot(native = false): Promise<void> {
     writeFileSync(filePath, image.toPNG())
     win.webContents.send('screenshot:saved', filePath)
   } catch (error) {
-    if (contents.getZoomFactor() !== previousZoom) contents.setZoomFactor(previousZoom)
     console.error('[screenshot] 保存に失敗:', error)
   }
 }
@@ -268,7 +264,7 @@ function createWindow(): void {
     return { action: 'deny' }
   })
   mainWindow.webContents.on('before-input-event', (_event, input) => {
-    // F12 = 見たまま撮る / Shift+F12 = 表示倍率(150% など)を打ち消して 100% 相当で撮る
+    // F12 = 物理ピクセルのまま撮る / Shift+F12 = 表示倍率(150% など)で割った大きさに縮めて保存
     if (input.type === 'keyDown' && input.key === 'F12') {
       void captureScreenshot(input.shift)
     }

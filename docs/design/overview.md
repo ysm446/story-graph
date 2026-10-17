@@ -1,7 +1,7 @@
 # 全体設計(アーキテクチャ)
 
 作成日時: 2026-08-09 15:30
-更新日時: 2026-10-17 09:59
+更新日時: 2026-10-17 10:03
 
 このアプリが **どう組まれているか** をまとめた入口。「何を作るか」は
 [story-graph-spec.md](../story-graph-spec.md)(仕様)と [plan/goals.md](../plan/goals.md)(目的・価値)、
@@ -73,7 +73,7 @@ llama.cpp の制約付き構造化出力 —— どれも Python 側に既存の
   assets/images/     … 挿絵・立ち絵・動画(DB は参照パスだけを持つ)
   snapshots/         … 時点保存(<id>.db + index.json)。docs/design/snapshots.md
   backups/           … 自動バックアップの既定の置き場(zip)。docs/design/backup.md
-  screenshot/        … F12 で撮った画面(Shift+F12 は表示倍率を打ち消して 100% 相当で撮る)
+  screenshot/        … F12 で撮った画面(Shift+F12 は表示倍率で割った大きさに縮めて保存。150% なら 1920×1080)
 ```
 
 - **どのライブラリを開くかは Electron 側が覚える**(`%APPDATA%/story-graph/app.json` の
