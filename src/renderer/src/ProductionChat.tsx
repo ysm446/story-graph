@@ -622,8 +622,10 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
         {live && <TimelineItem color="var(--text-dim)" label="制作" pulse><Markdown text={live} /></TimelineItem>}
         {/* 書いている途中の本文(未確定)。確定すると消え、同じ場所に操作の項目が入る */}
         <ProductionPreviewPanel nodes={nodes} />
-        {/* 押すとその場で送る。送り方を色で分ける(相談=アクセント、実行=--execute) */}
-        {!busy && !error && (chips.length > 0 || suggesting) && <div aria-label="制作の依頼候補" className="my-2 flex flex-wrap items-center gap-1.5">
+        {/* 押すとその場で送る。送り方を色で分ける(相談=アクセント、実行=--execute)。
+            エラー文が出ていても隠さない: 「未保存のシーンがあります」などの送信前の注意もエラー扱いで、
+            隠すと保存したあとに押す候補が無くなる(2026-10-17 ユーザー報告)。もう一度押せば送信が注意を消す */}
+        {!busy && (chips.length > 0 || suggesting) && <div aria-label="制作の依頼候補" className="my-2 flex flex-wrap items-center gap-1.5">
           {chips.map((suggestion) => <button key={suggestion.label} type="button" disabled={!!input.trim()}
             onClick={(e) => {
               // Shift を押しながらだと送らず、入力欄へ入れる(文面を直してから送れる)
