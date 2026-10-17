@@ -85,8 +85,7 @@ const SECTIONS = [
   { id: 'promptio', label: '書き出し / 読み込み', group: 'work' },
   { id: 'memory', label: '記憶の検索', group: 'work' },
   { id: 'import', label: '取り込み', group: 'work' },
-  { id: 'structure', label: '構造モード', group: 'work' },
-  { id: 'reader', label: '鑑賞モード', group: 'work' },
+  { id: 'display', label: '画面', group: 'work' },
   { id: 'backup', label: 'バックアップ', group: 'work' },
   { id: 'promptlog', label: 'プロンプトログ', group: 'work' }
 ] as const
@@ -156,7 +155,9 @@ export default function SettingsMode({ onImported }: {
   const [values, setValues] = useState<Record<string, string>>({})
   // 左ナビで選んでいるセクション。開き直したときに同じ場所へ戻れるよう覚える
   const [section, setSection] = useState<SectionId>(() => {
-    const saved = localStorage.getItem('settingsSection')
+    const stored = localStorage.getItem('settingsSection')
+    // 「構造モード」「鑑賞モード」は「画面」にまとめた(2026-10-18)。前に開いていた場所を引き継ぐ
+    const saved = stored === 'structure' || stored === 'reader' ? 'display' : stored
     return SECTIONS.some((s) => s.id === saved) ? (saved as SectionId) : 'engine'
   })
   const [savedMsg, setSavedMsg] = useState(false)
@@ -800,7 +801,11 @@ export default function SettingsMode({ onImported }: {
             </div>
           </Section>
 
-          <Section id="structure" current={section} title="構造モード">
+          {/* 画面ごとの見え方と操作の設定。どの画面に効くかを見出しで分ける */}
+          <Section id="display" current={section} title="画面">
+            <h3 className="mt-1 text-[12px] font-medium" style={{ color: 'var(--text-dim)' }}>
+              構造モード
+            </h3>
             <div className="settings-card">
               <div className="settings-field">
                 <div className="settings-field-header">
@@ -859,8 +864,7 @@ export default function SettingsMode({ onImported }: {
                   </div>
                 </div>
                 <p className="settings-field-hint">
-                  引いて全体を眺めたとき(ズーム 50% 以下)、カードの文字が読めなくなるので、
-                  各カードの上にタイトルを一定の大きさで出します。
+                  引いて全体を眺めたとき(ズーム 50% 以下)、カードの文字が読めなくなるので、各カードの上にタイトルを一定の大きさで出します。
                 </p>
               </div>
               <div className="settings-field">
@@ -893,6 +897,63 @@ export default function SettingsMode({ onImported }: {
                 <p className="settings-field-hint">
                   ノードをドラッグしたとき、背景のドットと同じ 20px の目に合わせて置きます。
                   整列(⟲)や新しいシーンの自動配置も同じ目に乗ります。
+                </p>
+              </div>
+            </div>
+            <h3 className="mt-1 text-[12px] font-medium" style={{ color: 'var(--text-dim)' }}>
+              鑑賞モード
+            </h3>
+            <div className="settings-card">
+              <div className="settings-field">
+                <div className="settings-field-header">
+                  <span
+                    className="settings-field-label"
+                    data-tip="動画の挿絵をループ再生するとき、終端と先頭をクロスディゾルブで重ねて継ぎ目を目立たなくします。"
+                  >
+                    動画ループのつなぎ(クロスディゾルブ)
+                  </span>
+                  <div className="settings-field-controls">
+                    {videoFade !== DEFAULT_VIDEO_CROSSFADE_SECONDS && (
+                      <button
+                        className="settings-reset-btn"
+                        aria-label="デフォルトに戻す"
+                        data-tip="デフォルトに戻す"
+                        onClick={() => void save({ video_crossfade_seconds: String(DEFAULT_VIDEO_CROSSFADE_SECONDS) })}
+                      >
+                        <svg
+                          width="12"
+                          height="12"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
+                          <polyline points="3 6 5 6 21 6" />
+                          <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                          <path d="M10 11v6" />
+                          <path d="M14 11v6" />
+                          <path d="M9 6V4h6v2" />
+                        </svg>
+                      </button>
+                    )}
+                    <span className="settings-value-badge">{videoFade === 0 ? 'なし' : `${videoFade.toFixed(1)}秒`}</span>
+                  </div>
+                </div>
+                <input
+                  className={`settings-slider${videoFade !== DEFAULT_VIDEO_CROSSFADE_SECONDS ? ' active' : ''}`}
+                  type="range"
+                  min={0}
+                  max={2}
+                  step={0.1}
+                  value={videoFade}
+                  onChange={(e) => setValues((v) => ({ ...v, video_crossfade_seconds: e.target.value }))}
+                  onPointerUp={() => void save({ video_crossfade_seconds: String(videoFade) })}
+                  onKeyUp={() => void save({ video_crossfade_seconds: String(videoFade) })}
+                />
+                <p className="settings-field-hint">
+                  0 にするとクロスディゾルブなしの通常ループになります。フェード時間の2倍より短い動画は自動的に通常ループになります。
                 </p>
               </div>
             </div>
@@ -973,63 +1034,6 @@ export default function SettingsMode({ onImported }: {
                   候補チップの下段に ✨ 付きで並べます(最大2件。固定の候補は常に残ります)。
                   生成は軽い1回の呼び出しですが、回答直後に少し待ち時間が増えます。LLM 未起動時は何もしません。
                   制作チャットでも、回答のあとに「案Bで進めて」のような依頼の候補を最大2件足します。
-                </p>
-              </div>
-            </div>
-          </Section>
-
-          <Section id="reader" current={section} title="鑑賞モード">
-            <div className="settings-card">
-              <div className="settings-field">
-                <div className="settings-field-header">
-                  <span
-                    className="settings-field-label"
-                    data-tip="動画の挿絵をループ再生するとき、終端と先頭をクロスディゾルブで重ねて継ぎ目を目立たなくします。"
-                  >
-                    動画ループのつなぎ(クロスディゾルブ)
-                  </span>
-                  <div className="settings-field-controls">
-                    {videoFade !== DEFAULT_VIDEO_CROSSFADE_SECONDS && (
-                      <button
-                        className="settings-reset-btn"
-                        aria-label="デフォルトに戻す"
-                        data-tip="デフォルトに戻す"
-                        onClick={() => void save({ video_crossfade_seconds: String(DEFAULT_VIDEO_CROSSFADE_SECONDS) })}
-                      >
-                        <svg
-                          width="12"
-                          height="12"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        >
-                          <polyline points="3 6 5 6 21 6" />
-                          <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-                          <path d="M10 11v6" />
-                          <path d="M14 11v6" />
-                          <path d="M9 6V4h6v2" />
-                        </svg>
-                      </button>
-                    )}
-                    <span className="settings-value-badge">{videoFade === 0 ? 'なし' : `${videoFade.toFixed(1)}秒`}</span>
-                  </div>
-                </div>
-                <input
-                  className={`settings-slider${videoFade !== DEFAULT_VIDEO_CROSSFADE_SECONDS ? ' active' : ''}`}
-                  type="range"
-                  min={0}
-                  max={2}
-                  step={0.1}
-                  value={videoFade}
-                  onChange={(e) => setValues((v) => ({ ...v, video_crossfade_seconds: e.target.value }))}
-                  onPointerUp={() => void save({ video_crossfade_seconds: String(videoFade) })}
-                  onKeyUp={() => void save({ video_crossfade_seconds: String(videoFade) })}
-                />
-                <p className="settings-field-hint">
-                  0 にするとクロスディゾルブなしの通常ループになります。フェード時間の2倍より短い動画は自動的に通常ループになります。
                 </p>
               </div>
             </div>

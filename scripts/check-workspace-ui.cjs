@@ -580,6 +580,25 @@ store.save_chat_messages(chat['id'], [
     win.destroy()
     return
   }
+  if (process.argv.includes('--display')) {
+    // 設定の「画面」のページ: 構造モード・鑑賞モードの設定を見出しで分けて 1 ページにまとめた
+    await js(`document.querySelector('button[aria-label="設定"]').click()`)
+    await pause(400)
+    await assert(`(() => {const nav=[...document.querySelectorAll('button')].filter(e=>e.getClientRects().length).map(e=>e.textContent.trim());return nav.includes('画面') && !nav.includes('構造モード') && !nav.includes('鑑賞モード')})()`, '左の一覧に「画面」があり、「構造モード」「鑑賞モード」は無い')
+    await click('画面')
+    await pause(400)
+    await assert(`(() => {const h=[...document.querySelectorAll('h3')].map(e=>e.textContent.trim());const t=document.body.textContent;return h.includes('構造モード') && h.includes('鑑賞モード') && ['ミニマップ','グリッドにスナップ','ズームアウト時のタイトル','動画ループのつなぎ'].every(l=>t.includes(l))})()`, '「画面」に構造モードと鑑賞モードの見出しと、それぞれの設定が並ぶ')
+    writeFileSync(join(target, 'settings-display.png'), (await win.webContents.capturePage()).toPNG())
+    await js(`(() => {const field=[...document.querySelectorAll('.settings-field')].find(e=>e.textContent.includes('ズームアウト時のタイトル'));[...field.querySelectorAll('button')].find(e=>e.textContent.trim()==='非表示').click()})()`)
+    await pause(500)
+    const stored = (await (await fetch(base + '/settings')).json()).zoomed_out_titles
+    if (stored !== '0') throw new Error('ズームアウト時のタイトルの非表示が保存されていません: ' + stored)
+    console.log('PASS 「ズームアウト時のタイトル」の非表示が保存される')
+    if (errors.length) throw new Error(errors.join('\n'))
+    console.log('Screenshots: ' + target)
+    win.destroy()
+    return
+  }
   if (process.argv.includes('--embedding')) {
     // 設定の Embedding のページ: 起動時に読み込むかのオン・オフ(既定オン)と、いまの状態
     await js(`document.querySelector('button[aria-label="設定"]').click()`)

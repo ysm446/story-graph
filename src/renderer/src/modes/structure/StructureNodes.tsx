@@ -60,7 +60,7 @@ export type BeatFlowNode = Node<BeatNodeData, 'beatNode'>
 const ZOOMED_OUT_TITLE_ZOOM = 0.5
 const selectZoom = (s: ReactFlowState): number => s.transform[2]
 
-/** ズームアウト時のタイトルを出すか(設定 → 構造モード。既定は出す)。
+/** ズームアウト時のタイトルを出すか(設定 → 画面 → 構造モード。既定は出す)。
  *  カードは memo しているので、data ではなく context で渡して全カードに効かせる */
 export const ZoomedOutTitlesEnabled = createContext(true)
 
