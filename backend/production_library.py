@@ -51,7 +51,7 @@ def tools(allow_write):
                     required.append("name")
             description = {
                 "create": f"{label}を資料庫に新規登録する。同名は重複登録不可。返されたIDをシーンに使う。",
-                "update": f"{label}の固定設定を編集する。指定した項目だけ更新し、省略項目は維持。空文字で項目を消去する。物語中の出来事・記憶はここに書かない。",
+                "update": f"{label}の固定設定を編集する。作者が『{label}の設定を更新』と言うものはこれ(設定資料ではない)。指定した項目だけ更新し、省略項目は維持。空文字で項目を消去する。物語中の出来事・記憶はここに書かない。",
                 "delete": f"{label}を資料庫から削除する。シーン・イベント・記憶などから使用中の資料は削除不可。参照を勝手に消さず作者へ報告する。",
             }[action]
             result.append({"type": "function", "function": {

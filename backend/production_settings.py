@@ -22,7 +22,9 @@ def tools():
             properties.update(id={"type": "string"}, revision={"type": "integer", "description": "read_setting_documentで読んだrevision"})
         result.append({"type": "function", "function": {
             "name": action + "_setting_document",
-            "description": "設定資料を新規作成する。同名は作らず既存を確認する。" if action == "create" else "設定資料を編集する。先に全文を読み、指定した項目だけ更新する。省略項目は維持する。",
+            "description": ("設定資料(世界観・制度・文化・用語などの文書)を新規作成する。同名は作らず既存を確認する。"
+                            "人物・場所そのものの設定には使わない(資料庫のupdate_character / update_placeを使う)。")
+            if action == "create" else "設定資料を編集する。先に全文を読み、指定した項目だけ更新する。省略項目は維持する。",
             "parameters": {"type": "object", "properties": properties, "required": required, "additionalProperties": False},
         }})
     return result
