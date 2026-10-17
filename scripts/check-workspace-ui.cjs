@@ -198,8 +198,8 @@ store.save_chat_messages(chat['id'], [
     for (let i = 0; i < 60; i++) { if (await js(`[...document.querySelectorAll('.react-flow__node')].some(e=>e.textContent.includes('第一幕'))`)) break; await pause(200) }
     await pause(400)
     // 章カードに、読む道のシーンの登場人物が出るシーンの多い順(同数は初登場順)で並ぶ
-    const chapterCast = (title) => `(() => {const card=[...document.querySelectorAll('.react-flow__node')].find(e=>e.textContent.includes(${JSON.stringify(title)}));return card ? [...card.querySelectorAll('img[alt], span[aria-label]')].map(e=>e.getAttribute('alt') ?? e.getAttribute('aria-label')).join('|') : ''})()`
-    await assert(`${chapterCast('第一幕')} === 'アヤ|ケン' && ${chapterCast('第二幕')} === 'アヤ|老技師' && ${chapterCast('第三幕')} === 'アヤ|ケン'`, '章カードに章の登場人物のアイコンが並ぶ')
+    const chapterCast = (title) => `(() => {const card=[...document.querySelectorAll('.react-flow__node')].find(e=>e.textContent.includes(${JSON.stringify(title)}));return card ? [...card.querySelectorAll('button[aria-label]')].map(e=>e.getAttribute('aria-label') + ':' + e.textContent.trim()).join('|') : ''})()`
+    await assert(`${chapterCast('第一幕')} === 'アヤ:アヤ|ケン:ケン' && ${chapterCast('第二幕')} === 'アヤ:アヤ|老技師:老技師' && ${chapterCast('第三幕')} === 'アヤ:アヤ|ケン:ケン'`, '章カードに章の登場人物の札(アイコンと名前)が並ぶ')
     writeFileSync(join(target, 'cast-chapter-cards.png'), (await win.webContents.capturePage()).toPNG())
     // ズームアウト時のタイトル: 全体表示(引いた状態)では出ていて、設定で非表示にすると出なくなる
     await assert(`document.querySelectorAll('[data-zoomed-out-title]').length >= 3`, '引いた状態では、カードの上にタイトルが出る')

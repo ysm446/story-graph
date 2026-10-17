@@ -1,7 +1,6 @@
 import { createContext, memo, useContext, useSyncExternalStore } from 'react'
 import { Handle, Position, useStore, type Node, type NodeProps, type ReactFlowState } from '@xyflow/react'
 import { assetUrl, isVideoAsset } from '../../api'
-import CharAvatar from '../../CharAvatar'
 import { useProductionPreview } from '../../productionPreview'
 import type { Character, Group, StoryNode } from '../../types'
 import { beatDraftCache, subscribeBeatDrafts } from './beatDrafts'
@@ -377,30 +376,36 @@ export function ChapterNodeCard({ data, selected }: NodeProps<ChapterFlowNode>):
           ))}
       </div>
       {cast.length > 0 && (
-        <div className="mt-2 flex items-center gap-0.5">
-          {shownCast.map(({ char, lastScene }) => (
-            // シーンカードの札と同じく nodrag で、クリック・ダブルクリックをカードに伝えない
-            // (ダブルクリックは章を開く操作なので、連打で章の中へ入らないように)
-            <button
-              key={char.id}
-              className="nodrag rounded-full p-0.5 hover:bg-[var(--accent-soft)]"
-              aria-label={char.name}
-              onClick={(e) => {
-                e.stopPropagation()
-                onSelectChar?.(char.id, lastScene.id)
-              }}
-              onDoubleClick={(e) => e.stopPropagation()}
-            >
-              <CharAvatar
-                char={char}
-                size={18}
-                tip={`${char.name}。クリックで「${lastScene.title || '無題'}」(この章で最後に登場するシーン)の時点の人物を下の詳細欄に出す`}
-              />
-            </button>
-          ))}
+        <div className="mt-2 flex flex-wrap items-center gap-1">
+          {shownCast.map(({ char, lastScene }) => {
+            const portrait = assetUrl(char.portrait_path)
+            return (
+              // シーンカードの札と同じ形。nodrag で、クリック・ダブルクリックをカードに伝えない
+              // (ダブルクリックは章を開く操作なので、連打で章の中へ入らないように)
+              <button
+                key={char.id}
+                className="nodrag inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] hover:bg-[var(--accent-soft)]"
+                style={{ background: 'var(--bg-elevated)', color: 'var(--text-dim)' }}
+                aria-label={char.name}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onSelectChar?.(char.id, lastScene.id)
+                }}
+                onDoubleClick={(e) => e.stopPropagation()}
+                data-tip={`${char.name}。クリックで「${lastScene.title || '無題'}」(この章で最後に登場するシーン)の時点の人物を下の詳細欄に出す`}
+              >
+                {portrait ? (
+                  <img src={portrait} className="h-3.5 w-3.5 rounded-full object-cover" />
+                ) : (
+                  <span className="inline-block h-2 w-2 rounded-full" style={{ background: char.color ?? '#8a8fa8' }} />
+                )}
+                {char.name}
+              </button>
+            )
+          })}
           {hiddenCast.length > 0 && (
             <span
-              className="ml-0.5 text-[11px] tabular-nums"
+              className="text-[11px] tabular-nums"
               style={{ color: 'var(--text-faint)' }}
               data-tip={hiddenCast.map(({ char }) => char.name).join('、')}
             >
