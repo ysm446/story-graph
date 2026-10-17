@@ -1,4 +1,4 @@
-import { memo, useSyncExternalStore } from 'react'
+import { createContext, memo, useContext, useSyncExternalStore } from 'react'
 import { Handle, Position, useStore, type Node, type NodeProps, type ReactFlowState } from '@xyflow/react'
 import { assetUrl, isVideoAsset } from '../../api'
 import CharAvatar from '../../CharAvatar'
@@ -60,12 +60,18 @@ export type BeatFlowNode = Node<BeatNodeData, 'beatNode'>
 const ZOOMED_OUT_TITLE_ZOOM = 0.5
 const selectZoom = (s: ReactFlowState): number => s.transform[2]
 
+/** ズームアウト時のタイトルを出すか(設定 → 構造モード。既定は出す)。
+ *  カードは memo しているので、data ではなく context で渡して全カードに効かせる */
+export const ZoomedOutTitlesEnabled = createContext(true)
+
 function ZoomedOutTitle({ title }: { title: string }): React.JSX.Element | null {
+  const enabled = useContext(ZoomedOutTitlesEnabled)
   const zoom = useStore(selectZoom)
-  if (zoom > ZOOMED_OUT_TITLE_ZOOM || !title) return null
+  if (!enabled || zoom > ZOOMED_OUT_TITLE_ZOOM || !title) return null
   const scale = 1 / zoom
   return (
     <div
+      data-zoomed-out-title
       className="pointer-events-none absolute bottom-full left-1/2 mb-2 max-w-[640px] truncate rounded-lg px-3 py-1 text-[13px] font-semibold"
       style={{
         transform: `translateX(-50%) scale(${scale})`,

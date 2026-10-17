@@ -201,6 +201,13 @@ store.save_chat_messages(chat['id'], [
     const chapterCast = (title) => `(() => {const card=[...document.querySelectorAll('.react-flow__node')].find(e=>e.textContent.includes(${JSON.stringify(title)}));return card ? [...card.querySelectorAll('img[alt], span[aria-label]')].map(e=>e.getAttribute('alt') ?? e.getAttribute('aria-label')).join('|') : ''})()`
     await assert(`${chapterCast('第一幕')} === 'アヤ|ケン' && ${chapterCast('第二幕')} === 'アヤ|老技師' && ${chapterCast('第三幕')} === 'アヤ|ケン'`, '章カードに章の登場人物のアイコンが並ぶ')
     writeFileSync(join(target, 'cast-chapter-cards.png'), (await win.webContents.capturePage()).toPNG())
+    // ズームアウト時のタイトル: 全体表示(引いた状態)では出ていて、設定で非表示にすると出なくなる
+    await assert(`document.querySelectorAll('[data-zoomed-out-title]').length >= 3`, '引いた状態では、カードの上にタイトルが出る')
+    await fetch(base + '/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ values: { zoomed_out_titles: '0' } }) })
+    await new Promise((done) => { win.webContents.once('did-finish-load', () => done()); win.webContents.reload() })
+    for (let i = 0; i < 60; i++) { if (await js(`[...document.querySelectorAll('.react-flow__node')].some(e=>e.textContent.includes('第一幕'))`)) break; await pause(200) }
+    await pause(400)
+    await assert(`document.querySelectorAll('[data-zoomed-out-title]').length === 0`, '設定で「ズームアウト時のタイトル」を非表示にすると、引いてもタイトルは出ない')
     // 全体表示ではカードが小さすぎて目視できないので、第二幕のカードに寄って切り抜く
     const cardRect = async () => js(`(() => {const r=[...document.querySelectorAll('.react-flow__node')].find(e=>e.textContent.includes('第二幕')).getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height}})()`)
     for (let i = 0; i < 12; i++) {

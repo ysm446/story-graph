@@ -183,6 +183,7 @@ export default function SettingsMode({ onImported }: {
     : DEFAULT_VIDEO_CROSSFADE_SECONDS
   const minimapVisible = values.minimap_visible === '1' // 既定は非表示(2026-10-14 に表示から変更)
   const gridSnap = values.grid_snap !== '0' // 既定はスナップする
+  const zoomedOutTitles = values.zoomed_out_titles !== '0' // 既定は出す
   const chatDynamicSuggestions = values.chat_dynamic_suggestions !== '0' // 既定は生成する
   const embeddingOnStartup = values.embedding_load_on_startup !== '0' // 既定は起動時に読み込む
   const memoryHalfLife = MEMORY_HALF_LIFE_OPTIONS.some(([value]) => value === values.memory_half_life)
@@ -829,6 +830,38 @@ export default function SettingsMode({ onImported }: {
                   </div>
                 </div>
                 <p className="settings-field-hint">ノードエリアの右下に表示される全体図です。</p>
+              </div>
+              <div className="settings-field">
+                <div className="settings-field-header">
+                  <span className="settings-field-label">ズームアウト時のタイトル</span>
+                  <div className="settings-field-controls">
+                    <div className="flex overflow-hidden rounded-md border" style={{ borderColor: 'var(--border-strong)' }}>
+                      {(
+                        [
+                          ['1', '表示'],
+                          ['0', '非表示']
+                        ] as const
+                      ).map(([value, label]) => (
+                        <button
+                          key={value}
+                          onClick={() => void save({ zoomed_out_titles: value })}
+                          className="px-2.5 py-0.5 text-[12px]"
+                          style={
+                            zoomedOutTitles === (value === '1')
+                              ? { background: 'var(--accent-soft)', color: 'var(--text)' }
+                              : { color: 'var(--text-faint)' }
+                          }
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                <p className="settings-field-hint">
+                  引いて全体を眺めたとき(ズーム 50% 以下)、カードの文字が読めなくなるので、
+                  各カードの上にタイトルを一定の大きさで出します。
+                </p>
               </div>
               <div className="settings-field">
                 <div className="settings-field-header">

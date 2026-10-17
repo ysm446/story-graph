@@ -77,6 +77,7 @@ import {
   PAN_ON_DRAG,
   PRO_OPTIONS,
   SNAP_GRID,
+  ZoomedOutTitlesEnabled,
   type AppFlowNode,
   type BeatFlowNode,
   type BeatNodeData,
@@ -113,6 +114,7 @@ function StructureModeInner({
 }): React.JSX.Element {
   const [minimapVisible, setMinimapVisible] = useState(false) // 既定は非表示(2026-10-14 ユーザー指示)
   const [gridSnap, setGridSnap] = useState(true) // ドラッグを背景のグリッドに合わせる
+  const [zoomedOutTitles, setZoomedOutTitles] = useState(true) // 引いたときカードの上にタイトルを出す
   const [chatDynamicSuggestions, setChatDynamicSuggestions] = useState(true)
   const [graphNodes, setGraphNodes] = useState<StoryNode[]>([])
   const [graphEdges, setGraphEdges] = useState<GraphEdge[]>([])
@@ -286,6 +288,7 @@ function StructureModeInner({
       .then((s) => {
         setMinimapVisible(s.minimap_visible === '1')
         setGridSnap(s.grid_snap !== '0')
+        setZoomedOutTitles(s.zoomed_out_titles !== '0')
         setChatDynamicSuggestions(s.chat_dynamic_suggestions !== '0')
       })
       .catch(() => undefined)
@@ -2609,6 +2612,7 @@ function StructureModeInner({
         <div ref={canvasColumnRef} className="flex min-h-0 min-w-0 flex-1 flex-col">
         {/* 制作中は書き換えだけを止める(writeLock.ts)。キャンバスの移動・拡大縮小・選択はできる */}
         <main ref={canvasRef} data-write-locked={productionEditingLocked ? 'true' : undefined} className="relative min-h-0 flex-1" style={{ background: 'var(--bg-canvas)' }}>
+          <ZoomedOutTitlesEnabled.Provider value={zoomedOutTitles}>
           <ReactFlow
             nodes={displayNodes}
             edges={displayEdges}
@@ -2936,6 +2940,7 @@ function StructureModeInner({
               </Panel>
             )}
           </ReactFlow>
+          </ZoomedOutTitlesEnabled.Provider>
           {/* キャラクタービュー: フローチャートの上に重ねる(React Flow は下で生きたままなので、
               選択・フォーカス・矢印キーの仕組みはそのまま使える)。見るだけの画面なので制作中も触れる */}
           {castView && (
