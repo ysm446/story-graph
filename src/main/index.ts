@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, screen, shell } from 'electron'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { execSync } from 'node:child_process'
 import { join } from 'node:path'
@@ -210,11 +210,27 @@ function stopSidecar(): void {
   }
 }
 
-async function captureScreenshot(): Promise<void> {
+/** F12 で画面を PNG に保存する。
+ *
+ *  capturePage は物理ピクセルで撮るので、Windows の表示が 150% なら PNG も 1.5 倍の
+ *  大きさの UI で写る。`native` のとき(Shift+F12)は撮る直前だけ 1/倍率 に縮小して、
+ *  CSS の 1px = 物理 1px、つまり **100% 表示で撮ったのと同じ絵** にする(画素数は
+ *  そのまま。一瞬だけ画面が縮んで戻る)。倍率はウィンドウのあるディスプレイから取る
+ */
+async function captureScreenshot(native = false): Promise<void> {
   const win = mainWindow
   if (!win) return
+  const contents = win.webContents
+  const scale = native ? screen.getDisplayMatching(win.getBounds()).scaleFactor : 1
+  const previousZoom = contents.getZoomFactor()
   try {
-    const image = await win.webContents.capturePage()
+    if (scale !== 1) {
+      contents.setZoomFactor(previousZoom / scale)
+      // レイアウトが縮んで描き直されるのを待つ(1 フレームでは古い絵を撮ることがある)
+      await new Promise((resolve) => setTimeout(resolve, 120))
+    }
+    const image = await contents.capturePage()
+    if (scale !== 1) contents.setZoomFactor(previousZoom)
     const dir = join(currentLibraryRoot(), 'screenshot')
     mkdirSync(dir, { recursive: true })
     const now = new Date()
@@ -226,6 +242,7 @@ async function captureScreenshot(): Promise<void> {
     writeFileSync(filePath, image.toPNG())
     win.webContents.send('screenshot:saved', filePath)
   } catch (error) {
+    if (contents.getZoomFactor() !== previousZoom) contents.setZoomFactor(previousZoom)
     console.error('[screenshot] 保存に失敗:', error)
   }
 }
@@ -251,8 +268,9 @@ function createWindow(): void {
     return { action: 'deny' }
   })
   mainWindow.webContents.on('before-input-event', (_event, input) => {
+    // F12 = 見たまま撮る / Shift+F12 = 表示倍率(150% など)を打ち消して 100% 相当で撮る
     if (input.type === 'keyDown' && input.key === 'F12') {
-      void captureScreenshot()
+      void captureScreenshot(input.shift)
     }
   })
   mainWindow.on('closed', () => {
