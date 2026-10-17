@@ -8,10 +8,13 @@ import type { Character } from './types'
  *  使うので共通部品として切り出した。 */
 export default function CharAvatar({
   char,
-  size
+  size,
+  tip
 }: {
   char: Character
   size: number
+  /** ツールチップ(既定は名前)。押せる場所に置くとき、押すと何が起きるかを書く */
+  tip?: string
 }): React.JSX.Element {
   const src = assetUrl(char.portrait_path)
   const color = char.color ?? '#8a8fa8'
@@ -21,7 +24,7 @@ export default function CharAvatar({
       <img
         src={src}
         alt={char.name}
-        data-tip={char.name}
+        data-tip={tip ?? char.name}
         decoding="async"
         className="shrink-0 rounded-full object-cover"
         style={style}
@@ -31,7 +34,7 @@ export default function CharAvatar({
   return (
     <span
       aria-label={char.name}
-      data-tip={char.name}
+      data-tip={tip ?? char.name}
       className="flex shrink-0 items-center justify-center rounded-full font-semibold"
       style={{ ...style, background: `${color}33`, color, fontSize: Math.round(size * 0.45) }}
     >

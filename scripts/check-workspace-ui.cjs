@@ -213,6 +213,16 @@ store.save_chat_messages(chat['id'], [
       const r = await cardRect()
       writeFileSync(join(target, 'cast-chapter-card-zoom.png'), (await win.webContents.capturePage({ x: Math.max(0, Math.round(r.x - 20)), y: Math.max(0, Math.round(r.y - 60)), width: Math.round(r.width + 40), height: Math.round(r.height + 80) })).toPNG())
     }
+    // 章カードのアイコンを押すと、シーンカードの札と同じく詳細欄が人物専用の表示になる。
+    // 時点はその章の読む道で最後に登場するシーン(第二幕の老技師は 2 シーンとも出るので後ろのほう)
+    await js(`[...document.querySelectorAll('.react-flow__node')].find(e=>e.textContent.includes('第二幕')).querySelector('button[aria-label="老技師"]').click()`)
+    await pause(500)
+    const chapterCharTabs = `(() => {const tab=[...document.querySelectorAll('button')].find(e=>e.getClientRects().length && e.textContent.trim()==='プロフィール');return tab ? tab.parentElement.textContent : ''})()`
+    await assert(`${chapterCharTabs}.includes('老技師') && [...document.querySelectorAll('.react-flow__node')].some(e=>e.textContent.includes('第二幕'))`, '章カードの人物のアイコンをクリックすると、その人物が詳細欄に出る(章ビューのまま)')
+    await click('状態')
+    await pause(300)
+    await assert(`document.body.textContent.includes('「' + ${JSON.stringify(example.scenes[2].title)} + '」の時点')`, '章カードから出した人物は、その章で最後に登場するシーンの時点になる')
+    await click('プロフィール')
     await click('人物')
     await pause(400)
     const cells =`[...document.querySelectorAll('button[aria-label]')].filter(e => /^(アヤ|ケン|老技師): /.test(e.getAttribute('aria-label')))`

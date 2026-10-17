@@ -258,9 +258,12 @@ export type ChapterNodeData = {
   dropTarget?: boolean
   /** 表紙にするシーン(cover_node_id の指定 → 無ければ章内で最初に挿絵があるシーン) */
   cover: StoryNode | null
-  /** 章の登場人物(読む道のシーンの cast を合わせたもの。出るシーンの多い順) */
-  cast: Character[]
+  /** 章の登場人物(読む道のシーンの cast を合わせたもの。出るシーンの多い順)。
+   *  lastScene = 読む道でその人物が最後に出るシーン(アイコンを押したときの時点) */
+  cast: ChapterCastMember[]
   onOpen: (groupId: string) => void
+  /** 登場人物のアイコンをクリック → そのシーンを選び、詳細欄を人物専用の表示にする */
+  onSelectChar?: (charId: string, sceneId: string) => void
 }
 export type ChapterFlowNode = Node<ChapterNodeData, 'chapterNode'>
 export type AppFlowNode = BeatFlowNode | ChapterFlowNode
@@ -280,6 +283,8 @@ export function chapterCoverNode(group: Group, nodeById: Map<string, StoryNode>)
 /** 章カードに並べる登場人物の上限。超えた分は「+N」にまとめる */
 const CHAPTER_CAST_MAX = 6
 
+export type ChapterCastMember = { char: Character; lastScene: StoryNode }
+
 /** 章の登場人物を、読む道(route)のシーンの cast から集める。分岐・島のシーンは数えない
  *  (試しに書いた枝の人物まで章の顔ぶれに出さないため)。出るシーンの多い順で、
  *  同数なら先に出た順。資料庫に無い人物 ID は飛ばす */
@@ -287,21 +292,23 @@ export function chapterCast(
   group: Group,
   nodeById: Map<string, StoryNode>,
   characters: Record<string, Character>
-): Character[] {
-  const counts = new Map<string, number>()
+): ChapterCastMember[] {
+  const seen = new Map<string, { count: number; lastScene: StoryNode }>()
   for (const id of group.route) {
-    for (const charId of nodeById.get(id)?.cast ?? []) {
-      counts.set(charId, (counts.get(charId) ?? 0) + 1)
+    const node = nodeById.get(id)
+    if (!node) continue
+    for (const charId of node.cast) {
+      seen.set(charId, { count: (seen.get(charId)?.count ?? 0) + 1, lastScene: node })
     }
   }
   // Map は挿入順を保つので、安定ソートで同数のときは初登場の順になる
-  return [...counts.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .flatMap(([charId]) => (characters[charId] ? [characters[charId]] : []))
+  return [...seen.entries()]
+    .sort((a, b) => b[1].count - a[1].count)
+    .flatMap(([charId, { lastScene }]) => (characters[charId] ? [{ char: characters[charId], lastScene }] : []))
 }
 
 export function ChapterNodeCard({ data, selected }: NodeProps<ChapterFlowNode>): React.JSX.Element {
-  const { group, number, cover, cast, dropTarget, onOpen } = data
+  const { group, number, cover, cast, dropTarget, onOpen, onSelectChar } = data
   const shownCast = cast.slice(0, CHAPTER_CAST_MAX)
   const hiddenCast = cast.slice(CHAPTER_CAST_MAX)
   return (
@@ -364,15 +371,32 @@ export function ChapterNodeCard({ data, selected }: NodeProps<ChapterFlowNode>):
           ))}
       </div>
       {cast.length > 0 && (
-        <div className="mt-2 flex items-center gap-1">
-          {shownCast.map((c) => (
-            <CharAvatar key={c.id} char={c} size={18} />
+        <div className="mt-2 flex items-center gap-0.5">
+          {shownCast.map(({ char, lastScene }) => (
+            // シーンカードの札と同じく nodrag で、クリック・ダブルクリックをカードに伝えない
+            // (ダブルクリックは章を開く操作なので、連打で章の中へ入らないように)
+            <button
+              key={char.id}
+              className="nodrag rounded-full p-0.5 hover:bg-[var(--accent-soft)]"
+              aria-label={char.name}
+              onClick={(e) => {
+                e.stopPropagation()
+                onSelectChar?.(char.id, lastScene.id)
+              }}
+              onDoubleClick={(e) => e.stopPropagation()}
+            >
+              <CharAvatar
+                char={char}
+                size={18}
+                tip={`${char.name}。クリックで「${lastScene.title || '無題'}」(この章で最後に登場するシーン)の時点の人物を下の詳細欄に出す`}
+              />
+            </button>
           ))}
           {hiddenCast.length > 0 && (
             <span
-              className="text-[11px] tabular-nums"
+              className="ml-0.5 text-[11px] tabular-nums"
               style={{ color: 'var(--text-faint)' }}
-              data-tip={hiddenCast.map((c) => c.name).join('、')}
+              data-tip={hiddenCast.map(({ char }) => char.name).join('、')}
             >
               +{hiddenCast.length}
             </span>

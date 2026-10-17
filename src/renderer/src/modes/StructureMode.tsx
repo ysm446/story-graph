@@ -1226,14 +1226,15 @@ function StructureModeInner({
             number: gi + 1,
             cover: chapterCoverNode(g, nodeById),
             cast: chapterCast(g, nodeById, charMap),
-            onOpen: openChapter
+            onOpen: openChapter,
+            onSelectChar: handleSelectCharacter
           }
         }
       })
     })
     // chapterAnchorSig は flowNodes の位置を畳んだ署名(毎フレーム作り直さないため)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [groups, chapterAnchorSig, graphNodes, charMap, openChapter])
+  }, [groups, chapterAnchorSig, graphNodes, charMap, openChapter, handleSelectCharacter])
 
   // シーンを章カードの上へ運んでいるか(離すとその章に入る)
   const [dropTargetGroupId, setDropTargetGroupId] = useState<string | null>(null)
