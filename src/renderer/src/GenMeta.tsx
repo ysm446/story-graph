@@ -92,6 +92,14 @@ export function MsgActionButton({
   )
 }
 
+/** 統計に入っているモデル名を表示用にする。llama-server はアプリが起動した場合は
+ *  `--alias`(GGUF の stem)を返すが、外部で起動したものや古い記録では **モデルのパス**が
+ *  そのまま入っている。フォルダと `.gguf` を落として名前だけにする */
+export function modelLabel(model: string): string {
+  const base = model.split(/[\\/]/).pop() || model
+  return base.replace(/\.gguf$/i, '')
+}
+
 /** 生成統計の 1 行(lm-chat の qa-meta と同じ並び)。チャットの返事と清書で使う */
 export function StatsLine({ stats }: { stats: ChatStats }): React.JSX.Element {
   const parts: React.JSX.Element[] = []
@@ -101,7 +109,7 @@ export function StatsLine({ stats }: { stats: ChatStats }): React.JSX.Element {
       {text}
     </span>
   )
-  if (stats.model) parts.push(item('model', <Icon name="sparkle" size={11} />, stats.model))
+  if (stats.model) parts.push(item('model', <Icon name="sparkle" size={11} />, modelLabel(stats.model)))
   if (stats.tokens_per_sec) {
     parts.push(item('speed', <Icon name="zap" size={11} />, `${stats.tokens_per_sec.toFixed(1)} tok/sec`))
   }

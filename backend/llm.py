@@ -83,9 +83,18 @@ def _extract_stats(chunk: dict[str, Any], choice: dict[str, Any]) -> dict[str, A
         "tokens_per_sec": per_sec,
         "elapsed_sec": (elapsed_ms / 1000.0) if elapsed_ms is not None else None,
         "finish_reason": choice.get("finish_reason"),
-        # llama-server 起動時の --alias(GGUF の stem)。返事にどのモデルで書いたかを残す
-        "model": chunk.get("model"),
+        # llama-server 起動時の --alias(GGUF の stem)。返事にどのモデルで書いたかを残す。
+        # 外部で起動したサーバーはモデルのパスを返すので、名前だけにして保存する
+        "model": _model_label(chunk.get("model")),
     }
+
+
+def _model_label(model: str | None) -> str | None:
+    """`D:/models/foo.gguf` のようなパスを `foo` にする。すでに名前ならそのまま"""
+    if not model:
+        return model
+    base = model.replace("\\", "/").rsplit("/", 1)[-1]
+    return base[:-5] if base.lower().endswith(".gguf") else base
 
 
 async def count_tokens(text: str, *, base_url: str, timeout: float = 10.0) -> int | None:
