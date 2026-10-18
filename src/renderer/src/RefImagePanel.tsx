@@ -314,7 +314,7 @@ export default function RefImagePanel({
             </span>
           )}
           {appearance !== (character.appearance ?? '') && (
-            <p className="text-[11px]" style={{ color: '#f2a3a3' }}>
+            <p className="text-[11px]" style={{ color: 'var(--danger-text)' }}>
               外見に未保存の変更があります。プロンプトは保存済みの内容から作るので、先に外見を「確定」してください。
             </p>
           )}
@@ -324,7 +324,7 @@ export default function RefImagePanel({
             </p>
           )}
           {error && (
-            <p className="text-[12px]" style={{ color: '#f2a3a3' }}>
+            <p className="text-[12px]" style={{ color: 'var(--danger-text)' }}>
               {error}
             </p>
           )}
@@ -389,7 +389,7 @@ export default function RefImagePanel({
               style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
             />
             {instructions.trim() !== promptBasis.trim() && (
-              <p className="mt-1 text-[11px]" style={{ color: '#f2a3a3' }}>
+              <p className="mt-1 text-[11px]" style={{ color: 'var(--danger-text)' }}>
                 追加指示が変わりました。「外見から書き直す」でプロンプトを作り直してください。
               </p>
             )}
@@ -429,7 +429,7 @@ export default function RefImagePanel({
               <CandidatePreview candidate={candidate} current={path} currentLabel="いまの参照画像" aspect="832 / 1216" />
             </div>
             {error && (
-              <p className="mt-2 text-[12px]" style={{ color: '#f2a3a3' }}>
+              <p className="mt-2 text-[12px]" style={{ color: 'var(--danger-text)' }}>
                 {error}
               </p>
             )}

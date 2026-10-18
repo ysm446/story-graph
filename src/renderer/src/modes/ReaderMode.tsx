@@ -582,7 +582,7 @@ function ReaderMode({
         {stale && (
           <span
             className="rounded px-1.5 py-px text-[10px] uppercase"
-            style={{ background: 'rgba(239,68,68,0.12)', color: '#f2a3a3' }}
+            style={{ background: 'rgba(239,68,68,0.12)', color: 'var(--danger-text)' }}
           >
             stale
           </span>
@@ -803,7 +803,7 @@ function ReaderMode({
           </div>
         )}
         {readAloud.state.error && (
-          <span className="text-[12px]" style={{ color: '#f2a3a3' }} data-tip={readAloud.state.error}>
+          <span className="text-[12px]" style={{ color: 'var(--danger-text)' }} data-tip={readAloud.state.error}>
             読み上げに失敗しました: {readAloud.state.error.slice(0, 120)}
           </span>
         )}

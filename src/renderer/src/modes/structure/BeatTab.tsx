@@ -303,7 +303,7 @@ export function BeatTab({
           {validation.length > 0 && (
             <div
               className="rounded-lg border px-3 py-2 text-[12px] leading-relaxed"
-              style={{ borderColor: 'rgba(239,68,68,0.4)', background: 'rgba(239,68,68,0.08)', color: '#f2a3a3' }}
+              style={{ borderColor: 'rgba(239,68,68,0.4)', background: 'rgba(239,68,68,0.08)', color: 'var(--danger-text)' }}
             >
               {validation.map((v, i) => (
                 <div key={i}>⚠ {v}</div>
@@ -767,7 +767,7 @@ export function BeatTab({
           />
       </>} />
       <div className="shrink-0 border-t px-5 py-2" style={{ borderColor: 'var(--border)', background: 'var(--bg-sidebar)' }}>
-        {error && <div role="alert" className="mb-1 text-[12px]" style={{ color: 'var(--danger)' }}>{error}</div>}
+        {error && <div role="alert" className="mb-1 text-[12px]" style={{ color: 'var(--danger-text)' }}>{error}</div>}
         <div className="flex flex-wrap items-center justify-between gap-2">
           {dirty && <span role="status" className="min-w-0 text-[11px]" style={{ color: 'var(--text-dim)' }}>
             未保存の変更があります

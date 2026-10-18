@@ -75,7 +75,7 @@ export default function ChatRulesPanel({ busy, open, onToggle, onDirty, onSaved 
         <span className="text-[11px] tabular-nums" style={{ color: 'var(--text-faint)' }}>{draft.length} / 6000</span>
       </div>
       {notice && <p role="status" className="text-[11px]" style={{ color: 'var(--text-dim)' }}>{notice}</p>}
-      {error && <p role="alert" className="text-[11px]" style={{ color: 'var(--danger)' }}>{error}</p>}
+      {error && <p role="alert" className="text-[11px]" style={{ color: 'var(--danger-text)' }}>{error}</p>}
     </div>}
   </>
 }

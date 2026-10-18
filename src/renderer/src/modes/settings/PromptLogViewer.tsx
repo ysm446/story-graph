@@ -59,7 +59,7 @@ export default function PromptLogViewer(): React.JSX.Element {
               className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12px]"
             >
               <span style={{ color: 'var(--text)' }}>{entry.label}</span>
-              {entry.error && <span style={{ color: 'var(--danger)' }}>エラー</span>}
+              {entry.error && <span style={{ color: 'var(--danger-text)' }}>エラー</span>}
               <span className="ml-auto tabular-nums" style={{ color: 'var(--text-faint)' }}>
                 {time} / T={entry.temperature}
                 {entry.usage?.prompt_tokens !== undefined &&
@@ -96,7 +96,7 @@ export default function PromptLogViewer(): React.JSX.Element {
                   </div>
                 )}
                 {entry.error && (
-                  <p className="text-[12px]" style={{ color: 'var(--danger)' }}>
+                  <p className="text-[12px]" style={{ color: 'var(--danger-text)' }}>
                     {entry.error}
                   </p>
                 )}

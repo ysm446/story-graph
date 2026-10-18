@@ -196,7 +196,7 @@ function ModelModal({
           </div>
         )}
         {error ? (
-          <p className="mt-3 text-[11px]" style={{ color: 'var(--danger)' }}>
+          <p className="mt-3 text-[11px]" style={{ color: 'var(--danger-text)' }}>
             {error}
           </p>
         ) : (
@@ -381,7 +381,7 @@ export default function ModelBar({ refreshKey }: { refreshKey: number }): React.
           </span>
           <span
             className="min-w-0 flex-1 truncate text-center text-[12.5px]"
-            style={hasError ? { color: 'var(--danger)' } : undefined}
+            style={hasError ? { color: 'var(--danger-text)' } : undefined}
           >
             {switching
               ? `読み込み中… ${currentName}`

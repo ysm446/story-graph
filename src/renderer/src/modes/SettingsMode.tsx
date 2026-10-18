@@ -344,7 +344,7 @@ export default function SettingsMode({ onImported }: {
         <p
           className="min-h-5 px-3 pb-2 text-[11px]"
           role={saveError ? 'alert' : undefined}
-          style={{ color: saveError ? 'var(--danger)' : 'var(--accent)' }}
+          style={{ color: saveError ? 'var(--danger-text)' : 'var(--accent)' }}
         >
           {saveError ?? (savedMsg ? '保存しました' : '')}
         </p>
@@ -397,7 +397,7 @@ export default function SettingsMode({ onImported }: {
                   )}
                 </div>
                 {llmError && (
-                  <p className="text-[12px]" style={{ color: 'var(--danger)' }}>
+                  <p className="text-[12px]" style={{ color: 'var(--danger-text)' }}>
                     {llmError}
                   </p>
                 )}
@@ -443,12 +443,12 @@ export default function SettingsMode({ onImported }: {
                   </span>
                 </div>
                 {modelsDir && !modelsDir.exists && (
-                  <p className="text-[12px]" style={{ color: '#f2a3a3' }}>
+                  <p className="text-[12px]" style={{ color: 'var(--danger-text)' }}>
                     フォルダが見つかりません: {modelsDir.dir}
                   </p>
                 )}
                 {modelsDirError && (
-                  <p className="text-[12px]" style={{ color: '#f2a3a3' }}>
+                  <p className="text-[12px]" style={{ color: 'var(--danger-text)' }}>
                     {modelsDirError}
                   </p>
                 )}

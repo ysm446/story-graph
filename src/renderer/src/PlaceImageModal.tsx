@@ -153,7 +153,7 @@ export default function PlaceImageModal({
           style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
         />
         {instructions.trim() !== promptBasis.trim() && (
-          <p className="mt-1 text-[11px]" style={{ color: '#f2a3a3' }}>
+          <p className="mt-1 text-[11px]" style={{ color: 'var(--danger-text)' }}>
             追加指示が変わりました。「説明から書き直す」でプロンプトを作り直してください。
           </p>
         )}
@@ -199,7 +199,7 @@ export default function PlaceImageModal({
           <CandidatePreview candidate={candidate} current={place.image_path} currentLabel="いまの場所の画像" aspect="1216 / 832" />
         </div>
         {error && (
-          <p className="mt-2 text-[12px]" style={{ color: '#f2a3a3' }}>
+          <p className="mt-2 text-[12px]" style={{ color: 'var(--danger-text)' }}>
             {error}
           </p>
         )}

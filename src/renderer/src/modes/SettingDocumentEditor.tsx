@@ -200,7 +200,7 @@ export default function SettingDocumentEditor({ documents, selectedId, onChanged
       </section>
       <p className="text-[11px]" style={faint}>作成: {new Date(document.created_at).toLocaleString('ja-JP')} ／ 更新: {new Date(document.updated_at).toLocaleString('ja-JP')}</p>
       <div className="flex flex-wrap items-center gap-2 border-t pt-3" style={{ borderColor: 'var(--border)' }}>
-        {error?.group === null && <p role="alert" className="w-full text-[12px]" style={{ color: 'var(--danger)' }}>{error.message}</p>}
+        {error?.group === null && <p role="alert" className="w-full text-[12px]" style={{ color: 'var(--danger-text)' }}>{error.message}</p>}
         <button onClick={() => void remove()} className="delete-action ml-auto text-[12px]" data-tip="この設定資料を削除します">この設定資料を削除</button>
       </div>
     </fieldset>

@@ -209,7 +209,7 @@ export default function ImageGenSection({
             )}
           </div>
           {error && (
-            <p className="text-[12px]" style={{ color: 'var(--danger)' }}>
+            <p className="text-[12px]" style={{ color: 'var(--danger-text)' }}>
               {error}
             </p>
           )}
@@ -305,11 +305,11 @@ export default function ImageGenSection({
                     <span className="w-28 shrink-0" style={{ color: 'var(--text-faint)' }}>
                       {m.folder}
                     </span>
-                    <span className="min-w-0 truncate" style={{ color: missing ? 'var(--danger)' : 'var(--text-dim)' }} data-tip={m.name || undefined}>
+                    <span className="min-w-0 truncate" style={{ color: missing ? 'var(--danger-text)' : 'var(--text-dim)' }} data-tip={m.name || undefined}>
                       {m.name || `(${m.key} が variants.json に書かれていません)`}
                     </span>
                     {missing && m.name && (
-                      <span className="shrink-0" style={{ color: 'var(--danger)' }}>
+                      <span className="shrink-0" style={{ color: 'var(--danger-text)' }}>
                         見つかりません
                       </span>
                     )}
@@ -450,7 +450,7 @@ export default function ImageGenSection({
                     />
                   </div>
                   <div className="flex items-center justify-between">
-                    <span className="text-[12px]" style={{ color: progress?.phase === 'error' ? 'var(--danger)' : 'var(--text-dim)' }}>
+                    <span className="text-[12px]" style={{ color: progress?.phase === 'error' ? 'var(--danger-text)' : 'var(--text-dim)' }}>
                       {progress ? describeProgress(progress) : '準備中…'}
                     </span>
                     {installing && (

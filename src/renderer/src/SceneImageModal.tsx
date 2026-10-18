@@ -257,7 +257,7 @@ export default function SceneImageModal({
           </p>
         )}
         {stale && (
-          <p className="mt-1 text-[11px]" style={{ color: '#f2a3a3' }}>
+          <p className="mt-1 text-[11px]" style={{ color: 'var(--danger-text)' }}>
             {selectionChanged
               ? '参照画像の選び方が変わったので、image のラベルが合いません。'
               : '追加指示が変わりました。'}
@@ -304,7 +304,7 @@ export default function SceneImageModal({
           <CandidatePreview candidate={candidate} current={node.image_path} currentLabel="いまの挿絵" aspect="1216 / 832" />
         </div>
         {error && (
-          <p className="mt-2 text-[12px]" style={{ color: '#f2a3a3' }}>
+          <p className="mt-2 text-[12px]" style={{ color: 'var(--danger-text)' }}>
             {error}
           </p>
         )}

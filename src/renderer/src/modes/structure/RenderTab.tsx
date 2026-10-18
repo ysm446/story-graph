@@ -360,7 +360,7 @@ export function RenderTab({
         {stale && (
           <span
             className="rounded px-1.5 py-px text-[10px] uppercase"
-            style={{ background: 'rgba(239,68,68,0.12)', color: '#f2a3a3' }}
+            style={{ background: 'rgba(239,68,68,0.12)', color: 'var(--danger-text)' }}
             data-tip="このシーンか上流が編集されたので、清書が古くなっています"
           >
             stale
@@ -386,7 +386,7 @@ export function RenderTab({
         </p>
       )}
       {error && (
-        <p className="text-[11px] leading-relaxed" style={{ color: 'var(--danger)' }}>
+        <p className="text-[11px] leading-relaxed" style={{ color: 'var(--danger-text)' }}>
           {error}
         </p>
       )}

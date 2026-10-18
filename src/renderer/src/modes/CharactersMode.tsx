@@ -224,7 +224,7 @@ function CharactersMode(): React.JSX.Element {
         style={{ background: 'var(--bg-sidebar)', width: sidebarWidth }}
       >
         <div className="px-3 py-2 text-[13px] font-medium" style={{ color: 'var(--text)' }}>資料庫</div>
-        {createError && <p role="alert" className="px-3 text-[11px]" style={{ color: 'var(--danger)' }}>{createError}</p>}
+        {createError && <p role="alert" className="px-3 text-[11px]" style={{ color: 'var(--danger-text)' }}>{createError}</p>}
         <nav aria-label="資料の種類と一覧" data-view-ok className="inspector-scrollbar min-h-0 flex-1 overflow-y-auto px-2 pb-2">
           {([['characters', 'キャラクター'], ['places', '場所'], ['settings', '設定資料']] as const).map(([kind, label]) => (
             <section key={kind} className="mb-2">

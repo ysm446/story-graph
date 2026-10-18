@@ -167,7 +167,7 @@ export function CharTab({
         </div>
       )}
       {error && (
-        <div className="text-[12px]" style={{ color: 'var(--danger)' }}>
+        <div className="text-[12px]" style={{ color: 'var(--danger-text)' }}>
           {error}
         </div>
       )}
@@ -308,7 +308,7 @@ export function CharTab({
               </div>
             ))}
             {charState.status === 'retired' && (
-              <div className="mt-1 text-[12px]" style={{ color: 'var(--danger)' }}>
+              <div className="mt-1 text-[12px]" style={{ color: 'var(--danger-text)' }}>
                 退場済み({charState.retire_reason})
               </div>
             )}

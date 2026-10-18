@@ -153,7 +153,7 @@ export default function ImageCropModal({
           ドラッグで位置調整 / ホイールまたはスライダーで拡大縮小。元画像は保持され、後から切り抜き直せます。
         </p>
         {error && (
-          <p className="mt-1 text-[12px]" style={{ color: 'var(--danger)' }}>
+          <p className="mt-1 text-[12px]" style={{ color: 'var(--danger-text)' }}>
             {error}
           </p>
         )}

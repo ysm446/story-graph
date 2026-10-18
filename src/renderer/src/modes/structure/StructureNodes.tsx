@@ -351,7 +351,7 @@ export function ChapterNodeCard({ data, selected }: NodeProps<ChapterFlowNode>):
         {group.warning && (
           <span
             className="rounded px-1.5 py-px text-[10px]"
-            style={{ background: 'rgba(239,68,68,0.12)', color: '#f2a3a3' }}
+            style={{ background: 'rgba(239,68,68,0.12)', color: 'var(--danger-text)' }}
             data-tip={group.warning}
           >
             ⚠ 要確認
@@ -361,7 +361,7 @@ export function ChapterNodeCard({ data, selected }: NodeProps<ChapterFlowNode>):
           (group.digest_stale ? (
             <span
               className="rounded px-1.5 py-px text-[10px]"
-              style={{ background: 'rgba(239,68,68,0.12)', color: '#f2a3a3' }}
+              style={{ background: 'rgba(239,68,68,0.12)', color: 'var(--danger-text)' }}
               data-tip="章の中が編集されたので、まとめが古くなっている可能性があります"
             >
               まとめ要更新

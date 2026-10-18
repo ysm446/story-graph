@@ -172,7 +172,7 @@ export default function VoiceProfilesCard(): React.JSX.Element {
         </div>
       )}
       {error && (
-        <p className="whitespace-pre-wrap text-[12px]" style={{ color: '#f2a3a3' }}>
+        <p className="whitespace-pre-wrap text-[12px]" style={{ color: 'var(--danger-text)' }}>
           {error}
         </p>
       )}

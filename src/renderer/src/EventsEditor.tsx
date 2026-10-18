@@ -753,12 +753,12 @@ export default function EventsEditor({
       {adding?.at === 'top' && addingForm}
 
       {error && (
-        <div className="mb-1 text-[12px]" style={{ color: 'var(--danger)' }}>
+        <div className="mb-1 text-[12px]" style={{ color: 'var(--danger-text)' }}>
           {error}
         </div>
       )}
       {validation.length > 0 && (
-        <div className="mb-1 text-[12px]" style={{ color: '#f2a3a3' }}>
+        <div className="mb-1 text-[12px]" style={{ color: 'var(--danger-text)' }}>
           {validation.map((v, i) => (
             <div key={i}>⚠ {v}</div>
           ))}

@@ -109,7 +109,7 @@ export default function ImportSection({ onImported }: { onImported?: (message: s
         </p>
       )}
       {problem && (
-        <p role="alert" className="text-[12px] [overflow-wrap:anywhere]" style={{ color: 'var(--danger)' }}>
+        <p role="alert" className="text-[12px] [overflow-wrap:anywhere]" style={{ color: 'var(--danger-text)' }}>
           {problem}
         </p>
       )}
@@ -122,7 +122,7 @@ export default function ImportSection({ onImported }: { onImported?: (message: s
           {errors.length > 0 && (
             <>
               <div className="flex items-center gap-2">
-                <span className="text-[12px]" style={{ color: 'var(--danger)' }}>
+                <span className="text-[12px]" style={{ color: 'var(--danger-text)' }}>
                   誤りが {errors.length} 件あります。直してから、もう一度ファイルを選んでください。
                 </span>
                 {check.errors.length > 0 && (

@@ -140,7 +140,7 @@ export default function SnapshotsSection(): React.JSX.Element {
         復元するとライブラリ全体(シーン・イベント・清書・チャット)がその時点に戻ります。
       </p>
       {error && (
-        <p className="settings-field-hint" style={{ color: 'var(--danger)' }}>
+        <p className="settings-field-hint" style={{ color: 'var(--danger-text)' }}>
           {error}
         </p>
       )}

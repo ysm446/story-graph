@@ -293,7 +293,7 @@ export function ChapterTab({
         </button>
       </div>
       {group.warning && (
-        <p className="text-[11px] leading-relaxed" style={{ color: '#f2a3a3' }}>
+        <p className="text-[11px] leading-relaxed" style={{ color: 'var(--danger-text)' }}>
           ⚠ {group.warning}
         </p>
       )}
@@ -328,7 +328,7 @@ export function ChapterTab({
             (digestStale ? (
               <span
                 className="rounded px-1.5 py-px text-[10px]"
-                style={{ background: 'rgba(239,68,68,0.12)', color: '#f2a3a3' }}
+                style={{ background: 'rgba(239,68,68,0.12)', color: 'var(--danger-text)' }}
                 data-tip="章の中が編集されたので、まとめが古くなっている可能性があります"
               >
                 要更新
@@ -365,7 +365,7 @@ export function ChapterTab({
           </span>
         </div>
         {error && (
-          <p className="mb-2 text-[11px]" style={{ color: 'var(--danger)' }}>
+          <p className="mb-2 text-[11px]" style={{ color: 'var(--danger-text)' }}>
             {error}
           </p>
         )}
@@ -554,7 +554,7 @@ export function ChapterTab({
             ) : (
               hasDigest &&
               digestStale && (
-                <span className="shrink-0 text-[10px]" style={{ color: '#f2a3a3' }}>
+                <span className="shrink-0 text-[10px]" style={{ color: 'var(--danger-text)' }}>
                   要更新
                 </span>
               )
@@ -730,7 +730,7 @@ function ChapterScenePreview({
         {stale && (
           <span
             className="shrink-0 rounded px-1.5 py-px text-[10px]"
-            style={{ background: 'rgba(239,68,68,0.12)', color: '#f2a3a3' }}
+            style={{ background: 'rgba(239,68,68,0.12)', color: 'var(--danger-text)' }}
             data-tip="清書のあとにシーンが編集されたので、清書が古くなっている可能性があります"
           >
             要更新
@@ -745,7 +745,7 @@ function ChapterScenePreview({
         )}
       </div>
       {error && (
-        <p className="text-[11px]" style={{ color: 'var(--danger)' }}>
+        <p className="text-[11px]" style={{ color: 'var(--danger-text)' }}>
           {error}
         </p>
       )}

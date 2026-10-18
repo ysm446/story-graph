@@ -290,7 +290,7 @@ export default function LlamaInstaller(): React.JSX.Element {
                 />
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-[12px]" style={{ color: progress?.phase === 'error' ? 'var(--danger)' : 'var(--text-dim)' }}>
+                <span className="text-[12px]" style={{ color: progress?.phase === 'error' ? 'var(--danger-text)' : 'var(--text-dim)' }}>
                   {progress ? describeProgress(progress) : '準備中…'}
                 </span>
                 {installing && (
@@ -330,7 +330,7 @@ export default function LlamaInstaller(): React.JSX.Element {
       )}
 
       {error && (
-        <p className="text-[12px]" style={{ color: 'var(--danger)' }}>
+        <p className="text-[12px]" style={{ color: 'var(--danger-text)' }}>
           {error}
         </p>
       )}

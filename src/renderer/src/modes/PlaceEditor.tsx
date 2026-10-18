@@ -291,7 +291,7 @@ export default function PlaceEditor({
           </button>
         </div>
         {unsavedDescription && (
-          <p className="text-[11px]" style={{ color: '#f2a3a3' }}>
+          <p className="text-[11px]" style={{ color: 'var(--danger-text)' }}>
             説明・雰囲気に未保存の変更があります。プロンプトは保存済みの内容から作るので、先に「確定」してください。
           </p>
         )}

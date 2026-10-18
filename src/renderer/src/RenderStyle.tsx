@@ -363,7 +363,7 @@ export function PresetEditorModal({
           (シーンにある出来事以外を発生させない / POV キャラが知らない情報を書かない 等)だけが自動で追加されます。
         </p>
         {error && (
-          <p className="mb-2 text-[12px]" style={{ color: 'var(--danger)' }}>
+          <p className="mb-2 text-[12px]" style={{ color: 'var(--danger-text)' }}>
             {error}
           </p>
         )}

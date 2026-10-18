@@ -225,7 +225,7 @@ export default function MediaPicker({
           </div>
         )}
         {error && (
-          <p className="mt-2 text-[12px]" style={{ color: '#f2a3a3' }}>
+          <p className="mt-2 text-[12px]" style={{ color: 'var(--danger-text)' }}>
             {error}
           </p>
         )}

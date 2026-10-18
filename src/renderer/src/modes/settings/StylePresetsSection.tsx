@@ -41,7 +41,7 @@ export default function StylePresetsSection(): React.JSX.Element {
         組み込みの 2 つは編集できないので、複製して育ててください。
       </p>
       {error && (
-        <p className="settings-field-hint" style={{ color: 'var(--danger)' }}>
+        <p className="settings-field-hint" style={{ color: 'var(--danger-text)' }}>
           {error}
         </p>
       )}

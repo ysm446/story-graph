@@ -116,7 +116,7 @@ const MessageList = memo(function MessageList({ messages, nodes, groups }: {
         if (m.step) return (
           <TimelineItem key={i} time={m.created_at} color={m.step.error ? 'var(--danger)' : 'var(--text-faint)'}
             label={<span data-step={m.step.name} style={{ color: 'var(--text-dim)' }}>{m.step.label}{m.step.detail ? `: ${m.step.detail}` : ''}{m.step.repeated ? '(前回の結果を再利用)' : ''}</span>}>
-            {m.step.error && <p className="text-[11px] [overflow-wrap:anywhere]" style={{ color: 'var(--danger)' }}>{m.step.error}</p>}
+            {m.step.error && <p className="text-[11px] [overflow-wrap:anywhere]" style={{ color: 'var(--danger-text)' }}>{m.step.error}</p>}
           </TimelineItem>
         )
         // 確定した操作: 作品が実際に変わった印として緑の丸。変更内容は折りたたむ
@@ -647,7 +647,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
         </div>}
         <div ref={endRef} />
       </div>
-      {error && <p role="alert" className="text-[12px]" style={{ color: 'var(--danger)' }}>{error}</p>}
+      {error && <p role="alert" className="text-[12px]" style={{ color: 'var(--danger-text)' }}>{error}</p>}
       {/* 進行状況。出すものがあるときだけ行を取る(使い方の説明は、会話が空のときに会話欄の中へ出す) */}
       {(status || task?.status === 'pending') && <p className="text-[11px]" style={{ color: 'var(--text-faint)' }}>
         {status && messageTime(statusAt) && <time dateTime={statusAt} className="mr-2 tabular-nums">{messageTime(statusAt)}</time>}

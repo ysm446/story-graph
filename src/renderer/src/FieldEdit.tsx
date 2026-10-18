@@ -57,7 +57,7 @@ export function EditActions({ dirty, saving, blocked, error, onCommit, onCancel,
         {saving ? '保存中…' : commitLabel}
       </button>
       {error && (
-        <p role="alert" className="w-full text-right text-[12px]" style={{ color: 'var(--danger)' }}>{error}</p>
+        <p role="alert" className="w-full text-right text-[12px]" style={{ color: 'var(--danger-text)' }}>{error}</p>
       )}
     </div>
   )

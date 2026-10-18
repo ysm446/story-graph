@@ -82,7 +82,7 @@ export default function VramEstimate({
         </span>
       </div>
       {over && (
-        <span style={{ color: '#f2a3a3' }}>⚠ GPU の搭載量を超えます。起動できないか、とても遅くなります。</span>
+        <span style={{ color: 'var(--danger-text)' }}>⚠ GPU の搭載量を超えます。起動できないか、とても遅くなります。</span>
       )}
       {tight && (
         <span style={{ color: '#f59e0b' }}>

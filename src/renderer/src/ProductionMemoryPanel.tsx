@@ -89,7 +89,7 @@ function ProductionMemoryPanel({ busy, open, onToggle, refresh, onDirty, onChang
       {memory?.created_at && <p className="text-[11px]" style={{ color: 'var(--text-faint)' }}>内容更新: {memoryDate(memory.created_at)}</p>}
       {memory?.reviewed_at && <p className="text-[11px]" style={{ color: 'var(--text-faint)' }}>最終照合: {memoryDate(memory.reviewed_at)}</p>}
       {enabled && memory?.needs_review && <p className="text-[11px]" style={{ color: 'var(--text-dim)' }}>現在の内容との照合が必要です。次の制作で作業メモを見直します。</p>}
-      {memory?.review_error && <p role="alert" className="text-[11px]" style={{ color: 'var(--danger)' }}>{memory.review_error}</p>}
+      {memory?.review_error && <p role="alert" className="text-[11px]" style={{ color: 'var(--danger-text)' }}>{memory.review_error}</p>}
       {editing ? <textarea aria-label="制作の作業メモ" value={draft} disabled={busy || saving} maxLength={6000} rows={9}
         onChange={(e) => setDraft(e.target.value)} className="inspector-scrollbar w-full rounded-md border px-2 py-0.5 text-[12px] outline-none"
         style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }} /> : <Markdown text={memory?.content || (enabled ? 'まだ作業メモはありません。制作中に方針や次の作業を記録します。' : 'まだ作業メモはありません。')} />}
@@ -115,7 +115,7 @@ function ProductionMemoryPanel({ busy, open, onToggle, refresh, onDirty, onChang
           data-tip={busy ? '制作が終わるか停止してからリセットできます' : 'メモ本文・更新履歴・作業記録・照合情報を消去し、版番号を初期化します'}>作業メモをリセット</button>
       </div>
       {notice && <p role="status" className="text-[11px]" style={{ color: 'var(--text-dim)' }}>{notice}</p>}
-      {error && <p role="alert" style={{ color: 'var(--danger)' }}>{error}</p>}
+      {error && <p role="alert" style={{ color: 'var(--danger-text)' }}>{error}</p>}
       {memory?.checkpoint && <details>
         <summary className="cursor-pointer">前回の作業記録 · {({ completed: '完了', interrupted: '中断', running: '作業中に保存', limit: '上限で停止', error: 'エラーで停止' } as Record<string, string>)[memory.checkpoint.status]}</summary>
         <p className="mt-1">依頼: {memory.checkpoint.request}</p>

@@ -335,7 +335,7 @@ export default function ExternalBackupSection(): React.JSX.Element {
         </p>
       )}
       {error && (
-        <p className="settings-field-hint" style={{ color: 'var(--danger)' }}>
+        <p className="settings-field-hint" style={{ color: 'var(--danger-text)' }}>
           {error}
         </p>
       )}
