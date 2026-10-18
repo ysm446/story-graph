@@ -11,8 +11,10 @@ export const NODE_WIDTH = 288 // カード幅(w-72)。重なり判定に使う
 export const snapped = (value: number): number => Math.round(value / GRID_SIZE) * GRID_SIZE
 
 // ---- DAG レイアウト(正史は左から右へ一直線、分岐は下のレーンへ) ------
-// カード幅は固定なので x は深さで決まる。y はレーンごとに、そのレーンの
-// 実測最大高さを積み上げて決める(カード高さは画像や本文量で変わるため)
+// カード幅は固定なので x は深さで決まる。y はレーン(分岐 1 本ぶんの横並び)ごとに、
+// そのレーンが通る列だけを見て「どの列の底にもぶつからず、親より下」の一番上に置く。
+// レーンを横一列ぶち抜きで積むと、右の方の分岐が左の方の分岐の数だけ下へ
+// 押しやられてしまうため。底はカードごとの実測高さで更新する(画像や本文量で変わる)
 
 // 章ビューの整列では「章カードを 1 枚のノードに畳んだ導出グラフ」を渡すので、
 // 引数は id と端点だけを見る形にしてある(実ノードでなくても並べられる)
@@ -29,6 +31,8 @@ export function layoutDag(
   }
   const order = new Map(nodes.map((n, i) => [n.id, i]))
   const placed: Record<string, { depth: number; lane: number }> = {}
+  // 分岐元のレーン。親より上に分岐が浮かないよう、その y を下限にする(別の島の根は null)
+  const laneParent: Array<number | null> = [null]
   let laneCounter = 0
 
   const assign = (id: string, lane: number, depth: number): void => {
@@ -38,27 +42,48 @@ export function layoutDag(
       .slice()
       .sort((a, b) => Number(b.canon) - Number(a.canon) || (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0))
     kids.forEach((kid, i) => {
-      assign(kid.id, i === 0 ? lane : ++laneCounter, depth + 1)
+      if (i === 0 || placed[kid.id]) {
+        assign(kid.id, lane, depth + 1)
+        return
+      }
+      laneCounter += 1
+      laneParent[laneCounter] = lane
+      assign(kid.id, laneCounter, depth + 1)
     })
   }
 
   const roots = nodes.filter((n) => !hasParent.has(n.id))
   roots.forEach((root, i) => {
-    assign(root.id, i === 0 ? 0 : ++laneCounter, 0)
+    if (i > 0) {
+      laneCounter += 1
+      laneParent[laneCounter] = null
+    }
+    assign(root.id, i === 0 ? 0 : laneCounter, 0)
   })
 
-  // レーンごとの最大高さを求めてから、レーンの y を積み上げる
-  const laneHeights: number[] = []
-  for (const [id, p] of Object.entries(placed)) {
-    const height = heights[id] ?? FALLBACK_NODE_HEIGHT
-    laneHeights[p.lane] = Math.max(laneHeights[p.lane] ?? 0, height)
-  }
+  const laneMembers: Array<Array<{ id: string; depth: number }>> = []
+  for (const [id, p] of Object.entries(placed)) (laneMembers[p.lane] ??= []).push({ id, depth: p.depth })
+
+  // レーンは分岐ができた順(深さ優先)に置く。子の分岐は親の分岐より後に来るので、
+  // 親の分岐の下に収まる
+  const columnBottom = new Map<number, number>()
   const laneY: number[] = []
-  let y = 0
   for (let lane = 0; lane <= laneCounter; lane += 1) {
+    const members = laneMembers[lane] ?? []
+    const parent = laneParent[lane]
+    let y = parent != null ? (laneY[parent] ?? 0) : 0
+    for (const m of members) {
+      const bottom = columnBottom.get(m.depth)
+      if (bottom != null) y = Math.max(y, bottom + LANE_GAP_Y)
+    }
+    // カードの高さは実測(グリッドの倍数とは限らない)なので、グリッドに乗せ直す。
+    // 切り捨てると下のカードに食い込むので切り上げる
+    y = Math.ceil(y / GRID_SIZE) * GRID_SIZE
     laneY[lane] = y
-    // カードの高さは実測(グリッドの倍数とは限らない)なので、次のレーンの頭で乗せ直す
-    y = snapped(y + (laneHeights[lane] ?? FALLBACK_NODE_HEIGHT) + LANE_GAP_Y)
+    for (const m of members) {
+      const bottom = y + (heights[m.id] ?? FALLBACK_NODE_HEIGHT)
+      columnBottom.set(m.depth, Math.max(columnBottom.get(m.depth) ?? 0, bottom))
+    }
   }
 
   const positions: Record<string, { x: number; y: number }> = {}
