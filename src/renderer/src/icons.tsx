@@ -27,6 +27,7 @@ export type IconName =
   | 'skipForward' // 読み上げの次の行へ
   | 'users' // 人が二人(キャラ同士の会話室)
   | 'activity' // 脈拍の折れ線(システムリソース表示の切り替え)
+  | 'info' // 丸に i(見出しの説明をツールチップで出す)
   | 'relation' // 左右の矢印(イベントの「関係」)
   | 'fact' // 荷札(イベントの「事実」)
   | 'more' // 横の三点(イベントの「その他」)
@@ -212,6 +213,14 @@ const PATHS: Record<IconName, React.JSX.Element> = {
     <>
       <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
       <path d="M3 3v5h5" />
+    </>
+  ),
+  // lucide の info
+  info: (
+    <>
+      <circle cx="12" cy="12" r="10" />
+      <path d="M12 16v-4" />
+      <path d="M12 8h.01" />
     </>
   )
 }

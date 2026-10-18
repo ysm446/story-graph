@@ -105,8 +105,14 @@ store.save_chat_messages(chat['id'], [
     if (!response.ok) throw new Error(await response.text())
     // 章のまとめのカード(読む表示 → 鉛筆で編集 → 確定)を確かめるため、まとめを 1 件入れておく
     const chapter = await response.json()
-    const [character] = await (await fetch(base + '/characters')).json()
-    const digest = await fetch(base + `/groups/${chapter.id}/digest`, {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({events:[{type:'memory_compress',payload:{char:character.id,replaces:[],summary:'検証のまとめ。',importance:0.6}}]})})
+    // 人物ごとに 1 枚へまとめて見せるのを確かめるため、2 人の項目を交互に入れる(検証キャラ・二人目・検証キャラ)
+    const second = await (await fetch(base + '/characters', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:'二人目'})})).json()
+    const character = (await (await fetch(base + '/characters')).json()).find((c) => c.name === '検証キャラ')
+    // 並びは章カードと同じ出番の多い順。シーンに出ているのは二人目だけにして、保存順では後ろの二人目が先に来るのを確かめる
+    const castPatch = await fetch(base + '/nodes/' + graph.nodes.find((n) => !n.kind).id, {method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({cast:[second.id]})})
+    if (!castPatch.ok) throw new Error(await castPatch.text())
+    const compress = (char, summary) => ({type:'memory_compress',payload:{char,replaces:[],summary,importance:0.6}})
+    const digest = await fetch(base + `/groups/${chapter.id}/digest`, {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({events:[compress(character.id,'検証のまとめ。'),compress(second.id,'二人目のまとめ。'),compress(character.id,'検証のまとめ・二件目。')]})})
     if (!digest.ok) throw new Error(await digest.text())
   }
   ipcMain.handle('library:info', () => ({ current: target, recents: [] }))
@@ -1085,14 +1091,18 @@ store.save_chat_messages(chat['id'], [
         // シーン一覧の行をクリックすると、右の列がそのシーンの内容になる(章の中には入らない)。先頭の「章のまとめ」で戻る
         await js(`document.querySelector('.scene-detail-meta button[data-shown-key]:not([data-shown-key=""])').click()`)
         await pause(400)
-        await assert(`(() => {const main=document.querySelector('.scene-detail-main').textContent;return main.includes('検証シーン') && main.includes('シーンを開く →') && main.includes('保存済みの本文。') && main.includes('(本文を表示しています)') && !main.includes('章を閉じたときのキャラごとの要約記憶') && document.querySelector('.scene-detail-meta button[data-shown-key]:not([data-shown-key=""])').getAttribute('aria-current')==='true' && document.body.textContent.includes('第1章')})()`, '章のシーン一覧をクリックすると、章の詳細のままで右にそのシーンの内容が出る(清書が無ければ本文)')
+        await assert(`(() => {const main=document.querySelector('.scene-detail-main').textContent;return main.includes('検証シーン') && main.includes('シーンを開く →') && main.includes('保存済みの本文。') && main.includes('(本文を表示しています)') && !main.includes('まとめを作り直す') && document.querySelector('.scene-detail-meta button[data-shown-key]:not([data-shown-key=""])').getAttribute('aria-current')==='true' && document.body.textContent.includes('第1章')})()`, '章のシーン一覧をクリックすると、章の詳細のままで右にそのシーンの内容が出る(清書が無ければ本文)')
         writeFileSync(join(target, 'chapter-scene-preview.png'), (await win.webContents.capturePage()).toPNG())
         await js(`document.querySelector('.scene-detail-meta button[data-shown-key]:not([data-shown-key=""])').dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowUp',bubbles:true}))`)
         await pause(300)
-        await assert(`document.querySelector('.scene-detail-main').textContent.includes('章を閉じたときのキャラごとの要約記憶') && document.querySelector('.scene-detail-meta button[data-shown-key=""]').getAttribute('aria-current')==='true' && document.activeElement===document.querySelector('.scene-detail-meta button[data-shown-key=""]')`, 'シーン一覧で ↑ を押すと先頭の「章のまとめ」に戻り、右がまとめになる')
+        await assert(`document.querySelector('.scene-detail-main').textContent.includes('まとめを作り直す') && document.querySelector('.scene-detail-meta button[data-shown-key=""]').getAttribute('aria-current')==='true' && document.activeElement===document.querySelector('.scene-detail-meta button[data-shown-key=""]')`, 'シーン一覧で ↑ を押すと先頭の「章のまとめ」に戻り、右がまとめになる')
         // 章のまとめのカード: 読む表示が既定で、鉛筆を押したカードだけ編集欄になり、確定でそのカードを保存する(下の帯の保存は無い)
-        const card = `document.querySelector('[data-digest-card]')`
+        // 以降の編集の確かめは、項目が 2 つある検証キャラのカード(先頭の項目)で行う
+        const card = `[...document.querySelectorAll('[data-digest-card]')].find(c=>c.textContent.includes('検証キャラ'))`
         await assert(`${card} && ${card}.textContent.includes('「検証のまとめ。」') && ${card}.textContent.includes('重要度 0.60') && !${card}.querySelector('textarea') && ![...document.querySelectorAll('button')].some(e=>e.textContent.trim()==='まとめを保存')`, 'まとめのカードは読む表示で、下の帯の「まとめを保存」は無い')
+        // 説明は見出しの ⓘ のツールチップへ移し、作り直す・削除は見出しの行の右端(作り直すが右端)
+        await assert(`(() => {const main=document.querySelector('.scene-detail-main');const info=main.querySelector('[role="img"][data-tip]');const btn=(t)=>[...main.querySelectorAll('button')].find(e=>e.textContent.trim()===t);const regen=btn('⟳ まとめを作り直す'),del=btn('削除');const r=regen.getBoundingClientRect(),d=del.getBoundingClientRect(),i=info.getBoundingClientRect(),cardTop=main.querySelector('[data-digest-card]').getBoundingClientRect().top;return info.dataset.tip.includes('章を閉じたときの人物ごとの要約記憶') && !main.textContent.includes('章を閉じたときの') && Math.abs((r.top+r.bottom)/2-(i.top+i.bottom)/2)<3 && d.right<=r.left && main.getBoundingClientRect().right-r.right<30 && r.bottom<cardTop})()`, 'まとめの説明は見出しの ⓘ のツールチップにあり、作り直すは見出しの行の右端、削除はその左')
+        await assert(`(() => {const cards=[...document.querySelectorAll('[data-digest-card]')];const entries=(c)=>[...c.querySelectorAll('[data-digest-entry]')].map(e=>e.textContent);return cards.length===2 && cards[0].textContent.includes('二人目') && !cards[0].textContent.includes('件') && entries(cards[0]).length===1 && cards[1].textContent.includes('検証キャラ') && cards[1].textContent.includes('2 件') && entries(cards[1]).length===2 && entries(cards[1])[0].includes('「検証のまとめ。」') && entries(cards[1])[1].includes('「検証のまとめ・二件目。」') && cards[1].querySelectorAll('button[aria-label="このまとめを編集"]').length===2})()`, 'まとめは人物ごとに 1 枚のカードにまとめ(離れて保存された同じ人物の項目も同じカード、鉛筆は項目ごと)、章カードと同じ出番の多い順に並べる')
         await js(`${card}.querySelector('button[aria-label="このまとめを編集"]').click()`)
         await pause(300)
         await assert(`!!${card}.querySelector('textarea') && document.activeElement===${card}.querySelector('textarea')`, '鉛筆を押すとそのカードが編集欄になり、本文にフォーカスが入る')
@@ -1128,7 +1138,7 @@ store.save_chat_messages(chat['id'], [
       else console.log('PASS 左の境界のドラッグで挿絵・設定の列を広げ、幅を保存')
       // 左右の余白: 中身・タブの行の「閉じる」・下のボタンの端を 20px に揃える(スクロールバーの有無で変わらない)。
       // 章タブには下の帯が無い(まとめはカードごとに確定する)ので、下のボタンは測らない
-      const edges = await js(`(() => {const panel=document.querySelector('.scene-detail').getBoundingClientRect();const visible=(q)=>[...document.querySelectorAll(q)].filter(e=>e.getClientRects().length);const close=visible('button').filter(e=>e.textContent.trim()==='閉じる').map(e=>e.getBoundingClientRect()).filter(r=>r.right<=panel.right+1 && r.right>panel.right-60 && Math.abs(r.bottom-panel.top)<60)[0];const footer=[...document.querySelector('.scene-detail').children].at(-1);const field=document.querySelector('.scene-detail-main input, .scene-detail-main textarea, .scene-detail-main p').getBoundingClientRect();const left=document.querySelector('.scene-detail-aside > div').getBoundingClientRect();const edges={close:panel.right-close.right,field:panel.right-field.right,left:left.x-panel.x};if(!footer.classList.contains('scene-detail-layout'))edges.footer=panel.right-[...footer.querySelectorAll('button')].at(-1).getBoundingClientRect().right;return edges})()`)
+      const edges = await js(`(() => {const panel=document.querySelector('.scene-detail').getBoundingClientRect();const visible=(q)=>[...document.querySelectorAll(q)].filter(e=>e.getClientRects().length);const close=visible('button').filter(e=>e.textContent.trim()==='閉じる').map(e=>e.getBoundingClientRect()).filter(r=>r.right<=panel.right+1 && r.right>panel.right-60 && Math.abs(r.bottom-panel.top)<60)[0];const footer=[...document.querySelector('.scene-detail').children].at(-1);const field=document.querySelector('.scene-detail-main input, .scene-detail-main textarea, .scene-detail-main p, .scene-detail-main [data-digest-card]').getBoundingClientRect();const left=document.querySelector('.scene-detail-aside > div').getBoundingClientRect();const edges={close:panel.right-close.right,field:panel.right-field.right,left:left.x-panel.x};if(!footer.classList.contains('scene-detail-layout'))edges.footer=panel.right-[...footer.querySelectorAll('button')].at(-1).getBoundingClientRect().right;return edges})()`)
       if (!Object.values(edges).every((value) => Math.abs(value - 20) < 1.5)) errors.push('詳細エリアの左右の端が 20px に揃っていない: ' + JSON.stringify(edges))
       else console.log('PASS 詳細エリアの中身・閉じる・下のボタンの端が左右 20px に揃う')
       writeFileSync(join(target, 'details-three.png'), (await win.webContents.capturePage()).toPNG())

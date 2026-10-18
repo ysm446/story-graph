@@ -1,7 +1,7 @@
 # UI スタイルガイド(色・タイポ・余白・部品)
 
 作成日時: 2026-08-09 16:00
-更新日時: 2026-10-19 05:23
+更新日時: 2026-10-19 05:38
 
 新しい画面や部品を足すときに **見た目を揃えるための具体値** をまとめる。
 [overview.md](overview.md) がアーキテクチャの入口なら、本書は UI の入口。
@@ -775,10 +775,15 @@ AIの返答・変更報告は左側の全幅、背景 `--bg-elevated` を維持�
 - ↑↓ キーで行を移り、フォーカスも一緒に移す。シーンを開くのは行のダブルクリック
 - シーンを出すときの右の列: 見出しの行に eyebrow(`text-[10px] uppercase tracking-[0.14em]`「シーン 1」/「別の道」)・タイトル(`text-[14px] font-semibold`、`truncate`)・右端に二次ボタン「シーンを開く →」。その下にセグメント「清書 / 本文」(§4 の型)と、清書が無いときの説明(`text-[11px]` / `--text-faint`、「…(本文を表示しています)」)。本文は `whitespace-pre-wrap text-[13px] leading-relaxed` / `--text`。古い清書は清書タブと同じく「要更新」のバッジを付けて `opacity: 0.6`
 - 読むだけ。編集の部品は置かない(書き直しはシーンを開いてから)
-- まとめのカード(2026-10-19): シーンの Events の記憶カードと同じ型(`flex gap-2.5 rounded-lg border px-3 py-2 text-[12px]`、地 `--bg-elevated`、左に `CharAvatar` 28px、1 行目に名前 `font-medium`・`--text`)。
+- まとめの見出しの行(2026-10-19 ユーザー指摘): 「章のまとめ」(eyebrow)・ⓘ(`Icon name="info"` 12px・`--text-faint`、`role="img"`、説明は `data-tip` と `aria-label`)・状態バッジ(最新 / 要更新)、右端(`ml-auto`)に「削除」(`delete-action`)と「⟳ まとめを作り直す / ▶ まとめを作る」(主ボタン)。主な操作を右端に、削除はその左。
+  説明文を見出しの下に常に出すのはやめ、ⓘ のツールチップへ移した。まとめがまだ無いときだけ、「まだまとめはありません。」に続けて 1 文の説明を本文に出す(説明が要るのは作る前なので)
+- まとめのカード(2026-10-19): **人物ごとに 1 枚**。シーンの Events の記憶カードと同じ型(`flex gap-2.5 rounded-lg border px-3 py-2 text-[12px]`、地 `--bg-elevated`、左に `CharAvatar` 28px、1 行目に名前 `font-medium`・`--text`)。
+  項目が 2 件以上ある人物は、名前の横に「2 件」(`text-[11px] tabular-nums`・`--text-faint`)。項目どうしは `mt-1.5 border-t pt-1.5`(`--border`)で区切る。
+  人物の順は章カードの登場人物と同じ(`chapterCast`。読む道で出番の多い順、同数は初登場順)、登場人物に入っていない人物はその後ろに保存順。fact_set など人物の要約でない項目は最後に中身をそのまま出す。
+  見せ方だけで、保存・編集の単位は項目のまま。
   読む表示が既定で、本文は「」付き・`leading-relaxed`・`--text-dim`、続けて「重要度 0.60」を `text-[11px]`・`--text-faint`・`whitespace-nowrap`。
-  1 行目の右端に `FieldEdit.tsx` の `EditPencil`(「このまとめを編集」)。編集に入るのは鉛筆だけで、本文のクリックでは入らない(資料庫の読む表示と同じ)。
-  編集中は本文を `AutoTextarea`、その下に「重要度」の数値欄(`w-16`)、右下に `EditActions`(未保存・取り消し・確定)。編集は 1 枚ずつ、確定でそのカードを保存する(Ctrl+Enter 確定、Esc 取り消し)。下の帯の保存ボタンは置かない
+  各項目の右に `FieldEdit.tsx` の `EditPencil`(「このまとめを編集」。`flex items-start gap-2` で本文の 1 行目に揃える)。編集に入るのは鉛筆だけで、本文のクリックでは入らない(資料庫の読む表示と同じ)。
+  編集中はその項目の本文を `AutoTextarea`、その下に「重要度」の数値欄(`w-16`)、右下に `EditActions`(未保存・取り消し・確定)。編集は 1 項目ずつ、確定でその項目を保存する(Ctrl+Enter 確定、Esc 取り消し)。下の帯の保存ボタンは置かない
 
 ### 章カードの登場人物(`StructureNodes.tsx` の `ChapterNodeCard`)
 

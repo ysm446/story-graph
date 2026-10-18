@@ -9,9 +9,16 @@ import { Icon } from '../../icons'
 import type { RenderStyleState } from '../../RenderStyle'
 import { enqueueTask, notifyGraphChanged, useTasks } from '../../tasks'
 import type { Character, EventInput, Group, RenderResult, StoryNode } from '../../types'
-import { chapterCoverNode, NodeThumb } from './StructureNodes'
+import { chapterCast, chapterCoverNode, NodeThumb } from './StructureNodes'
 
 // ---- 章タブ(章ノードを選択したときのインスペクタ。docs/design/chapters.md §6) ----
+
+/** 見出し「章のまとめ」の ⓘ のツールチップ(2026-10-19 までは見出しの下に常に出していた説明) */
+const DIGEST_HELP = [
+  '章を閉じたときの人物ごとの要約記憶。',
+  '次の章からは、この章の生の記憶の代わりにこのまとめが引き継がれます(生の記憶は清書時の検索などで引き続き参照されます)。',
+  'まとめを更新しない限り、章の中の記憶の編集は次の章へ波及しません。'
+].join('\n')
 
 export function ChapterTab({
   group,
@@ -190,6 +197,28 @@ export function ChapterTab({
     }
   }
 
+  // まとめは人物ごとに 1 枚のカードにまとめて見せる(見せ方だけ。保存・編集の単位は項目のまま。
+  // 2026-10-19 ユーザー決定)。人物の順は章カードと同じ(読む道で出番の多い順、同数は初登場順)、
+  // 章の登場人物に入っていない人物はその後ろに保存順で。1 人の中の項目は保存順
+  const digestCards = useMemo(() => {
+    const charMap = Object.fromEntries(characters.map((c) => [c.id, c]))
+    const castOrder = chapterCast(group, nodeById, charMap).map((m) => m.char.id)
+    const byChar = new Map<string, Array<{ e: EventInput; i: number }>>()
+    digest.forEach((e, i) => {
+      if (e.type !== 'memory_compress') return
+      const charId = String(e.payload.char ?? '')
+      byChar.set(charId, [...(byChar.get(charId) ?? []), { e, i }])
+    })
+    const rank = (charId: string): number => {
+      const at = castOrder.indexOf(charId)
+      return at >= 0 ? at : castOrder.length
+    }
+    // Map は挿入順(保存順で最初に出た順)を保つので、安定ソートで登場人物外の人物は保存順になる
+    return [...byChar.entries()]
+      .sort((a, b) => rank(a[0]) - rank(b[0]))
+      .map(([charId, entries]) => ({ charId, entries }))
+  }, [digest, characters, group, nodeById])
+
   const removeDigest = async (): Promise<void> => {
     if (!window.confirm('まとめを削除しますか?(次の章からは生の記憶に戻ります)')) return
     setBusy(true)
@@ -280,9 +309,20 @@ export function ChapterTab({
         />
       ) : <>
       <div>
-        <div className="mb-1 flex items-center gap-2">
+        {/* 見出しの行: 「章のまとめ ⓘ 状態 …… 削除 作る」。説明は ⓘ のツールチップへ(常設の説明文は面積を取るので)、
+            LLM を走らせるボタンは見出しの行の右端(2026-10-19 ユーザー指摘) */}
+        <div className="mb-2 flex items-center gap-2">
           <span className="text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
             章のまとめ
+          </span>
+          <span
+            role="img"
+            aria-label={DIGEST_HELP}
+            data-tip={DIGEST_HELP}
+            className="inline-flex shrink-0"
+            style={{ color: 'var(--text-faint)' }}
+          >
+            <Icon name="info" size={12} />
           </span>
           {hasDigest &&
             (digestStale ? (
@@ -301,31 +341,28 @@ export function ChapterTab({
                 最新
               </span>
             ))}
-        </div>
-        <p className="mb-2 text-[11px] leading-relaxed" style={{ color: 'var(--text-faint)' }}>
-          章を閉じたときのキャラごとの要約記憶。次の章からは、この章の生の記憶の代わりに
-          このまとめが引き継がれます(生の記憶は清書時の検索などで引き続き参照されます)。
-          まとめを更新しない限り、章の中の記憶の編集は次の章へ波及しません。
-        </p>
-        <div className="mb-2 flex gap-1.5">
-          <button
-            onClick={generate}
-            disabled={generateQueued}
-            className="rounded-lg px-2.5 py-1 text-[12px] font-medium text-white disabled:opacity-50"
-            style={{ background: 'var(--accent)' }}
-            data-tip="LLM で章のまとめを作る(既存のまとめは置き換え)"
-          >
-            {generateQueued ? '生成待ち…' : hasDigest ? '⟳ まとめを作り直す' : '▶ まとめを作る'}
-          </button>
-          {hasDigest && (
+          {/* 主な操作(作る)を右端に、削除はその手前 */}
+          <span className="ml-auto flex shrink-0 items-center gap-1.5">
+            {hasDigest && (
+              <button
+                onClick={() => void removeDigest()}
+                disabled={busy}
+                className="delete-action rounded-lg border px-2 py-1 text-[12px] disabled:opacity-50"
+                data-tip="まとめを削除する(次の章からは生の記憶に戻ります)"
+              >
+                削除
+              </button>
+            )}
             <button
-              onClick={() => void removeDigest()}
-              disabled={busy}
-              className="delete-action rounded-lg border px-2 py-1 text-[12px] disabled:opacity-50"
+              onClick={generate}
+              disabled={generateQueued}
+              className="rounded-lg px-2.5 py-1 text-[12px] font-medium text-white disabled:opacity-50"
+              style={{ background: 'var(--accent)' }}
+              data-tip="LLM で章のまとめを作る(既存のまとめは置き換え)"
             >
-              削除
+              {generateQueued ? '生成待ち…' : hasDigest ? '⟳ まとめを作り直す' : '▶ まとめを作る'}
             </button>
-          )}
+          </span>
         </div>
         {error && (
           <p className="mb-2 text-[11px]" style={{ color: 'var(--danger)' }}>
@@ -337,31 +374,18 @@ export function ChapterTab({
             読み込み中…
           </p>
         ) : digest.length === 0 ? (
-          <p className="text-[11px]" style={{ color: 'var(--text-faint)' }}>
-            まだまとめはありません
+          // 説明が要るのは作る前なので、まとめが無いときだけ本文にも短く出す(詳しくは見出しの ⓘ)
+          <p className="text-[11px] leading-relaxed" style={{ color: 'var(--text-faint)' }}>
+            まだまとめはありません。まとめは章を閉じたときの人物ごとの要約記憶で、次の章へはこの章の生の記憶の代わりにこれが引き継がれます。
           </p>
         ) : (
           <div className="flex flex-col gap-2">
-            {digest.map((e, i) => {
-              const key = entryKey(e, i)
-              // memory_compress 以外(fact_set など)は中身をそのまま出すだけ(編集しない)
-              if (e.type !== 'memory_compress')
-                return (
-                  <div
-                    key={key}
-                    className="rounded-lg border px-3 py-2 text-[11px]"
-                    style={{ borderColor: 'var(--border)', color: 'var(--text-dim)' }}
-                  >
-                    {e.type}: {JSON.stringify(e.payload)}
-                  </div>
-                )
-              const char = charOf(String(e.payload.char ?? ''))
-              const open = editing?.key === key
-              const summary = String(e.payload.summary ?? '')
+            {digestCards.map(({ charId, entries }) => {
+              const char = charOf(charId)
               return (
-                // シーンの Events の記憶カードと同じ見た目(左にだれのアイコン、1 行目に名前と操作、本文は下に幅いっぱい)
+                // 人物ごとに 1 枚。シーンの Events の記憶カードと同じ見た目(左にだれのアイコン、1 行目に名前、本文は下に幅いっぱい)
                 <div
-                  key={key}
+                  key={charId}
                   data-digest-card
                   className="flex gap-2.5 rounded-lg border px-3 py-2 text-[12px]"
                   style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border)' }}
@@ -371,61 +395,90 @@ export function ChapterTab({
                   <div className="min-w-0 flex-1">
                     <div className="mb-0.5 flex items-center gap-2">
                       <span className="min-w-0 truncate font-medium" style={{ color: 'var(--text)' }}>
-                        {nameOf(String(e.payload.char ?? ''))}
+                        {nameOf(charId)}
                       </span>
-                      {!open && (
-                        <span className="ml-auto">
-                          <EditPencil label="このまとめ" onClick={() => startEdit(e, i)} />
+                      {entries.length > 1 && (
+                        <span className="shrink-0 text-[11px] tabular-nums" style={{ color: 'var(--text-faint)' }}>
+                          {entries.length} 件
                         </span>
                       )}
                     </div>
-                    {open && editing ? (
-                      <div
-                        data-edit-group={`digest-${key}`}
-                        onKeyDown={editKeys(true, () => void commitEdit(), cancelEdit)}
-                      >
-                        <AutoTextarea
-                          value={editing.summary}
-                          onChange={(v) => setEditing({ ...editing, summary: v })}
-                          className="w-full rounded-md border px-2 py-1 text-[12px] leading-relaxed outline-none"
-                          style={{ background: 'var(--bg-input)', borderColor: 'var(--border)', color: 'var(--text)' }}
-                        />
-                        <label className="mt-1.5 flex items-center gap-2 text-[11px]" style={{ color: 'var(--text-faint)' }}>
-                          重要度
-                          <input
-                            type="number"
-                            min={0}
-                            max={1}
-                            step={0.1}
-                            value={editing.importance}
-                            onChange={(ev) => setEditing({ ...editing, importance: Number(ev.target.value) })}
-                            className="w-16 rounded-md border px-1.5 py-0.5 text-[11px] outline-none"
-                            style={{ background: 'var(--bg-input)', borderColor: 'var(--border)', color: 'var(--text)' }}
-                            data-tip="0 些細 〜 1 人生を変える"
-                          />
-                        </label>
-                        <EditActions
-                          dirty={editDirty}
-                          saving={editSaving}
-                          blocked={editBlocked}
-                          error={editError ?? undefined}
-                          onCommit={() => void commitEdit()}
-                          onCancel={cancelEdit}
-                        />
-                      </div>
-                    ) : (
-                      // 編集に入るのは鉛筆だけ。本文のクリックでは入らない(2026-10-19 ユーザー指摘。読むつもりで押して編集になると、鉛筆の意味が無い)
-                      <div className="leading-relaxed" style={{ color: 'var(--text-dim)' }}>
-                        「{summary}」
-                        <span className="whitespace-nowrap text-[11px]" style={{ color: 'var(--text-faint)' }}>
-                          重要度 {Number(e.payload.importance ?? 0.6).toFixed(2)}
-                        </span>
-                      </div>
-                    )}
+                    {entries.map(({ e, i }, n) => {
+                      const key = entryKey(e, i)
+                      const open = editing?.key === key
+                      return (
+                        // 同じ人物の項目は薄い線で区切る。保存・編集の単位はこの項目
+                        <div
+                          key={key}
+                          data-digest-entry
+                          className={n > 0 ? 'mt-1.5 border-t pt-1.5' : ''}
+                          style={n > 0 ? { borderColor: 'var(--border)' } : undefined}
+                        >
+                          {open && editing ? (
+                            <div
+                              data-edit-group={`digest-${key}`}
+                              onKeyDown={editKeys(true, () => void commitEdit(), cancelEdit)}
+                            >
+                              <AutoTextarea
+                                value={editing.summary}
+                                onChange={(v) => setEditing({ ...editing, summary: v })}
+                                className="w-full rounded-md border px-2 py-1 text-[12px] leading-relaxed outline-none"
+                                style={{ background: 'var(--bg-input)', borderColor: 'var(--border)', color: 'var(--text)' }}
+                              />
+                              <label className="mt-1.5 flex items-center gap-2 text-[11px]" style={{ color: 'var(--text-faint)' }}>
+                                重要度
+                                <input
+                                  type="number"
+                                  min={0}
+                                  max={1}
+                                  step={0.1}
+                                  value={editing.importance}
+                                  onChange={(ev) => setEditing({ ...editing, importance: Number(ev.target.value) })}
+                                  className="w-16 rounded-md border px-1.5 py-0.5 text-[11px] outline-none"
+                                  style={{ background: 'var(--bg-input)', borderColor: 'var(--border)', color: 'var(--text)' }}
+                                  data-tip="0 些細 〜 1 人生を変える"
+                                />
+                              </label>
+                              <EditActions
+                                dirty={editDirty}
+                                saving={editSaving}
+                                blocked={editBlocked}
+                                error={editError ?? undefined}
+                                onCommit={() => void commitEdit()}
+                                onCancel={cancelEdit}
+                              />
+                            </div>
+                          ) : (
+                            // 編集に入るのは鉛筆だけ。本文のクリックでは入らない(2026-10-19 ユーザー指摘。読むつもりで押して編集になると、鉛筆の意味が無い)
+                            <div className="flex items-start gap-2">
+                              <div className="min-w-0 flex-1 leading-relaxed" style={{ color: 'var(--text-dim)' }}>
+                                「{String(e.payload.summary ?? '')}」
+                                <span className="whitespace-nowrap text-[11px]" style={{ color: 'var(--text-faint)' }}>
+                                  重要度 {Number(e.payload.importance ?? 0.6).toFixed(2)}
+                                </span>
+                              </div>
+                              <EditPencil label="このまとめ" onClick={() => startEdit(e, i)} />
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
                   </div>
                 </div>
               )
             })}
+            {/* memory_compress 以外(fact_set など)は中身をそのまま出すだけ(編集しない) */}
+            {digest.map((e, i) =>
+              e.type === 'memory_compress' ? null : (
+                <div
+                  key={entryKey(e, i)}
+                  className="rounded-lg border px-3 py-2 text-[11px]"
+                  style={{ borderColor: 'var(--border)', color: 'var(--text-dim)' }}
+                >
+                  {e.type}: {JSON.stringify(e.payload)}
+                </div>
+              )
+            )}
           </div>
         )}
       </div>      </>} aside={<>
