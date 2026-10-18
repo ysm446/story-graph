@@ -428,6 +428,15 @@ store.save_chat_messages(chat['id'], [
       await pause(200)
       writeFileSync(join(target, 'usage-thumbs.png'), (await win.webContents.capturePage(r)).toPNG())
     }
+    // 出ていないシーンがある人物(ケンは 1・4 番目だけ): 出ていない列の絵は白黒で控えめ、全部の列に無彩色の線路が通る
+    await js(`[...document.querySelectorAll('button')].find(e => e.getClientRects().length && e.textContent.trim().endsWith('ケン') && e.closest('nav, aside, [class*="list"]') !== null).click()`)
+    await pause(600)
+    await assert(`(() => { const t = ${usageThumbs}; const absent = t.map((e, i) => e.hasAttribute('data-usage-absent') ? i : -1).filter(i => i >= 0); const track = [...document.querySelectorAll('section[aria-label="登場するシーン"] svg line')].some(l => l.getAttribute('stroke') === 'var(--border-strong)'); return absent.join(',') === '1,2' && getComputedStyle(t[2]).filter.includes('grayscale') && !getComputedStyle(t[0]).filter.includes('grayscale') && track })()`, '出ていないシーンの絵は白黒で控えめにし、出番の段には全部の列を通す線路を引く')
+    {
+      const r = await js(`(() => { const el = document.querySelector('section[aria-label="登場するシーン"]'); el.scrollIntoView({ block: 'center' }); const r = el.getBoundingClientRect(); return { x: Math.round(r.x - 8), y: Math.round(r.y - 8), width: Math.round(Math.min(r.width + 16, 700)), height: Math.round(r.height + 16) } })()`)
+      await pause(200)
+      writeFileSync(join(target, 'usage-thumbs-absent.png'), (await win.webContents.capturePage(r)).toPNG())
+    }
     if (errors.length) throw new Error(errors.join('\n'))
     console.log('Screenshots: ' + target)
     win.destroy()

@@ -179,9 +179,20 @@ function Strip({
             </div>
           )
         })}
-        {/* 初登場から最後の出番までを結ぶ線(人物の色) */}
-        {usedCols.length > 1 && (
-          <svg className="pointer-events-none absolute inset-0" width={path.length * COLUMN_WIDTH} height={height}>
+        <svg className="pointer-events-none absolute inset-0" width={path.length * COLUMN_WIDTH} height={height}>
+          {/* 全部の列を通す無彩色の線路。出ていない列が「抜け」ではなく「出ていない」と読めるように
+              (サムネイルの下が空白だと、帯が抜け落ちたように見えた。2026-10-18 ユーザー指摘) */}
+          <line
+            x1={CELL_INSET}
+            x2={path.length * COLUMN_WIDTH - CELL_INSET}
+            y1={lineY}
+            y2={lineY}
+            stroke="var(--border-strong)"
+            strokeWidth={2}
+            strokeLinecap="round"
+          />
+          {/* 初登場から最後の出番までを結ぶ線(人物の色) */}
+          {usedCols.length > 1 && (
             <line
               x1={usedCols[0] * COLUMN_WIDTH + COLUMN_WIDTH / 2}
               x2={usedCols[usedCols.length - 1] * COLUMN_WIDTH + COLUMN_WIDTH / 2}
@@ -191,8 +202,8 @@ function Strip({
               strokeWidth={2}
               strokeOpacity={0.6}
             />
-          </svg>
-        )}
+          )}
+        </svg>
         {/* 出番の帯: 続けて出ているシーンは 1 本にまとめ、区切り線で何シーンかを見せる。引き継ぎは破線 */}
         {[...directRuns.map((run) => ({ run, inherited: false })), ...inheritedRuns.map((run) => ({ run, inherited: true }))].map(
           ({ run: [start, end], inherited }) => {
@@ -240,10 +251,15 @@ function Strip({
               data-tip={`${index + 1}. ${title}\n${note}\nクリックでフローチャートで開く`}
             >
               {showThumbs && (
+                // 出ていない列の絵は白黒にして控えめに(同じ行の中での主従。目が出ている場面の絵へ向くように)
                 <span
                   className="block h-10 w-16 shrink-0 overflow-hidden rounded-md"
-                  style={{ background: 'var(--bg-canvas)' }}
+                  style={{
+                    background: 'var(--bg-canvas)',
+                    ...(used ? {} : { filter: 'grayscale(1)', opacity: 0.45 })
+                  }}
                   data-usage-thumb
+                  data-usage-absent={used ? undefined : true}
                 >
                   <NodeThumb node={node} className="block h-full w-full object-cover" />
                 </span>
