@@ -32,6 +32,10 @@ export type IconName =
   | 'fact' // 荷札(イベントの「事実」)
   | 'more' // 横の三点(イベントの「その他」)
   | 'rotateCcw' // 左回りの矢印(既定値に戻す)
+  | 'download' // 受け皿に下向きの矢印(ダウンロード / 書き出し)
+  | 'upload' // 受け皿に上向きの矢印(読み込み)
+  | 'pause' // 縦棒 2 本(一時停止)
+  | 'play' // 右向きの三角(再開)
 
 const PATHS: Record<IconName, React.JSX.Element> = {
   alignNodes: (
@@ -215,6 +219,31 @@ const PATHS: Record<IconName, React.JSX.Element> = {
       <path d="M3 3v5h5" />
     </>
   ),
+  // lucide の download
+  download: (
+    <>
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <polyline points="7 10 12 15 17 10" />
+      <line x1="12" x2="12" y1="15" y2="3" />
+    </>
+  ),
+  // lucide の upload
+  upload: (
+    <>
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <polyline points="17 8 12 3 7 8" />
+      <line x1="12" x2="12" y1="3" y2="15" />
+    </>
+  ),
+  // lucide の pause
+  pause: (
+    <>
+      <rect x="14" y="4" width="4" height="16" rx="1" />
+      <rect x="6" y="4" width="4" height="16" rx="1" />
+    </>
+  ),
+  // lucide の play
+  play: <polygon points="6 3 20 12 6 21 6 3" />,
   // lucide の info
   info: (
     <>

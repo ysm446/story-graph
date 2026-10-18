@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { Icon } from '../icons'
 import { api } from '../api'
 import AutoTextarea from '../AutoTextarea'
 import { CHAT_RULES_EVENT } from '../ChatRulesPanel'
@@ -518,27 +519,12 @@ export default function SettingsMode({ onImported }: {
                   <div className="settings-field-controls">
                     {ctxSize !== DEFAULT_CTX_SIZE && (
                       <button
-                        className="settings-reset-btn"
-                        aria-label="デフォルトに戻す"
-                        data-tip="デフォルトに戻す"
                         onClick={() => void save({ llm_ctx_size: String(DEFAULT_CTX_SIZE) })}
+                        className="inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px]"
+                        style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+                        data-tip={`既定値(${DEFAULT_CTX_SIZE})に戻します`}
                       >
-                        <svg
-                          width="12"
-                          height="12"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        >
-                          <polyline points="3 6 5 6 21 6" />
-                          <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-                          <path d="M10 11v6" />
-                          <path d="M14 11v6" />
-                          <path d="M9 6V4h6v2" />
-                        </svg>
+                        <Icon name="rotateCcw" size={12} /> 既定に戻す
                       </button>
                     )}
                     <span className="settings-value-badge">{formatCtxSizeLabel(ctxSize)}</span>
@@ -582,27 +568,12 @@ export default function SettingsMode({ onImported }: {
                   <div className="settings-field-controls">
                     {(values.generation_system_prompt ?? '') !== '' && (
                       <button
-                        className="settings-reset-btn"
-                        aria-label="デフォルトに戻す"
-                        data-tip="デフォルトに戻す"
                         onClick={() => void save({ generation_system_prompt: '' })}
+                        className="inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px]"
+                        style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+                        data-tip="空欄に戻して、既定のシステムプロンプトを使います"
                       >
-                        <svg
-                          width="12"
-                          height="12"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        >
-                          <polyline points="3 6 5 6 21 6" />
-                          <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-                          <path d="M10 11v6" />
-                          <path d="M14 11v6" />
-                          <path d="M9 6V4h6v2" />
-                        </svg>
+                        <Icon name="rotateCcw" size={12} /> 既定に戻す
                       </button>
                     )}
                   </div>
@@ -917,27 +888,12 @@ export default function SettingsMode({ onImported }: {
                   <div className="settings-field-controls">
                     {videoFade !== DEFAULT_VIDEO_CROSSFADE_SECONDS && (
                       <button
-                        className="settings-reset-btn"
-                        aria-label="デフォルトに戻す"
-                        data-tip="デフォルトに戻す"
                         onClick={() => void save({ video_crossfade_seconds: String(DEFAULT_VIDEO_CROSSFADE_SECONDS) })}
+                        className="inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px]"
+                        style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+                        data-tip={`既定値(${DEFAULT_VIDEO_CROSSFADE_SECONDS.toFixed(1)}秒)に戻します`}
                       >
-                        <svg
-                          width="12"
-                          height="12"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        >
-                          <polyline points="3 6 5 6 21 6" />
-                          <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-                          <path d="M10 11v6" />
-                          <path d="M14 11v6" />
-                          <path d="M9 6V4h6v2" />
-                        </svg>
+                        <Icon name="rotateCcw" size={12} /> 既定に戻す
                       </button>
                     )}
                     <span className="settings-value-badge">{videoFade === 0 ? 'なし' : `${videoFade.toFixed(1)}秒`}</span>

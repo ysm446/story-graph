@@ -173,7 +173,7 @@ function ModelModal({
                   ) : (
                     <div className="flex shrink-0 items-center gap-1.5 text-[10px]" style={{ color: 'var(--text-faint)' }}>
                       {recentSet.has(m.path) && (
-                        <span className="rounded px-1" style={{ background: 'var(--bg-input)' }} data-tip="最近使ったモデル(新しい順に上へ並びます)">
+                        <span className="rounded px-1.5 py-0.5" style={{ background: 'var(--bg-elevated)' }} data-tip="最近使ったモデル(新しい順に上へ並びます)">
                           最近
                         </span>
                       )}

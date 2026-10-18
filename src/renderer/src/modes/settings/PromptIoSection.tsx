@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react'
+import { Icon } from '../../icons'
 import { api } from '../../api'
 
 // プロンプトの書き出し / 読み込み。シーン生成・校正・スタイルプリセット
@@ -97,18 +98,18 @@ export default function PromptIoSection({
           <button
             onClick={() => void handleExport()}
             disabled={busy}
-            className="rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-50"
+            className="inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-50"
             style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
           >
-            ⬆ 書き出し
+            <Icon name="upload" size={11} /> 書き出し
           </button>
           <button
             onClick={() => importRef.current?.click()}
             disabled={busy}
-            className="rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-50"
+            className="inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-50"
             style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
           >
-            ⬇ 読み込み
+            <Icon name="download" size={11} /> 読み込み
           </button>
           <input
             ref={importRef}

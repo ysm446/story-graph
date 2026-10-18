@@ -257,7 +257,7 @@ export default function PlaceEditor({
             void acceptImageFile(file)
           }}
         />
-        <div className="flex w-full flex-wrap items-center gap-2">
+        <div className="flex w-full flex-wrap items-center gap-1.5">
           <button
             onClick={() => setStockOpen(true)}
             className="rounded-md border px-2 py-0.5 text-[11px]"
@@ -267,15 +267,24 @@ export default function PlaceEditor({
             ストック
           </button>
           {draft.image_path && (
-            <div className="flex items-center gap-2 text-[11px]" style={{ color: 'var(--text-faint)' }}>
-              <button onClick={() => fileInputRef.current?.click()} data-tip="別の画像に差し替える(前の画像はストックに残ります)">
-                {uploading ? 'アップロード中…' : '画像を差し替え'}
-              </button>
-              <span>・</span>
-              <button onClick={() => void removeImage()} data-tip="画像を外す(ストックとプロンプトは残ります)">
-                画像を外す
-              </button>
-            </div>
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="rounded-md border px-2 py-0.5 text-[11px]"
+              style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+              data-tip="別の画像に差し替える(前の画像はストックに残ります)"
+            >
+              {uploading ? 'アップロード中…' : '画像を差し替え'}
+            </button>
+          )}
+          {draft.image_path && (
+            <button
+              onClick={() => void removeImage()}
+              className="rounded-md border px-2 py-0.5 text-[11px]"
+              style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+              data-tip="画像を外す(ストックとプロンプトは残ります)"
+            >
+              外す
+            </button>
           )}
           {/* 左から確かめて、最後に押す「生成」は右端(生成ウインドウと同じ並び) */}
           <button

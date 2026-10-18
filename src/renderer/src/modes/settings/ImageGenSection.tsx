@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { Icon } from '../../icons'
 import {
   api,
   comfyInstallStream,
@@ -468,11 +469,11 @@ export default function ImageGenSection({
                 <button
                   onClick={() => void handleInstall()}
                   disabled={!selectedVariant || status?.spawned}
-                  className="self-start rounded-md px-3 py-1 text-[12px] font-medium text-white disabled:opacity-50"
+                  className="inline-flex items-center gap-1 self-start rounded-md px-3 py-1 text-[12px] font-medium text-white disabled:opacity-50"
                   style={{ background: 'var(--accent)' }}
                   data-tip={status?.spawned ? '起動中は入れ替えられません(先に停止してください)' : undefined}
                 >
-                  ⬇ インストール({selectedVariant ? fmtBytes(selectedVariant.size_bytes) : '—'})
+                  <Icon name="download" size={12} /> インストール({selectedVariant ? fmtBytes(selectedVariant.size_bytes) : '—'})
                 </button>
               )}
             </div>

@@ -173,7 +173,6 @@ function Strip({
                 borderColor: chapterColor ?? 'var(--border-strong)',
                 color: chapterColor ?? 'var(--text-dim)'
               }}
-              title={span.group.title}
             >
               {span.group.title}
             </div>

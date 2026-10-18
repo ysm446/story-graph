@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { Icon } from './icons'
 import { api, isAbortError, ttsInstallStream, type TtsInstallProgress, type TtsStatus } from './api'
 import AutoTextarea from './AutoTextarea'
 import ReadingDictCard from './ReadingDictCard'
@@ -412,11 +413,11 @@ export default function VoiceSettingsSection({
             <button
               onClick={() => void handleInstall()}
               disabled={!status || status.spawned}
-              className="self-start rounded-md px-3 py-1 text-[12px] font-medium text-white disabled:opacity-50"
+              className="inline-flex items-center gap-1 self-start rounded-md px-3 py-1 text-[12px] font-medium text-white disabled:opacity-50"
               style={{ background: 'var(--accent)' }}
               data-tip={status?.spawned ? '起動中は入れ替えられません(先に停止してください)' : undefined}
             >
-              {status?.installed ? '⟳ 入れ直す' : '⬇ インストール'}
+              {status?.installed ? '⟳ 入れ直す' : <><Icon name="download" size={12} /> インストール</>}
             </button>
           )}
           <p className="settings-field-hint">
@@ -437,8 +438,7 @@ export default function VoiceSettingsSection({
               <button
                 onClick={() => void handleClearCache()}
                 disabled={!status || status.cache.files === 0}
-                className="rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-40"
-                style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+                className="delete-action rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-40"
                 data-tip="合成済みの音声を消します。次に読むときに合成し直します"
               >
                 キャッシュを消す

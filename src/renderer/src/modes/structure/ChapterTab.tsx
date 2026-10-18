@@ -286,8 +286,8 @@ export function ChapterTab({
         <button
           onClick={onDissolve}
           data-tip="章を解除する(シーンは残る)"
-          className="ml-auto shrink-0 rounded p-0.5 text-[11px] hover:bg-[var(--accent-soft)]"
-          style={{ color: 'var(--text-faint)' }}
+          className="ml-auto shrink-0 rounded-md border px-2 py-0.5 text-[11px]"
+          style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
         >
           解除
         </button>
@@ -347,7 +347,7 @@ export function ChapterTab({
               <button
                 onClick={() => void removeDigest()}
                 disabled={busy}
-                className="delete-action rounded-lg border px-2 py-1 text-[12px] disabled:opacity-50"
+                className="delete-action rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-50"
                 data-tip="まとめを削除する(次の章からは生の記憶に戻ります)"
               >
                 削除
@@ -496,8 +496,8 @@ export function ChapterTab({
               <button
                 onClick={() => onSetCover(null)}
                 data-tip="表紙の指定を外して、章内で最初に挿絵があるシーンに戻す"
-                className="shrink-0 rounded px-1 text-[11px] hover:bg-[var(--accent-soft)]"
-                style={{ color: 'var(--text-faint)' }}
+                className="shrink-0 rounded-md border px-2 py-0.5 text-[11px]"
+                style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
               >
                 自動に戻す
               </button>

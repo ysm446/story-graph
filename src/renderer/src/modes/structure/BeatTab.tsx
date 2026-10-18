@@ -438,6 +438,7 @@ export function BeatTab({
                   onClick={() => imageInputRef.current?.click()}
                   className="rounded-md border px-2 py-0.5 text-[11px]"
                   style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+                  data-tip={node.image_path ? '別の画像・動画ファイルを選んで挿絵を差し替えます' : '画像・動画ファイルを選んで挿絵にします'}
                 >
                   {node.image_path ? '変更' : '+ 画像/動画を添付'}
                 </button>
@@ -445,7 +446,7 @@ export function BeatTab({
                   <button
                     onClick={() => void api.setNodeImage(node.id, null).then(onSaved)}
                     className="rounded-md border px-2 py-0.5 text-[11px]"
-                    style={{ borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }}
+                    style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
                     data-tip="挿絵を外します(ストックには残るので、あとから選び直せます)"
                   >
                     外す
@@ -563,7 +564,12 @@ export function BeatTab({
                         : { background: 'transparent', borderColor: 'var(--border)', color: 'var(--text-faint)' }
                     }
                   >
-                    <button onClick={() => toggleCast(c.id)} className="inline-flex items-center gap-1.5">
+                    <button
+                      onClick={() => toggleCast(c.id)}
+                      className="inline-flex items-center gap-1.5"
+                      aria-pressed={active}
+                      data-tip={active ? `${c.name} をこのシーンの登場人物から外す` : `${c.name} をこのシーンの登場人物に入れる`}
+                    >
                       <span className="inline-block h-2 w-2 rounded-full" style={{ background: c.color ?? '#8a8fa8' }} />
                       <span className={retired ? 'line-through' : undefined}>{c.name}</span>
                     </button>
@@ -579,6 +585,7 @@ export function BeatTab({
                         }}
                         className="rounded-full px-1 text-[11px]"
                         style={{ color: retired ? 'var(--accent)' : 'var(--text-faint)' }}
+                        aria-label={retired ? `${c.name} の退場を取り消す` : `${c.name} をこのシーンで退場させる`}
                         data-tip={
                           retired
                             ? 'このシーンでの退場を取り消す'

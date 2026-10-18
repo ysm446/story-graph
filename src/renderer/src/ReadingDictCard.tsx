@@ -96,10 +96,9 @@ export default function ReadingDictCard({
                 />
                 <button
                   onClick={() => remove(i)}
-                  className="shrink-0 rounded-md border px-1.5 py-0.5 text-[11px]"
-                  style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-                  aria-label="この言葉を消す"
-                  data-tip="この言葉を消す"
+                  className="delete-action shrink-0 rounded-md border px-1.5 py-0.5 text-[11px]"
+                  aria-label="この読みを削除"
+                  data-tip="この読みを削除"
                 >
                   ✕
                 </button>

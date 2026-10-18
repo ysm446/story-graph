@@ -301,8 +301,8 @@ export default function ProofreadTextarea({
                     onChange(backup)
                     setBackup(null)
                   }}
-                  className="rounded-md border px-1.5 py-px text-[10px]"
-                  style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }}
+                  className="rounded-md border px-2 py-0.5 text-[11px]"
+                  style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
                   data-tip="校正前の文章に戻す"
                 >
                   ↩ 元に戻す
@@ -398,8 +398,9 @@ export default function ProofreadTextarea({
               <button
                 type="button"
                 onClick={close}
-                className="rounded-md px-2 py-0.5 text-[11px]"
-                style={{ color: 'var(--text-dim)' }}
+                className="rounded-md border px-2 py-0.5 text-[11px]"
+                style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+                data-tip={busy ? '校正を止めます' : '校正結果を反映せずに閉じます'}
               >
                 {busy ? `■ 中止 (${elapsed}s)` : '閉じる'}
               </button>

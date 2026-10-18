@@ -339,6 +339,7 @@ export function RenderTab({
             onClick={() => task && cancelTask(task.id)}
             className="rounded-lg border px-2.5 py-1 text-[12px]"
             style={{ borderColor: 'rgba(239,68,68,0.5)', color: 'var(--danger)' }}
+            data-tip={running ? '清書を中止します(書きかけは保存されません)' : '待機中の清書を取り消します'}
           >
             ■ {running ? `清書中… (${elapsed}s)` : '待機中… 取り消す'}
           </button>

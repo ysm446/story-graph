@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Icon } from '../../icons'
 import { api } from '../../api'
 
 // 設定では変えられず、システムプロンプトに必ず付く部分。編集欄の内容と食い違う指示を
@@ -35,7 +36,7 @@ export function FixedPrompt({ label, text, hint, collapsed = false }: {
 }
 
 // 空欄なら既定(プレースホルダ)が使われる編集欄。シーン生成プロンプトの欄と同じ見た目で、
-// 値があるときだけ「デフォルトに戻す」(ごみ箱)を見出しの右端に出す
+// 値があるときだけ「既定に戻す」を見出しの右端に出す
 export function EditablePrompt({ label, value, placeholder, rows = 6, hint, ariaLabel, onChange, onBlur, onReset }: {
   label: string
   value: string
@@ -53,14 +54,13 @@ export function EditablePrompt({ label, value, placeholder, rows = 6, hint, aria
         <span className="settings-field-label">{label}</span>
         <div className="settings-field-controls">
           {value !== '' && (
-            <button className="settings-reset-btn" aria-label="デフォルトに戻す" data-tip="デフォルトに戻す" onClick={onReset}>
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="3 6 5 6 21 6" />
-                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-                <path d="M10 11v6" />
-                <path d="M14 11v6" />
-                <path d="M9 6V4h6v2" />
-              </svg>
+            <button
+              onClick={onReset}
+              className="inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px]"
+              style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+              data-tip="空欄に戻して、既定のプロンプトを使います"
+            >
+              <Icon name="rotateCcw" size={12} /> 既定に戻す
             </button>
           )}
         </div>

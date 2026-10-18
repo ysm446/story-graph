@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { Icon } from '../../icons'
 import {
   api,
   isAbortError,
@@ -309,10 +310,10 @@ export default function LlamaInstaller(): React.JSX.Element {
               <button
                 onClick={() => void handleInstall()}
                 disabled={!selectedVariant}
-                className="rounded-md px-3 py-1 text-[12px] font-medium text-white disabled:opacity-50"
+                className="inline-flex items-center gap-1 rounded-md px-3 py-1 text-[12px] font-medium text-white disabled:opacity-50"
                 style={{ background: 'var(--accent)' }}
               >
-                ⬇ インストール({totalSize ? fmtBytes(totalSize) : '—'})
+                <Icon name="download" size={12} /> インストール({totalSize ? fmtBytes(totalSize) : '—'})
               </button>
               {canAddCudart && (
                 <button
@@ -336,7 +337,7 @@ export default function LlamaInstaller(): React.JSX.Element {
       )}
       {doneMsg && !error && (
         <p className="text-[12px]" style={{ color: 'var(--text-dim)' }}>
-          ✓ {doneMsg}
+          {doneMsg}
         </p>
       )}
       <p className="settings-field-hint">

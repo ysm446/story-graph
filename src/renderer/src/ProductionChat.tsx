@@ -606,8 +606,8 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
         <ProductionPolicyPanel value={policy} onChange={setPolicy} nodes={nodes} groups={groups} busy={busy} open={openPanel === 'policy'} onToggle={togglePolicy} />
       </div>
       {busy && runId && <button disabled={!manualReady || switching} onClick={() => void toggleManual()}
-        className="rounded-md border px-2 py-0.5 text-[12px] disabled:opacity-50"
-        style={{ background: 'var(--bg-input)', borderColor: 'var(--border-strong)' }}
+        className="rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-50"
+        style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
         data-tip={!manualReady ? '作業前の保存が終わるまでお待ちください' : manualEditing ? '未保存のシーンを保存してから、最新の構成で制作を再開します' : '制作を一時停止して、シーンと接続を手動で編集します。書きかけの操作は破棄されます。「制作を再開」で続きから進みます'}>
         {switching ? '切り替えています…' : manualEditing ? '制作を再開' : '一時停止して手動編集'}
       </button>}

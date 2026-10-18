@@ -27,17 +27,18 @@ function sameResources(a: SystemResources, b: SystemResources): boolean {
 // lm-graph の SystemResourceMonitor と同じ見た目のミニバー
 function ResourceBar({ label, pct, detail }: { label: string; pct: number; detail: string }): React.JSX.Element {
   const clampedPct = Math.min(100, Math.max(0, pct))
-  const barColor = clampedPct > 85 ? '#ef4444' : clampedPct > 65 ? '#f97316' : 'var(--accent)'
+  // 閾値はコンテキスト使用量のリングと同じ(70% で警告、90% で危険)
+  const barColor = clampedPct >= 90 ? 'var(--danger)' : clampedPct >= 70 ? 'var(--warn)' : 'var(--accent)'
   return (
     <div className="flex items-center gap-2">
-      <span className="text-[11px] font-medium opacity-50">{label}</span>
-      <div className="h-1 w-[52px] overflow-hidden rounded-full bg-white/10">
+      <span className="text-[11px] font-medium" style={{ color: 'var(--text-faint)' }}>{label}</span>
+      <div className="h-1 w-[52px] overflow-hidden rounded-full" style={{ background: 'var(--border-strong)' }}>
         <div
           className="h-full rounded-full transition-[width] duration-500 ease-out"
           style={{ width: `${clampedPct}%`, backgroundColor: barColor }}
         />
       </div>
-      <span className="text-[11px] tabular-nums opacity-60">{detail}</span>
+      <span className="text-[11px] tabular-nums" style={{ color: 'var(--text-dim)' }}>{detail}</span>
     </div>
   )
 }

@@ -338,24 +338,6 @@ input[type='range']:focus-visible {
   gap: 4px;
 }
 
-.settings-reset-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 6px;
-  color: var(--text-faint);
-  background: transparent;
-  border: none;
-  cursor: pointer;
-}
-
-.settings-reset-btn:hover {
-  color: var(--text);
-  background: rgba(255, 255, 255, 0.06);
-}
-
 .settings-value-badge {
   min-width: 72px;
   padding: 4px 8px;

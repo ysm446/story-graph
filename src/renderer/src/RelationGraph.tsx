@@ -699,6 +699,7 @@ export default function RelationGraph({
             onClick={() => setEgo(null)}
             className="rounded-md border px-1.5 py-0.5"
             style={{ borderColor: 'var(--accent-border)', color: 'var(--accent)' }}
+            data-tip="絞り込みを外して、全員の関係を表示します"
           >
             {nameOf(egoCharId)} のみ ✕
           </button>
@@ -722,7 +723,12 @@ export default function RelationGraph({
                 </span>
               )}
             </span>
-            <button onClick={() => setSelectedEdge(null)} style={{ color: 'var(--text-faint)' }}>
+            <button
+              onClick={() => setSelectedEdge(null)}
+              style={{ color: 'var(--text-faint)' }}
+              aria-label="関係の履歴を閉じる"
+              data-tip="関係の履歴を閉じる"
+            >
               ✕
             </button>
           </div>

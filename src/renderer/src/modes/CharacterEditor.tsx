@@ -317,21 +317,27 @@ export default function CharacterEditor({
         />
         {/* 画像のすぐ下に画像操作(差し替え・外すは画像があるとき、参照画像からは参照画像があるとき) */}
         {(draft.portrait_path || character.ref_image_path) && (
-          <div className="flex items-center gap-2 text-[11px]" style={{ color: 'var(--text-faint)' }}>
+          <div className="flex flex-wrap items-center gap-1.5">
             {draft.portrait_path && (
-              <>
-                <button onClick={() => fileInputRef.current?.click()} data-tip="別の画像に差し替える">
-                  画像を差し替え
-                </button>
-                <span>・</span>
-              </>
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="rounded-md border px-2 py-0.5 text-[11px]"
+                style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+                data-tip="別の画像に差し替える"
+              >
+                画像を差し替え
+              </button>
             )}
             {character.ref_image_path && (
-              <button onClick={cropFromRefImage} data-tip="参照画像から顔を切り抜いてプロフィール画像にします">
+              <button
+                onClick={cropFromRefImage}
+                className="rounded-md border px-2 py-0.5 text-[11px]"
+                style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+                data-tip="参照画像から顔を切り抜いてプロフィール画像にします"
+              >
                 参照画像から
               </button>
             )}
-            {draft.portrait_path && character.ref_image_path && <span>・</span>}
             {draft.portrait_path && (
               <button
                 onClick={() => {
@@ -343,9 +349,11 @@ export default function CharacterEditor({
                     })
                     .catch((e) => window.alert(`画像を外せませんでした: ${String(e)}`))
                 }}
-                data-tip="画像を外す"
+                className="rounded-md border px-2 py-0.5 text-[11px]"
+                style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+                data-tip="プロフィール画像を外す"
               >
-                画像を外す
+                外す
               </button>
             )}
           </div>

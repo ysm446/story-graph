@@ -186,8 +186,8 @@ export function CharTab({
                       return !prev
                     })
                   }}
-                  className="text-[10px] hover:underline"
-                  style={{ color: 'var(--text-faint)' }}
+                  className="rounded-md border px-2 py-0.5 text-[11px]"
+                  style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
                   data-tip="並び順を切り替える"
                 >
                   {memNewestFirst ? '新 → 古' : '古 → 新'}

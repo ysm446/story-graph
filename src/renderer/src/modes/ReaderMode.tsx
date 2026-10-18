@@ -744,10 +744,10 @@ function ReaderMode({
         <button
           onClick={exportMarkdown}
           disabled={!hasAnyRender}
-          className="rounded-lg border px-3 py-1 text-[12px] disabled:opacity-40"
+          className="inline-flex items-center gap-1 rounded-lg border px-3 py-1 text-[12px] disabled:opacity-40"
           style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
         >
-          ⬇ Markdown
+          <Icon name="download" size={12} /> Markdown
         </button>
         {reading && (
           <div
@@ -777,11 +777,12 @@ function ReaderMode({
             </button>
             <button
               onClick={readAloud.state.paused ? readAloud.resume : readAloud.pause}
-              className="shrink-0 rounded-md border px-2 py-0.5 text-[11px]"
+              className="inline-flex shrink-0 items-center gap-1 rounded-md border px-2 py-0.5 text-[11px]"
               style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
               data-tip={readAloud.state.paused ? '続きから読みます' : 'いまの行で止めます(続きから再開できます)'}
             >
-              {readAloud.state.paused ? '▶ 再開' : '❚❚ 一時停止'}
+              <Icon name={readAloud.state.paused ? 'play' : 'pause'} size={11} />
+              {readAloud.state.paused ? '再開' : '一時停止'}
             </button>
             <button
               onClick={readAloud.next}

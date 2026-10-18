@@ -2832,6 +2832,7 @@ function StructureModeInner({
                           onClick={() => genTaskIdRef.current && cancelTask(genTaskIdRef.current)}
                           className="w-full rounded-lg border px-3 py-1.5 text-[13px] font-medium"
                           style={{ borderColor: 'rgba(239,68,68,0.5)', color: 'var(--danger)' }}
+                          data-tip="いま動いているシーンの生成を止めます"
                         >
                           ■ 実行中の生成を中止
                         </button>
@@ -3610,14 +3611,16 @@ function StructureModeInner({
                         onClick={() => void makeRouteCanon(selectedNode.id)}
                         className="rounded-md px-3 py-1 text-[12px] font-medium text-white"
                         style={{ background: 'var(--accent)' }}
+                        data-tip="この結末までの道を正史にします"
                       >
                         🏁 この結末にする
                       </button>
                     )}
                     <button
                       onClick={() => renameEnding(selectedNode.id)}
-                      className="rounded-lg border px-3 py-1 text-[12px]"
+                      className="rounded-md border px-2 py-0.5 text-[11px]"
                       style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+                      data-tip="この結末の名前を変えます"
                     >
                       名前を変更
                     </button>

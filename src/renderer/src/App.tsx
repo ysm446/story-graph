@@ -250,7 +250,7 @@ export default function App(): React.JSX.Element {
   useEffect(() => {
     // F12 スクリーンショット保存の通知。クリックする余裕を持たせるため長めに出す
     const off = window.storyGraph.onScreenshotSaved((path) => {
-      setToast({ title: '📷 スクリーンショットを保存', detail: baseName(path), path })
+      setToast({ title: 'スクリーンショットを保存しました', detail: baseName(path), path })
       if (toastTimer.current) clearTimeout(toastTimer.current)
       toastTimer.current = setTimeout(() => setToast(null), 6000)
     })
@@ -375,7 +375,7 @@ export default function App(): React.JSX.Element {
         ))}
         {mode !== 'reader' && <button onClick={toggleChat}
           className="ml-auto rounded-md border px-2 py-0.5 text-[11px]"
-          style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)', background: chatOpen ? 'var(--accent-soft)' : undefined }}
+          style={{ borderColor: 'var(--border-strong)', color: chatOpen ? 'var(--text)' : 'var(--text-dim)', background: chatOpen ? 'var(--accent-soft)' : undefined }}
           aria-expanded={chatOpen} data-tip="共通チャットの表示を切り替える">チャット</button>}
       </nav>
       <div className="flex min-h-0 flex-1 overflow-hidden">

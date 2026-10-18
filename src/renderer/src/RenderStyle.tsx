@@ -448,6 +448,7 @@ export function RenderStyleControls({
         disabled={!style.presetId}
         className={buttonClass}
         style={buttonStyle}
+        aria-label={style.preset?.builtin ? '複製して編集' : 'プリセットを編集'}
         data-tip={
           style.preset?.builtin
             ? '組み込みプリセットは編集できません。複製して新規作成します'
@@ -460,6 +461,7 @@ export function RenderStyleControls({
         onClick={() => setEditor({ name: '', person: 'third', tone: '' })}
         className={buttonClass}
         style={buttonStyle}
+        aria-label="スタイルプリセットを新規作成"
         data-tip="スタイルプリセットを新規作成"
       >
         {compact ? '+' : '+ 新規'}
