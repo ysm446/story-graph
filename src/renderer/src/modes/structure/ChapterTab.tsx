@@ -4,12 +4,12 @@ import { api } from '../../api'
 import AutoTextarea from '../../AutoTextarea'
 import { showStatusNotice } from '../../statusNotice'
 import CharAvatar from '../../CharAvatar'
+import { EditActions, editKeys, EditPencil, focusEditGroup } from '../../FieldEdit'
 import { Icon } from '../../icons'
 import type { RenderStyleState } from '../../RenderStyle'
 import { enqueueTask, notifyGraphChanged, useTasks } from '../../tasks'
 import type { Character, EventInput, Group, RenderResult, StoryNode } from '../../types'
 import { chapterCoverNode, NodeThumb } from './StructureNodes'
-import { useSaveShortcut } from './useSaveShortcut'
 
 // ---- 章タブ(章ノードを選択したときのインスペクタ。docs/design/chapters.md §6) ----
 
@@ -44,7 +44,6 @@ export function ChapterTab({
   const [hasDigest, setHasDigest] = useState(false)
   const [digestStale, setDigestStale] = useState(false)
   const [loading, setLoading] = useState(true)
-  const [dirty, setDirty] = useState(false) // ローカル編集が未保存
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   // 章名のその場編集。null = 表示中、文字列 = 入力中の値
@@ -99,7 +98,6 @@ export function ChapterTab({
       setDigest(d.digest_events ?? [])
       setHasDigest(d.digest_events !== null)
       setDigestStale(d.digest_stale === 1)
-      setDirty(false)
     } catch (e) {
       setError(String(e))
     } finally {
@@ -132,23 +130,65 @@ export function ChapterTab({
     })
   }
 
-  const save = async (): Promise<boolean> => {
-    setBusy(true)
-    setError(null)
+  // まとめのカードは読む表示が既定で、鉛筆(または本文)を押したカードだけを編集欄にし、
+  // カードごとに確定(すぐ保存)・取り消しする(資料庫の読む表示と同じ型。2026-10-19 ユーザー決定)。
+  // 編集は 1 枚ずつ。key は保存済みイベントの id(無ければ並び順)で、まとめを取り直しても同じカードを指す
+  const [editing, setEditing] = useState<{ key: string; summary: string; importance: number } | null>(null)
+  const [editSaving, setEditSaving] = useState(false)
+  const [editError, setEditError] = useState<string | null>(null)
+  const entryKey = (e: EventInput, i: number): string => e.id ?? `#${i}`
+  const editIndex = editing ? digest.findIndex((e, i) => entryKey(e, i) === editing.key) : -1
+  const editOriginal = editIndex >= 0 ? digest[editIndex] : undefined
+  const editDirty =
+    !!editing &&
+    !!editOriginal &&
+    (editing.summary !== String(editOriginal.payload.summary ?? '') ||
+      editing.importance !== Number(editOriginal.payload.importance ?? 0.6))
+  // 作り直し・削除で編集中のカードが無くなったら閉じる
+  useEffect(() => {
+    if (editing && !loading && !editOriginal) setEditing(null)
+  }, [editing, loading, editOriginal])
+  const editBlocked = !editing
+    ? undefined
+    : !editing.summary.trim()
+      ? 'まとめの本文が空です'
+      : !(editing.importance >= 0 && editing.importance <= 1)
+        ? '重要度は 0〜1 で入れてください'
+        : undefined
+  const startEdit = (e: EventInput, i: number): void => {
+    const key = entryKey(e, i)
+    if (editing?.key === key) return
+    if (editDirty && !window.confirm('編集中のまとめの変更を捨てて、別のカードを編集しますか?')) return
+    setEditing({ key, summary: String(e.payload.summary ?? ''), importance: Number(e.payload.importance ?? 0.6) })
+    setEditError(null)
+    focusEditGroup(`digest-${key}`)
+  }
+  const cancelEdit = (): void => {
+    setEditing(null)
+    setEditError(null)
+  }
+  const commitEdit = async (): Promise<void> => {
+    if (!editing || editSaving || editBlocked || editIndex < 0) return
+    if (!editDirty) {
+      cancelEdit()
+      return
+    }
+    setEditSaving(true)
+    setEditError(null)
     try {
-      await api.putGroupDigest(group.id, digest)
+      const next = digest.map((e, i) =>
+        i === editIndex ? { ...e, payload: { ...e.payload, summary: editing.summary, importance: editing.importance } } : e
+      )
+      await api.putGroupDigest(group.id, next)
+      setEditing(null)
       await refetch()
       onChanged()
-      return true
     } catch (e) {
-      setError(String(e))
-      return false
+      setEditError(String(e))
     } finally {
-      setBusy(false)
+      setEditSaving(false)
     }
   }
-  const saveButtonRef = useRef<HTMLButtonElement | null>(null)
-  useSaveShortcut(saveButtonRef, save, '章のまとめを保存しました')
 
   const removeDigest = async (): Promise<void> => {
     if (!window.confirm('まとめを削除しますか?(次の章からは生の記憶に戻ります)')) return
@@ -163,11 +203,6 @@ export function ChapterTab({
     } finally {
       setBusy(false)
     }
-  }
-
-  const updateEntry = (index: number, patch: Record<string, unknown>): void => {
-    setDigest((prev) => prev.map((e, i) => (i === index ? { ...e, payload: { ...e.payload, ...patch } } : e)))
-    setDirty(true)
   }
 
   return (
@@ -307,53 +342,90 @@ export function ChapterTab({
           </p>
         ) : (
           <div className="flex flex-col gap-2">
-            {digest.map((e, i) =>
-              e.type === 'memory_compress' ? (
-                <div
-                  key={e.id ?? i}
-                  className="rounded-xl border p-2"
-                  style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}
-                >
-                  <div className="mb-1 flex items-center gap-2 text-[11px]" style={{ color: 'var(--text-dim)' }}>
-                    {/* まとめはキャラごとの要約記憶なので、誰のものかをアイコンでも示す */}
-                    {charOf(String(e.payload.char ?? '')) && (
-                      <CharAvatar char={charOf(String(e.payload.char ?? ''))!} size={28} />
-                    )}
-                    <span className="font-medium" style={{ color: 'var(--text)' }}>
-                      {nameOf(String(e.payload.char ?? ''))}
-                    </span>
-                    <span className="ml-auto" style={{ color: 'var(--text-faint)' }}>
-                      重要度
-                    </span>
-                    <input
-                      type="number"
-                      min={0}
-                      max={1}
-                      step={0.1}
-                      value={Number(e.payload.importance ?? 0.6)}
-                      onChange={(ev) => updateEntry(i, { importance: Number(ev.target.value) })}
-                      className="w-16 rounded-md border px-1.5 py-0.5 text-[11px]"
-                      style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
-                    />
+            {digest.map((e, i) => {
+              const key = entryKey(e, i)
+              // memory_compress 以外(fact_set など)は中身をそのまま出すだけ(編集しない)
+              if (e.type !== 'memory_compress')
+                return (
+                  <div
+                    key={key}
+                    className="rounded-lg border px-3 py-2 text-[11px]"
+                    style={{ borderColor: 'var(--border)', color: 'var(--text-dim)' }}
+                  >
+                    {e.type}: {JSON.stringify(e.payload)}
                   </div>
-                  <AutoTextarea
-                    value={String(e.payload.summary ?? '')}
-                    onChange={(v) => updateEntry(i, { summary: v })}
-                    className="w-full rounded-md border px-2 py-1 text-[12px] leading-relaxed outline-none"
-                    style={{ background: 'var(--bg-input)', borderColor: 'var(--border)', color: 'var(--text)' }}
-                  />
-                </div>
-              ) : (
+                )
+              const char = charOf(String(e.payload.char ?? ''))
+              const open = editing?.key === key
+              const summary = String(e.payload.summary ?? '')
+              return (
+                // シーンの Events の記憶カードと同じ見た目(左にだれのアイコン、1 行目に名前と操作、本文は下に幅いっぱい)
                 <div
-                  key={e.id ?? i}
-                  className="rounded-xl border p-2 text-[11px]"
-                  style={{ borderColor: 'var(--border)', color: 'var(--text-dim)' }}
+                  key={key}
+                  data-digest-card
+                  className="flex gap-2.5 rounded-lg border px-3 py-2 text-[12px]"
+                  style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border)' }}
                 >
-                  {e.type}: {JSON.stringify(e.payload)}
+                  {/* まとめはキャラごとの要約記憶なので、誰のものかをアイコンでも示す */}
+                  {char && <CharAvatar char={char} size={28} />}
+                  <div className="min-w-0 flex-1">
+                    <div className="mb-0.5 flex items-center gap-2">
+                      <span className="min-w-0 truncate font-medium" style={{ color: 'var(--text)' }}>
+                        {nameOf(String(e.payload.char ?? ''))}
+                      </span>
+                      {!open && (
+                        <span className="ml-auto">
+                          <EditPencil label="このまとめ" onClick={() => startEdit(e, i)} />
+                        </span>
+                      )}
+                    </div>
+                    {open && editing ? (
+                      <div
+                        data-edit-group={`digest-${key}`}
+                        onKeyDown={editKeys(true, () => void commitEdit(), cancelEdit)}
+                      >
+                        <AutoTextarea
+                          value={editing.summary}
+                          onChange={(v) => setEditing({ ...editing, summary: v })}
+                          className="w-full rounded-md border px-2 py-1 text-[12px] leading-relaxed outline-none"
+                          style={{ background: 'var(--bg-input)', borderColor: 'var(--border)', color: 'var(--text)' }}
+                        />
+                        <label className="mt-1.5 flex items-center gap-2 text-[11px]" style={{ color: 'var(--text-faint)' }}>
+                          重要度
+                          <input
+                            type="number"
+                            min={0}
+                            max={1}
+                            step={0.1}
+                            value={editing.importance}
+                            onChange={(ev) => setEditing({ ...editing, importance: Number(ev.target.value) })}
+                            className="w-16 rounded-md border px-1.5 py-0.5 text-[11px] outline-none"
+                            style={{ background: 'var(--bg-input)', borderColor: 'var(--border)', color: 'var(--text)' }}
+                            data-tip="0 些細 〜 1 人生を変える"
+                          />
+                        </label>
+                        <EditActions
+                          dirty={editDirty}
+                          saving={editSaving}
+                          blocked={editBlocked}
+                          error={editError ?? undefined}
+                          onCommit={() => void commitEdit()}
+                          onCancel={cancelEdit}
+                        />
+                      </div>
+                    ) : (
+                      // 編集に入るのは鉛筆だけ。本文のクリックでは入らない(2026-10-19 ユーザー指摘。読むつもりで押して編集になると、鉛筆の意味が無い)
+                      <div className="leading-relaxed" style={{ color: 'var(--text-dim)' }}>
+                        「{summary}」
+                        <span className="whitespace-nowrap text-[11px]" style={{ color: 'var(--text-faint)' }}>
+                          重要度 {Number(e.payload.importance ?? 0.6).toFixed(2)}
+                        </span>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )
-            )}
-
+            })}
           </div>
         )}
       </div>      </>} aside={<>
@@ -422,8 +494,8 @@ export function ChapterTab({
             {/* シーンの行のサムネイルの列と、タイトルの位置を揃える */}
             {hasAnyThumb && <span className="block w-16 shrink-0" />}
             <span className="min-w-0 flex-1 truncate">章のまとめ</span>
-            {dirty ? (
-              <span className="shrink-0 text-[10px]" style={{ color: 'var(--text-dim)' }}>
+            {editDirty ? (
+              <span className="shrink-0 text-[10px]" style={{ color: 'var(--text-dim)' }} data-tip="編集中のまとめのカードに、確定していない変更があります">
                 未保存
               </span>
             ) : (
@@ -504,13 +576,6 @@ export function ChapterTab({
         </div>
       </div>
       </>} />
-      <div className="flex shrink-0 items-center justify-end gap-2 border-t px-5 py-2" style={{ borderColor: 'var(--border)' }}>
-        {dirty && <span className="mr-auto text-[11px]" style={{ color: 'var(--text-dim)' }}>未保存の変更があります</span>}
-        <button ref={saveButtonRef} onClick={() => void save()} disabled={busy || !dirty}
-          className="rounded-md px-3 py-1 text-[12px] font-medium disabled:opacity-50"
-          style={{ background: 'var(--accent)', color: 'var(--text)' }}
-          data-tip={dirty ? '章のまとめの変更を保存します(Ctrl+S)' : '変更はありません'}>まとめを保存</button>
-      </div>
     </div>
   )
 }

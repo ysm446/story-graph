@@ -103,6 +103,11 @@ store.save_chat_messages(chat['id'], [
     const graph = await (await fetch(base + '/graph')).json()
     const response = await fetch(base + '/groups', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:'検証章',node_ids:graph.nodes.filter(n=>!n.kind).map(n=>n.id)})})
     if (!response.ok) throw new Error(await response.text())
+    // 章のまとめのカード(読む表示 → 鉛筆で編集 → 確定)を確かめるため、まとめを 1 件入れておく
+    const chapter = await response.json()
+    const [character] = await (await fetch(base + '/characters')).json()
+    const digest = await fetch(base + `/groups/${chapter.id}/digest`, {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({events:[{type:'memory_compress',payload:{char:character.id,replaces:[],summary:'検証のまとめ。',importance:0.6}}]})})
+    if (!digest.ok) throw new Error(await digest.text())
   }
   ipcMain.handle('library:info', () => ({ current: target, recents: [] }))
   const win = new BrowserWindow({ show: false, width: 1440, height: 1000, webPreferences: { offscreen: true, backgroundThrottling: false, preload: join(root, 'out/preload/index.js') } })
@@ -1085,6 +1090,30 @@ store.save_chat_messages(chat['id'], [
         await js(`document.querySelector('.scene-detail-meta button[data-shown-key]:not([data-shown-key=""])').dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowUp',bubbles:true}))`)
         await pause(300)
         await assert(`document.querySelector('.scene-detail-main').textContent.includes('章を閉じたときのキャラごとの要約記憶') && document.querySelector('.scene-detail-meta button[data-shown-key=""]').getAttribute('aria-current')==='true' && document.activeElement===document.querySelector('.scene-detail-meta button[data-shown-key=""]')`, 'シーン一覧で ↑ を押すと先頭の「章のまとめ」に戻り、右がまとめになる')
+        // 章のまとめのカード: 読む表示が既定で、鉛筆を押したカードだけ編集欄になり、確定でそのカードを保存する(下の帯の保存は無い)
+        const card = `document.querySelector('[data-digest-card]')`
+        await assert(`${card} && ${card}.textContent.includes('「検証のまとめ。」') && ${card}.textContent.includes('重要度 0.60') && !${card}.querySelector('textarea') && ![...document.querySelectorAll('button')].some(e=>e.textContent.trim()==='まとめを保存')`, 'まとめのカードは読む表示で、下の帯の「まとめを保存」は無い')
+        await js(`${card}.querySelector('button[aria-label="このまとめを編集"]').click()`)
+        await pause(300)
+        await assert(`!!${card}.querySelector('textarea') && document.activeElement===${card}.querySelector('textarea')`, '鉛筆を押すとそのカードが編集欄になり、本文にフォーカスが入る')
+        await input('[data-digest-card] textarea', '検証のまとめ(直した)。')
+        await assert(`document.querySelector('.scene-detail-meta button[data-shown-key=""]').textContent.includes('未保存')`, '確定していない変更があると、一覧の「章のまとめ」の行に未保存と出る')
+        await click('確定')
+        await pause(600)
+        const savedDigest = (await (await fetch(base + '/groups')).json()).find((g) => g.title === '検証章')
+        const savedSummary = (await (await fetch(base + `/groups/${savedDigest.id}/digest`)).json()).digest_events[0].payload.summary
+        await assert(`${card}.textContent.includes('「検証のまとめ(直した)。」') && !${card}.querySelector('textarea') && ${JSON.stringify(savedSummary)}==='検証のまとめ(直した)。'`, '確定するとそのカードだけ保存して読む表示に戻る')
+        // 本文を押しても編集に入らない(編集は鉛筆だけ)。鉛筆で開いて Esc で取り消すと保存値に戻る
+        await js(`${card}.querySelector('.leading-relaxed').click()`)
+        await pause(300)
+        await assert(`!${card}.querySelector('textarea')`, 'まとめの本文をクリックしても編集に入らない')
+        await js(`${card}.querySelector('button[aria-label="このまとめを編集"]').click()`)
+        await pause(300)
+        await input('[data-digest-card] textarea', '捨てる変更')
+        await js(`${card}.querySelector('textarea').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`)
+        await pause(300)
+        await assert(`!${card}.querySelector('textarea') && ${card}.textContent.includes('「検証のまとめ(直した)。」') && !document.querySelector('.scene-detail-meta button[data-shown-key=""]').textContent.includes('未保存')`, '鉛筆で開いて Esc で取り消すと保存値の読む表示に戻る')
+        writeFileSync(join(target, 'chapter-digest-cards.png'), (await win.webContents.capturePage()).toPNG())
       }
       const before = wide.meta.width
       await js(`(() => {const el=document.querySelector('.scene-detail-divider');const rect=el.getBoundingClientRect();el.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,clientX:rect.x,clientY:rect.y+30}));window.dispatchEvent(new PointerEvent('pointermove',{clientX:rect.x+60,clientY:rect.y+30}));window.dispatchEvent(new PointerEvent('pointerup'))})()`)
@@ -1098,7 +1127,8 @@ store.save_chat_messages(chat['id'], [
       if (!(Math.abs(asideDragged.aside.width - 320) < 4 && Number(await js(`localStorage.getItem(${JSON.stringify(widthKey + 'Aside')})`)) === Math.round(asideDragged.aside.width) && asideDragged.meta.x >= asideDragged.aside.right - 1 && asideDragged.main.x >= asideDragged.meta.right - 1)) errors.push('左の境界のドラッグで挿絵・設定の列が広がっていない: ' + JSON.stringify(asideDragged))
       else console.log('PASS 左の境界のドラッグで挿絵・設定の列を広げ、幅を保存')
       // 左右の余白: 中身・タブの行の「閉じる」・下のボタンの端を 20px に揃える(スクロールバーの有無で変わらない)。
-      const edges = await js(`(() => {const panel=document.querySelector('.scene-detail').getBoundingClientRect();const visible=(q)=>[...document.querySelectorAll(q)].filter(e=>e.getClientRects().length);const close=visible('button').filter(e=>e.textContent.trim()==='閉じる').map(e=>e.getBoundingClientRect()).filter(r=>r.right<=panel.right+1 && r.right>panel.right-60 && Math.abs(r.bottom-panel.top)<60)[0];const footer=[...document.querySelector('.scene-detail').children].at(-1);const last=[...footer.querySelectorAll('button')].at(-1).getBoundingClientRect();const field=document.querySelector('.scene-detail-main input, .scene-detail-main textarea, .scene-detail-main p').getBoundingClientRect();const left=document.querySelector('.scene-detail-aside > div').getBoundingClientRect();return {close:panel.right-close.right,footer:panel.right-last.right,field:panel.right-field.right,left:left.x-panel.x}})()`)
+      // 章タブには下の帯が無い(まとめはカードごとに確定する)ので、下のボタンは測らない
+      const edges = await js(`(() => {const panel=document.querySelector('.scene-detail').getBoundingClientRect();const visible=(q)=>[...document.querySelectorAll(q)].filter(e=>e.getClientRects().length);const close=visible('button').filter(e=>e.textContent.trim()==='閉じる').map(e=>e.getBoundingClientRect()).filter(r=>r.right<=panel.right+1 && r.right>panel.right-60 && Math.abs(r.bottom-panel.top)<60)[0];const footer=[...document.querySelector('.scene-detail').children].at(-1);const field=document.querySelector('.scene-detail-main input, .scene-detail-main textarea, .scene-detail-main p').getBoundingClientRect();const left=document.querySelector('.scene-detail-aside > div').getBoundingClientRect();const edges={close:panel.right-close.right,field:panel.right-field.right,left:left.x-panel.x};if(!footer.classList.contains('scene-detail-layout'))edges.footer=panel.right-[...footer.querySelectorAll('button')].at(-1).getBoundingClientRect().right;return edges})()`)
       if (!Object.values(edges).every((value) => Math.abs(value - 20) < 1.5)) errors.push('詳細エリアの左右の端が 20px に揃っていない: ' + JSON.stringify(edges))
       else console.log('PASS 詳細エリアの中身・閉じる・下のボタンの端が左右 20px に揃う')
       writeFileSync(join(target, 'details-three.png'), (await win.webContents.capturePage()).toPNG())
@@ -1226,6 +1256,10 @@ store.save_chat_messages(chat['id'], [
   await pause(200)
   // 読む表示が既定。入力欄は並ばず、鉛筆を押した項目だけ編集欄になる。
   await assert(`(() => {const body=document.querySelector('.character-editor-body');return !body.querySelector('textarea') && [...body.querySelectorAll('p')].some(e=>e.textContent==='保存済みプロフィール') && !document.querySelector('.character-editor-id input:not([type="file"])') && !!document.querySelector('button[aria-label="プロフィールを編集"]') && [...body.querySelectorAll('button')].some(e=>e.textContent.trim()==='+ 外見を書く')})()`, 'キャラクターは読む表示が既定で、空の項目は書き始める案内を出す')
+  // 本文を押しても編集に入らない(編集は鉛筆だけ。2026-10-19 ユーザー指摘)
+  await js(`[...document.querySelectorAll('.character-editor-body p')].find(e=>e.textContent==='保存済みプロフィール').click()`)
+  await pause(200)
+  await assert(`!document.querySelector('.character-editor-body textarea')`, '資料庫の本文をクリックしても編集に入らない(編集は鉛筆だけ)')
   await js(`document.querySelector('button[aria-label="プロフィールを編集"]').click()`)
   await pause(200)
   const profileSelector = '[data-edit-group="profile"] textarea'

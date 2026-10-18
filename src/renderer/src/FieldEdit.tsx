@@ -3,12 +3,12 @@ import { Markdown } from './Markdown'
 import UnsavedBadge from './UnsavedBadge'
 
 /**
- * 資料庫の「読む表示」の部品。資料は読む表示が既定で、鉛筆(または本文)を押した項目だけを
+ * 資料庫の「読む表示」の部品。資料は読む表示が既定で、鉛筆を押した項目だけを
  * 編集欄にし、項目ごとに確定・取り消しする(docs/design/style-guide.md)。
  * 編集欄を包む要素には data-edit-group を付ける(フォーカスとキー操作の単位)。
  */
 
-/** 見出しの横に置く鉛筆。小さいので、本文側(ReadText)からも編集に入れるようにする */
+/** 見出しの横に置く鉛筆。編集に入るのはこれだけ(本文のクリックでは入らない。2026-10-19 ユーザー指摘) */
 export function EditPencil({ label, onClick }: { label: string; onClick: () => void }): React.JSX.Element {
   return (
     <button
@@ -60,10 +60,12 @@ export function EditActions({ dirty, saving, blocked, error, onCommit, onCancel 
   )
 }
 
-/** 読む表示の本文。押すと編集に入る(文字を選択してコピーするときは開かない)。空なら書き始める案内を出す */
+/** 読む表示の本文。押しても編集には入らない(編集は見出しの鉛筆から。クリックで即編集だと鉛筆の意味が無い。
+ *  2026-10-19 ユーザー指摘)。空のときだけ、書き始めるボタン「+ 〜を書く」を出す */
 export function ReadText({ value, emptyLabel, onEdit, markdown = false }: {
   value: string
   emptyLabel: string
+  /** 空のときの「+ 〜を書く」で編集に入る */
   onEdit: () => void
   markdown?: boolean
 }): React.JSX.Element {
@@ -74,15 +76,12 @@ export function ReadText({ value, emptyLabel, onEdit, markdown = false }: {
       </button>
     )
   }
-  const open = (): void => {
-    if (!window.getSelection()?.toString()) onEdit()
-  }
   return markdown ? (
-    <div data-write-action onClick={open} className="cursor-text text-[13px] leading-relaxed" style={{ color: 'var(--text)' }}>
+    <div className="text-[13px] leading-relaxed" style={{ color: 'var(--text)' }}>
       <Markdown text={value} />
     </div>
   ) : (
-    <p data-write-action onClick={open} className="cursor-text whitespace-pre-wrap text-[13px] leading-relaxed" style={{ color: 'var(--text)' }}>
+    <p className="whitespace-pre-wrap text-[13px] leading-relaxed" style={{ color: 'var(--text)' }}>
       {value}
     </p>
   )
