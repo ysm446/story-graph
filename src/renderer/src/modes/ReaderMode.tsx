@@ -581,10 +581,11 @@ function ReaderMode({
         </h2>
         {stale && (
           <span
-            className="rounded px-1.5 py-px text-[10px] uppercase"
+            className="rounded px-1.5 py-px text-[10px]"
             style={{ background: 'rgba(239,68,68,0.12)', color: 'var(--danger-text)' }}
+            data-tip="このシーンか上流が編集されたので、清書が古くなっています"
           >
-            stale
+            要更新
           </span>
         )}
         <div className="ml-auto flex gap-1.5">
@@ -939,7 +940,7 @@ function ReaderMode({
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           {scenes.length === 0 ? (
             <div className="pt-16 text-center text-[13px]" style={{ color: 'var(--text-faint)' }}>
-              正史パスにシーンがありません。構造モードで物語を作成してください。
+              正史にシーンがありません。構造モードで物語を作成してください。
             </div>
           ) : (
             (() => {
@@ -1056,7 +1057,7 @@ function ReaderMode({
             <div className="pt-16 text-center text-[13px]" style={{ color: 'var(--text-faint)' }}>
               {scopeGroup
                 ? `「${scopeGroup.title}」にシーンがありません。`
-                : '正史パスにシーンがありません。構造モードで物語を作成してください。'}
+                : '正史にシーンがありません。構造モードで物語を作成してください。'}
             </div>
           )}
           {scenes.map((scene) => {

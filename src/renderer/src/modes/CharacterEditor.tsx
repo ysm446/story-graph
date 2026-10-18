@@ -393,7 +393,7 @@ export default function CharacterEditor({
                     value={draft.color ?? DEFAULT_CHAR_COLOR}
                     onChange={(e) => setDraft((d) => ({ ...d, color: e.target.value }))}
                     className="color-swatch block h-11 w-12 cursor-pointer"
-                    data-tip="ノード・関係図・チャットで使われるキャラの色"
+                    data-tip="シーンのカード・関係図・チャットで使われるキャラの色"
                   />
                 </div>
               </div>

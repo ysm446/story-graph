@@ -836,7 +836,7 @@ export default function SettingsMode({ onImported }: {
                     </div>
                   </div>
                 </div>
-                <p className="settings-field-hint">ノードエリアの右下に表示される全体図です。</p>
+                <p className="settings-field-hint">キャンバスの右下に表示される全体図です。</p>
               </div>
               <div className="settings-field">
                 <div className="settings-field-header">
@@ -897,7 +897,7 @@ export default function SettingsMode({ onImported }: {
                   </div>
                 </div>
                 <p className="settings-field-hint">
-                  ノードをドラッグしたとき、背景のドットと同じ 20px の目に合わせて置きます。
+                  カードをドラッグしたとき、背景のドットと同じ 20px の目に合わせて置きます。
                   整列(⟲)や新しいシーンの自動配置も同じ目に乗ります。
                 </p>
               </div>

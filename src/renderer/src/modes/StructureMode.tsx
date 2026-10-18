@@ -2732,7 +2732,7 @@ function StructureModeInner({
                     style={{ background: 'var(--accent)' }}
                     data-tip={
                       selectedId
-                        ? '選択ノードの子としてシーンを追加'
+                        ? '選択したシーンの続きとしてシーンを追加'
                         : activeGroup
                           ? `「${activeGroup.title}」の末尾(出口の手前)にシーンを追加`
                           : '正史の末尾にシーンを追加'
@@ -2759,8 +2759,8 @@ function StructureModeInner({
                       onClick={() => void handleInsertAfter()}
                       className="flex items-center rounded-lg border px-2.5 py-2 shadow-lg shadow-black/30"
                       style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-                      data-tip="選択ノードと後続シーンの間に新しいシーンを割り込ませる"
-                      aria-label="選択ノードの後ろに割り込ませる"
+                      data-tip="選択したシーンと次のシーンの間に新しいシーンを割り込ませる"
+                      aria-label="選択したシーンの後ろに割り込ませる"
                     >
                       <Icon name="insert" size={15} />
                     </button>
@@ -2823,9 +2823,9 @@ function StructureModeInner({
                         }}
                         disabled={!selectedId}
                         className="accent-action w-full rounded-lg border px-3 py-1.5 text-[13px] font-medium disabled:opacity-40"
-                        data-tip="選択ノードから what-if 分岐を draft として生成"
+                        data-tip="選択したシーンから what-if の分岐を下書きとして生成"
                       >
-                        ⑂ 選択ノードから分岐を生成
+                        ⑂ 選択したシーンから分岐を生成
                       </button>
                       {generating && (
                         <button
@@ -2894,12 +2894,12 @@ function StructureModeInner({
             <Panel position="top-right">
               <button
                 onClick={() => void realignLayout()}
-                aria-label="ノードを整列"
+                aria-label="カードを整列"
                 className="rounded-lg border px-2.5 py-1.5 text-[13px] shadow-lg shadow-black/30"
                 style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
                 data-tip={
                   effectiveView === 'chapters'
-                    ? '章カードと未分類のノードだけを整列する(章の中は変えません)'
+                    ? '章カードと未分類のシーンだけを整列する(章の中は変えません)'
                     : effectiveView === 'focused'
                       ? selectedCount >= 2
                         ? `選択中の ${selectedCount} シーンだけを整列する`
@@ -3301,7 +3301,7 @@ function StructureModeInner({
                   },
                   {
                     label: 'まとめて切り離す',
-                    hint: '親エッジを切って島にする',
+                    hint: '前のシーンとのつながりを切って独立させる',
                     group: 'danger',
                     run: () => void detachNodes(menu.targets)
                   },
@@ -3669,7 +3669,7 @@ function StructureModeInner({
               )
             ) : (
               <div className="pt-8 text-center text-[12px]" style={{ color: 'var(--text-faint)' }}>
-                ノードを選択してください
+                シーンを選択してください
               </div>
             )}
             </>

@@ -433,7 +433,7 @@ export default function RelationGraph({
   if (canonPath.length === 0) {
     return (
       <div className="pt-8 text-center text-[12px]" style={{ color: 'var(--text-faint)' }}>
-        正史パスにシーンがありません
+        正史にシーンがありません
       </div>
     )
   }
@@ -755,7 +755,7 @@ export default function RelationGraph({
         </div>
       )}
       <p className="text-[11px]" style={{ color: 'var(--text-faint)' }}>
-        ノードクリック = エゴ切替 / ノードドラッグ = 配置(保存) / エッジクリック = 履歴 /
+        人物をクリック = その人物から見た図 / 人物をドラッグ = 配置(保存) / 矢印をクリック = 履歴 /
         ホイール = ズーム / 背景ドラッグ = パン / 背景ダブルクリック = リセット
       </p>
 

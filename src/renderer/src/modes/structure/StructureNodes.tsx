@@ -196,7 +196,7 @@ export function BeatNodeCard({ data, selected }: NodeProps<BeatFlowNode>): React
           <span
             className="shrink-0 rounded px-1.5 py-px text-[10px]"
             style={{ background: 'var(--bg-elevated)', color: 'var(--text-faint)' }}
-            data-tip={connected ? '正史ルート以外につながっているシーンです' : '他のノードと接続されていないシーンです'}
+            data-tip={connected ? '正史ルート以外につながっているシーンです' : '他のシーンと接続されていないシーンです'}
           >
             {connected ? '分岐' : '未接続'}
           </span>

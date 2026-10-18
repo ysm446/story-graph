@@ -582,7 +582,7 @@ export function BeatTab({
                         data-tip={
                           retired
                             ? 'このシーンでの退場を取り消す'
-                            : 'このシーンで退場させる(以降 cast に入れると警告)'
+                            : 'このシーンで退場させる(以降 Cast に入れると警告)'
                         }
                       >
                         {retired ? '⏎' : '⊗'}

@@ -158,6 +158,13 @@ function buildDisplay(messages: Array<Record<string, unknown>>): DisplayItem[] {
   return display
 }
 
+/** 相談チャットのツールの行に出す名前(関数名を画面に出さない。制作チャットの READ_STEP_LABELS と同じ言い方) */
+const CHAT_TOOL_LABELS: Record<string, string> = {
+  get_beats: 'シーン本文を読む',
+  get_state: '人物の状態を読む',
+  search_memories: '記憶を検索'
+}
+
 // 定型質問。読み取り3ツール(get_beats / get_state / search_memories)と
 // 文章での展開提案を含む並びにしている。詳細は docs/design/chat.md
 const TEMPLATES: { label: string; text: string }[] = [
@@ -1324,7 +1331,7 @@ export default function ChatDrawer({
                         </>
                       ) : (
                         <>
-                          <Icon name="search" size={12} /> {item.name}
+                          <Icon name="search" size={12} /> {CHAT_TOOL_LABELS[item.name] ?? item.name}
                         </>
                       )}
                     </div>

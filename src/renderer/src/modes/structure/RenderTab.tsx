@@ -359,11 +359,11 @@ export function RenderTab({
         )}
         {stale && (
           <span
-            className="rounded px-1.5 py-px text-[10px] uppercase"
+            className="rounded px-1.5 py-px text-[10px]"
             style={{ background: 'rgba(239,68,68,0.12)', color: 'var(--danger-text)' }}
             data-tip="このシーンか上流が編集されたので、清書が古くなっています"
           >
-            stale
+            要更新
           </span>
         )}
         {render && !liveText && (
@@ -382,7 +382,7 @@ export function RenderTab({
       </div>
       {!isCanon && (
         <p className="text-[11px] leading-relaxed" style={{ color: 'var(--text-faint)' }}>
-          正史パス外のシーンです。直前シーンの文末に接続する処理は効きません(単独で書かれます)。
+          正史から外れたシーンです。直前シーンの文末に接続する処理は効きません(単独で書かれます)。
         </p>
       )}
       {error && (

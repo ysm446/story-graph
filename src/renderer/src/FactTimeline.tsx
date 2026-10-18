@@ -41,7 +41,7 @@ function buildBands(path: StoryNode[], charId: string | null): { keys: string[];
       const scope = payload.scope ?? 'char'
       // charId 指定時はそのキャラの facts、null のときは世界の facts
       if (charId ? !(scope === 'char' && payload.char === charId) : scope !== 'world') continue
-      const key = payload.key ?? '(key なし)'
+      const key = payload.key ?? '(項目名なし)'
       if (!keys.includes(key)) keys.push(key)
       const previous = open.get(key)
       const value = valueLabel(payload.value)
@@ -125,9 +125,9 @@ export default function FactTimeline({
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       {keys.length === 0 ? (
         <div className="py-6 text-center text-[12px]" style={{ color: 'var(--text-faint)' }}>
-          このパスに fact_set がありません。
+          ここまでの道筋に事実のイベントがありません。
           <br />
-          シーンのイベントに fact_set(location / goal など)が入ると帯が並びます。
+          シーンのイベントに事実(location / goal など)が入ると帯が並びます。
         </div>
       ) : (
         <div className="detail-gutter inspector-scrollbar min-h-0 flex-1 overflow-auto py-3 pl-5 pr-2.5">

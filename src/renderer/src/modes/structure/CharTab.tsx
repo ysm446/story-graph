@@ -163,7 +163,7 @@ export function CharTab({
       <div className="scene-detail flex min-h-0 min-w-0 flex-1 flex-col">
       {node.cast.length === 0 && (
         <div className="text-[12px]" style={{ color: 'var(--text-faint)' }}>
-          cast が空です
+          このシーンの Cast が空です
         </div>
       )}
       {error && (
@@ -287,8 +287,8 @@ export function CharTab({
                 }}
                 className="rounded-md px-2 py-0.5 text-[12px] font-medium text-white"
                 style={{ background: 'var(--accent)' }}
-                aria-label="memory_add イベントとして記録"
-                data-tip="memory_add イベントとして記録"
+                aria-label="記憶のイベントとして記録"
+                data-tip="記憶のイベントとして記録"
               >
                 +
               </button>
@@ -314,14 +314,14 @@ export function CharTab({
             )}
             <div className="mt-1 flex gap-1">
               <input
-                placeholder="key"
+                placeholder="項目"
                 value={factKey}
                 onChange={(e) => setFactKey(e.target.value)}
                 className="w-24 rounded-md border px-2 py-1 text-[12px]"
                 style={inputStyle}
               />
               <input
-                placeholder="value"
+                placeholder="値"
                 value={factValue}
                 onChange={(e) => setFactValue(e.target.value)}
                 className="min-w-0 flex-1 rounded-md border px-2 py-1 text-[12px]"
@@ -336,8 +336,8 @@ export function CharTab({
                 }}
                 className="rounded-md px-2 py-0.5 text-[12px] font-medium text-white"
                 style={{ background: 'var(--accent)' }}
-                aria-label="fact_set イベントとして記録"
-                data-tip="fact_set イベントとして記録"
+                aria-label="事実のイベントとして記録"
+                data-tip="事実のイベントとして記録"
               >
                 +
               </button>
@@ -425,9 +425,9 @@ export function CharTab({
                 }}
                 className="rounded-md px-2 py-0.5 text-[12px] font-medium text-white"
                 style={{ background: 'var(--accent)' }}
-                data-tip="relationship_set イベントとして記録"
+                data-tip="関係のイベントとして記録"
               >
-                set
+                設定
               </button>
             </div>
           </section>
@@ -436,7 +436,7 @@ export function CharTab({
       )}
       {charId && !charState && state && (
         <div className="text-[12px]" style={{ color: 'var(--text-faint)' }}>
-          このキャラはまだ物語に登場していません(char_introduce 前)
+          このキャラはまだ物語に登場していません
         </div>
       )}
       </div>
