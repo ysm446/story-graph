@@ -710,6 +710,34 @@ store.save_chat_messages(chat['id'], [
     win.destroy()
     return
   }
+  if (process.argv.includes('--vram')) {
+    // 設定の推論パラメータ: Context Length の下に VRAM の目安(GGUF のヘッダーだけを読む)。
+    // 検証用のライブラリにモデルのパスを書く(STORY_GRAPH_APP_DATA が無いので、この PC の設定には書かない)
+    const { existsSync } = require('node:fs')
+    const model = process.env.CHECK_GGUF || 'D:/ai-models/llm/lmstudio-community/gemma-4-31B-it-GGUF/gemma-4-31B-it-Q6_K.gguf'
+    if (!existsSync(model)) { console.log('SKIP モデルがありません(CHECK_GGUF で指定): ' + model); win.destroy(); return }
+    await fetch(base + '/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ values: { llm_model_path: model, llm_ctx_size: '16384' } }) })
+    await js(`document.querySelector('button[aria-label="設定"]').click()`)
+    await pause(400)
+    await click('推論パラメータ')
+    const line = `document.querySelector('[data-vram-estimate]')`
+    for (let i = 0; i < 30; i++) { if (await js(`!!${line}`)) break; await pause(200) }
+    await assert(`(() => { const t = ${line}?.textContent ?? ''; return t.includes('VRAM の目安') && t.includes('約') && t.includes('重み') && t.includes('KV') && t.includes('搭載') })()`, 'Context Length の下に VRAM の目安(内訳と搭載量)が出る')
+    const totalAt = async () => js(`+${line}.querySelector('.font-medium').textContent.replace(/[^0-9.]/g, '')`)
+    const small = await totalAt()
+    writeFileSync(join(target, 'settings-vram.png'), (await win.webContents.capturePage()).toPNG())
+    // スライダーを最大(256K)へ: 目安が増え、搭載量に近ければ注意が出る
+    await js(`(() => { const el = [...document.querySelectorAll('input[type=range]')].find(e => e.closest('.settings-field')?.textContent.includes('Context Length')); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, el.max); el.dispatchEvent(new Event('input', { bubbles: true })) })()`)
+    await pause(300)
+    const large = await totalAt()
+    console.log('VRAM の目安: 16K ' + small + ' GB / 256K ' + large + ' GB')
+    await assert(`${large} > ${small}`, 'コンテキスト長を大きくすると、目安がその場で増える')
+    writeFileSync(join(target, 'settings-vram-256k.png'), (await win.webContents.capturePage()).toPNG())
+    if (errors.length) throw new Error(errors.join('\n'))
+    console.log('Screenshots: ' + target)
+    win.destroy()
+    return
+  }
   if (process.argv.includes('--embedding')) {
     // 設定の Embedding のページ: 起動時に読み込むかのオン・オフ(既定オン)と、いまの状態
     await js(`document.querySelector('button[aria-label="設定"]').click()`)

@@ -1181,6 +1181,39 @@ async def llm_status() -> dict[str, Any]:
     }
 
 
+@app.get("/llm/vram_estimate")
+async def llm_vram_estimate(ctx: str, model: str | None = None) -> dict[str, Any]:
+    """設定の Context Length の横に出す、VRAM の目安。ctx はカンマ区切りのコンテキスト長
+    (スライダーの目盛りぶんを 1 回で返し、動かすたびに問い合わせない)。
+    model を省くと、次に起動するときのモデル(設定の llm_model_path か既定)"""
+    from pathlib import Path
+
+    import gguf_info
+    import llama_manager
+    import system_info
+
+    path = model or llama_manager.resolve_model_path(store.get_settings())
+    try:
+        sizes = [int(c) for c in ctx.split(",") if c.strip()]
+    except ValueError:
+        raise HTTPException(400, f"ctx は数のカンマ区切りで指定してください: {ctx}")
+    if not Path(path).is_file():
+        raise HTTPException(404, f"モデルが見つかりません: {path}")
+    try:
+        # ヘッダーだけを読むが、語彙の配列を読み飛ばすのに数十 ms かかるのでスレッドへ逃がす
+        profile = await asyncio.to_thread(gguf_info.model_profile, path)
+    except (OSError, ValueError, EOFError) as e:
+        raise HTTPException(422, f"GGUF のヘッダーを読めませんでした: {path}: {e}")
+    resources = system_info.resources()
+    return {
+        "model": path,
+        "architecture": profile["architecture"],
+        "context_length": profile["context_length"],
+        "estimates": [gguf_info.estimate_bytes(profile, n) for n in sizes],
+        "vram_total": resources.get("vram_total"),
+    }
+
+
 @app.post("/llm/start")
 async def llm_start() -> dict[str, Any]:
     try:

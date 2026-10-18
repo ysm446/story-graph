@@ -388,6 +388,17 @@ export const api = {
       models_dir_exists: boolean
     }>('/models'),
 
+  /** 設定の Context Length の横に出す VRAM の目安(バイト)。ctx ごとに 1 件。model を省くと次に起動するモデル */
+  vramEstimate: (ctx: readonly number[], model?: string) =>
+    request<{
+      model: string
+      architecture: string
+      /** モデルが扱える最大のコンテキスト長(0 = 不明) */
+      context_length: number
+      estimates: Array<{ ctx: number; weights: number; kv: number; compute: number; total: number }>
+      vram_total: number | null
+    }>(`/llm/vram_estimate?ctx=${ctx.join(',')}${model ? `&model=${encodeURIComponent(model)}` : ''}`),
+
   llmStatus: () =>
     request<{
       base_url: string

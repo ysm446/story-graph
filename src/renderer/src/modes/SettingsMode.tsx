@@ -14,6 +14,7 @@ import PromptIoSection from './settings/PromptIoSection'
 import PromptLogViewer from './settings/PromptLogViewer'
 import { BuiltinProofreadPrompts, EditablePrompt, FixedPrompt } from './settings/prompts'
 import SnapshotsSection from './settings/SnapshotsSection'
+import VramEstimate from './settings/VramEstimate'
 import StylePresetsSection from './settings/StylePresetsSection'
 
 // lm-chat の SettingsPanel と同じ刻み
@@ -564,6 +565,7 @@ export default function SettingsMode({ onImported }: {
                     <span key={p}>{formatCtxSizeLabel(p)}</span>
                   ))}
                 </div>
+                <VramEstimate ctxSize={ctxSize} presets={CTX_SIZE_PRESETS} modelPath={values.llm_model_path || currentModel} />
                 <p className="settings-field-hint">
                   llama-server の <code>--ctx-size</code>。変更は次回のサーバー起動から反映されます。
                 </p>
