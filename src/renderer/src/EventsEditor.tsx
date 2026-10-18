@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { api, isAbortError } from './api'
 import CharAvatar from './CharAvatar'
 import { Icon, type IconName } from './icons'
+import RelationBar from './RelationBar'
 import { enqueueTask, notifyGraphChanged, useTaskFor } from './tasks'
 import type { Character, EventInput, StateSnapshot, StoryEvent, StoryNode } from './types'
 import { useElapsedSeconds } from './useElapsed'
@@ -148,33 +149,17 @@ function RelationChange({
       : delta < -0.005
         ? { text: '▼ 悪くなった', color: 'var(--rel-negative)' }
         : { text: '変わらず', color: 'var(--text-faint)' }
-  const pos = (score: number): string => `${(score + 1) * 50}%`
   return (
     <div className="mt-1">
-      {/* キャラタブの関係のバーと同じ形: 0 を中心に、好意は右へ・反感は左へ。直前の位置は細い縦線で残す */}
+      {/* キャラタブの関係のバーと同じ形。直前の値は同じ色の薄い塗りで下に敷く */}
       <div className="flex items-center gap-2 text-[10px]" style={{ color: 'var(--text-faint)' }}>
         反感
-        <div
-          className="relative h-1.5 flex-1 overflow-hidden rounded-full"
-          style={{ background: 'var(--bg-input)' }}
-          data-tip={`好感度 ${before === null ? 'なし' : before.toFixed(2)} → ${after.toFixed(2)}`}
-        >
-          <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2" style={{ background: 'var(--border-strong)' }} />
-          <div
-            className="absolute inset-y-0 rounded-full"
-            style={{
-              width: `${Math.abs(after) * 50}%`,
-              [after >= 0 ? 'left' : 'right']: '50%',
-              background: after >= 0 ? 'var(--rel-positive)' : 'var(--rel-negative)'
-            }}
-          />
-          {before !== null && (
-            <div
-              className="absolute inset-y-0 w-0.5 -translate-x-1/2"
-              style={{ left: pos(before), background: 'var(--text-dim)' }}
-            />
-          )}
-        </div>
+        <RelationBar
+          score={after}
+          before={before}
+          className="flex-1"
+          tip={`好感度 ${before === null ? 'なし' : before.toFixed(2)} → ${after.toFixed(2)}(薄い塗りが前、濃い塗りが今)`}
+        />
         好意
       </div>
       <div className="mt-0.5 flex flex-wrap items-baseline gap-x-2 text-[11px]">

@@ -2,6 +2,7 @@ import DetailSplit from '../../DetailSplit'
 import { useEffect, useState } from 'react'
 import { api } from '../../api'
 import CharAvatar from '../../CharAvatar'
+import RelationBar from '../../RelationBar'
 import type { Character, StateSnapshot, StoryEvent, StoryNode } from '../../types'
 import { latestEventInputs } from './events'
 import { NodeThumb } from './StructureNodes'
@@ -356,24 +357,11 @@ export function CharTab({
                   <span className="min-w-0 flex-1 truncate">{nameOf(target)}</span>
                 </span>
                 {/* 0 を中心に、好意は右へ・反感は左へ伸ばす(-1.0〜+1.0) */}
-                <div
-                  className="relative h-1.5 flex-1 overflow-hidden rounded-full"
-                  style={{ background: 'var(--bg-input)' }}
-                  data-tip={`${nameOf(target)} への好感度 ${rel.score.toFixed(2)}`}
-                >
-                  <div
-                    className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2"
-                    style={{ background: 'var(--border-strong)' }}
-                  />
-                  <div
-                    className="absolute inset-y-0 rounded-full"
-                    style={{
-                      width: `${Math.abs(rel.score) * 50}%`,
-                      [rel.score >= 0 ? 'left' : 'right']: '50%',
-                      background: rel.score >= 0 ? 'var(--rel-positive)' : 'var(--rel-negative)'
-                    }}
-                  />
-                </div>
+                <RelationBar
+                  score={rel.score}
+                  className="flex-1"
+                  tip={`${nameOf(target)} への好感度 ${rel.score.toFixed(2)}`}
+                />
                 <span className="w-10 text-right tabular-nums" style={{ color: 'var(--text)' }}>
                   {rel.score.toFixed(2)}
                 </span>
