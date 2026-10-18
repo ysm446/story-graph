@@ -8,6 +8,9 @@ import ProofreadTextarea from '../ProofreadTextarea'
 import type { Place } from '../types'
 import SceneUsage, { type SceneUsageProps } from '../SceneUsage'
 
+/** 新しい場所の色。色の欄の「既定の色に戻す」もこの色にする */
+export const DEFAULT_PLACE_COLOR = '#5a8fa7'
+
 const EDITABLE_FIELDS = ['name', 'color', 'description', 'atmosphere', 'reading'] as const
 
 const FIELD_DEFS: Array<{ key: 'description' | 'atmosphere'; label: string; short: string; rows: number }> = [
@@ -329,18 +332,31 @@ export default function PlaceEditor({
                   style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
                 />
               </label>
-              <label className="block shrink-0">
-                <span className="mb-1 block text-[12px]" style={{ color: 'var(--text-dim)' }}>
-                  色
-                </span>
+              {/* 戻すボタンを label の中に置くと、押したときに色の選択も開くので div で包む */}
+              <div className="shrink-0">
+                <div className="mb-1 flex items-center justify-between">
+                  <span className="text-[12px]" style={{ color: 'var(--text-dim)' }}>
+                    色
+                  </span>
+                  <button
+                    onClick={() => setDraft((d) => ({ ...d, color: DEFAULT_PLACE_COLOR }))}
+                    disabled={(draft.color ?? '').toLowerCase() === DEFAULT_PLACE_COLOR}
+                    aria-label="既定の色に戻す"
+                    data-tip={`既定の色(${DEFAULT_PLACE_COLOR})に戻す`}
+                    className="rounded-md p-0.5 hover:bg-[var(--accent-soft)] disabled:opacity-50 disabled:hover:bg-transparent"
+                    style={{ color: 'var(--text-faint)' }}
+                  >
+                    <Icon name="rotateCcw" size={12} />
+                  </button>
+                </div>
                 <input
                   type="color"
-                  value={draft.color ?? '#5a8fa7'}
+                  value={draft.color ?? DEFAULT_PLACE_COLOR}
                   onChange={(e) => setDraft((d) => ({ ...d, color: e.target.value }))}
                   className="color-swatch block h-11 w-12 cursor-pointer"
                   data-tip="シーンカードの場所表示に使う色"
                 />
-              </label>
+              </div>
             </div>
             <label className="mt-3 block">
               <span className="mb-1 block text-[12px]" style={{ color: 'var(--text-dim)' }}>

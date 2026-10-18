@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, assetUrl } from '../api'
-import CharacterEditor from './CharacterEditor'
-import PlaceEditor from './PlaceEditor'
+import CharacterEditor, { DEFAULT_CHAR_COLOR } from './CharacterEditor'
+import PlaceEditor, { DEFAULT_PLACE_COLOR } from './PlaceEditor'
 import RelationGraph from '../RelationGraph'
 import type { Character, Group, Place, StoryGraph, StoryNode } from '../types'
 import { useWorkspace } from '../Workspace'
@@ -184,7 +184,7 @@ function CharactersMode(): React.JSX.Element {
     setCreating(true); setCreateError('')
     try {
       if (kind === 'places') {
-        const created = await api.createPlace({ name: '新しい場所', color: '#5a8fa7' })
+        const created = await api.createPlace({ name: '新しい場所', color: DEFAULT_PLACE_COLOR })
         await reload()
         setTab('places')
         setExpanded((value) => ({ ...value, places: true }))
@@ -192,7 +192,7 @@ function CharactersMode(): React.JSX.Element {
         setSelectedPlaceId(created.id)
         return
       }
-      const created = await api.createCharacter({ name: '新しいキャラクター', color: '#7c5af7' })
+      const created = await api.createCharacter({ name: '新しいキャラクター', color: DEFAULT_CHAR_COLOR })
       await reload()
       setTab('characters')
       setShowRelations(false)

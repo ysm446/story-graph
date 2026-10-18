@@ -30,6 +30,7 @@ export type IconName =
   | 'relation' // 左右の矢印(イベントの「関係」)
   | 'fact' // 荷札(イベントの「事実」)
   | 'more' // 横の三点(イベントの「その他」)
+  | 'rotateCcw' // 左回りの矢印(既定値に戻す)
 
 const PATHS: Record<IconName, React.JSX.Element> = {
   alignNodes: (
@@ -204,6 +205,13 @@ const PATHS: Record<IconName, React.JSX.Element> = {
       <circle cx="12" cy="12" r="1" />
       <circle cx="19" cy="12" r="1" />
       <circle cx="5" cy="12" r="1" />
+    </>
+  ),
+  // lucide の rotate-ccw
+  rotateCcw: (
+    <>
+      <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+      <path d="M3 3v5h5" />
     </>
   )
 }

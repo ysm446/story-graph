@@ -7,6 +7,7 @@ import ProofreadTextarea from '../ProofreadTextarea'
 import type { Character } from '../types'
 import SceneUsage, { type SceneUsageProps } from '../SceneUsage'
 import { EditActions, EditPencil, ReadText, editKeys as fieldEditKeys, focusEditGroup } from '../FieldEdit'
+import { Icon } from '../icons'
 
 /** キャラクターの編集(プロフィール・画像・声)。資料庫と、構造モードの詳細欄「資料」タブで共用する。
  *
@@ -14,6 +15,9 @@ import { EditActions, EditPencil, ReadText, editKeys as fieldEditKeys, focusEdit
  *  読む表示が既定で、鉛筆(または本文)を押した単位だけを編集欄にし、単位ごとに確定して保存する。
  *  人物を切り替えるときは親が `key` を変えて作り直す(下書き・編集状態を持ち越さない)。
  */
+
+/** 新しいキャラの色。色の欄の「既定の色に戻す」もこの色にする */
+export const DEFAULT_CHAR_COLOR = '#7c5af7'
 
 const EDITABLE_FIELDS = ['name', 'color', 'profile', 'appearance', 'voice', 'reading'] as const
 
@@ -367,18 +371,31 @@ export default function CharacterEditor({
                     style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
                   />
                 </label>
-                <label className="block shrink-0">
-                  <span className="mb-1 block text-[12px]" style={{ color: 'var(--text-dim)' }}>
-                    色
-                  </span>
+                {/* 戻すボタンを label の中に置くと、押したときに色の選択も開くので div で包む */}
+                <div className="shrink-0">
+                  <div className="mb-1 flex items-center justify-between">
+                    <span className="text-[12px]" style={{ color: 'var(--text-dim)' }}>
+                      色
+                    </span>
+                    <button
+                      onClick={() => setDraft((d) => ({ ...d, color: DEFAULT_CHAR_COLOR }))}
+                      disabled={(draft.color ?? '').toLowerCase() === DEFAULT_CHAR_COLOR}
+                      aria-label="既定の色に戻す"
+                      data-tip={`既定の色(${DEFAULT_CHAR_COLOR})に戻す`}
+                      className="rounded-md p-0.5 hover:bg-[var(--accent-soft)] disabled:opacity-50 disabled:hover:bg-transparent"
+                      style={{ color: 'var(--text-faint)' }}
+                    >
+                      <Icon name="rotateCcw" size={12} />
+                    </button>
+                  </div>
                   <input
                     type="color"
-                    value={draft.color ?? '#7c5af7'}
+                    value={draft.color ?? DEFAULT_CHAR_COLOR}
                     onChange={(e) => setDraft((d) => ({ ...d, color: e.target.value }))}
                     className="color-swatch block h-11 w-12 cursor-pointer"
                     data-tip="ノード・関係図・チャットで使われるキャラの色"
                   />
-                </label>
+                </div>
               </div>
               <label className="mt-3 block">
                 <span className="mb-1 block text-[12px]" style={{ color: 'var(--text-dim)' }}>
