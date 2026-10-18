@@ -3319,15 +3319,15 @@ function StructureModeInner({
           {namePrompt && (
             <div
               className="fixed inset-0 z-50 flex items-center justify-center"
-              style={{ background: 'rgba(0,0,0,0.55)' }}
+              style={{ background: 'rgba(0,0,0,0.6)' }}
               onClick={() => setNamePrompt(null)}
             >
               <div
-                className="w-[360px] max-w-[92vw] rounded-2xl border p-4"
+                className="w-[360px] max-w-[92vw] rounded-2xl border p-4 shadow-xl shadow-black/50"
                 style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)' }}
                 onClick={(e) => e.stopPropagation()}
               >
-                <h3 className="mb-2 text-[13px] font-semibold" style={{ color: 'var(--text)' }}>
+                <h3 className="mb-3 text-[14px] font-semibold" style={{ color: 'var(--text)' }}>
                   {namePrompt.label}
                 </h3>
                 <input
@@ -3344,8 +3344,8 @@ function StructureModeInner({
                     }
                     if (e.key === 'Escape') setNamePrompt(null)
                   }}
-                  className="w-full rounded-lg border px-2 py-1.5 text-[13px] outline-none"
-                  style={{ background: 'var(--bg-input)', borderColor: 'var(--accent-border)', color: 'var(--text)' }}
+                  className="w-full rounded-lg border px-3 py-1.5 text-[13px] outline-none"
+                  style={{ background: 'var(--bg-input)', borderColor: 'var(--border)', color: 'var(--text)' }}
                 />
                 <div className="mt-3 flex justify-end gap-2 text-[12px]">
                   <button onClick={() => setNamePrompt(null)} className="rounded-md border px-2 py-0.5 text-[11px]" style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }} data-tip="入力をやめて閉じます(Esc)">
@@ -3362,7 +3362,7 @@ function StructureModeInner({
                     className="rounded-md px-3 py-1 text-[12px] font-medium text-white disabled:opacity-40"
                     style={{ background: 'var(--accent)' }}
                   >
-                    OK
+                    確定
                   </button>
                 </div>
               </div>

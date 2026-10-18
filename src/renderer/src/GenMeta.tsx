@@ -158,11 +158,11 @@ export function SystemPromptModal({
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center"
-      style={{ background: 'rgba(0,0,0,0.55)' }}
+      style={{ background: 'rgba(0,0,0,0.6)' }}
       onClick={onClose}
     >
       <div
-        className="flex max-h-[85vh] w-[720px] max-w-[92vw] flex-col rounded-2xl border p-5"
+        className="flex max-h-[85vh] w-[720px] max-w-[92vw] flex-col rounded-2xl border p-4 shadow-xl shadow-black/50"
         style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)' }}
         onClick={(e) => e.stopPropagation()}
       >
@@ -196,7 +196,7 @@ export function SystemPromptModal({
         <div className="mt-3 flex justify-end">
           <button
             onClick={onClose}
-            className="rounded-lg border px-3 py-1 text-[12px]"
+            className="rounded-md border px-2 py-0.5 text-[11px]"
             style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
           >
             閉じる

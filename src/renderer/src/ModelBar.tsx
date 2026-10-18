@@ -121,27 +121,17 @@ function ModelModal({
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-6"
-      style={{ background: 'rgba(0,0,0,0.45)' }}
+      style={{ background: 'rgba(0,0,0,0.6)' }}
       onClick={() => !busy && onClose()}
     >
       <div
-        className="w-full max-w-xl rounded-2xl border p-4 shadow-2xl"
-        style={{ background: 'var(--bg-sidebar)', borderColor: 'var(--border-strong)' }}
+        className="w-full max-w-xl rounded-2xl border p-4 shadow-xl shadow-black/50"
+        style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)' }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="mb-3 flex items-center justify-between">
-          <span className="text-[13px] font-semibold" style={{ color: 'var(--text)' }}>
-            モデルを選択
-          </span>
-          <button
-            onClick={onClose}
-            disabled={busy}
-            className="rounded-md px-2 py-1 text-[13px] disabled:opacity-40"
-            style={{ color: 'var(--text-dim)' }}
-          >
-            閉じる
-          </button>
-        </div>
+        <h3 className="mb-3 text-[14px] font-semibold" style={{ color: 'var(--text)' }}>
+          モデルを選択
+        </h3>
         {models.length === 0 ? (
           <div className="rounded-xl border border-dashed px-4 py-8 text-center text-[12px]" style={{ borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }}>
             GGUF がありません: {modelsDir || 'models/'}
@@ -214,6 +204,18 @@ function ModelModal({
             選択するとモデルの読み込みを開始します(数分かかることがあります)。
           </p>
         )}
+        {/* 閉じるは下端の右(スタイルガイドのモーダルの節) */}
+        <div className="mt-3 flex justify-end">
+          <button
+            onClick={onClose}
+            disabled={busy}
+            className="rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-40"
+            style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+            data-tip={busy ? 'モデルの読み込みが終わるまで閉じられません' : 'モデルを変えずに閉じます'}
+          >
+            閉じる
+          </button>
+        </div>
       </div>
     </div>
   )

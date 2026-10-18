@@ -440,11 +440,11 @@ export default function App(): React.JSX.Element {
       {settingsOpen && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center"
-          style={{ background: 'rgba(0,0,0,0.55)' }}
+          style={{ background: 'rgba(0,0,0,0.6)' }}
           onClick={closeSettings}
         >
           <div
-            className="flex h-[85vh] w-[900px] max-w-[94vw] flex-col overflow-hidden rounded-2xl border"
+            className="flex h-[85vh] w-[900px] max-w-[94vw] flex-col overflow-hidden rounded-2xl border shadow-xl shadow-black/50"
             style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)' }}
             onClick={(e) => e.stopPropagation()}
           >
@@ -452,12 +452,13 @@ export default function App(): React.JSX.Element {
               className="flex shrink-0 items-center justify-between border-b px-4 py-2.5"
               style={{ borderColor: 'var(--border)' }}
             >
-              <span className="text-[13px] font-semibold" style={{ color: 'var(--text)' }}>
+              <h3 className="text-[14px] font-semibold" style={{ color: 'var(--text)' }}>
                 設定
-              </span>
+              </h3>
+              {/* 高さいっぱいの大きなモーダルだけ、ヘッダーの右端に ✕(スタイルガイドのモーダルの節) */}
               <button
                 onClick={closeSettings}
-                className="rounded-md px-2 py-1 text-[15px] leading-none"
+                className="flex h-6 w-6 items-center justify-center rounded-md text-[13px] leading-none hover:bg-[var(--accent-soft)]"
                 style={{ color: 'var(--text-dim)' }}
                 aria-label="閉じる"
                 data-tip="閉じる"

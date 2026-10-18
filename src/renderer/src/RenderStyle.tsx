@@ -316,11 +316,11 @@ export function PresetEditorModal({
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center"
-      style={{ background: 'rgba(0,0,0,0.55)' }}
+      style={{ background: 'rgba(0,0,0,0.6)' }}
       onClick={onClose}
     >
       <div
-        className="w-[560px] max-w-[92vw] rounded-2xl border p-5"
+        className="w-[560px] max-w-[92vw] rounded-2xl border p-4 shadow-xl shadow-black/50"
         style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)' }}
         onClick={(e) => e.stopPropagation()}
       >

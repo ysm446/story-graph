@@ -113,7 +113,7 @@ export default function ImageCropModal({
       onClick={onCancel}
     >
       <div
-        className="w-[520px] max-w-[92vw] rounded-2xl border p-4"
+        className="w-[520px] max-w-[92vw] rounded-2xl border p-4 shadow-xl shadow-black/50"
         style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)' }}
         onClick={(e) => e.stopPropagation()}
       >

@@ -1,7 +1,7 @@
 # UI スタイルガイド(色・タイポ・余白・部品)
 
 作成日時: 2026-08-09 16:00
-更新日時: 2026-10-19 06:07
+更新日時: 2026-10-19 06:09
 
 新しい画面や部品を足すときに **見た目を揃えるための具体値** をまとめる。
 [overview.md](overview.md) がアーキテクチャの入口なら、本書は UI の入口。
@@ -340,13 +340,24 @@ Tailwind の既定スケール(`1 = 4px`)をそのまま使う。**使う段は�
 
 // モーダル(オーバーレイをクリックで閉じ、中身は stopPropagation)
 <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.6)' }} onClick={onCancel}>
-  <div className="w-[520px] max-w-[92vw] rounded-2xl border p-4"
+  <div className="w-[520px] max-w-[92vw] rounded-2xl border p-4 shadow-xl shadow-black/50"
        style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)' }}
        onClick={(e) => e.stopPropagation()}>
     <h3 className="mb-3 text-[14px] font-semibold">タイトル</h3>
+    …
+    <div className="mt-3 flex justify-end gap-2">[取り消し(二次)] [確定(主ボタン)]</div>  // 見るだけのものは [閉じる(二次)]
 ```
 
 幅は `w-[520px] max-w-[92vw]` のように**固定幅 + ビューポート上限**。`z-50` を使う。
+
+モーダルはすべてこの型(2026-10-19 に統一。それまでは地の濃さ 0.45 / 0.55 / 0.6、面の色、影、タイトルの 13px / 14px、閉じる操作の形がモーダルごとに違った)。
+
+- 地は `rgba(0,0,0,0.6)`、面は `--bg-card` + `--border-strong` + `rounded-2xl` + `p-4` + `shadow-xl shadow-black/50`(拡大表示の `Lightbox` だけは別。§4 拡大表示)
+- タイトルは `h3`・`text-[14px] font-semibold`。説明を添えるときは `mb-1` にして、下に `text-[11px]`・`--text-faint` の文
+- **閉じる操作は下端の右**。確定のあるものは「取り消し(二次)… 確定(主ボタン)」、見るだけのものは二次ボタンの「閉じる」。
+  生成ウインドウ(画像の生成)は「[閉じる / 取り消し] …… [決定]」の並び(§4 画像のドロップ枠)
+- 例外: 高さいっぱいの大きなモーダル(設定)はヘッダーの行を持ち、その右端に ✕ の記号ボタン
+  (`flex h-6 w-6 items-center justify-center rounded-md text-[13px]`、hover で `--accent-soft`、`aria-label` と `data-tip` は「閉じる」)
 
 スクロール領域(`overflow-y-auto`)の中から出すメニューは、`absolute` だと領域の端で切り取られる。
 `createPortal` で `document.body` へ出し、`fixed` でボタンの位置(`getBoundingClientRect()`)に置く。

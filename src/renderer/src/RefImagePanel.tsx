@@ -355,7 +355,7 @@ export default function RefImagePanel({
           }}
         >
           <div
-            className="inspector-scrollbar max-h-[92vh] w-[640px] max-w-[92vw] overflow-y-auto rounded-2xl border p-4"
+            className="inspector-scrollbar max-h-[92vh] w-[640px] max-w-[92vw] overflow-y-auto rounded-2xl border p-4 shadow-xl shadow-black/50"
             style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)' }}
             onClick={(e) => e.stopPropagation()}
           >

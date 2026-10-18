@@ -167,7 +167,7 @@ export default function VoiceScriptModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.6)' }} onClick={handleClose}>
       <div
-        className="flex max-h-[92vh] w-[920px] max-w-[92vw] flex-col rounded-2xl border p-4"
+        className="flex max-h-[92vh] w-[920px] max-w-[92vw] flex-col rounded-2xl border p-4 shadow-xl shadow-black/50"
         style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)' }}
         onClick={(e) => e.stopPropagation()}
       >
