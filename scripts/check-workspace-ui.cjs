@@ -412,7 +412,12 @@ store.save_chat_messages(chat['id'], [
     await pause(600)
     const groups = `[...document.querySelectorAll('[data-event-group]')]`
     await assert(`${groups}.map(e => e.getAttribute('data-event-group') + ':' + e.querySelectorAll('[data-event-type]').length).join('|') === 'memory:2|relation:1|fact:2'`, 'Events は 記憶 / 関係 / 事実 の見出しに分かれ、件数 0 の「その他」は出さない')
-    await assert(`(() => { const [memory, relation] = ${groups}; return memory.querySelector('[data-event-type]').className.includes('border') && !relation.querySelector('[data-event-type]').className.includes('border') && !memory.textContent.includes('記憶を追加') })()`, '記憶はカード、関係は枠の無い 1 行で、種類の名前は見出しだけに出る')
+    // すべてカード。関係は「なし → 反感」のように段階の言葉で前後を出し、事実は「項目名 + 値」(キー = 値 にしない)
+    const card = (group) => `document.querySelector('[data-event-group="${group}"] [data-event-type]')`
+    await assert(`[...document.querySelectorAll('[data-event-type]')].every(e => e.className.includes('border')) && !document.querySelector('[data-event-group="memory"]').textContent.includes('記憶を追加')`, 'イベントはすべてカードで、種類の名前は見出しだけに出る')
+    for (let i = 0; i < 20; i++) { if (await js(`${card('relation')}.textContent.includes('悪くなった')`)) break; await pause(150) }
+    await assert(`(() => { const t = ${card('relation')}.textContent; return t.includes('ケン → アヤ') && t.includes('置いていかれた幼なじみ') && t.includes('なし → 反感') && t.includes('▼ 悪くなった') })()`, '関係は「ケン → アヤ」と一言、「なし → 反感」と変化の向きを言葉で出す')
+    await assert(`(() => { const facts = [...document.querySelectorAll('[data-event-group="fact"] [data-event-type]')].map(e => e.textContent); return facts.length === 2 && facts[0].includes('任務') && facts.every(t => !t.includes(' = ')) && facts[1].includes('世界') && facts[1].includes('冬の終わり') })()`, '事実は項目名と値で出し、世界の事実は「世界」と出す')
     {
       await js(`document.querySelector('[data-event-group]').scrollIntoView({ block: 'start' })`)
       await pause(200)
@@ -433,6 +438,16 @@ store.save_chat_messages(chat['id'], [
     await js(`document.querySelector('[data-event-group="relation"] button[aria-label="関係を手で追加"]').click()`)
     await pause(300)
     await assert(`!document.querySelector('[data-event-group="relation"] select')`, 'もう一度押すとフォームが閉じる')
+    // 直前に関係があるシーン: 通行止め では 老技師 → アヤ が 反感(-0.30) から ふつう(0.00) へ
+    await js(`[...document.querySelectorAll('.react-flow__node')].find(e=>e.textContent.includes(${JSON.stringify(example.scenes[2].title)})).dispatchEvent(new MouseEvent('click',{bubbles:true}))`)
+    for (let i = 0; i < 20; i++) { if (await js(`(${card('relation')}?.textContent ?? '').includes('良くなった')`)) break; await pause(150) }
+    await assert(`(() => { const t = ${card('relation')}.textContent; return t.includes('老技師 → アヤ') && t.includes('反感 → ふつう') && t.includes('▲ 良くなった') })()`, '直前に関係があれば「反感 → ふつう」と前後の段階を出す')
+    {
+      await js(`document.querySelector('[data-event-group="relation"]').scrollIntoView({ block: 'start' })`)
+      await pause(200)
+      const r = await js(`(() => { const a = document.querySelector('[data-event-group="relation"]').getBoundingClientRect(), b = document.querySelector('[data-event-group="fact"]').getBoundingClientRect(); return { x: Math.round(a.x - 8), y: Math.round(a.y - 4), width: Math.round(a.width + 16), height: Math.round(Math.min(b.bottom - a.y + 12, innerHeight - a.y + 4)) } })()`)
+      writeFileSync(join(target, 'events-relation-before.png'), (await win.webContents.capturePage(r)).toPNG())
+    }
     if (errors.length) throw new Error(errors.join('\n'))
     console.log('Screenshots: ' + target)
     win.destroy()

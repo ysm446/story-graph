@@ -207,6 +207,8 @@ export const api = {
       body: JSON.stringify({ events })
     }),
   getState: (nodeId: string) => request<StateSnapshot>(`/nodes/${nodeId}/state`),
+  /** そのシーンに入る直前の状態(関係が「どこからどこへ」動いたかを出すため) */
+  getStateBefore: (nodeId: string) => request<StateSnapshot>(`/nodes/${nodeId}/state_before`),
   validateNode: (nodeId: string) => request<{ errors: string[] }>(`/nodes/${nodeId}/validate`),
 
   // ---- 章グループ(docs/design/chapters.md) ----

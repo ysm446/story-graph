@@ -2743,6 +2743,14 @@ class Store:
         if commit:
             self.conn.commit()
 
+    def get_state_before(self, node_id: str) -> dict[str, Any]:
+        """node_id のイベントを当てる直前の状態(パス上の 1 つ前のノードの状態)。
+        先頭のノードなら空の状態。章のまとめは出口のノードで当たるので、親の状態がそのまま入口の状態になる"""
+        path = self.path_to(node_id)
+        if len(path) < 2:
+            return fold_mod.empty_state()
+        return self.get_state(path[-2])
+
     def get_state(self, node_id: str) -> dict[str, Any]:
         """ルートからのパス順に fold し、途中経過は state_cache に保存する(遅延再計算)。
 

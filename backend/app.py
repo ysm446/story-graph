@@ -1068,6 +1068,18 @@ async def node_state(node_id: str) -> dict[str, Any]:
         raise HTTPException(422, f"fold に失敗しました(不正なイベント): {type(e).__name__}: {e}")
 
 
+@app.get("/nodes/{node_id}/state_before")
+async def node_state_before(node_id: str) -> dict[str, Any]:
+    """そのシーンに入る直前の状態(パス上の 1 つ前のノードの状態。先頭なら空の状態)。
+    詳細欄のイベントで、関係が「どこからどこへ」動いたかを出すのに使う"""
+    if store.get_node(node_id) is None:
+        raise HTTPException(404, "node not found")
+    try:
+        return store.get_state_before(node_id)
+    except (KeyError, TypeError, ValueError) as e:
+        raise HTTPException(422, f"fold に失敗しました(不正なイベント): {type(e).__name__}: {e}")
+
+
 @app.get("/nodes/{node_id}/validate")
 async def node_validate(node_id: str) -> dict[str, Any]:
     return {"errors": store.validate(node_id)}

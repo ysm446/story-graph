@@ -120,3 +120,25 @@ def test_chat_stream_tools_reads_usage_from_empty_choices_chunk(monkeypatch):
     assert result["stats"]["prompt_tokens"] == 20
     assert result["stats"]["finish_reason"] == "stop"
     assert result["stats"]["model"] == "m"
+
+
+def test_state_before_is_parent_state(store, client):
+    """詳細欄のイベントで「前 → 後」を出すための、シーンに入る直前の状態"""
+    store.create_character({"id": "aya", "name": "綾"})
+    store.create_character({"id": "ken", "name": "健"})
+    rel = {"type": "relationship_update", "payload": {"char": "aya", "target": "ken", "delta": -0.2, "reason": "r"}}
+
+    async def check():
+        async with client as c:
+            assert (await c.put("/nodes/a/events", json={"events": [rel]})).status_code == 200
+            assert (await c.put("/nodes/b/events", json={"events": [rel]})).status_code == 200
+            before = (await c.get("/nodes/b/state_before")).json()
+            after = (await c.get("/nodes/b/state")).json()
+            assert before["chars"]["aya"]["relationships"]["ken"]["score"] == pytest.approx(-0.2)
+            assert after["chars"]["aya"]["relationships"]["ken"]["score"] == pytest.approx(-0.4)
+            # 先頭のノードの直前は、はじまりの状態(関係はまだ無い)
+            first = (await c.get("/nodes/a/state_before")).json()
+            assert "ken" not in first["chars"].get("aya", {}).get("relationships", {})
+            assert (await c.get("/nodes/missing/state_before")).status_code == 404
+
+    asyncio.run(check())

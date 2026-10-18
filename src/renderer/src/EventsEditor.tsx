@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { api, isAbortError } from './api'
 import CharAvatar from './CharAvatar'
 import { Icon, type IconName } from './icons'
 import { enqueueTask, notifyGraphChanged, useTaskFor } from './tasks'
-import type { Character, EventInput, StoryEvent, StoryNode } from './types'
+import type { Character, EventInput, StateSnapshot, StoryEvent, StoryNode } from './types'
 import { useElapsedSeconds } from './useElapsed'
 
 /** イベントの追加・編集・削除。
@@ -29,13 +29,13 @@ const TYPE_LABELS: Record<string, string> = {
 const ADDABLE_TYPES = Object.keys(TYPE_LABELS)
 
 /** 一覧の見出し。種類ごとに分けて並べ(同じ種類の中は保存順のまま)、件数 0 の見出しは出さない。
- *  addType = 見出しの「+」で開く手動イベントの型。記憶は長い文なのでカード、ほかは 1 行で詰める */
+ *  addType = 見出しの「+」で開く手動イベントの型 */
 type EventGroupKey = 'memory' | 'relation' | 'fact' | 'other'
-const EVENT_GROUPS: Array<{ key: EventGroupKey; label: string; icon: IconName; addType?: string; card: boolean }> = [
-  { key: 'memory', label: '記憶', icon: 'recall', addType: 'memory_add', card: true },
-  { key: 'relation', label: '関係', icon: 'relation', addType: 'relationship_update', card: false },
-  { key: 'fact', label: '事実', icon: 'fact', addType: 'fact_set', card: false },
-  { key: 'other', label: 'その他', icon: 'more', card: false }
+const EVENT_GROUPS: Array<{ key: EventGroupKey; label: string; icon: IconName; addType?: string }> = [
+  { key: 'memory', label: '記憶', icon: 'recall', addType: 'memory_add' },
+  { key: 'relation', label: '関係', icon: 'relation', addType: 'relationship_update' },
+  { key: 'fact', label: '事実', icon: 'fact', addType: 'fact_set' },
+  { key: 'other', label: 'その他', icon: 'more' }
 ]
 
 function eventGroupOf(type: string): EventGroupKey {
@@ -103,6 +103,95 @@ function eventCharId(type: string, payload: Payload): string | null {
   if (type === 'fact_set' && str(payload.scope) === 'world') return null
   const char = str(payload.char)
   return char || null
+}
+
+/** 関係の値(-1〜+1)の段階。「ふつう」の幅はスタイルガイドの「ほぼ中立」(絶対値 0.15 未満)に合わせる */
+function relationLevel(score: number): { word: string; color: string } {
+  if (score >= 0.6) return { word: '強い好意', color: 'var(--rel-positive)' }
+  if (score >= 0.15) return { word: '好意', color: 'var(--rel-positive)' }
+  if (score > -0.15) return { word: 'ふつう', color: 'var(--text-faint)' }
+  if (score > -0.6) return { word: '反感', color: 'var(--rel-negative)' }
+  return { word: '強い反感', color: 'var(--rel-negative)' }
+}
+
+/** 関係イベント 1 件の前後の値。before = null はこのシーンまで関係がまだ無かった */
+type RelationStep = { before: number | null; after: number }
+
+/** 関係が「どこからどこへ」動いたか。今の関係(段階の言葉 + バー)と今回の変化(▲▼ と言葉)を分けて出す。
+ *  符号付きの数だけだと、変化の向きと関係の良し悪しが区別できないため */
+function RelationChange({
+  type,
+  payload,
+  step
+}: {
+  type: string
+  payload: Payload
+  step: RelationStep | null
+}): React.JSX.Element {
+  // 直前の状態がまだ読めていないときは、イベントに書いてある数だけ出す
+  if (!step) {
+    return (
+      <div className="text-[11px]" style={{ color: 'var(--text-faint)' }}>
+        {type === 'relationship_set'
+          ? `関係を ${num(payload.value).toFixed(2)} に`
+          : `${num(payload.delta) >= 0 ? '▲' : '▼'} ${Math.abs(num(payload.delta)).toFixed(2)}`}
+      </div>
+    )
+  }
+  const { before, after } = step
+  const delta = after - (before ?? 0)
+  const from = before === null ? null : relationLevel(before)
+  const to = relationLevel(after)
+  const trend =
+    delta > 0.005
+      ? { text: '▲ 良くなった', color: 'var(--rel-positive)' }
+      : delta < -0.005
+        ? { text: '▼ 悪くなった', color: 'var(--rel-negative)' }
+        : { text: '変わらず', color: 'var(--text-faint)' }
+  const pos = (score: number): string => `${(score + 1) * 50}%`
+  return (
+    <div className="mt-1">
+      {/* キャラタブの関係のバーと同じ形: 0 を中心に、好意は右へ・反感は左へ。直前の位置は細い縦線で残す */}
+      <div className="flex items-center gap-2 text-[10px]" style={{ color: 'var(--text-faint)' }}>
+        反感
+        <div
+          className="relative h-1.5 flex-1 overflow-hidden rounded-full"
+          style={{ background: 'var(--bg-input)' }}
+          data-tip={`好感度 ${before === null ? 'なし' : before.toFixed(2)} → ${after.toFixed(2)}`}
+        >
+          <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2" style={{ background: 'var(--border-strong)' }} />
+          <div
+            className="absolute inset-y-0 rounded-full"
+            style={{
+              width: `${Math.abs(after) * 50}%`,
+              [after >= 0 ? 'left' : 'right']: '50%',
+              background: after >= 0 ? 'var(--rel-positive)' : 'var(--rel-negative)'
+            }}
+          />
+          {before !== null && (
+            <div
+              className="absolute inset-y-0 w-0.5 -translate-x-1/2"
+              style={{ left: pos(before), background: 'var(--text-dim)' }}
+            />
+          )}
+        </div>
+        好意
+      </div>
+      <div className="mt-0.5 flex flex-wrap items-baseline gap-x-2 text-[11px]">
+        <span style={{ color: 'var(--text-dim)' }}>
+          {from ? <span style={{ color: from.color }}>{from.word}</span> : 'なし'}
+          {' → '}
+          <span style={{ color: to.color }}>{to.word}</span>
+          <span className="tabular-nums" style={{ color: 'var(--text-faint)' }}>
+            ({after.toFixed(2)})
+          </span>
+        </span>
+        <span className="whitespace-nowrap" style={{ color: trend.color }}>
+          {trend.text}
+        </span>
+      </div>
+    </div>
+  )
 }
 
 function Row({ label, children }: { label: string; children: React.ReactNode }): React.JSX.Element {
@@ -414,6 +503,45 @@ export default function EventsEditor({
   const extractElapsed = useElapsedSeconds(extracting)
   // 抽出が終わったとき、インスペクタがまだそのシーンを映しているかの判定に使う
   const shownNodeId = useRef(node.id)
+  // このシーンに入る直前の状態(関係が「どこからどこへ」動いたかを出す)。
+  // 矢印キーで次々に切り替えると取得が複数走るので、古い応答は捨てる。
+  // どのシーンの分かも持ち、切り替えた直後に前のシーンの状態で計算しないようにする
+  const [before, setBefore] = useState<{ nodeId: string; state: StateSnapshot } | null>(null)
+  const beforeState = before?.nodeId === node.id ? before.state : null
+  const eventsKey = node.events.map((e) => e.id).join(',')
+  useEffect(() => {
+    let ignore = false
+    const nodeId = node.id
+    void api
+      .getStateBefore(nodeId)
+      .then((state) => {
+        if (!ignore) setBefore({ nodeId, state })
+      })
+      .catch(() => undefined)
+    return () => {
+      ignore = true
+    }
+  }, [node.id, node.updated_at, eventsKey])
+  // 関係イベントを保存順に当てて、1 件ごとの前後の値を出す(同じ二人の関係が 1 シーンで 2 回動くこともある)。
+  // 値の丸めはバックエンドの fold と同じく -1〜+1
+  const relationSteps = useMemo(() => {
+    if (!beforeState) return null
+    const scores = new Map<string, number | null>()
+    const steps = new Map<string, RelationStep>()
+    for (const e of node.events) {
+      if (e.type !== 'relationship_update' && e.type !== 'relationship_set') continue
+      const p = e.payload as Payload
+      const key = `${str(p.char)}\u0000${str(p.target)}`
+      const before = scores.has(key)
+        ? scores.get(key)!
+        : (beforeState.chars[str(p.char)]?.relationships?.[str(p.target)]?.score ?? null)
+      const raw = e.type === 'relationship_update' ? (before ?? 0) + num(p.delta) : num(p.value)
+      const after = Math.min(1, Math.max(-1, raw))
+      steps.set(e.id, { before, after })
+      scores.set(key, after)
+    }
+    return steps
+  }, [beforeState, node.events])
   shownNodeId.current = node.id
 
   // 検証結果とエラーは直前に見ていたシーンのものなので、切り替えたら捨てる
@@ -685,80 +813,76 @@ export default function EventsEditor({
               // 編集中は入力中の payload を見る(「だれの」を変えたらアイコンも追う)
               const payload = open ? editing.payload : (e.payload as Payload)
               const eventChar = characters.find((c) => c.id === eventCharId(e.type, payload))
-              // 見出しで種類は分かるので、型の名前は混ざる見出し(その他)と記憶の圧縮だけに出す
-              const showType = group.key === 'other' || e.type === 'memory_compress'
-              // 記憶はカード、関係・事実・その他は枠の無い 1 行。編集中は入力欄が要るのでカードにする
-              const card = group.card || open
-              const sourceBadge = (
-                <span
-                  className="shrink-0 rounded px-1.5 py-px text-[10px] uppercase"
-                  style={
-                    e.source === 'user'
-                      ? { background: 'var(--accent-soft)', color: 'var(--accent)' }
-                      : { background: 'var(--bg-input)', color: 'var(--text-faint)' }
-                  }
-                >
-                  {e.source}
-                </span>
-              )
-              const actions = (
-                <>
-                  <button
-                    onClick={() => setEditing(open ? null : { id: e.id, payload: { ...(e.payload as Payload) } })}
-                    className="text-[11px]"
-                    style={{ color: open ? 'var(--accent)' : 'var(--text-faint)' }}
-                    aria-label={open ? '編集を閉じる' : 'このイベントを編集'}
-                    data-tip={open ? '編集を閉じる' : 'このイベントを編集'}
-                  >
-                    {open ? '閉じる' : '✎'}
-                  </button>
-                  <button
-                    onClick={() => handleDelete(index)}
-                    disabled={saving || extracting}
-                    className="delete-action text-[11px]"
-                    aria-label="このイベントを削除"
-                    data-tip="このイベントを削除"
-                  >
-                    ✕
-                  </button>
-                </>
-              )
+              const isWorldFact = e.type === 'fact_set' && str(payload.scope) === 'world'
+              const isRelation = group.key === 'relation'
+              // 1 行目の見出し。種類は見出しで分かるので、だれ(関係は だれ → だれ)を出す。
+              // 混ざる「その他」と記憶の圧縮、編集中だけ種類の名前を出す
+              const heading = open
+                ? (TYPE_LABELS[e.type] ?? e.type)
+                : isRelation
+                  ? `${nameOf(str(payload.char))} → ${nameOf(str(payload.target))}`
+                  : isWorldFact
+                    ? '世界'
+                    : group.key === 'other' || e.type === 'memory_compress'
+                      ? `${TYPE_LABELS[e.type] ?? e.type}${eventChar ? `・${eventChar.name}` : ''}`
+                      : (eventChar?.name ?? '')
               return (
                 <div
                   key={e.id}
                   data-event-type={e.type}
-                  className={
-                    card
-                      ? 'mb-1.5 flex gap-2.5 rounded-lg border px-3 py-2 text-[12px]'
-                      : 'flex items-start gap-2 rounded-md px-2 py-1 text-[12px] hover:bg-[var(--bg-elevated)]'
-                  }
-                  style={card ? { background: 'var(--bg-elevated)', borderColor: 'var(--border)' } : undefined}
+                  className="mb-1.5 flex gap-2.5 rounded-lg border px-3 py-2 text-[12px]"
+                  style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border)' }}
                 >
-                  {/* 記憶・事実などが「だれのことか」をアイコンで示す。世界の事実は地球の線画、
-                      ほかにキャラに紐づかないものは行の頭を揃えるため同じ幅を空ける(カードは列ごと出さない) */}
+                  {/* 「だれのことか」をアイコンで示す。世界の事実は地球の線画、ほかにキャラに紐づかないものは列ごと出さない */}
                   {eventChar ? (
-                    <CharAvatar char={eventChar} size={card ? 28 : 20} />
+                    <CharAvatar char={eventChar} size={28} />
                   ) : (
-                    !card && (
+                    isWorldFact && (
                       <span
-                        className="flex h-5 w-5 shrink-0 items-center justify-center"
-                        style={{ color: 'var(--text-faint)' }}
+                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border"
+                        style={{ borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }}
                       >
-                        {e.type === 'fact_set' && str(payload.scope) === 'world' && <Icon name="globe" size={14} />}
+                        <Icon name="globe" size={15} />
                       </span>
                     )
                   )}
                   <div className="min-w-0 flex-1">
-                    {/* カードは 1 行目に だれの(種類) + 出どころ + 操作、本文は下に幅いっぱい */}
-                    {card && (
-                      <div className="mb-0.5 flex items-center gap-2">
-                        <span className="min-w-0 truncate font-medium" style={{ color: 'var(--text)' }}>
-                          {open || showType ? (TYPE_LABELS[e.type] ?? e.type) : (eventChar?.name ?? '')}
-                        </span>
-                        {sourceBadge}
-                        <span className="ml-auto flex shrink-0 items-center gap-2">{actions}</span>
-                      </div>
-                    )}
+                    {/* 1 行目に だれ + 出どころ + 操作、本文は下に幅いっぱい */}
+                    <div className="mb-0.5 flex items-center gap-2">
+                      <span className="min-w-0 truncate font-medium" style={{ color: 'var(--text)' }}>
+                        {heading}
+                      </span>
+                      <span
+                        className="shrink-0 rounded px-1.5 py-px text-[10px] uppercase"
+                        style={
+                          e.source === 'user'
+                            ? { background: 'var(--accent-soft)', color: 'var(--accent)' }
+                            : { background: 'var(--bg-input)', color: 'var(--text-faint)' }
+                        }
+                      >
+                        {e.source}
+                      </span>
+                      <span className="ml-auto flex shrink-0 items-center gap-2">
+                        <button
+                          onClick={() => setEditing(open ? null : { id: e.id, payload: { ...(e.payload as Payload) } })}
+                          className="text-[11px]"
+                          style={{ color: open ? 'var(--accent)' : 'var(--text-faint)' }}
+                          aria-label={open ? '編集を閉じる' : 'このイベントを編集'}
+                          data-tip={open ? '編集を閉じる' : 'このイベントを編集'}
+                        >
+                          {open ? '閉じる' : '✎'}
+                        </button>
+                        <button
+                          onClick={() => handleDelete(index)}
+                          disabled={saving || extracting}
+                          className="delete-action text-[11px]"
+                          aria-label="このイベントを削除"
+                          data-tip="このイベントを削除"
+                        >
+                          ✕
+                        </button>
+                      </span>
+                    </div>
                     {open ? (
                       <div className="mt-1">
                         <EventFields
@@ -794,23 +918,30 @@ export default function EventsEditor({
                           重要度 {num(payload.importance, 0.5).toFixed(2)} / 感情 {num(payload.emotion).toFixed(1)}
                         </span>
                       </div>
+                    ) : isRelation ? (
+                      <div>
+                        {/* 関係の一言(相関図の矢印に出る文)が主役 */}
+                        {str(payload.label) && (
+                          <div className="leading-relaxed" style={{ color: 'var(--text-dim)' }}>
+                            「{str(payload.label)}」
+                          </div>
+                        )}
+                        <RelationChange type={e.type} payload={payload} step={relationSteps?.get(e.id) ?? null} />
+                      </div>
+                    ) : e.type === 'fact_set' ? (
+                      // キー = 値 ではなく、項目名を小さなラベル、値を本文に(短ければ横に並び、長ければ折り返す)
+                      <div className="flex flex-wrap items-baseline gap-x-2 leading-relaxed">
+                        <span className="text-[11px]" style={{ color: 'var(--text-faint)' }}>
+                          {str(payload.key)}
+                        </span>
+                        <span style={{ color: 'var(--text-dim)' }}>{str(payload.value)}</span>
+                      </div>
                     ) : (
                       <div className="leading-relaxed" style={{ color: 'var(--text-dim)' }}>
-                        {showType && !card && (
-                          <span className="mr-1.5 font-medium" style={{ color: 'var(--text)' }}>
-                            {TYPE_LABELS[e.type] ?? e.type}
-                          </span>
-                        )}
                         {eventSummary(e.type, payload, nameOf)}
                       </div>
                     )}
                   </div>
-                  {!card && (
-                    <div className="flex shrink-0 items-center gap-2 pt-0.5">
-                      {sourceBadge}
-                      {actions}
-                    </div>
-                  )}
                 </div>
               )
             })}
