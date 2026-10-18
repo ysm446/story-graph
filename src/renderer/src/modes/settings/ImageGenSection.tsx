@@ -227,7 +227,7 @@ export default function ImageGenSection({
             placeholder="http://127.0.0.1:8188"
             onChange={(e) => setValues((v) => ({ ...v, comfy_base_url: e.target.value }))}
             onBlur={() => void save({ comfy_base_url: values.comfy_base_url ?? '' })}
-            className="w-full rounded-lg border px-3 py-2 text-[13px] outline-none"
+            className="w-full rounded-lg border px-3 py-1.5 text-[13px] outline-none"
             style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
           />
           <p className="settings-field-hint">空欄なら既定(127.0.0.1:8188)。自動起動もこのポートで行います。</p>
@@ -285,7 +285,7 @@ export default function ImageGenSection({
             }}
             disabled={workflows.length === 0}
             aria-label="既定のワークフロー"
-            className="w-full rounded-lg border px-3 py-2 text-[13px] outline-none disabled:opacity-50"
+            className="w-full rounded-lg border px-3 py-1.5 text-[13px] outline-none disabled:opacity-50"
             style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
           >
             {workflows.length === 0 && <option value="">(ワークフローの一覧を読めません)</option>}
@@ -370,7 +370,7 @@ export default function ImageGenSection({
             placeholder={COMFY_DEFAULT_NEGATIVE}
             onChange={(next) => setValues((v) => ({ ...v, comfy_negative: next }))}
             onBlur={() => void save({ comfy_negative: values.comfy_negative ?? '' })}
-            className="w-full rounded-lg border px-3 py-2 text-[13px] outline-none"
+            className="w-full rounded-lg border px-3 py-1.5 text-[13px] leading-relaxed outline-none"
             style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
           />
           <p className="settings-field-hint">空欄はプレースホルダの値。欄外クリックで保存されます。</p>
@@ -429,7 +429,7 @@ export default function ImageGenSection({
                 value={selectedVariant?.key ?? ''}
                 onChange={(e) => setSelectedKey(e.target.value)}
                 disabled={installing}
-                className="w-full rounded-lg border px-2 py-1.5 text-[13px]"
+                className="w-full rounded-lg border px-3 py-1.5 text-[13px]"
                 style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
               >
                 {allVariants.map((v) => (

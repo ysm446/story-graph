@@ -72,7 +72,7 @@ export function EditablePrompt({ label, value, placeholder, rows = 6, hint, aria
         aria-label={ariaLabel ?? label}
         onChange={(e) => onChange(e.target.value)}
         onBlur={onBlur}
-        className="w-full rounded-lg border px-3 py-2 text-[13px] leading-relaxed outline-none"
+        className="w-full rounded-lg border px-3 py-1.5 text-[13px] leading-relaxed outline-none"
         style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
       />
       <p className="settings-field-hint">{hint}</p>

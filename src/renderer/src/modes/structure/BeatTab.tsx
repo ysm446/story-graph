@@ -610,7 +610,7 @@ export function BeatTab({
                     if (e.key === 'Escape') setRetireTarget(null)
                   }}
                   placeholder="death / departure など"
-                  className="w-40 rounded-md border px-1.5 py-0.5 outline-none"
+                  className="w-40 rounded-md border px-2 py-0.5 text-[12px] outline-none"
                   style={{ background: 'var(--bg-input)', borderColor: 'var(--accent-border)' }}
                 />
                 {/* 「取り消し … 確定(右)」の順 */}
@@ -726,7 +726,7 @@ export function BeatTab({
                       const count = Math.min(9999, Math.max(1, Math.floor(Number(e.target.value)) || 1))
                       setDraft((d) => ({ ...d, elapsed_count: count }))
                     }}
-                    className="w-16 shrink-0 rounded-lg border px-2 py-1.5 text-[13px] tabular-nums outline-none"
+                    className="w-16 shrink-0 rounded-md border px-2 py-0.5 text-[12px] tabular-nums outline-none"
                     style={inputStyle}
                   />
                 )}

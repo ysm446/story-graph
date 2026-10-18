@@ -9,7 +9,7 @@ export default function VoiceRateSelect({ className = '' }: { className?: string
     <select
       value={String(rate)}
       onChange={(e) => setVoiceRate(Number(e.target.value))}
-      className={`rounded-md border px-1 py-0.5 text-[11px] tabular-nums outline-none ${className}`}
+      className={`rounded-md border px-2 py-0.5 text-[12px] tabular-nums outline-none ${className}`}
       style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
       aria-label="読み上げの速さ"
       data-tip="読み上げの速さ(合成し直さず、再生の速さだけを変えます。声の高さはそのまま)"

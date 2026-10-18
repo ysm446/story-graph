@@ -72,7 +72,7 @@ export default function VoiceProfilesCard(): React.JSX.Element {
         <select
           value={list?.narrator_profile_id ?? ''}
           onChange={(e) => void assignSetting('tts_narrator_profile', e.target.value)}
-          className="w-full rounded-lg border px-3 py-2 text-[13px] outline-none"
+          className="w-full rounded-lg border px-3 py-1.5 text-[13px] outline-none"
           style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
         >
           <option value="">(未設定: エンジンの既定の声)</option>
@@ -94,7 +94,7 @@ export default function VoiceProfilesCard(): React.JSX.Element {
         <select
           value={list?.chat_profile_id ?? ''}
           onChange={(e) => void assignSetting('tts_chat_profile', e.target.value)}
-          className="w-full rounded-lg border px-3 py-2 text-[13px] outline-none"
+          className="w-full rounded-lg border px-3 py-1.5 text-[13px] outline-none"
           style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
         >
           <option value="">(語り手の声)</option>

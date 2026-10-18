@@ -240,7 +240,7 @@ export default function VoiceScriptModal({
                   value={line.speaker}
                   onChange={(e) => update(i, { speaker: e.target.value })}
                   disabled={annotating}
-                  className="w-24 shrink-0 rounded-md border px-1 py-0.5 text-[11px] outline-none"
+                  className="w-24 shrink-0 rounded-md border px-2 py-0.5 text-[12px] outline-none"
                   style={inputStyle}
                   data-tip="話者"
                 >
@@ -254,7 +254,7 @@ export default function VoiceScriptModal({
                   value={line.emotion}
                   onChange={(e) => update(i, { emotion: e.target.value })}
                   disabled={annotating}
-                  className="w-20 shrink-0 rounded-md border px-1 py-0.5 text-[11px] outline-none"
+                  className="w-20 shrink-0 rounded-md border px-2 py-0.5 text-[12px] outline-none"
                   style={inputStyle}
                   data-tip="読むときの感情"
                 >
@@ -271,7 +271,7 @@ export default function VoiceScriptModal({
                   step={0.1}
                   disabled={annotating}
                   onCommit={(v) => update(i, { intensity: v })}
-                  className="w-12 shrink-0 rounded-md border px-1 py-0.5 text-[11px] tabular-nums outline-none"
+                  className="w-14 shrink-0 rounded-md border px-2 py-0.5 text-[12px] tabular-nums outline-none"
                   style={inputStyle}
                   data-tip="感情の強さ(0〜1)。0.8 以上で強めに演じます"
                 />
@@ -290,7 +290,7 @@ export default function VoiceScriptModal({
                   step={50}
                   disabled={annotating}
                   onCommit={(v) => update(i, { pause_after_ms: Math.round(v) })}
-                  className="w-16 shrink-0 rounded-md border px-1 py-0.5 text-[11px] tabular-nums outline-none"
+                  className="w-16 shrink-0 rounded-md border px-2 py-0.5 text-[12px] tabular-nums outline-none"
                   style={inputStyle}
                   data-tip="この行の後の間(ミリ秒)"
                 />

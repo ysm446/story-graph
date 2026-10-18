@@ -58,7 +58,7 @@ const DEFAULT_PAYLOADS: Record<string, Payload> = {
 }
 
 const inputStyle = { background: 'var(--bg-input)', borderColor: 'var(--border)' }
-const fieldClass = 'w-full rounded-md border px-2 py-1 text-[12px] outline-none'
+const fieldClass = 'w-full rounded-lg border px-3 py-1.5 text-[13px] outline-none'
 
 function num(value: unknown, fallback = 0): number {
   const n = Number(value)
@@ -245,7 +245,7 @@ function Slider({
         step={step}
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
-        className="w-16 rounded-md border px-1.5 py-0.5 text-right text-[12px] tabular-nums outline-none"
+        className="w-16 rounded-md border px-2 py-0.5 text-right text-[12px] tabular-nums outline-none"
         style={inputStyle}
       />
     </span>

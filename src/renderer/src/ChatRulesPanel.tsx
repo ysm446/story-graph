@@ -65,7 +65,7 @@ export default function ChatRulesPanel({ busy, open, onToggle, onDirty, onSaved 
       <AutoTextarea ariaLabel="制作エージェントへの指示" minRows={3} maxLength={6000} value={draft} placeholder={example}
         disabled={busy || saving || saved === null}
         onChange={(value) => { setDraft(value); setNotice('') }}
-        className="w-full shrink-0 rounded-md border px-2 py-0.5 text-[12px] outline-none"
+        className="w-full shrink-0 rounded-lg border px-3 py-1.5 text-[13px] leading-relaxed outline-none"
         style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }} />
       <p className="text-[11px]" style={{ color: 'var(--text-faint)' }}>「回答」「1シーンの本文」など対象を明記してください。空にして保存すると解除できます。</p>
       <div className="flex items-center gap-2">

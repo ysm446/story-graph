@@ -422,7 +422,7 @@ export function ChapterTab({
                               <AutoTextarea
                                 value={editing.summary}
                                 onChange={(v) => setEditing({ ...editing, summary: v })}
-                                className="w-full rounded-md border px-2 py-1 text-[12px] leading-relaxed outline-none"
+                                className="w-full rounded-lg border px-3 py-1.5 text-[13px] leading-relaxed outline-none"
                                 style={{ background: 'var(--bg-input)', borderColor: 'var(--border)', color: 'var(--text)' }}
                               />
                               <label className="mt-1.5 flex items-center gap-2 text-[11px]" style={{ color: 'var(--text-faint)' }}>
@@ -434,7 +434,7 @@ export function ChapterTab({
                                   step={0.1}
                                   value={editing.importance}
                                   onChange={(ev) => setEditing({ ...editing, importance: Number(ev.target.value) })}
-                                  className="w-16 rounded-md border px-1.5 py-0.5 text-[11px] outline-none"
+                                  className="w-16 rounded-md border px-2 py-0.5 text-[12px] outline-none"
                                   style={{ background: 'var(--bg-input)', borderColor: 'var(--border)', color: 'var(--text)' }}
                                   data-tip="0 些細 〜 1 人生を変える"
                                 />

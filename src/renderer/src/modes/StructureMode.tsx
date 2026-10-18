@@ -2790,7 +2790,7 @@ function StructureModeInner({
                       value={instruction}
                       onChange={(e) => setInstruction(e.target.value)}
                       placeholder="生成の指示(任意)"
-                      className="mb-2 w-full rounded-lg border px-2.5 py-1.5 text-[12px] outline-none"
+                      className="mb-2 w-full rounded-lg border px-3 py-1.5 text-[13px] leading-relaxed outline-none"
                       style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
                     />
                     {/* 実行中でも押せる(キューに積まれる) */}

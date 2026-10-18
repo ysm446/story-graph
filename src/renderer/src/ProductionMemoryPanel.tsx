@@ -91,7 +91,7 @@ function ProductionMemoryPanel({ busy, open, onToggle, refresh, onDirty, onChang
       {enabled && memory?.needs_review && <p className="text-[11px]" style={{ color: 'var(--text-dim)' }}>現在の内容との照合が必要です。次の制作で作業メモを見直します。</p>}
       {memory?.review_error && <p role="alert" className="text-[11px]" style={{ color: 'var(--danger-text)' }}>{memory.review_error}</p>}
       {editing ? <textarea aria-label="制作の作業メモ" value={draft} disabled={busy || saving} maxLength={6000} rows={9}
-        onChange={(e) => setDraft(e.target.value)} className="inspector-scrollbar w-full rounded-md border px-2 py-0.5 text-[12px] outline-none"
+        onChange={(e) => setDraft(e.target.value)} className="inspector-scrollbar w-full rounded-lg border px-3 py-1.5 text-[13px] leading-relaxed outline-none"
         style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }} /> : <Markdown text={memory?.content || (enabled ? 'まだ作業メモはありません。制作中に方針や次の作業を記録します。' : 'まだ作業メモはありません。')} />}
       <div className="flex flex-wrap gap-2">
         {editing ? <>

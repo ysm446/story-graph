@@ -273,7 +273,7 @@ export function CharTab({
                 placeholder="記憶を追加(このキャラ視点で)"
                 value={memContent}
                 onChange={(e) => setMemContent(e.target.value)}
-                className="min-w-0 flex-1 rounded-md border px-2 py-1 text-[12px]"
+                className="min-w-0 flex-1 rounded-md border px-2 py-0.5 text-[12px]"
                 style={inputStyle}
               />
               <button
@@ -317,14 +317,14 @@ export function CharTab({
                 placeholder="項目"
                 value={factKey}
                 onChange={(e) => setFactKey(e.target.value)}
-                className="w-24 rounded-md border px-2 py-1 text-[12px]"
+                className="w-24 rounded-md border px-2 py-0.5 text-[12px]"
                 style={inputStyle}
               />
               <input
                 placeholder="値"
                 value={factValue}
                 onChange={(e) => setFactValue(e.target.value)}
-                className="min-w-0 flex-1 rounded-md border px-2 py-1 text-[12px]"
+                className="min-w-0 flex-1 rounded-md border px-2 py-0.5 text-[12px]"
                 style={inputStyle}
               />
               <button
@@ -371,7 +371,7 @@ export function CharTab({
               <select
                 value={relTarget}
                 onChange={(e) => setRelTarget(e.target.value)}
-                className="rounded-md border px-2 py-1 text-[12px]"
+                className="rounded-md border px-2 py-0.5 text-[12px]"
                 style={inputStyle}
               >
                 <option value="">相手…</option>
@@ -390,21 +390,21 @@ export function CharTab({
                 step={0.05}
                 value={relValue}
                 onChange={(e) => setRelValue(e.target.value)}
-                className="w-20 rounded-md border px-2 py-1 text-[12px] tabular-nums"
+                className="w-20 rounded-md border px-2 py-0.5 text-[12px] tabular-nums"
                 style={inputStyle}
               />
               <input
                 placeholder="理由"
                 value={relReason}
                 onChange={(e) => setRelReason(e.target.value)}
-                className="min-w-0 flex-1 rounded-md border px-2 py-1 text-[12px]"
+                className="min-w-0 flex-1 rounded-md border px-2 py-0.5 text-[12px]"
                 style={inputStyle}
               />
               <input
                 placeholder="一言(相関図表示)"
                 value={relLabel}
                 onChange={(e) => setRelLabel(e.target.value)}
-                className="w-28 rounded-md border px-2 py-1 text-[12px]"
+                className="w-28 rounded-md border px-2 py-0.5 text-[12px]"
                 style={inputStyle}
                 data-tip="相関図の矢印に添える一言(例: 幼なじみ)"
               />

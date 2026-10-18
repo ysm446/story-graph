@@ -140,7 +140,7 @@ export default function VoiceSettingsSection({
         placeholder={placeholder}
         onChange={(e) => setValues((v) => ({ ...v, [key]: e.target.value }))}
         onBlur={() => void save({ [key]: values[key] ?? '' })}
-        className={`${width} rounded-lg border px-3 py-2 text-[13px] outline-none`}
+        className={`${width} rounded-lg border px-3 py-1.5 text-[13px] outline-none`}
         style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
       />
       <p className="settings-field-hint">{hint}</p>
@@ -216,7 +216,7 @@ export default function VoiceSettingsSection({
             <select
               value={status.engine.id}
               onChange={(e) => void save({ tts_engine: e.target.value }).then(refresh)}
-              className="w-full rounded-lg border px-3 py-2 text-[13px] outline-none"
+              className="w-full rounded-lg border px-3 py-1.5 text-[13px] outline-none"
               style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
             >
               {status.engines.map((e) => (
@@ -327,7 +327,7 @@ export default function VoiceSettingsSection({
             placeholder='{"irodori": {"num_steps": 24}}'
             onChange={(next) => setValues((v) => ({ ...v, tts_extra_body: next }))}
             onBlur={() => void save({ tts_extra_body: values.tts_extra_body ?? '' })}
-            className="w-full rounded-lg border px-3 py-2 font-mono text-[12px] outline-none"
+            className="w-full rounded-lg border px-3 py-1.5 font-mono text-[13px] leading-relaxed outline-none"
             style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
           />
           <p className="settings-field-hint">

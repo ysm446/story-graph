@@ -45,7 +45,7 @@ export function WorkflowSelect({
         value={current}
         disabled={disabled}
         onChange={(e) => onChange(e.target.value)}
-        className="rounded-md border px-1.5 py-0.5 text-[11px] disabled:opacity-50"
+        className="rounded-md border px-2 py-0.5 text-[12px] disabled:opacity-50"
         style={{ background: 'var(--bg-input)', borderColor: 'var(--border)', color: 'var(--text)' }}
         data-tip="ComfyUI に送るワークフローの組(workflows/variants.json)。LoRA 版などを選べます。seed と同じく生成に使ったものが保存されます"
       >
@@ -99,7 +99,7 @@ export function SeedField({
         onKeyDown={(e) => {
           if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
         }}
-        className="w-36 rounded-md border px-2 py-0.5 text-[11px] tabular-nums outline-none disabled:opacity-50"
+        className="w-36 rounded-md border px-2 py-0.5 text-[12px] tabular-nums outline-none disabled:opacity-50"
         style={{ background: 'var(--bg-input)', borderColor: 'var(--border)', color: 'var(--text)' }}
         data-tip="-1 でランダム。同じ seed と同じプロンプトで同じ絵になります"
       />

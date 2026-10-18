@@ -161,7 +161,7 @@ export default function ChatHistoryPanel({ history, chatId, busy, characters = [
                       if (e.key === 'Escape') setRenamingId(null)
                     }}
                     placeholder="会話名(空で既定に戻す)"
-                    className="min-w-0 flex-1 rounded-md border px-1.5 py-1 text-[11px] outline-none"
+                    className="min-w-0 flex-1 rounded-md border px-2 py-0.5 text-[12px] outline-none"
                     style={{ background: 'var(--bg-input)', borderColor: 'var(--accent-border)' }}
                   />
                 ) : (

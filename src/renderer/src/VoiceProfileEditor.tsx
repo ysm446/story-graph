@@ -248,7 +248,7 @@ export default function VoiceProfileEditor({
           value={name}
           onChange={(e) => setName(e.target.value)}
           onBlur={() => name.trim() && name.trim() !== profile.name && void save({ name: name.trim() })}
-          className="w-full rounded-md border px-2 py-1 text-[12px] outline-none"
+          className="w-full rounded-lg border px-3 py-1.5 text-[13px] outline-none"
           style={inputStyle}
         />
         {usedBy && usedBy.length > 1 && (
@@ -281,7 +281,7 @@ export default function VoiceProfileEditor({
           placeholder="落ち着いた大人の女性の声。静かな部屋で、柔らかく丁寧に話している"
           onChange={setCaption}
           onBlur={() => caption !== (profile.caption ?? '') && void save({ caption: caption.trim() || null })}
-          className="w-full rounded-md border px-2 py-1 text-[12px] outline-none"
+          className="w-full rounded-lg border px-3 py-1.5 text-[13px] leading-relaxed outline-none"
           style={inputStyle}
         />
         <p className={hintClass} style={{ color: 'var(--text-faint)' }}>
@@ -369,7 +369,7 @@ export default function VoiceProfileEditor({
             placeholder="1234"
             onChange={(e) => setSeed(e.target.value)}
             onBlur={saveSeed}
-            className="w-28 rounded-md border px-2 py-1 text-[12px] tabular-nums outline-none"
+            className="w-28 rounded-lg border px-3 py-1.5 text-[13px] tabular-nums outline-none"
             style={inputStyle}
           />
         </label>
@@ -382,7 +382,7 @@ export default function VoiceProfileEditor({
             placeholder='{"irodori": {"num_steps": 24}}'
             onChange={(e) => setParams(e.target.value)}
             onBlur={saveParams}
-            className="w-full rounded-md border px-2 py-1 font-mono text-[12px] outline-none"
+            className="w-full rounded-lg border px-3 py-1.5 font-mono text-[13px] outline-none"
             style={inputStyle}
           />
         </label>
@@ -399,7 +399,7 @@ export default function VoiceProfileEditor({
           <input
             value={sample}
             onChange={(e) => setSample(e.target.value)}
-            className="min-w-0 flex-1 rounded-md border px-2 py-1 text-[12px] outline-none"
+            className="min-w-0 flex-1 rounded-md border px-2 py-0.5 text-[12px] outline-none"
             style={inputStyle}
           />
           <button

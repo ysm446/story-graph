@@ -465,7 +465,7 @@ export default function SettingsMode({ onImported }: {
                 <select
                   value={values.llm_model_path || currentModel}
                   onChange={(e) => void save({ llm_model_path: e.target.value })}
-                  className="w-full rounded-lg border px-3 py-2 text-[13px] outline-none"
+                  className="w-full rounded-lg border px-3 py-1.5 text-[13px] outline-none"
                   style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
                 >
                   {models.length === 0 && (
@@ -495,7 +495,7 @@ export default function SettingsMode({ onImported }: {
                     placeholder={def.placeholder}
                     onChange={(e) => setValues((v) => ({ ...v, [def.key]: e.target.value }))}
                     onBlur={() => void save({ [def.key]: values[def.key] ?? '' })}
-                    className="w-full rounded-lg border px-3 py-2 text-[13px] outline-none"
+                    className="w-full rounded-lg border px-3 py-1.5 text-[13px] outline-none"
                     style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
                   />
                 </div>
@@ -613,7 +613,7 @@ export default function SettingsMode({ onImported }: {
                   placeholder={genPromptDefault}
                   onChange={(e) => setValues((v) => ({ ...v, generation_system_prompt: e.target.value }))}
                   onBlur={() => void save({ generation_system_prompt: values.generation_system_prompt ?? '' })}
-                  className="w-full rounded-lg border px-3 py-2 text-[13px] leading-relaxed outline-none"
+                  className="w-full rounded-lg border px-3 py-1.5 text-[13px] leading-relaxed outline-none"
                   style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
                 />
                 <p className="settings-field-hint">
@@ -642,7 +642,7 @@ export default function SettingsMode({ onImported }: {
                   placeholder={'例: あなたはハードボイルド小説の編集者です。感傷的な表現を削り、\n短く乾いた文に整えてください。修正後の文章だけを返してください。'}
                   onChange={(v) => setValues((prev) => ({ ...prev, proofread_custom_prompt: v }))}
                   onBlur={() => void save({ proofread_custom_prompt: values.proofread_custom_prompt ?? '' })}
-                  className="w-full rounded-lg border px-3 py-2 text-[13px] leading-relaxed outline-none"
+                  className="w-full rounded-lg border px-3 py-1.5 text-[13px] leading-relaxed outline-none"
                   style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
                 />
                 <p className="settings-field-hint">
@@ -688,7 +688,7 @@ export default function SettingsMode({ onImported }: {
                       window.dispatchEvent(new Event(CHAT_RULES_EVENT))
                     )
                   }
-                  className="w-full rounded-lg border px-3 py-2 text-[13px] leading-relaxed outline-none"
+                  className="w-full rounded-lg border px-3 py-1.5 text-[13px] leading-relaxed outline-none"
                   style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
                 />
                 <p className="settings-field-hint">
@@ -772,7 +772,7 @@ export default function SettingsMode({ onImported }: {
                       aria-label="古い記憶の点数を下げる速さ"
                       value={memoryHalfLife}
                       onChange={(e) => void save({ memory_half_life: e.target.value })}
-                      className="rounded-lg border px-2 py-1.5 text-[13px]"
+                      className="rounded-md border px-2 py-0.5 text-[12px]"
                       style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
                     >
                       {MEMORY_HALF_LIFE_OPTIONS.map(([value, label]) => (

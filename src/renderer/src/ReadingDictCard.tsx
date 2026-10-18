@@ -78,7 +78,7 @@ export default function ReadingDictCard({
                   placeholder="田村工業"
                   onChange={(e) => update(i, { word: e.target.value })}
                   onBlur={() => persist(entries)}
-                  className="min-w-0 flex-1 rounded-md border px-2 py-1 text-[12px] outline-none"
+                  className="min-w-0 flex-1 rounded-md border px-2 py-0.5 text-[12px] outline-none"
                   style={inputStyle}
                   aria-label="言葉"
                 />
@@ -90,7 +90,7 @@ export default function ReadingDictCard({
                   placeholder="たむらこうぎょう"
                   onChange={(e) => update(i, { reading: e.target.value })}
                   onBlur={() => persist(entries)}
-                  className="min-w-0 flex-1 rounded-md border px-2 py-1 text-[12px] outline-none"
+                  className="min-w-0 flex-1 rounded-md border px-2 py-0.5 text-[12px] outline-none"
                   style={inputStyle}
                   aria-label="読み"
                 />

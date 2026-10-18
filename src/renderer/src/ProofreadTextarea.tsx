@@ -351,7 +351,7 @@ export default function ProofreadTextarea({
           // 別の欄へ移ったら選択は消えて見えるので、ボタンの文言も全文に戻す
           // (校正ボタンは onMouseDown で既定動作を止めているため blur しない)
           onBlur={() => setSelection(null)}
-          className={`w-full resize-none overflow-hidden rounded-lg border px-3 py-2 text-[13px] leading-relaxed outline-none ${className}`}
+          className={`w-full resize-none overflow-hidden rounded-lg border px-3 py-1.5 text-[13px] leading-relaxed outline-none ${className}`}
           style={style}
         />
         {/* 校正結果のポップアップ */}
@@ -370,7 +370,7 @@ export default function ProofreadTextarea({
                   localStorage.setItem('proofreadPreset', e.target.value)
                 }}
                 disabled={busy}
-                className="rounded-md border px-1 py-px text-[10px]"
+                className="rounded-md border px-2 py-0.5 text-[12px]"
                 style={{ background: 'var(--bg-input)', borderColor: 'var(--border)', color: 'var(--text-dim)' }}
                 data-tip="校正のプリセット(変更後にもう一度校正すると反映されます)"
               >

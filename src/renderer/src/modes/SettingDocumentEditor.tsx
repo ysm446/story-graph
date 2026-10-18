@@ -193,7 +193,7 @@ export default function SettingDocumentEditor({ documents, selectedId, onChanged
         </div>
         {isOpen('body') ? <>
           <textarea aria-label="設定資料の本文" value={draft.body} rows={16} maxLength={100000} onChange={(e) => change('body', e.target.value)}
-            className="block w-full rounded-lg border px-3 py-2 text-[13px] leading-relaxed outline-none" style={inputStyle} />
+            className="block w-full rounded-lg border px-3 py-1.5 text-[13px] leading-relaxed outline-none" style={inputStyle} />
           <p className="mt-1 text-[11px]" style={faint}>Markdown で書けます。確定すると整形して表示します。</p>
           {actions('body')}
         </> : <ReadText value={document.body} emptyLabel="本文" onEdit={() => startEdit('body')} markdown />}

@@ -228,7 +228,7 @@ export default function LlamaInstaller(): React.JSX.Element {
                 setCudartChoice(null)
               }}
               disabled={installing}
-              className="rounded-lg border px-2 py-1.5 text-[13px]"
+              className="rounded-lg border px-3 py-1.5 text-[13px]"
               style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
             >
               {releases.map((r) => (
@@ -245,7 +245,7 @@ export default function LlamaInstaller(): React.JSX.Element {
                 setCudartChoice(null)
               }}
               disabled={installing}
-              className="min-w-0 flex-1 rounded-lg border px-2 py-1.5 text-[13px]"
+              className="min-w-0 flex-1 rounded-lg border px-3 py-1.5 text-[13px]"
               style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
             >
               {selectedRelease?.variants.map((v) => (

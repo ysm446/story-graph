@@ -373,7 +373,7 @@ export default function RefImagePanel({
                 onChange={(e) => setInstructions(e.target.value)}
                 disabled={phase !== null}
                 rows={2}
-                className="w-full rounded-md border px-2 py-1.5 text-[12px] outline-none"
+                className="w-full rounded-lg border px-3 py-1.5 text-[13px] leading-relaxed outline-none"
                 style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
               />
             </label>
@@ -385,7 +385,7 @@ export default function RefImagePanel({
               onChange={(e) => setModal((m) => (m ? { ...m, prompt: e.target.value } : m))}
               disabled={phase === 'generate' || phase === 'apply'}
               rows={5}
-              className="w-full rounded-md border px-2 py-1.5 text-[12px] outline-none"
+              className="w-full rounded-lg border px-3 py-1.5 text-[13px] leading-relaxed outline-none"
               style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
             />
             {instructions.trim() !== promptBasis.trim() && (

@@ -234,7 +234,7 @@ export default function SceneImageModal({
             onChange={(e) => setInstructions(e.target.value)}
             disabled={busy}
             rows={2}
-            className="w-full rounded-md border px-2 py-1.5 text-[12px] outline-none"
+            className="w-full rounded-lg border px-3 py-1.5 text-[13px] leading-relaxed outline-none"
             style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
           />
         </label>
@@ -248,7 +248,7 @@ export default function SceneImageModal({
           disabled={busy}
           rows={5}
           placeholder={phase === 'prompt' ? 'プロンプトを作成中…' : ''}
-          className="w-full rounded-md border px-2 py-1.5 text-[12px] outline-none"
+          className="w-full rounded-lg border px-3 py-1.5 text-[13px] leading-relaxed outline-none"
           style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
         />
         {data && (

@@ -338,7 +338,7 @@ export function PresetEditorModal({
           <select
             value={form.person}
             onChange={(e) => setForm((f) => ({ ...f, person: e.target.value }))}
-            className="rounded-lg border px-2 py-1.5 text-[13px]"
+            className="rounded-lg border px-3 py-1.5 text-[13px]"
             style={inputStyle}
           >
             <option value="third">三人称</option>
@@ -355,7 +355,7 @@ export function PresetEditorModal({
           placeholder={
             'あなたはプロの小説家です。与えられたシーン(出来事の仕様書)を散文に仕上げます。\n背景や空気感の描写、人物の仕草と表情、会話の間を丁寧に肉付けしてください。\n硬質で乾いた文体。短いセンテンスを重ね、比喩は最小限に。'
           }
-          className="mb-2 w-full rounded-lg border px-3 py-2 text-[13px] leading-relaxed outline-none"
+          className="mb-2 w-full rounded-lg border px-3 py-1.5 text-[13px] leading-relaxed outline-none"
           style={inputStyle}
         />
         <p className="mb-3 text-[11px] leading-relaxed" style={{ color: 'var(--text-faint)' }}>
