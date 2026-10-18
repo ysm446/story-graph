@@ -391,6 +391,31 @@ store.save_chat_messages(chat['id'], [
       const r = await js(`(() => { const r = document.querySelector('.scene-detail-meta').getBoundingClientRect(); return { x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(Math.min(r.height, 300, innerHeight - r.y)) } })()`)
       writeFileSync(join(target, 'chapter-scene-list.png'), (await win.webContents.capturePage(r)).toPNG())
     }
+    // 関係図の Time: 今の時点のシーンのサムネイルを番号・タイトルと並べ、挿絵の無いシーンは空の枠。「弱い関係を隠す」は短い固定幅
+    await click('資料庫')
+    await click('関係図')
+    await pause(600)
+    const timeScene = `document.querySelector('[data-relation-time-scene]')`
+    // Time は目印(はじまり・章の入口と出口・結末)も 1 コマに数えるので、タイトルで位置を探して動かす
+    const scrubTo = async (title) => {
+      const max = await js(`+${timeScene}.parentElement.querySelector('input[type=range]').max`)
+      for (let i = 0; i <= max; i++) {
+        await js(`(() => { const el = ${timeScene}.parentElement.querySelector('input[type=range]'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, '${i}'); el.dispatchEvent(new Event('input', { bubbles: true })) })()`)
+        await pause(80)
+        if (await js(`${timeScene}.querySelector('.truncate').textContent === ${JSON.stringify(title)}`)) return
+      }
+      throw new Error('Time で見つかりません: ' + title)
+    }
+    await scrubTo(example.scenes[3].title)
+    await assert(`(() => { const t = ${timeScene}; return !!t.querySelector('span.h-10.w-16 img') && t.querySelector('.tabular-nums').textContent.includes('/') })()`, '関係図の Time に、今の時点のシーンのサムネイルと番号・タイトルが出る')
+    await scrubTo(example.scenes[1].title)
+    await assert(`(() => { const t = ${timeScene}; return !!t.querySelector('span.h-10.w-16') && !t.querySelector('span.h-10.w-16 img') })()`, 'Time を挿絵の無いシーンへ動かすと、同じ大きさの空の枠になる')
+    await scrubTo(example.scenes[2].title)
+    await assert(`(() => { const s = document.querySelector('input[aria-label="弱い関係を隠す"]'); return !!s && Math.round(s.getBoundingClientRect().width) === 120 && s.parentElement.textContent.includes('なし') })()`, '「弱い関係を隠す」のスライダーは 120px の固定幅で、既定は「なし」')
+    {
+      const r = await js(`(() => { const a = ${timeScene}.parentElement.getBoundingClientRect(), b = document.querySelector('input[aria-label="弱い関係を隠す"]').parentElement.getBoundingClientRect(); return { x: Math.round(a.x - 8), y: Math.round(a.y - 8), width: Math.round(Math.max(a.width, b.width) + 16), height: Math.round(b.bottom - a.y + 16) } })()`)
+      writeFileSync(join(target, 'relation-time.png'), (await win.webContents.capturePage(r)).toPNG())
+    }
     if (errors.length) throw new Error(errors.join('\n'))
     console.log('Screenshots: ' + target)
     win.destroy()

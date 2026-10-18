@@ -11,6 +11,7 @@ import {
   type SimulationNodeDatum
 } from 'd3-force'
 import { api, assetUrl } from './api'
+import { NodeThumb } from './modes/structure/StructureNodes'
 import type { Character, StateSnapshot, StoryNode } from './types'
 import { LABEL_FONT, LABEL_H, labelWidth, nodeShape, routeOrthogonal, type NodeShape, type Pt } from './relationRoute'
 
@@ -639,10 +640,28 @@ export default function RelationGraph({
 
       {/* 時間スクラブ */}
       <div>
-        <div className="mb-1 flex items-center justify-between text-[11px]" style={{ color: 'var(--text-faint)' }}>
-          <span className="uppercase tracking-[0.14em]">Time</span>
-          <span className="truncate pl-2" style={{ color: 'var(--text-dim)' }}>
-            {clampedIndex + 1}/{canonPath.length} {scrubNode?.title || '(無題)'}
+        <div className="mb-1 text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
+          Time
+        </div>
+        {/* 今の時点のシーン。挿絵のサムネイル(Memories・章のシーン一覧と同じ大きさで中央を切り抜く)と番号・タイトル。
+            挿絵の無いシーンは同じ大きさの空の枠にする(動かしている最中に枠が出入りしてスライダーの位置がずれないように)。
+            作品に挿絵が 1 枚も無ければ枠ごと出さない */}
+        <div className="mb-1.5 flex items-center gap-2.5" data-relation-time-scene>
+          {canonPath.some((n) => n.image_path) && (
+            <span
+              className="block h-10 w-16 shrink-0 overflow-hidden rounded-md"
+              style={{ background: 'var(--bg-canvas)' }}
+            >
+              {scrubNode && <NodeThumb node={scrubNode} className="block h-full w-full object-cover" />}
+            </span>
+          )}
+          <span className="min-w-0 flex-1">
+            <span className="block text-[11px] tabular-nums" style={{ color: 'var(--text-faint)' }}>
+              {clampedIndex + 1}/{canonPath.length}
+            </span>
+            <span className="block truncate text-[12px]" style={{ color: 'var(--text-dim)' }}>
+              {scrubNode?.title || '(無題)'}
+            </span>
           </span>
         </div>
         <input
@@ -655,8 +674,9 @@ export default function RelationGraph({
         />
       </div>
       {/* フィルタ */}
-      <div className="flex items-center gap-2 text-[11px]" style={{ color: 'var(--text-faint)' }}>
-        <span className="uppercase tracking-[0.14em]">|score| ≥ {threshold.toFixed(2)}</span>
+      {/* 0〜1 を 0.05 刻みで選ぶだけなので、幅は固定で短く(Time のスライダーと同じ重さに見せない) */}
+      <div className="flex flex-wrap items-center gap-2 text-[11px]" style={{ color: 'var(--text-faint)' }}>
+        <span data-tip="関係の強さ(好意・反感の大きさ)がこの値より小さい矢印を隠します">弱い関係を隠す</span>
         <input
           type="range"
           min={0}
@@ -664,8 +684,14 @@ export default function RelationGraph({
           step={0.05}
           value={threshold}
           onChange={(e) => setThreshold(Number(e.target.value))}
-          className={`settings-slider min-w-0 flex-1${threshold > 0 ? ' active' : ''}`}
+          // .settings-slider が width: 100% を持つので、幅は style で上書きする
+          className={`settings-slider shrink-0${threshold > 0 ? ' active' : ''}`}
+          style={{ width: 120 }}
+          aria-label="弱い関係を隠す"
         />
+        <span className="tabular-nums" style={{ color: threshold > 0 ? 'var(--text-dim)' : 'var(--text-faint)' }}>
+          {threshold > 0 ? `${threshold.toFixed(2)} 未満` : 'なし'}
+        </span>
         {egoCharId && (
           <button
             onClick={() => setEgo(null)}
