@@ -402,6 +402,16 @@ store.save_chat_messages(chat['id'], [
     const example = JSON.parse(readFileSync(join(root, 'docs/reference/import-example.json'), 'utf8'))
     const applied = await fetch(base + '/import/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data: example }) })
     if (!applied.ok) throw new Error(await applied.text())
+    {
+      const faction = await (await fetch(base + '/factions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: '港の組合', description: '' }) })).json()
+      const graph = await (await fetch(base + '/graph')).json()
+      const nodeId = graph.nodes.find((n) => n.title === example.scenes[1].title).id
+      const node = await (await fetch(base + '/nodes/' + nodeId)).json()
+      const aya = (await (await fetch(base + '/characters')).json()).find((c) => c.name === 'アヤ').id
+      const events = [...node.events.map((e) => ({ id: e.id, type: e.type, payload: e.payload, source: e.source })), { type: 'relationship_update', payload: { char: aya, target_type: 'faction', target: faction.id, delta: -0.1, reason: '検証', label: '雇い主' }, source: 'user' }]
+      const put = await fetch(base + '/nodes/' + nodeId + '/events', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ events }) })
+      if (!put.ok) throw new Error(await put.text())
+    }
     await new Promise((done) => { win.webContents.once('did-finish-load', () => done()); win.webContents.reload() })
     for (let i = 0; i < 60; i++) { if (await js(`[...document.querySelectorAll('.react-flow__node')].some(e=>e.textContent.includes('第一幕'))`)) break; await pause(200) }
     await pause(400)
@@ -416,7 +426,8 @@ store.save_chat_messages(chat['id'], [
     const card = (group) => `document.querySelector('[data-event-group="${group}"] [data-event-type]')`
     await assert(`[...document.querySelectorAll('[data-event-type]')].every(e => e.className.includes('border')) && !document.querySelector('[data-event-group="memory"]').textContent.includes('記憶を追加')`, 'イベントはすべてカードで、種類の名前は見出しだけに出る')
     for (let i = 0; i < 20; i++) { if (await js(`${card('relation')}.textContent.includes('悪くなった')`)) break; await pause(150) }
-    await assert(`(() => { const t = ${card('relation')}.textContent; return t.includes('ケン → アヤ') && t.includes('置いていかれた幼なじみ') && t.includes('なし → 反感') && t.includes('▼ 悪くなった') })()`, '関係は「ケン → アヤ」と一言、「なし → 反感」と変化の向きを言葉で出す')
+    await assert(`(() => { const c = ${card('relation')}; const who = (name) => c.querySelectorAll('[aria-label="' + name + '"], img[alt="' + name + '"]').length; return who('ケン') === 1 && who('アヤ') === 1 })()`, '関係のカードは、左に関係を持つ側、1 行目の矢印の後ろに相手のアイコンを出す')
+    await assert(`(() => { const t = ${card('relation')}.textContent; return t.replace(/\s/g, '').includes('ケン→アアヤ') && t.includes('置いていかれた幼なじみ') && t.includes('なし → 反感') && t.includes('▼ 悪くなった') })()`, '関係は「ケン → アヤ」と一言、「なし → 反感」と変化の向きを言葉で出す')
     await assert(`(() => { const facts = [...document.querySelectorAll('[data-event-group="fact"] [data-event-type]')].map(e => e.textContent); return facts.length === 2 && facts[0].includes('任務') && facts.every(t => !t.includes(' = ')) && facts[1].includes('世界') && facts[1].includes('冬の終わり') })()`, '事実は項目名と値で出し、世界の事実は「世界」と出す')
     {
       await js(`document.querySelector('[data-event-group]').scrollIntoView({ block: 'start' })`)
@@ -438,10 +449,14 @@ store.save_chat_messages(chat['id'], [
     await js(`document.querySelector('[data-event-group="relation"] button[aria-label="関係を手で追加"]').click()`)
     await pause(300)
     await assert(`!document.querySelector('[data-event-group="relation"] select')`, 'もう一度押すとフォームが閉じる')
+    // 相手が勢力の関係: アイコンは出さず、名前で出す(ID のまま出さない)
+    await js(`[...document.querySelectorAll('.react-flow__node')].find(e=>e.textContent.includes(${JSON.stringify(example.scenes[1].title)})).dispatchEvent(new MouseEvent('click',{bubbles:true}))`)
+    for (let i = 0; i < 20; i++) { if (await js(`document.querySelectorAll('[data-event-group="relation"] [data-event-type]').length === 2`)) break; await pause(150) }
+    await assert(`(() => { const cards = [...document.querySelectorAll('[data-event-group="relation"] [data-event-type]')]; const f = cards.find(c => c.textContent.includes('雇い主')); return !!f && f.textContent.replace(/\s/g, '').includes('アヤ→港の組合') && f.querySelectorAll('[aria-label], img[alt]').length - f.querySelectorAll('button[aria-label]').length === 1 })()`, '相手が勢力の関係は、アイコンを出さずに勢力の名前で出す')
     // 直前に関係があるシーン: 通行止め では 老技師 → アヤ が 反感(-0.30) から ふつう(0.00) へ
     await js(`[...document.querySelectorAll('.react-flow__node')].find(e=>e.textContent.includes(${JSON.stringify(example.scenes[2].title)})).dispatchEvent(new MouseEvent('click',{bubbles:true}))`)
     for (let i = 0; i < 20; i++) { if (await js(`(${card('relation')}?.textContent ?? '').includes('良くなった')`)) break; await pause(150) }
-    await assert(`(() => { const t = ${card('relation')}.textContent; return t.includes('老技師 → アヤ') && t.includes('反感 → ふつう') && t.includes('▲ 良くなった') })()`, '直前に関係があれば「反感 → ふつう」と前後の段階を出す')
+    await assert(`(() => { const t = ${card('relation')}.textContent; return t.replace(/\s/g, '').includes('老技師→アアヤ') && t.includes('反感 → ふつう') && t.includes('▲ 良くなった') })()`, '直前に関係があれば「反感 → ふつう」と前後の段階を出す')
     {
       await js(`document.querySelector('[data-event-group="relation"]').scrollIntoView({ block: 'start' })`)
       await pause(200)

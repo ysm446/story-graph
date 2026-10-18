@@ -544,6 +544,14 @@ export default function EventsEditor({
 
   const nameOf = (id: string): string =>
     characters.find((c) => c.id === id)?.name ?? (id || '(未選択)')
+  // 関係の相手が勢力のときの名前(ID のまま出さない)。勢力は滅多に変わらないので開いたときに 1 回読む
+  const [factionNames, setFactionNames] = useState<Record<string, string>>({})
+  useEffect(() => {
+    void api
+      .listFactions()
+      .then((list) => setFactionNames(Object.fromEntries(list.map((f) => [f.id, f.name]))))
+      .catch(() => undefined)
+  }, [])
   // 既に使われている fact のキーを入力候補にする
   const factKeys = Array.from(
     new Set(
@@ -802,10 +810,15 @@ export default function EventsEditor({
               const isRelation = group.key === 'relation'
               // 1 行目の見出し。種類は見出しで分かるので、だれ(関係は だれ → だれ)を出す。
               // 混ざる「その他」と記憶の圧縮、編集中だけ種類の名前を出す
+              // 関係の相手。人物ならアイコンも出す(勢力はアイコンも色も無いので名前だけ)
+              const targetId = str(payload.target)
+              const targetIsFaction = isRelation && str(payload.target_type) === 'faction'
+              const targetChar = isRelation && !targetIsFaction ? characters.find((c) => c.id === targetId) : undefined
+              const targetName = targetIsFaction ? (factionNames[targetId] ?? targetId) : nameOf(targetId)
               const heading = open
                 ? (TYPE_LABELS[e.type] ?? e.type)
                 : isRelation
-                  ? `${nameOf(str(payload.char))} → ${nameOf(str(payload.target))}`
+                  ? `${nameOf(str(payload.char))} → ${targetName}`
                   : isWorldFact
                     ? '世界'
                     : group.key === 'other' || e.type === 'memory_compress'
@@ -834,9 +847,21 @@ export default function EventsEditor({
                   <div className="min-w-0 flex-1">
                     {/* 1 行目に だれ + 出どころ + 操作、本文は下に幅いっぱい */}
                     <div className="mb-0.5 flex items-center gap-2">
-                      <span className="min-w-0 truncate font-medium" style={{ color: 'var(--text)' }}>
-                        {heading}
-                      </span>
+                      {isRelation && !open ? (
+                        // 「ケン → (ア)アヤ」。矢印の向きのまま左から右へ読めるよう、相手のアイコンは名前の前に置く
+                        <span className="flex min-w-0 items-center gap-1 font-medium" style={{ color: 'var(--text)' }}>
+                          <span className="shrink-0">{nameOf(str(payload.char))}</span>
+                          <span className="shrink-0" style={{ color: 'var(--text-faint)' }}>
+                            →
+                          </span>
+                          {targetChar && <CharAvatar char={targetChar} size={18} />}
+                          <span className="min-w-0 truncate">{targetName}</span>
+                        </span>
+                      ) : (
+                        <span className="min-w-0 truncate font-medium" style={{ color: 'var(--text)' }}>
+                          {heading}
+                        </span>
+                      )}
                       <span
                         className="shrink-0 rounded px-1.5 py-px text-[10px] uppercase"
                         style={

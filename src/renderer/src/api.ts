@@ -209,6 +209,8 @@ export const api = {
   getState: (nodeId: string) => request<StateSnapshot>(`/nodes/${nodeId}/state`),
   /** そのシーンに入る直前の状態(関係が「どこからどこへ」動いたかを出すため) */
   getStateBefore: (nodeId: string) => request<StateSnapshot>(`/nodes/${nodeId}/state_before`),
+  /** 勢力の一覧(関係の相手が勢力のときの名前に使う) */
+  listFactions: () => request<Array<{ id: string; name: string }>>('/factions'),
   validateNode: (nodeId: string) => request<{ errors: string[] }>(`/nodes/${nodeId}/validate`),
 
   // ---- 章グループ(docs/design/chapters.md) ----
