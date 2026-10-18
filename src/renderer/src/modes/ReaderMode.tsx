@@ -734,7 +734,7 @@ function ReaderMode({
           <button
             onClick={() => void runRender(null, 'to_end')}
             disabled={!presetId || renderQueued}
-            className="rounded-lg px-3 py-1 text-[12px] font-medium text-white disabled:opacity-50"
+            className="rounded-md px-3 py-1 text-[12px] font-medium text-white disabled:opacity-50"
             style={{ background: 'var(--accent)' }}
           >
             {scopeGroup ? '▶ この章を清書' : '▶ 全編を清書'}
@@ -1037,7 +1037,7 @@ function ReaderMode({
                       <button
                         onClick={() => goToPage(pageIndex + 1)}
                         disabled={pageIndex >= pages.length - 1}
-                        className="shrink-0 rounded-lg px-3 py-1 text-[12px] font-medium text-white disabled:opacity-30"
+                        className="shrink-0 rounded-md px-3 py-1 text-[12px] font-medium text-white disabled:opacity-40"
                         style={{ background: 'var(--accent)' }}
                       >
                         次へ ▶

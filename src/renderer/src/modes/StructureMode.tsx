@@ -3359,7 +3359,7 @@ function StructureModeInner({
                       namePrompt.onSubmit(value)
                     }}
                     disabled={!namePrompt.value.trim()}
-                    className="rounded-md px-3 py-1 font-medium text-white disabled:opacity-40"
+                    className="rounded-md px-3 py-1 text-[12px] font-medium text-white disabled:opacity-40"
                     style={{ background: 'var(--accent)' }}
                   >
                     OK
@@ -3608,7 +3608,7 @@ function StructureModeInner({
                     {selectedNode.status !== 'canon' && (
                       <button
                         onClick={() => void makeRouteCanon(selectedNode.id)}
-                        className="rounded-lg px-3 py-1.5 text-[12px] font-medium text-white"
+                        className="rounded-md px-3 py-1 text-[12px] font-medium text-white"
                         style={{ background: 'var(--accent)' }}
                       >
                         🏁 この結末にする

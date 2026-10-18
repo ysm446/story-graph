@@ -380,7 +380,7 @@ export function PresetEditorModal({
             <button
               onClick={() => void handleSave()}
               disabled={busy}
-              className="rounded-lg px-4 py-1.5 text-[13px] font-medium text-white disabled:opacity-50"
+              className="rounded-md px-3 py-1 text-[12px] font-medium text-white disabled:opacity-50"
               style={{ background: 'var(--accent)' }}
             >
               保存

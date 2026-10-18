@@ -615,7 +615,7 @@ export function BeatTab({
                 />
                 <button
                   onClick={() => void saveRetire(retireTarget, retireReason)}
-                  className="rounded-md px-2 py-0.5 font-medium text-white"
+                  className="rounded-md px-2 py-0.5 text-[12px] font-medium text-white"
                   style={{ background: 'var(--accent)' }}
                 >
                   退場させる
@@ -794,8 +794,8 @@ export function BeatTab({
           <button
             onClick={() => void handleSave()}
             disabled={!dirty || saving}
-            className="shrink-0 rounded-md px-3 py-1 text-[12px] font-medium disabled:opacity-50"
-            style={{ background: 'var(--accent)', color: 'var(--text)' }}
+            className="shrink-0 rounded-md px-3 py-1 text-[12px] font-medium text-white disabled:opacity-50"
+            style={{ background: 'var(--accent)' }}
             data-tip={dirty ? 'シーンの変更を保存します(Ctrl+S。複数のシーンを選択していれば、未保存のものをまとめて保存します)' : '変更はありません'}
           >
             保存

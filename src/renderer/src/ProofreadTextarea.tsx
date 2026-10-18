@@ -422,7 +422,7 @@ export default function ProofreadTextarea({
                 type="button"
                 onClick={apply}
                 disabled={!result.done}
-                className="rounded-md px-3 py-0.5 text-[11px] font-medium text-white disabled:opacity-50"
+                className="rounded-md px-3 py-1 text-[12px] font-medium text-white disabled:opacity-50"
                 style={{ background: 'var(--accent)' }}
               >
                 置換

@@ -285,7 +285,7 @@ export function CharTab({
                   )
                   setMemContent('')
                 }}
-                className="rounded-md px-2 text-[12px] text-white"
+                className="rounded-md px-2 py-0.5 text-[12px] font-medium text-white"
                 style={{ background: 'var(--accent)' }}
                 aria-label="memory_add イベントとして記録"
                 data-tip="memory_add イベントとして記録"
@@ -334,7 +334,7 @@ export function CharTab({
                   setFactKey('')
                   setFactValue('')
                 }}
-                className="rounded-md px-2 text-[12px] text-white"
+                className="rounded-md px-2 py-0.5 text-[12px] font-medium text-white"
                 style={{ background: 'var(--accent)' }}
                 aria-label="fact_set イベントとして記録"
                 data-tip="fact_set イベントとして記録"
@@ -423,7 +423,7 @@ export function CharTab({
                   setRelReason('')
                   setRelLabel('')
                 }}
-                className="rounded-md px-2 text-[12px] text-white"
+                className="rounded-md px-2 py-0.5 text-[12px] font-medium text-white"
                 style={{ background: 'var(--accent)' }}
                 data-tip="relationship_set イベントとして記録"
               >

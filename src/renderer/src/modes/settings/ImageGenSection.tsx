@@ -181,7 +181,7 @@ export default function ImageGenSection({
             <button
               onClick={() => void handleStart()}
               disabled={busy !== null || status?.healthy || (!status?.installed && !values.comfy_base_url)}
-              className="rounded-lg px-3 py-1.5 text-[13px] font-medium text-white disabled:opacity-50"
+              className="rounded-md px-3 py-1 text-[12px] font-medium text-white disabled:opacity-50"
               style={{ background: 'var(--accent)' }}
               data-tip={
                 !status?.installed && !values.comfy_base_url
@@ -194,7 +194,7 @@ export default function ImageGenSection({
             <button
               onClick={() => void handleStop()}
               disabled={busy !== null || !status?.spawned}
-              className="rounded-lg border px-3 py-1.5 text-[13px] disabled:opacity-40"
+              className="rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-40"
               style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
             >
               停止
@@ -417,7 +417,7 @@ export default function ImageGenSection({
             <button
               onClick={() => void handleFetch()}
               disabled={loadingReleases || installing}
-              className="rounded-lg border px-3 py-1.5 text-[13px] disabled:opacity-40"
+              className="rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-40"
               style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
             >
               {loadingReleases ? '取得中…' : releases.length ? '⟳ リリース一覧を更新' : 'リリース一覧を取得'}
@@ -468,7 +468,7 @@ export default function ImageGenSection({
                 <button
                   onClick={() => void handleInstall()}
                   disabled={!selectedVariant || status?.spawned}
-                  className="self-start rounded-lg px-4 py-1.5 text-[13px] font-medium text-white disabled:opacity-50"
+                  className="self-start rounded-md px-3 py-1 text-[12px] font-medium text-white disabled:opacity-50"
                   style={{ background: 'var(--accent)' }}
                   data-tip={status?.spawned ? '起動中は入れ替えられません(先に停止してください)' : undefined}
                 >

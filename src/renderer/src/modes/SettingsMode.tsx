@@ -374,7 +374,7 @@ export default function SettingsMode({ onImported }: {
                   <button
                     onClick={() => void handleLlmStart()}
                     disabled={busy !== null || status?.healthy}
-                    className="rounded-lg px-3 py-1.5 text-[13px] font-medium text-white disabled:opacity-50"
+                    className="rounded-md px-3 py-1 text-[12px] font-medium text-white disabled:opacity-50"
                     style={{ background: 'var(--accent)' }}
                   >
                     起動
@@ -382,7 +382,7 @@ export default function SettingsMode({ onImported }: {
                   <button
                     onClick={() => void handleLlmStop()}
                     disabled={busy !== null || !status?.spawned}
-                    className="rounded-lg border px-3 py-1.5 text-[13px] disabled:opacity-40"
+                    className="rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-40"
                     style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
                   >
                     停止

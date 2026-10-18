@@ -170,7 +170,7 @@ export default function VoiceSettingsSection({
             <button
               onClick={() => void handleStart()}
               disabled={busy !== null || !canStart}
-              className="rounded-lg px-3 py-1.5 text-[13px] font-medium text-white disabled:opacity-50"
+              className="rounded-md px-3 py-1 text-[12px] font-medium text-white disabled:opacity-50"
               style={{ background: 'var(--accent)' }}
               data-tip={
                 status && !status.installed && !values.tts_base_url
@@ -183,7 +183,7 @@ export default function VoiceSettingsSection({
             <button
               onClick={() => void handleStop()}
               disabled={busy !== null || !status?.spawned}
-              className="rounded-lg border px-3 py-1.5 text-[13px] disabled:opacity-40"
+              className="rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-40"
               style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
               data-tip={status?.external ? '外部で起動したサーバーは止めません' : 'プロセスごと止めて VRAM を解放します'}
             >
@@ -412,7 +412,7 @@ export default function VoiceSettingsSection({
             <button
               onClick={() => void handleInstall()}
               disabled={!status || status.spawned}
-              className="self-start rounded-lg px-4 py-1.5 text-[13px] font-medium text-white disabled:opacity-50"
+              className="self-start rounded-md px-3 py-1 text-[12px] font-medium text-white disabled:opacity-50"
               style={{ background: 'var(--accent)' }}
               data-tip={status?.spawned ? '起動中は入れ替えられません(先に停止してください)' : undefined}
             >

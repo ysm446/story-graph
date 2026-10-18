@@ -164,7 +164,7 @@ export default function ImageCropModal({
           <button
             onClick={() => void handleConfirm()}
             disabled={busy}
-            className="rounded-lg px-4 py-1.5 text-[13px] font-medium text-white disabled:opacity-50"
+            className="rounded-md px-3 py-1 text-[12px] font-medium text-white disabled:opacity-50"
             style={{ background: 'var(--accent)' }}
           >
             {busy ? '処理中…' : 'この範囲で設定'}

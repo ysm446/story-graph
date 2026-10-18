@@ -356,7 +356,7 @@ export function ChapterTab({
             <button
               onClick={generate}
               disabled={generateQueued}
-              className="rounded-lg px-2.5 py-1 text-[12px] font-medium text-white disabled:opacity-50"
+              className="rounded-md px-3 py-1 text-[12px] font-medium text-white disabled:opacity-50"
               style={{ background: 'var(--accent)' }}
               data-tip="LLM で章のまとめを作る(既存のまとめは置き換え)"
             >

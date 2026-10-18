@@ -209,7 +209,7 @@ export default function LlamaInstaller(): React.JSX.Element {
         <button
           onClick={() => void handleFetch()}
           disabled={loadingReleases || installing}
-          className="rounded-lg border px-3 py-1.5 text-[13px] disabled:opacity-40"
+          className="rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-40"
           style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
         >
           {loadingReleases ? '取得中…' : releases.length ? '⟳ リリース一覧を更新' : 'リリース一覧を取得'}
@@ -309,7 +309,7 @@ export default function LlamaInstaller(): React.JSX.Element {
               <button
                 onClick={() => void handleInstall()}
                 disabled={!selectedVariant}
-                className="rounded-lg px-4 py-1.5 text-[13px] font-medium text-white disabled:opacity-50"
+                className="rounded-md px-3 py-1 text-[12px] font-medium text-white disabled:opacity-50"
                 style={{ background: 'var(--accent)' }}
               >
                 ⬇ インストール({totalSize ? fmtBytes(totalSize) : '—'})
@@ -317,7 +317,7 @@ export default function LlamaInstaller(): React.JSX.Element {
               {canAddCudart && (
                 <button
                   onClick={() => void handleInstall(true)}
-                  className="rounded-lg border px-3 py-1.5 text-[13px] disabled:opacity-40"
+                  className="rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-40"
                   style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
                   data-tip="このビルドはインストール済みです。本体は落とし直さず、CUDA ランタイム DLL だけ同じフォルダに足します"
                 >

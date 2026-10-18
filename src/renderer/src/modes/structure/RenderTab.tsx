@@ -346,7 +346,7 @@ export function RenderTab({
           <button
             onClick={runRender}
             disabled={!presetId}
-            className="rounded-lg px-2.5 py-1 text-[12px] font-medium text-white disabled:opacity-40"
+            className="rounded-md px-3 py-1 text-[12px] font-medium text-white disabled:opacity-40"
             style={{ background: 'var(--accent)' }}
             data-tip={
               (render ? '同じ条件で書き直す(前の清書は履歴として残る)' : 'このシーンを散文にする') +
