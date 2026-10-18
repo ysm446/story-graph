@@ -95,12 +95,12 @@ function ProductionMemoryPanel({ busy, open, onToggle, refresh, onDirty, onChang
         style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }} /> : <Markdown text={memory?.content || (enabled ? 'まだ作業メモはありません。制作中に方針や次の作業を記録します。' : 'まだ作業メモはありません。')} />}
       <div className="flex flex-wrap gap-2">
         {editing ? <>
-          <button className={button} style={style} disabled={busy || saving} onClick={() => void save()} data-tip="作業メモを保存します">メモを保存</button>
           <button className={button} style={style} disabled={saving} onClick={() => {
             setEditing(false)
             setError('')
             void productionApi.memory().then(setMemory).catch((e) => setError(String(e)))
-          }} data-tip="入力を取り消し、保存済みのメモを読み直します">キャンセル</button>
+          }} data-tip="入力を取り消し、保存済みのメモを読み直します">取り消し</button>
+          <button className="accent-action rounded-md border px-2.5 py-1 text-[12px] font-medium disabled:opacity-40" disabled={busy || saving} onClick={() => void save()} data-tip="作業メモを保存します">メモを保存</button>
         </> : <button className={button} style={style} disabled={busy || saving || !memory} onClick={() => { setDraft(memory?.content ?? ''); editBaseRevision.current = memory?.revision ?? null; setEditing(true) }} data-tip={busy ? '制作が終わるか停止してから修正できます' : '方針や決定事項を修正します'}>メモを編集</button>}
         <button className={button} style={style} disabled={saving} onClick={() => {
           const epoch = historyEpoch.current

@@ -613,15 +613,17 @@ export function BeatTab({
                   className="w-40 rounded-md border px-1.5 py-0.5 outline-none"
                   style={{ background: 'var(--bg-input)', borderColor: 'var(--accent-border)' }}
                 />
+                {/* 「取り消し … 確定(右)」の順 */}
+                <button onClick={() => setRetireTarget(null)} className="rounded-md border px-2 py-0.5 text-[11px]" style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }} data-tip="退場させずに閉じます(Esc)">
+                  取り消し
+                </button>
                 <button
                   onClick={() => void saveRetire(retireTarget, retireReason)}
                   className="rounded-md px-2 py-0.5 text-[12px] font-medium text-white"
                   style={{ background: 'var(--accent)' }}
+                  data-tip="このシーンでこの人物を退場させます(Enter)"
                 >
                   退場させる
-                </button>
-                <button onClick={() => setRetireTarget(null)} style={{ color: 'var(--text-faint)' }}>
-                  取消
                 </button>
               </div>
             )}
@@ -790,7 +792,7 @@ export function BeatTab({
               className="rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-50"
               style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
               data-tip={saving || suggesting !== null ? '保存・自動生成が終わるまでお待ちください' : dirty ? 'このシーンの未保存の変更を取り消します' : '変更はありません'}
-            >元に戻す</button>
+            >取り消し</button>
           <button
             onClick={() => void handleSave()}
             disabled={!dirty || saving}

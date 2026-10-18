@@ -3348,8 +3348,8 @@ function StructureModeInner({
                   style={{ background: 'var(--bg-input)', borderColor: 'var(--accent-border)', color: 'var(--text)' }}
                 />
                 <div className="mt-3 flex justify-end gap-2 text-[12px]">
-                  <button onClick={() => setNamePrompt(null)} style={{ color: 'var(--text-faint)' }}>
-                    取消
+                  <button onClick={() => setNamePrompt(null)} className="rounded-md border px-2 py-0.5 text-[11px]" style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }} data-tip="入力をやめて閉じます(Esc)">
+                    取り消し
                   </button>
                   <button
                     onClick={() => {

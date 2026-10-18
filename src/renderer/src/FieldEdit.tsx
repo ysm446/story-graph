@@ -24,7 +24,7 @@ export function EditPencil({ label, onClick }: { label: string; onClick: () => v
 }
 
 /** 編集欄の右下に置く(校正ボタンの下の段)。主な操作の「確定」を右端にする */
-export function EditActions({ dirty, saving, blocked, error, onCommit, onCancel }: {
+export function EditActions({ dirty, saving, blocked, error, onCommit, onCancel, commitLabel = '確定', commitTip = 'この項目を保存します(Ctrl+Enter)' }: {
   dirty: boolean
   saving: boolean
   /** 確定できない理由(名前が空など)。あれば確定を無効にしてツールチップに出す */
@@ -32,6 +32,9 @@ export function EditActions({ dirty, saving, blocked, error, onCommit, onCancel 
   error?: string
   onCommit: () => void
   onCancel: () => void
+  /** 確定ボタンの文言(イベントの「追加」など、何が起きるかを言うとき) */
+  commitLabel?: string
+  commitTip?: string
 }): React.JSX.Element {
   return (
     <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
@@ -49,9 +52,9 @@ export function EditActions({ dirty, saving, blocked, error, onCommit, onCancel 
         onClick={onCommit}
         disabled={saving || !!blocked}
         className="accent-action rounded-md border px-2.5 py-1 text-[12px] font-medium disabled:opacity-40"
-        data-tip={blocked || 'この項目を保存します(Ctrl+Enter)'}
+        data-tip={blocked || commitTip}
       >
-        {saving ? '保存中…' : '確定'}
+        {saving ? '保存中…' : commitLabel}
       </button>
       {error && (
         <p role="alert" className="w-full text-right text-[12px]" style={{ color: 'var(--danger)' }}>{error}</p>

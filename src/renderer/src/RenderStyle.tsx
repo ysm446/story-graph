@@ -374,8 +374,8 @@ export function PresetEditorModal({
             </button>
           )}
           <div className="ml-auto flex gap-2">
-            <button onClick={onClose} className="px-3 py-1.5 text-[13px]" style={{ color: 'var(--text-dim)' }}>
-              キャンセル
+            <button onClick={onClose} className="rounded-md border px-2 py-0.5 text-[11px]" style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }} data-tip="保存せずに閉じます">
+              取り消し
             </button>
             <button
               onClick={() => void handleSave()}

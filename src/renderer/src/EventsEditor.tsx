@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { api, isAbortError } from './api'
 import CharAvatar from './CharAvatar'
+import { EditActions, editKeys, EditPencil } from './FieldEdit'
 import { Icon, type IconName } from './icons'
 import RelationBar from './RelationBar'
 import { enqueueTask, notifyGraphChanged, useTaskFor } from './tasks'
@@ -658,6 +659,7 @@ export default function EventsEditor({
     <div
       className="mb-2 rounded-lg border p-2"
       style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border)' }}
+      onKeyDown={editKeys(true, handleAdd, () => setAdding(null))}
     >
       <span className="mb-1.5 flex items-end gap-2.5">
         {/* 「だれの」を選ぶと出る。一覧のカードと同じ位置にアイコンが立つ */}
@@ -691,14 +693,15 @@ export default function EventsEditor({
         factKeys={factKeys}
         onChange={(payload) => setAdding({ ...adding, payload })}
       />
-      <button
-        onClick={handleAdd}
-        disabled={saving || extracting}
-        className="rounded-md px-3 py-1 text-[12px] font-medium text-white disabled:opacity-50"
-        style={{ background: 'var(--accent)' }}
-      >
-        追加
-      </button>
+      {/* 資料庫・章のまとめと同じ「取り消し … 確定(右端)」の並び */}
+      <EditActions
+        dirty={false}
+        saving={saving || extracting}
+        onCommit={handleAdd}
+        onCancel={() => setAdding(null)}
+        commitLabel="追加"
+        commitTip="このイベントを追加します(Ctrl+Enter)"
+      />
     </div>
   )
 
@@ -718,7 +721,7 @@ export default function EventsEditor({
             className="rounded-md border px-2 py-0.5 text-[11px]"
             style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
           >
-            {adding ? 'キャンセル' : '+ 手動イベント'}
+            {adding ? '取り消し' : '+ 手動イベント'}
           </button>
           {/* 1 件でもキューに積む(他の処理と取り合いにならないように) */}
           <button
@@ -873,15 +876,13 @@ export default function EventsEditor({
                         {e.source}
                       </span>
                       <span className="ml-auto flex shrink-0 items-center gap-2">
-                        <button
-                          onClick={() => setEditing(open ? null : { id: e.id, payload: { ...(e.payload as Payload) } })}
-                          className="text-[11px]"
-                          style={{ color: open ? 'var(--accent)' : 'var(--text-faint)' }}
-                          aria-label={open ? '編集を閉じる' : 'このイベントを編集'}
-                          data-tip={open ? '編集を閉じる' : 'このイベントを編集'}
-                        >
-                          {open ? '閉じる' : '✎'}
-                        </button>
+                        {/* 鉛筆は資料庫・章のまとめと同じ部品。編集中は出さない(閉じるのは下の「取り消し」) */}
+                        {!open && (
+                          <EditPencil
+                            label="このイベント"
+                            onClick={() => setEditing({ id: e.id, payload: { ...(e.payload as Payload) } })}
+                          />
+                        )}
                         <button
                           onClick={() => handleDelete(index)}
                           disabled={saving || extracting}
@@ -894,7 +895,7 @@ export default function EventsEditor({
                       </span>
                     </div>
                     {open ? (
-                      <div className="mt-1">
+                      <div className="mt-1" onKeyDown={editKeys(true, handleUpdate, () => setEditing(null))}>
                         <EventFields
                           type={e.type}
                           payload={editing.payload}
@@ -902,23 +903,13 @@ export default function EventsEditor({
                           factKeys={factKeys}
                           onChange={(payload) => setEditing({ id: e.id, payload })}
                         />
-                        <div className="flex gap-2">
-                          <button
-                            onClick={handleUpdate}
-                            disabled={saving || extracting}
-                            className="rounded-md px-3 py-1 text-[12px] font-medium text-white disabled:opacity-50"
-                            style={{ background: 'var(--accent)' }}
-                          >
-                            保存
-                          </button>
-                          <button
-                            onClick={() => setEditing(null)}
-                            className="px-2 py-1 text-[12px]"
-                            style={{ color: 'var(--text-dim)' }}
-                          >
-                            取消
-                          </button>
-                        </div>
+                        <EditActions
+                          dirty={JSON.stringify(editing.payload) !== JSON.stringify(e.payload)}
+                          saving={saving || extracting}
+                          onCommit={handleUpdate}
+                          onCancel={() => setEditing(null)}
+                          commitTip="このイベントを保存します(Ctrl+Enter)"
+                        />
                       </div>
                     ) : e.type === 'memory_add' ? (
                       // 人物名は 1 行目に出しているので、本文と重要度・感情だけ

@@ -1121,15 +1121,20 @@ export default function ChatDrawer({
                             className="w-full resize-none rounded-2xl border px-3 py-1.5 text-[13px] outline-none"
                             style={{ background: 'var(--bg-input)', borderColor: 'var(--accent-border)' }}
                           />
-                          <div className="mt-1 flex justify-end gap-2 text-[11px]">
-                            <button onClick={() => setEditingTurn(null)} style={{ color: 'var(--text-faint)' }}>
-                              取消
+                          <div className="mt-1 flex justify-end gap-2">
+                            <button
+                              onClick={() => setEditingTurn(null)}
+                              className="rounded-md border px-2 py-0.5 text-[11px]"
+                              style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+                              data-tip="編集をやめて元の発言に戻します"
+                            >
+                              取り消し
                             </button>
                             <button
                               onClick={() => void saveEditTurn(turn)}
                               disabled={!editText.trim()}
-                              className="rounded-md px-2 py-0.5 font-medium text-white disabled:opacity-40"
-                              style={{ background: 'var(--accent)' }}
+                              className="accent-action rounded-md border px-2.5 py-1 text-[12px] font-medium disabled:opacity-40"
+                              data-tip={editText.trim() ? '発言を直して保存します' : '発言が空です'}
                             >
                               保存
                             </button>

@@ -69,8 +69,9 @@ export default function ChatRulesPanel({ busy, open, onToggle, onDirty, onSaved 
         style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }} />
       <p className="text-[11px]" style={{ color: 'var(--text-faint)' }}>「回答」「1シーンの本文」など対象を明記してください。空にして保存すると解除できます。</p>
       <div className="flex items-center gap-2">
-        <button className={button} style={style} disabled={busy || saving || !dirty} onClick={() => void save()} data-tip="ルールを保存し、次の送信から適用します">{saving ? '保存中…' : '保存'}</button>
-        <button className={button} style={style} disabled={saving || !dirty} onClick={() => { setDraft(saved ?? ''); setError(''); setNotice('') }} data-tip="未保存の変更を取り消します">元に戻す</button>
+        {/* 「取り消し … 保存(右)」の順(資料庫の確定と同じ並び) */}
+        <button className={button} style={style} disabled={saving || !dirty} onClick={() => { setDraft(saved ?? ''); setError(''); setNotice('') }} data-tip="未保存の変更を取り消します">取り消し</button>
+        <button className="accent-action rounded-md border px-2.5 py-1 text-[12px] font-medium disabled:opacity-40" disabled={busy || saving || !dirty} onClick={() => void save()} data-tip="ルールを保存し、次の送信から適用します">{saving ? '保存中…' : '保存'}</button>
         <span className="text-[11px] tabular-nums" style={{ color: 'var(--text-faint)' }}>{draft.length} / 6000</span>
       </div>
       {notice && <p role="status" className="text-[11px]" style={{ color: 'var(--text-dim)' }}>{notice}</p>}

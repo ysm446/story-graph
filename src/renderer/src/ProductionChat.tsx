@@ -411,7 +411,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
     const message = text.trim()
     if (!message || busy) return
     if (rulesDirty) { setError('制作エージェントへの指示を保存するか、元に戻してから送信してください。'); return }
-    if (memoryDirty) { setError('作業メモを保存するか、編集をキャンセルしてから送信してください。'); return }
+    if (memoryDirty) { setError('作業メモを保存するか、編集を取り消してから送信してください。'); return }
     const blocked = execute ? beforeExecute() : null
     if (blocked) { setError(blocked); return }
     if (execute && policy.allowed_ids?.length === 0) { setError('変更できるシーンを1つ以上選んでください'); return }

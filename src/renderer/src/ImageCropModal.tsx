@@ -158,8 +158,8 @@ export default function ImageCropModal({
           </p>
         )}
         <div className="mt-3 flex justify-end gap-2">
-          <button onClick={onCancel} className="px-3 py-1.5 text-[13px]" style={{ color: 'var(--text-dim)' }}>
-            キャンセル
+          <button onClick={onCancel} className="rounded-md border px-2 py-0.5 text-[11px]" style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }} data-tip="切り抜かずに閉じます">
+            取り消し
           </button>
           <button
             onClick={() => void handleConfirm()}

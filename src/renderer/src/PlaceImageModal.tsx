@@ -211,7 +211,7 @@ export default function PlaceImageModal({
             style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
             data-tip={candidate ? '生成した画像は採用せずに閉じます(ストックには残りません)' : '閉じるだけでは設定を保存しません(生成したときに保存されます)'}
           >
-            {phase === 'generate' ? 'キャンセル' : '閉じる'}
+            {phase === 'generate' ? '取り消し' : '閉じる'}
           </button>
           <div className="ml-auto flex items-center gap-2">
             {candidate && (
