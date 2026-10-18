@@ -1,6 +1,7 @@
 import { Fragment, useMemo } from 'react'
 import { chapterSpans, consecutiveRuns } from './CharacterTimeline'
 import { resolveEffectiveLocations } from './effectiveLocations'
+import { NodeThumb } from './modes/structure/StructureNodes'
 import type { Group, StoryGraph, StoryNode } from './types'
 
 /** 資料庫の人物・場所のページに出す「出番の図」。
@@ -10,6 +11,8 @@ import type { Group, StoryGraph, StoryNode } from './types'
  * 場所は location を空欄にして親から引き継いだシーンも含め、破線で区別する(2026-10-16 ユーザー判断)。
  * 正史から外れた分岐は、その資料が出てくる枝だけを下に 1 本ずつ並べる。
  * セルをクリックするとフローチャートでそのシーンを開く。
+ * 章の帯の下には各シーンの挿絵のサムネイルを並べる(キャラクタービューの列の見出しと同じく、帯の上に絵・下に名前。
+ * 出ていないシーンも物語の流れの目印として出す。2026-10-18 ユーザー要望)。
  */
 
 const COLUMN_WIDTH = 72
@@ -18,6 +21,7 @@ const CELL_INSET = 5
 const CHAPTER_ROW_HEIGHT = 22 // 帯 16px + 下 6px
 const ROW_HEIGHT = 32
 const TITLE_ROW_HEIGHT = 18
+const THUMB_ROW_HEIGHT = 44 // サムネイル 40px + 下 4px
 const FALLBACK_COLOR = '#8a8fa8'
 
 export type SceneUsageKind = 'character' | 'place'
@@ -129,6 +133,7 @@ function Strip({
   color,
   name,
   kind,
+  showThumbs,
   onOpenScene
 }: {
   path: StoryNode[]
@@ -137,15 +142,19 @@ function Strip({
   color: string
   name: string
   kind: SceneUsageKind
+  /** 挿絵のサムネイルの行を出すか(図に出るシーンに挿絵が 1 枚も無ければ出さない) */
+  showThumbs: boolean
   onOpenScene: (nodeId: string) => void
 }): React.JSX.Element {
   const spans = chapterSpans(path, groups)
   const usedCols = path.map((n, i) => (usage.has(n.id) ? i : -1)).filter((i) => i >= 0)
   const directRuns = consecutiveRuns(path.map((n, i) => (usage.get(n.id) && !usage.get(n.id)!.inherited ? i : -1)).filter((i) => i >= 0))
   const inheritedRuns = consecutiveRuns(path.map((n, i) => (usage.get(n.id)?.inherited ? i : -1)).filter((i) => i >= 0))
-  const cellTop = CHAPTER_ROW_HEIGHT + (ROW_HEIGHT - CELL_HEIGHT) / 2
-  const lineY = CHAPTER_ROW_HEIGHT + ROW_HEIGHT / 2
-  const height = CHAPTER_ROW_HEIGHT + ROW_HEIGHT + TITLE_ROW_HEIGHT
+  const thumbRow = showThumbs ? THUMB_ROW_HEIGHT : 0
+  const bandTop = CHAPTER_ROW_HEIGHT + thumbRow
+  const cellTop = bandTop + (ROW_HEIGHT - CELL_HEIGHT) / 2
+  const lineY = bandTop + ROW_HEIGHT / 2
+  const height = bandTop + ROW_HEIGHT + TITLE_ROW_HEIGHT
   const verb = kind === 'character' ? 'に登場' : 'が舞台'
   return (
     <div className="inspector-scrollbar overflow-x-auto">
@@ -215,7 +224,8 @@ function Strip({
             )
           }
         )}
-        {/* 列ごとの透明なボタン(クリックでフローチャートへ)とタイトル */}
+        {/* 列ごとの透明なボタン(クリックでフローチャートへ)。上に挿絵のサムネイル、下にタイトル。
+            挿絵の無いシーンは同じ大きさの空の枠で列を揃える */}
         {path.map((node, index) => {
           const used = usage.get(node.id)
           const title = node.title || '(無題)'
@@ -224,11 +234,21 @@ function Strip({
             <button
               key={node.id}
               onClick={() => onOpenScene(node.id)}
-              className="absolute flex flex-col justify-end rounded-md px-1 text-left hover:bg-[var(--accent-soft)]"
-              style={{ left: index * COLUMN_WIDTH, top: CHAPTER_ROW_HEIGHT, width: COLUMN_WIDTH, height: ROW_HEIGHT + TITLE_ROW_HEIGHT }}
+              className="absolute flex flex-col rounded-md px-1 text-left hover:bg-[var(--accent-soft)]"
+              style={{ left: index * COLUMN_WIDTH, top: CHAPTER_ROW_HEIGHT, width: COLUMN_WIDTH, height: thumbRow + ROW_HEIGHT + TITLE_ROW_HEIGHT }}
               aria-label={`${index + 1}. ${title}`}
               data-tip={`${index + 1}. ${title}\n${note}\nクリックでフローチャートで開く`}
             >
+              {showThumbs && (
+                <span
+                  className="block h-10 w-16 shrink-0 overflow-hidden rounded-md"
+                  style={{ background: 'var(--bg-canvas)' }}
+                  data-usage-thumb
+                >
+                  <NodeThumb node={node} className="block h-full w-full object-cover" />
+                </span>
+              )}
+              <span className="flex-1" />
               <span className="truncate text-[10px] leading-[18px]" style={{ color: used ? 'var(--text)' : 'var(--text-faint)' }}>
                 <span className="tabular-nums" style={{ color: 'var(--text-faint)' }}>{index + 1}.</span> {title}
               </span>
@@ -277,6 +297,8 @@ export default function SceneUsage({
     () => branchChains(graph, canon).filter((chain) => chain.path.some((n) => usage.has(n.id))),
     [graph, canon, usage]
   )
+  // 挿絵のサムネイルの行は、図に出るシーンのどれかに挿絵があるときだけ出す(空の枠ばかり並べない)
+  const showThumbs = canon.some((n) => n.image_path) || chains.some((chain) => chain.path.some((n) => n.image_path))
   const total = usage.size
   const inherited = [...usage.values()].filter((u) => u.inherited).length
   const entityColor = color ?? FALLBACK_COLOR
@@ -298,13 +320,13 @@ export default function SceneUsage({
         </p>
       ) : (
         <>
-          <Strip path={canon} usage={usage} groups={groups} color={entityColor} name={name} kind={kind} onOpenScene={onOpenScene} />
+          <Strip path={canon} usage={usage} groups={groups} color={entityColor} name={name} kind={kind} showThumbs={showThumbs} onOpenScene={onOpenScene} />
           {chains.map((chain) => (
             <div key={chain.path[0].id} className="mt-2">
               <p className="mb-0.5 truncate text-[10px]" style={{ color: 'var(--text-faint)' }}>
                 分岐: 「{chain.from}」から
               </p>
-              <Strip path={chain.path} usage={usage} groups={groups} color={entityColor} name={name} kind={kind} onOpenScene={onOpenScene} />
+              <Strip path={chain.path} usage={usage} groups={groups} color={entityColor} name={name} kind={kind} showThumbs={showThumbs} onOpenScene={onOpenScene} />
             </div>
           ))}
           <p className="mt-1 text-[11px]" style={{ color: 'var(--text-faint)' }}>

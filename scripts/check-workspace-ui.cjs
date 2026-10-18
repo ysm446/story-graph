@@ -418,6 +418,16 @@ store.save_chat_messages(chat['id'], [
       const r = await js(`(() => { const a = ${timeScene}.parentElement.getBoundingClientRect(), b = document.querySelector('input[aria-label="弱い関係を隠す"]').parentElement.getBoundingClientRect(); return { x: Math.round(a.x - 8), y: Math.round(a.y - 8), width: Math.round(Math.max(a.width, b.width) + 16), height: Math.round(b.bottom - a.y + 16) } })()`)
       writeFileSync(join(target, 'relation-time.png'), (await win.webContents.capturePage(r)).toPNG())
     }
+    // 資料庫の人物のページの「登場するシーン」: 章の帯の下に各シーンの挿絵のサムネイル(出ていないシーンも)。挿絵の無いシーンは空の枠
+    await js(`[...document.querySelectorAll('button')].find(e => e.getClientRects().length && e.textContent.trim().endsWith('アヤ') && e.closest('nav, aside, [class*="list"]') !== null).click()`)
+    await pause(600)
+    const usageThumbs = `[...document.querySelectorAll('section[aria-label="登場するシーン"] [data-usage-thumb]')]`
+    await assert(`${usageThumbs}.length === 4 && ${usageThumbs}.filter(e => e.querySelector('img')).length === 3 && !${usageThumbs}[1].querySelector('img')`, '資料庫の「登場するシーン」の図に、各シーンの挿絵のサムネイルが並ぶ(挿絵の無いシーンは空の枠)')
+    {
+      const r = await js(`(() => { const el = document.querySelector('section[aria-label="登場するシーン"]'); el.scrollIntoView({ block: 'center' }); const r = el.getBoundingClientRect(); return { x: Math.round(r.x - 8), y: Math.round(r.y - 8), width: Math.round(Math.min(r.width + 16, 700)), height: Math.round(r.height + 16) } })()`)
+      await pause(200)
+      writeFileSync(join(target, 'usage-thumbs.png'), (await win.webContents.capturePage(r)).toPNG())
+    }
     if (errors.length) throw new Error(errors.join('\n'))
     console.log('Screenshots: ' + target)
     win.destroy()
@@ -523,6 +533,7 @@ store.save_chat_messages(chat['id'], [
     await assert(`!!${section('登場するシーン')} && ${cols('登場するシーン')}.join('|') === '1. ${example.scenes[0].title}|2. ${example.scenes[1].title}|3. ${example.scenes[2].title}|4. ${example.scenes[3].title}|5. 翌朝'`, '人物のページに「登場するシーン」の図が出て、正史の 5 シーンが順に並ぶ')
     await assert(`${section('登場するシーン')}.textContent.includes('登場するシーン3') && !${section('登場するシーン')}.textContent.includes('分岐:')`, 'ケンの出番は 3(分岐には出ていないので分岐の行は無い)')
     await assert(`['第一幕 出発','第二幕 橋','第三幕 帰港'].every(t => ${section('登場するシーン')}.textContent.includes(t))`, '図の上に章の帯が出る')
+    await assert(`!${section('登場するシーン')}.querySelector('[data-usage-thumb]')`, '挿絵が 1 枚も無い作品では、サムネイルの行を出さない')
     writeFileSync(join(target, 'usage-character.png'), (await win.webContents.capturePage()).toPNG())
     await clickRow('老技師')
     await assert(`${section('登場するシーン')}.textContent.includes('登場するシーン3') && ${section('登場するシーン')}.textContent.includes('分岐: 「${example.scenes[1].title}」から') && ${cols('登場するシーン')}.includes('1. 別の道')`, '老技師は正史 2 + 分岐 1 で、分岐の行に「別の道」が出る')
