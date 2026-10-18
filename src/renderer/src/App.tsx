@@ -128,7 +128,7 @@ function LibraryMenu(): React.JSX.Element {
           className="absolute left-0 top-8 z-50 w-72 rounded-xl border p-1.5 shadow-lg shadow-black/40"
           style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)' }}
         >
-          <div className="px-2 py-1 text-[10px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
+          <div className="px-2 py-1 text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
             Library
           </div>
           {recents.map((root) => {

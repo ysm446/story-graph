@@ -180,7 +180,7 @@ export function SystemPromptModal({
             ]
             return (
               <div key={i} className="mb-2">
-                <div className="mb-0.5 text-[10px] uppercase tracking-[0.14em]" style={{ color: 'var(--accent)' }}>
+                <div className="mb-0.5 text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
                   {String(m.role ?? '')}
                 </div>
                 <pre

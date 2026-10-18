@@ -365,7 +365,7 @@ export default function RefImagePanel({
               生成した画像は「決定」を押すまで参照画像にはなりません(決定した画像だけがストックに残ります)。プロンプト・追加指示・seed は「生成」したときの組み合わせでキャラに保存されます(閉じるだけでは保存しません)。
             </p>
             <label className="mb-3 block">
-              <span className="mb-1 block text-[10px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
+              <span className="mb-1 block text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
                 追加指示(日本語可。外見欄を変えるほどではない一時的な指示)
               </span>
               <textarea
@@ -377,7 +377,7 @@ export default function RefImagePanel({
                 style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
               />
             </label>
-            <span className="mb-1 block text-[10px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
+            <span className="mb-1 block text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
               プロンプト(英語)
             </span>
             <textarea

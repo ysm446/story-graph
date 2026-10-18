@@ -71,7 +71,7 @@ export default function PromptLogViewer(): React.JSX.Element {
               <div className="border-t px-3 py-2" style={{ borderColor: 'var(--border)' }}>
                 {entry.messages.map((m, i) => (
                   <div key={i} className="mb-2">
-                    <div className="mb-0.5 text-[10px] uppercase tracking-[0.14em]" style={{ color: 'var(--accent)' }}>
+                    <div className="mb-0.5 text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
                       {m.role}
                     </div>
                     <pre
@@ -84,7 +84,7 @@ export default function PromptLogViewer(): React.JSX.Element {
                 ))}
                 {entry.response !== null && entry.response !== '' && (
                   <div className="mb-1">
-                    <div className="mb-0.5 text-[10px] uppercase tracking-[0.14em]" style={{ color: '#3ecf8e' }}>
+                    <div className="mb-0.5 text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
                       response{entry.finish_reason ? `(${entry.finish_reason})` : ''}
                     </div>
                     <pre

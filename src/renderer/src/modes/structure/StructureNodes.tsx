@@ -340,7 +340,7 @@ export function ChapterNodeCard({ data, selected }: NodeProps<ChapterFlowNode>):
       <Handle type="target" position={Position.Left} />
       {/* 表紙。シーンカードと同じく、切り抜かずに元の比率のまま収める */}
       {cover && <NodeThumb node={cover} className="mx-auto mb-3 max-h-40 max-w-full rounded-xl" />}
-      <div className="text-[10px] uppercase tracking-[0.25em]" style={{ color: 'var(--text-faint)' }}>
+      <div className="text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
         {group.on_canon ? `第${number}章` : '別ルートの章'}
       </div>
       <div className="mt-1 truncate text-[15px] font-semibold" style={{ color: 'var(--text)' }}>

@@ -312,7 +312,7 @@ export default function SettingsMode({ onImported }: {
               <div key={id} className={!grouped && previousGrouped ? 'mt-2' : undefined}>
                 {/* 保存先の区切り(この PC / この作品)。2つ目からは線で分ける */}
                 {groupStart && (
-                  <div className={`px-2.5 pb-1 text-[10px] tracking-[0.14em] ${index > 0 ? 'mt-3 border-t pt-3' : 'pt-1'}`}
+                  <div className={`px-2.5 pb-1 text-[11px] tracking-[0.14em] ${index > 0 ? 'mt-3 border-t pt-3' : 'pt-1'}`}
                     style={{ borderColor: 'var(--border)', color: 'var(--text-faint)' }}>
                     {GROUP_LABEL[group]}
                   </div>

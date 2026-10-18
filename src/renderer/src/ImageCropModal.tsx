@@ -136,7 +136,7 @@ export default function ImageCropModal({
           )}
         </div>
         <div className="mt-3 flex items-center gap-2">
-          <span className="text-[10px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
+          <span className="text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
             Zoom
           </span>
           <input

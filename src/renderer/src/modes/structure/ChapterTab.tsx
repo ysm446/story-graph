@@ -239,7 +239,7 @@ export function ChapterTab({
       <div className="shrink-0 border-b px-5 py-2" style={{ borderColor: 'var(--border)' }}>
 
       <div className="flex items-center gap-2">
-        <span className="shrink-0 text-[10px] uppercase tracking-[0.2em]" style={{ color: 'var(--text-faint)' }}>
+        <span className="shrink-0 text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
           {group.on_canon ? `第${number}章` : '別ルートの章'}
         </span>
         {renameText !== null ? (
@@ -691,7 +691,7 @@ function ChapterScenePreview({
   return (
     <>
       <div className="flex items-center gap-2">
-        <span className="shrink-0 text-[10px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
+        <span className="shrink-0 text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
           {routeIndex >= 0 ? `シーン ${routeIndex + 1}` : '別の道'}
         </span>
         <span className="min-w-0 flex-1 truncate text-[14px] font-semibold" style={{ color: 'var(--text)' }}>

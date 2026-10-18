@@ -144,7 +144,7 @@ export function CandidatePreview({
     <div>
       <div className="mb-1 flex h-4 items-center">
         {label && (
-          <span className="text-[10px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
+          <span className="text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
             {label}
           </span>
         )}

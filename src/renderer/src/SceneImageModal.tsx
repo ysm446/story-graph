@@ -182,7 +182,7 @@ export default function SceneImageModal({
         {/* 参照画像を渡すキャラ(cast 順) */}
         {node.cast.length > 0 && (
           <div className="mb-3">
-            <span className="mb-1 block text-[10px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
+            <span className="mb-1 block text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
               参照画像を渡す人物(最大 {MAX_REFS} 人)
             </span>
             <div className="flex flex-wrap gap-1.5">
@@ -226,7 +226,7 @@ export default function SceneImageModal({
 
         {/* 作者の追加指示。LLM に渡してプロンプトへ織り込む(案 A。docs/design/image-gen.md §6) */}
         <label className="mb-3 block">
-          <span className="mb-1 block text-[10px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
+          <span className="mb-1 block text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
             追加指示(日本語可。構図・時間帯・表情・服装など)
           </span>
           <textarea
@@ -239,7 +239,7 @@ export default function SceneImageModal({
           />
         </label>
 
-        <span className="mb-1 block text-[10px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
+        <span className="mb-1 block text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
           プロンプト(英語。手直しできます)
         </span>
         <textarea
