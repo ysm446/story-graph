@@ -406,6 +406,8 @@ store.save_chat_messages(chat['id'], [
       }
       throw new Error('Time で見つかりません: ' + title)
     }
+    // Time はシーンだけを数える(目印は数えない)。開いた直後は最後のシーン
+    await assert(`(() => { const t = ${timeScene}; return t.querySelector('.tabular-nums').textContent === '4/4' && t.querySelector('.truncate').textContent === ${JSON.stringify(example.scenes[3].title)} && +t.parentElement.querySelector('input[type=range]').max === 3 })()`, '関係図の Time はシーンだけを数え(4 シーンで 4 コマ)、開いた直後は最後のシーン')
     await scrubTo(example.scenes[3].title)
     await assert(`(() => { const t = ${timeScene}; return !!t.querySelector('span.h-10.w-16 img') && t.querySelector('.tabular-nums').textContent.includes('/') })()`, '関係図の Time に、今の時点のシーンのサムネイルと番号・タイトルが出る')
     await scrubTo(example.scenes[1].title)

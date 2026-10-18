@@ -123,6 +123,9 @@ export default function RelationGraph({
   onEgoChange?: (id: string | null) => void
 }): React.JSX.Element {
   const frameRef = useRef<HTMLDivElement>(null)
+  // Time で数えるのはシーンだけ。はじまり・章の入口と出口・結末の目印は関係を変えないので、
+  // 動かしても図が変わらないコマになり、番号も実感と合わなくなる(キャラクタービュー・出番の図と同じ数え方)
+  const canonPath = useMemo(() => path.filter((n) => !n.kind), [path])
   const [frameSize, setFrameSize] = useState({ width: configuredWidth, height: configuredHeight })
   const width = detailLayout ? frameSize.width : configuredWidth
   const height = detailLayout ? frameSize.height : configuredHeight
@@ -135,8 +138,7 @@ export default function RelationGraph({
     })
     observer.observe(frame)
     return () => observer.disconnect()
-  }, [detailLayout, path.length > 0])
-  const canonPath = path
+  }, [detailLayout, canonPath.length > 0])
   const [scrubIndex, setScrubIndex] = useState(canonPath.length - 1)
   const [state, setState] = useState<StateSnapshot | null>(null)
   const [threshold, setThreshold] = useState(0)
@@ -176,7 +178,7 @@ export default function RelationGraph({
     svg.addEventListener('wheel', onWheel, { passive: false })
     return () => svg.removeEventListener('wheel', onWheel)
     // シーン 0 件で描画した後に svg が現れる場合があるので、path の有無でも登録し直す
-  }, [width, height, path.length > 0])
+  }, [width, height, canonPath.length > 0])
 
   const charMap = useMemo(() => Object.fromEntries(characters.map((c) => [c.id, c])), [characters])
 
