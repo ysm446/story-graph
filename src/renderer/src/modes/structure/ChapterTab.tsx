@@ -5,8 +5,9 @@ import AutoTextarea from '../../AutoTextarea'
 import { showStatusNotice } from '../../statusNotice'
 import CharAvatar from '../../CharAvatar'
 import { Icon } from '../../icons'
+import type { RenderStyleState } from '../../RenderStyle'
 import { enqueueTask, notifyGraphChanged, useTasks } from '../../tasks'
-import type { Character, EventInput, Group, StoryNode } from '../../types'
+import type { Character, EventInput, Group, RenderResult, StoryNode } from '../../types'
 import { chapterCoverNode, NodeThumb } from './StructureNodes'
 import { useSaveShortcut } from './useSaveShortcut'
 
@@ -17,6 +18,7 @@ export function ChapterTab({
   number,
   nodes,
   characters,
+  renderStyle,
   onSelectScene,
   onChanged,
   onRename,
@@ -27,6 +29,9 @@ export function ChapterTab({
   number: number
   nodes: StoryNode[]
   characters: Character[]
+  /** シーンの清書を見るときのスタイルプリセット / POV(清書タブと共通) */
+  renderStyle: RenderStyleState
+  /** シーンを開く(章の中に入ってそのシーンを選ぶ) */
   onSelectScene: (nodeId: string) => void
   onChanged: () => void
   /** 章名をその場で変更して保存する(変更なし・空は呼ばれない) */
@@ -64,6 +69,27 @@ export function ChapterTab({
   const cover = chapterCoverNode(group, nodeById)
   // シーン一覧にサムネイルの列を出すか(挿絵のあるシーンが 1 つでもあれば)
   const hasAnyThumb = group.node_ids.some((id) => !!nodeById.get(id)?.image_path)
+
+  // 右の列に何を出すか。null = 章のまとめ、文字列 = そのシーンの内容(読むだけ)。
+  // シーン一覧は「何を見るか」を選ぶ場所で、シーンを開く(章の中に入る)のはダブルクリックか右の列のボタン
+  const [shownId, setShownId] = useState<string | null>(null)
+  const shownNode = shownId && group.node_ids.includes(shownId) ? nodeById.get(shownId) : undefined
+  // シーンの内容を清書で見るか本文で見るか。シーンを移っても選んだほうを保つ
+  const [sceneText, setSceneText] = useState<'render' | 'beat'>('render')
+  const listRef = useRef<HTMLDivElement | null>(null)
+  // ↑↓ キーで一覧(先頭がまとめ)を移る。フォーカスも移して、押し続けて下っていけるようにする
+  const moveShown = (step: number): void => {
+    const order: Array<string | null> = [null, ...group.node_ids]
+    const at = order.indexOf(shownNode ? shownNode.id : null)
+    const next = order[Math.max(0, Math.min(order.length - 1, at + step))]
+    setShownId(next)
+    listRef.current?.querySelector<HTMLButtonElement>(`[data-shown-key="${next ?? ''}"]`)?.focus()
+  }
+  // 見るものを切り替えたら右の列を先頭から読めるようにする
+  const mainScrollRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    if (mainScrollRef.current) mainScrollRef.current.scrollTop = 0
+  }, [shownNode?.id])
 
   const refetch = useCallback(async (): Promise<void> => {
     setLoading(true)
@@ -208,7 +234,16 @@ export function ChapterTab({
         </p>
       )}
       </div>
-      <DetailSplit storageKey="chapterDetailListWidth" defaultWidth={34} main={<>
+      <DetailSplit storageKey="chapterDetailListWidth" defaultWidth={34} mainScrollRef={mainScrollRef} main={shownNode ? (
+        <ChapterScenePreview
+          node={shownNode}
+          routeIndex={group.route.indexOf(shownNode.id)}
+          renderStyle={renderStyle}
+          textKind={sceneText}
+          onTextKind={setSceneText}
+          onOpen={() => onSelectScene(shownNode.id)}
+        />
+      ) : <>
       <div>
         <div className="mb-1 flex items-center gap-2">
           <span className="text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
@@ -365,14 +400,56 @@ export function ChapterTab({
             </span>
           )}
         </span>
-        <div className="flex flex-col">
+        <div
+          ref={listRef}
+          className="flex flex-col"
+          onKeyDown={(e) => {
+            if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
+            e.preventDefault()
+            moveShown(e.key === 'ArrowDown' ? 1 : -1)
+          }}
+        >
+          {/* 先頭は章のまとめ。シーンと同じ行の形にして、右の列に出すものを選ぶ一覧にする */}
+          <button
+            data-view-ok
+            data-shown-key=""
+            onClick={() => setShownId(null)}
+            aria-current={!shownNode}
+            className="flex items-center gap-2 rounded-md px-2 py-1 text-left text-[12px] hover:bg-[var(--accent-soft)]"
+            style={!shownNode ? { background: 'var(--accent-soft)', color: 'var(--text)' } : { color: 'var(--text-dim)' }}
+            data-tip="章のまとめを右に表示"
+          >
+            {/* シーンの行のサムネイルの列と、タイトルの位置を揃える */}
+            {hasAnyThumb && <span className="block w-16 shrink-0" />}
+            <span className="min-w-0 flex-1 truncate">章のまとめ</span>
+            {dirty ? (
+              <span className="shrink-0 text-[10px]" style={{ color: 'var(--text-dim)' }}>
+                未保存
+              </span>
+            ) : (
+              hasDigest &&
+              digestStale && (
+                <span className="shrink-0 text-[10px]" style={{ color: '#f2a3a3' }}>
+                  要更新
+                </span>
+              )
+            )}
+          </button>
           {group.node_ids.map((id, i) => (
-            <div key={id} className="group/scene flex items-center rounded-md hover:bg-[var(--accent-soft)]">
+            <div
+              key={id}
+              className="group/scene flex items-center rounded-md hover:bg-[var(--accent-soft)]"
+              style={shownNode?.id === id ? { background: 'var(--accent-soft)' } : undefined}
+            >
               <button
                 data-view-ok
-                onClick={() => onSelectScene(id)}
+                data-shown-key={id}
+                onClick={() => setShownId(id)}
+                onDoubleClick={() => onSelectScene(id)}
+                aria-current={shownNode?.id === id}
                 className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1 text-left text-[12px]"
-                style={{ color: 'var(--text-dim)' }}
+                style={{ color: shownNode?.id === id ? 'var(--text)' : 'var(--text-dim)' }}
+                data-tip="右にこのシーンの内容を表示(ダブルクリックでシーンを開く)"
               >
                 {/* 挿絵のサムネイル(Memories と同じ大きさで中央を切り抜く)。番号付きの一覧なので、
                     挿絵の無いシーンも同じ大きさの空の枠を置いてタイトルの位置を揃える。
@@ -435,5 +512,145 @@ export function ChapterTab({
           data-tip={dirty ? '章のまとめの変更を保存します(Ctrl+S)' : '変更はありません'}>まとめを保存</button>
       </div>
     </div>
+  )
+}
+
+/** 章タブの右の列に出す、選んだシーンの内容(読むだけ)。清書か本文かを切り替えて見る。
+ *  書き直しはシーンを開いてから(清書タブ・本文タブ)行う */
+function ChapterScenePreview({
+  node,
+  routeIndex,
+  renderStyle,
+  textKind,
+  onTextKind,
+  onOpen
+}: {
+  node: StoryNode
+  /** 読む道の何番目か(-1 = 別の道) */
+  routeIndex: number
+  renderStyle: RenderStyleState
+  textKind: 'render' | 'beat'
+  onTextKind: (kind: 'render' | 'beat') => void
+  onOpen: () => void
+}): React.JSX.Element {
+  const { presetId, povChar } = renderStyle
+  const [render, setRender] = useState<RenderResult | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    setError(null)
+    if (!presetId) {
+      setRender(null)
+      setLoading(false)
+      return
+    }
+    let ignore = false
+    setLoading(true)
+    void api
+      .getRender(node.id, presetId, povChar)
+      .then((r) => {
+        if (!ignore) setRender(r.render)
+      })
+      .catch((e) => {
+        if (ignore) return
+        setRender(null)
+        setError(String(e))
+      })
+      .finally(() => {
+        if (!ignore) setLoading(false)
+      })
+    return () => {
+      ignore = true
+    }
+    // updated_at はシーン編集後に stale 表示を取り直すために見る(清書タブと同じ)
+  }, [node.id, node.updated_at, presetId, povChar])
+
+  // 清書を選んでいても、まだ無いシーンは本文を出す(空の列にしない)
+  const showRender = textKind === 'render' && render !== null
+  const stale = showRender && render.stale === 1
+
+  return (
+    <>
+      <div className="flex items-center gap-2">
+        <span className="shrink-0 text-[10px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
+          {routeIndex >= 0 ? `シーン ${routeIndex + 1}` : '別の道'}
+        </span>
+        <span className="min-w-0 flex-1 truncate text-[14px] font-semibold" style={{ color: 'var(--text)' }}>
+          {node.title || '(無題)'}
+        </span>
+        <button
+          data-view-ok
+          onClick={onOpen}
+          className="shrink-0 rounded-md border px-2 py-0.5 text-[11px]"
+          style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+          data-tip="章の中に入って、このシーンを選ぶ(編集はシーンのタブで)"
+        >
+          シーンを開く →
+        </button>
+      </div>
+      <div className="flex min-w-0 items-center gap-2">
+        <div className="flex shrink-0 overflow-hidden rounded-md border" style={{ borderColor: 'var(--border-strong)' }}>
+          {(
+            [
+              ['render', '清書', 'いまのスタイルプリセット / 視点で書いた清書を表示'],
+              ['beat', '本文', 'シーン本文(清書の材料)を表示']
+            ] as const
+          ).map(([value, label, tip]) => (
+            <button
+              key={value}
+              data-view-ok
+              onClick={() => onTextKind(value)}
+              className="px-2.5 py-0.5 text-[12px]"
+              style={textKind === value ? { background: 'var(--accent-soft)', color: 'var(--text)' } : { color: 'var(--text-faint)' }}
+              data-tip={tip}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        {stale && (
+          <span
+            className="shrink-0 rounded px-1.5 py-px text-[10px]"
+            style={{ background: 'rgba(239,68,68,0.12)', color: '#f2a3a3' }}
+            data-tip="清書のあとにシーンが編集されたので、清書が古くなっている可能性があります"
+          >
+            要更新
+          </span>
+        )}
+        {textKind === 'render' && !loading && !error && render === null && (
+          <span className="min-w-0 truncate text-[11px]" style={{ color: 'var(--text-faint)' }}>
+            {presetId
+              ? 'このスタイルの清書はまだありません(本文を表示しています)'
+              : 'スタイルプリセットが未選択です(本文を表示しています)'}
+          </span>
+        )}
+      </div>
+      {error && (
+        <p className="text-[11px]" style={{ color: 'var(--danger)' }}>
+          {error}
+        </p>
+      )}
+      {textKind === 'render' && loading ? (
+        <p className="text-[11px]" style={{ color: 'var(--text-faint)' }}>
+          読み込み中…
+        </p>
+      ) : showRender ? (
+        <div
+          className="whitespace-pre-wrap text-[13px] leading-relaxed"
+          style={{ color: 'var(--text)', opacity: stale ? 0.6 : 1 }}
+        >
+          {render.prose}
+        </div>
+      ) : node.beat.trim() ? (
+        <div className="whitespace-pre-wrap text-[13px] leading-relaxed" style={{ color: 'var(--text)' }}>
+          {node.beat}
+        </div>
+      ) : (
+        <p className="text-[11px]" style={{ color: 'var(--text-faint)' }}>
+          本文はまだありません
+        </p>
+      )}
+    </>
   )
 }

@@ -382,7 +382,8 @@ store.save_chat_messages(chat['id'], [
     // 章の詳細のシーン一覧: 挿絵のサムネイルを左に出し、挿絵の無いシーンは同じ大きさの空の枠で揃える
     await js(`[...document.querySelectorAll('[data-cast-table] button')].find(e => e.textContent === '第2章「第二幕 橋」').click()`)
     await pause(500)
-    const sceneRows = `[...document.querySelectorAll('.scene-detail-meta button[data-view-ok]')]`
+    // 先頭の「章のまとめ」の行(data-shown-key が空)は除く
+    const sceneRows = `[...document.querySelectorAll('.scene-detail-meta button[data-shown-key]:not([data-shown-key=""])')]`
     await assert(`${sceneRows}.length === 2 && ${sceneRows}.every(e => e.querySelector('span.h-10.w-16')) && ${sceneRows}.filter(e => e.querySelector('img')).length === 1 && ${sceneRows}[1].querySelector('img') && ${sceneRows}[0].textContent.includes('1. ' + ${JSON.stringify(example.scenes[1].title)})`, '章の詳細のシーン一覧に挿絵のサムネイルが出て、挿絵の無いシーンは空の枠になる')
     {
       // 広さによってはシーン一覧が表紙の下に隠れているので、見える位置まで送ってから撮る
@@ -1075,6 +1076,16 @@ store.save_chat_messages(chat['id'], [
       await assert(`document.querySelector('.scene-detail-meta').textContent.includes(${JSON.stringify(middle)}) && !document.querySelector('.scene-detail-aside').textContent.includes(${JSON.stringify(middle)})`, (chapterCheck ? 'シーン一覧' : 'イベント') + 'は中央の列に置く')
       if (chapterCheck) await assert(`document.querySelector('.scene-detail-aside').textContent.includes('表紙') && document.querySelector('.scene-detail-main').textContent.includes('まとめ')`, '章は左に表紙、右にまとめを置く')
       if (chapterCheck) await assert(`!!document.querySelector('.scene-detail-meta button[data-view-ok]') && !document.querySelector('.scene-detail-meta span.h-10.w-16')`, '挿絵が 1 枚も無い章では、シーン一覧にサムネイルの列を出さない')
+      if (chapterCheck) {
+        // シーン一覧の行をクリックすると、右の列がそのシーンの内容になる(章の中には入らない)。先頭の「章のまとめ」で戻る
+        await js(`document.querySelector('.scene-detail-meta button[data-shown-key]:not([data-shown-key=""])').click()`)
+        await pause(400)
+        await assert(`(() => {const main=document.querySelector('.scene-detail-main').textContent;return main.includes('検証シーン') && main.includes('シーンを開く →') && main.includes('保存済みの本文。') && main.includes('(本文を表示しています)') && !main.includes('章を閉じたときのキャラごとの要約記憶') && document.querySelector('.scene-detail-meta button[data-shown-key]:not([data-shown-key=""])').getAttribute('aria-current')==='true' && document.body.textContent.includes('第1章')})()`, '章のシーン一覧をクリックすると、章の詳細のままで右にそのシーンの内容が出る(清書が無ければ本文)')
+        writeFileSync(join(target, 'chapter-scene-preview.png'), (await win.webContents.capturePage()).toPNG())
+        await js(`document.querySelector('.scene-detail-meta button[data-shown-key]:not([data-shown-key=""])').dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowUp',bubbles:true}))`)
+        await pause(300)
+        await assert(`document.querySelector('.scene-detail-main').textContent.includes('章を閉じたときのキャラごとの要約記憶') && document.querySelector('.scene-detail-meta button[data-shown-key=""]').getAttribute('aria-current')==='true' && document.activeElement===document.querySelector('.scene-detail-meta button[data-shown-key=""]')`, 'シーン一覧で ↑ を押すと先頭の「章のまとめ」に戻り、右がまとめになる')
+      }
       const before = wide.meta.width
       await js(`(() => {const el=document.querySelector('.scene-detail-divider');const rect=el.getBoundingClientRect();el.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,clientX:rect.x,clientY:rect.y+30}));window.dispatchEvent(new PointerEvent('pointermove',{clientX:rect.x+60,clientY:rect.y+30}));window.dispatchEvent(new PointerEvent('pointerup'))})()`)
       await pause(200)

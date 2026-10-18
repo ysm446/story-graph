@@ -3577,6 +3577,7 @@ function StructureModeInner({
                 number={groups.indexOf(activeGroup) + 1}
                 nodes={graphNodes}
                 characters={characters}
+                renderStyle={renderStyle}
                 onSelectScene={(nodeId) => {
                   // 章ビューから選んだ場合は章の中に入ってから選択する
                   if (effectiveView === 'chapters') setChapterView(activeGroup.id)
