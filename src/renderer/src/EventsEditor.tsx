@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, isAbortError } from './api'
 import CharAvatar from './CharAvatar'
+import { Icon, type IconName } from './icons'
 import { enqueueTask, notifyGraphChanged, useTaskFor } from './tasks'
 import type { Character, EventInput, StoryEvent, StoryNode } from './types'
 import { useElapsedSeconds } from './useElapsed'
@@ -26,6 +27,23 @@ const TYPE_LABELS: Record<string, string> = {
 
 // 手動で追加できる型(char_introduce は cast から導出されるので出さない)
 const ADDABLE_TYPES = Object.keys(TYPE_LABELS)
+
+/** 一覧の見出し。種類ごとに分けて並べ(同じ種類の中は保存順のまま)、件数 0 の見出しは出さない。
+ *  addType = 見出しの「+」で開く手動イベントの型。記憶は長い文なのでカード、ほかは 1 行で詰める */
+type EventGroupKey = 'memory' | 'relation' | 'fact' | 'other'
+const EVENT_GROUPS: Array<{ key: EventGroupKey; label: string; icon: IconName; addType?: string; card: boolean }> = [
+  { key: 'memory', label: '記憶', icon: 'recall', addType: 'memory_add', card: true },
+  { key: 'relation', label: '関係', icon: 'relation', addType: 'relationship_update', card: false },
+  { key: 'fact', label: '事実', icon: 'fact', addType: 'fact_set', card: false },
+  { key: 'other', label: 'その他', icon: 'more', card: false }
+]
+
+function eventGroupOf(type: string): EventGroupKey {
+  if (type === 'memory_add' || type === 'memory_compress') return 'memory'
+  if (type === 'relationship_update' || type === 'relationship_set') return 'relation'
+  if (type === 'fact_set') return 'fact'
+  return 'other' // 退場・手動上書きなど
+}
 
 const DEFAULT_PAYLOADS: Record<string, Payload> = {
   memory_add: { char: '', content: '', emotion: 0, importance: 0.5 },
@@ -381,7 +399,8 @@ export default function EventsEditor({
   onChanged: () => void
   onBusyChange: (busy: boolean) => void // キャンバス側のノードを光らせる
 }): React.JSX.Element {
-  const [adding, setAdding] = useState<{ type: string; payload: Payload } | null>(null)
+  // at = フォームを開いた場所(上の「+ 手動イベント」か、種類の見出しの「+」)。種類を選び直しても動かさない
+  const [adding, setAdding] = useState<{ type: string; payload: Payload; at: EventGroupKey | 'top' } | null>(null)
   // 編集対象は添字でなく id で持つ(抽出などで events が入れ替わると添字は
   // 別のイベントを指し、保存で無関係なイベントを上書きしてしまう)
   const [editing, setEditing] = useState<{ id: string; payload: Payload } | null>(null)
@@ -513,6 +532,55 @@ export default function EventsEditor({
     })
   }
 
+  // 手動イベントの追加フォーム。開いた場所(上か、種類の見出しの下)に出す
+  const addingForm = adding && (
+    <div
+      className="mb-2 rounded-lg border p-2"
+      style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border)' }}
+    >
+      <span className="mb-1.5 flex items-end gap-2.5">
+        {/* 「だれの」を選ぶと出る。一覧のカードと同じ位置にアイコンが立つ */}
+        {(() => {
+          const char = characters.find((c) => c.id === eventCharId(adding.type, adding.payload))
+          return char ? <CharAvatar char={char} size={28} /> : null
+        })()}
+        <span className="min-w-0 flex-1">
+          <Row label="種類">
+            <select
+              value={adding.type}
+              onChange={(e) =>
+                setAdding({ ...adding, type: e.target.value, payload: { ...DEFAULT_PAYLOADS[e.target.value] } })
+              }
+              className={fieldClass}
+              style={inputStyle}
+            >
+              {ADDABLE_TYPES.map((t) => (
+                <option key={t} value={t}>
+                  {TYPE_LABELS[t]}
+                </option>
+              ))}
+            </select>
+          </Row>
+        </span>
+      </span>
+      <EventFields
+        type={adding.type}
+        payload={adding.payload}
+        characters={characters}
+        factKeys={factKeys}
+        onChange={(payload) => setAdding({ ...adding, payload })}
+      />
+      <button
+        onClick={handleAdd}
+        disabled={saving || extracting}
+        className="rounded-md px-3 py-1 text-[12px] font-medium text-white disabled:opacity-50"
+        style={{ background: 'var(--accent)' }}
+      >
+        追加
+      </button>
+    </div>
+  )
+
   return (
     <div className="mt-2">
       <div className="mb-1 flex items-center justify-between">
@@ -523,7 +591,7 @@ export default function EventsEditor({
           <button
             onClick={() =>
               setAdding((v) =>
-                v ? null : { type: 'fact_set', payload: { ...DEFAULT_PAYLOADS['fact_set'] } }
+                v ? null : { type: 'fact_set', payload: { ...DEFAULT_PAYLOADS['fact_set'] }, at: 'top' }
               )
             }
             className="rounded-md border px-2 py-0.5 text-[11px]"
@@ -558,53 +626,7 @@ export default function EventsEditor({
         </div>
       </div>
 
-      {adding && (
-        <div
-          className="mb-2 rounded-lg border p-2"
-          style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border)' }}
-        >
-          <span className="mb-1.5 flex items-end gap-2.5">
-            {/* 「だれの」を選ぶと出る。一覧のカードと同じ位置にアイコンが立つ */}
-            {(() => {
-              const char = characters.find((c) => c.id === eventCharId(adding.type, adding.payload))
-              return char ? <CharAvatar char={char} size={28} /> : null
-            })()}
-            <span className="min-w-0 flex-1">
-              <Row label="種類">
-                <select
-                  value={adding.type}
-                  onChange={(e) =>
-                    setAdding({ type: e.target.value, payload: { ...DEFAULT_PAYLOADS[e.target.value] } })
-                  }
-                  className={fieldClass}
-                  style={inputStyle}
-                >
-                  {ADDABLE_TYPES.map((t) => (
-                    <option key={t} value={t}>
-                      {TYPE_LABELS[t]}
-                    </option>
-                  ))}
-                </select>
-              </Row>
-            </span>
-          </span>
-          <EventFields
-            type={adding.type}
-            payload={adding.payload}
-            characters={characters}
-            factKeys={factKeys}
-            onChange={(payload) => setAdding({ ...adding, payload })}
-          />
-          <button
-            onClick={handleAdd}
-            disabled={saving || extracting}
-            className="rounded-md px-3 py-1 text-[12px] font-medium text-white disabled:opacity-50"
-            style={{ background: 'var(--accent)' }}
-          >
-            追加
-          </button>
-        </div>
-      )}
+      {adding?.at === 'top' && addingForm}
 
       {error && (
         <div className="mb-1 text-[12px]" style={{ color: 'var(--danger)' }}>
@@ -624,27 +646,52 @@ export default function EventsEditor({
         </div>
       )}
 
-      {node.events.map((e, index) => {
-        const open = editing?.id === e.id
-        // 編集中は入力中の payload を見る(「だれの」を変えたらアイコンも追う)
-        const payload = open ? editing.payload : (e.payload as Payload)
-        const eventChar = characters.find((c) => c.id === eventCharId(e.type, payload))
+      {/* 種類ごとの見出しで分ける。違う種類どうしは状態の別の部分を変えるだけなので並べ替えても結果は同じ。
+          同じ種類の中は保存順のまま(同じ事実を 2 回設定したら後が勝つので、順番に意味がある) */}
+      {EVENT_GROUPS.map((group) => {
+        const items = node.events
+          .map((e, index) => ({ e, index }))
+          .filter(({ e }) => eventGroupOf(e.type) === group.key)
+        if (items.length === 0 && adding?.at !== group.key) return null
         return (
-          <div
-            key={e.id}
-            className="mb-1.5 flex gap-2.5 rounded-lg border px-3 py-2 text-[12px]"
-            style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border)' }}
-          >
-            {/* 記憶・事実などが「だれのことか」をアイコンで示す。
-                世界の事実のようにキャラに紐づかないものは左の列ごと出さない */}
-            {eventChar && <CharAvatar char={eventChar} size={28} />}
-            <div className="min-w-0 flex-1">
-              <div className="mb-0.5 flex items-center gap-2">
-                <span className="font-medium" style={{ color: 'var(--text)' }}>
-                  {TYPE_LABELS[e.type] ?? e.type}
-                </span>
+          <section key={group.key} data-event-group={group.key} className="mt-3 first-of-type:mt-1">
+            <div className="mb-1 flex items-center gap-1.5 text-[11px] font-medium" style={{ color: 'var(--text-dim)' }}>
+              <Icon name={group.icon} size={12} />
+              {group.label}
+              <span className="tabular-nums" style={{ color: 'var(--text-faint)' }}>
+                {items.length}
+              </span>
+              {group.addType && (
+                <button
+                  onClick={() =>
+                    setAdding((v) =>
+                      v?.at === group.key
+                        ? null
+                        : { type: group.addType!, payload: { ...DEFAULT_PAYLOADS[group.addType!] }, at: group.key }
+                    )
+                  }
+                  className="ml-auto flex h-5 w-5 items-center justify-center rounded-md text-[13px] hover:bg-[var(--accent-soft)]"
+                  style={{ color: adding?.at === group.key ? 'var(--accent)' : 'var(--text-faint)' }}
+                  aria-label={`${group.label}を手で追加`}
+                  data-tip={adding?.at === group.key ? '追加をやめる' : `${group.label}のイベントを手で追加`}
+                >
+                  {adding?.at === group.key ? '✕' : '+'}
+                </button>
+              )}
+            </div>
+            {adding?.at === group.key && addingForm}
+            {items.map(({ e, index }) => {
+              const open = editing?.id === e.id
+              // 編集中は入力中の payload を見る(「だれの」を変えたらアイコンも追う)
+              const payload = open ? editing.payload : (e.payload as Payload)
+              const eventChar = characters.find((c) => c.id === eventCharId(e.type, payload))
+              // 見出しで種類は分かるので、型の名前は混ざる見出し(その他)と記憶の圧縮だけに出す
+              const showType = group.key === 'other' || e.type === 'memory_compress'
+              // 記憶はカード、関係・事実・その他は枠の無い 1 行。編集中は入力欄が要るのでカードにする
+              const card = group.card || open
+              const sourceBadge = (
                 <span
-                  className="rounded px-1.5 py-px text-[10px] uppercase"
+                  className="shrink-0 rounded px-1.5 py-px text-[10px] uppercase"
                   style={
                     e.source === 'user'
                       ? { background: 'var(--accent-soft)', color: 'var(--accent)' }
@@ -653,56 +700,121 @@ export default function EventsEditor({
                 >
                   {e.source}
                 </span>
-                <button
-                  onClick={() => setEditing(open ? null : { id: e.id, payload: { ...(e.payload as Payload) } })}
-                  className="ml-auto text-[11px]"
-                  style={{ color: open ? 'var(--accent)' : 'var(--text-faint)' }}
-                  data-tip="このイベントを編集"
+              )
+              const actions = (
+                <>
+                  <button
+                    onClick={() => setEditing(open ? null : { id: e.id, payload: { ...(e.payload as Payload) } })}
+                    className="text-[11px]"
+                    style={{ color: open ? 'var(--accent)' : 'var(--text-faint)' }}
+                    aria-label={open ? '編集を閉じる' : 'このイベントを編集'}
+                    data-tip={open ? '編集を閉じる' : 'このイベントを編集'}
+                  >
+                    {open ? '閉じる' : '✎'}
+                  </button>
+                  <button
+                    onClick={() => handleDelete(index)}
+                    disabled={saving || extracting}
+                    className="delete-action text-[11px]"
+                    aria-label="このイベントを削除"
+                    data-tip="このイベントを削除"
+                  >
+                    ✕
+                  </button>
+                </>
+              )
+              return (
+                <div
+                  key={e.id}
+                  data-event-type={e.type}
+                  className={
+                    card
+                      ? 'mb-1.5 flex gap-2.5 rounded-lg border px-3 py-2 text-[12px]'
+                      : 'flex items-start gap-2 rounded-md px-2 py-1 text-[12px] hover:bg-[var(--bg-elevated)]'
+                  }
+                  style={card ? { background: 'var(--bg-elevated)', borderColor: 'var(--border)' } : undefined}
                 >
-                  {open ? '閉じる' : '✎ 編集'}
-                </button>
-                <button
-                  onClick={() => handleDelete(index)}
-                  disabled={saving || extracting}
-                  className="delete-action text-[11px]"
-                  aria-label="このイベントを削除"
-                  data-tip="このイベントを削除"
-                >
-                  ✕
-                </button>
-              </div>
-              {open ? (
-                <div className="mt-1.5">
-                  <EventFields
-                    type={e.type}
-                    payload={editing.payload}
-                    characters={characters}
-                    factKeys={factKeys}
-                    onChange={(payload) => setEditing({ id: e.id, payload })}
-                  />
-                  <div className="flex gap-2">
-                    <button
-                      onClick={handleUpdate}
-                      disabled={saving || extracting}
-                      className="rounded-md px-3 py-1 text-[12px] font-medium text-white disabled:opacity-50"
-                      style={{ background: 'var(--accent)' }}
-                    >
-                      保存
-                    </button>
-                    <button
-                      onClick={() => setEditing(null)}
-                      className="px-2 py-1 text-[12px]"
-                      style={{ color: 'var(--text-dim)' }}
-                    >
-                      取消
-                    </button>
+                  {/* 記憶・事実などが「だれのことか」をアイコンで示す。世界の事実は地球の線画、
+                      ほかにキャラに紐づかないものは行の頭を揃えるため同じ幅を空ける(カードは列ごと出さない) */}
+                  {eventChar ? (
+                    <CharAvatar char={eventChar} size={card ? 28 : 20} />
+                  ) : (
+                    !card && (
+                      <span
+                        className="flex h-5 w-5 shrink-0 items-center justify-center"
+                        style={{ color: 'var(--text-faint)' }}
+                      >
+                        {e.type === 'fact_set' && str(payload.scope) === 'world' && <Icon name="globe" size={14} />}
+                      </span>
+                    )
+                  )}
+                  <div className="min-w-0 flex-1">
+                    {/* カードは 1 行目に だれの(種類) + 出どころ + 操作、本文は下に幅いっぱい */}
+                    {card && (
+                      <div className="mb-0.5 flex items-center gap-2">
+                        <span className="min-w-0 truncate font-medium" style={{ color: 'var(--text)' }}>
+                          {open || showType ? (TYPE_LABELS[e.type] ?? e.type) : (eventChar?.name ?? '')}
+                        </span>
+                        {sourceBadge}
+                        <span className="ml-auto flex shrink-0 items-center gap-2">{actions}</span>
+                      </div>
+                    )}
+                    {open ? (
+                      <div className="mt-1">
+                        <EventFields
+                          type={e.type}
+                          payload={editing.payload}
+                          characters={characters}
+                          factKeys={factKeys}
+                          onChange={(payload) => setEditing({ id: e.id, payload })}
+                        />
+                        <div className="flex gap-2">
+                          <button
+                            onClick={handleUpdate}
+                            disabled={saving || extracting}
+                            className="rounded-md px-3 py-1 text-[12px] font-medium text-white disabled:opacity-50"
+                            style={{ background: 'var(--accent)' }}
+                          >
+                            保存
+                          </button>
+                          <button
+                            onClick={() => setEditing(null)}
+                            className="px-2 py-1 text-[12px]"
+                            style={{ color: 'var(--text-dim)' }}
+                          >
+                            取消
+                          </button>
+                        </div>
+                      </div>
+                    ) : e.type === 'memory_add' ? (
+                      // 人物名は 1 行目に出しているので、本文と重要度・感情だけ
+                      <div className="leading-relaxed" style={{ color: 'var(--text-dim)' }}>
+                        「{str(payload.content)}」
+                        <span className="whitespace-nowrap text-[11px]" style={{ color: 'var(--text-faint)' }}>
+                          重要度 {num(payload.importance, 0.5).toFixed(2)} / 感情 {num(payload.emotion).toFixed(1)}
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="leading-relaxed" style={{ color: 'var(--text-dim)' }}>
+                        {showType && !card && (
+                          <span className="mr-1.5 font-medium" style={{ color: 'var(--text)' }}>
+                            {TYPE_LABELS[e.type] ?? e.type}
+                          </span>
+                        )}
+                        {eventSummary(e.type, payload, nameOf)}
+                      </div>
+                    )}
                   </div>
+                  {!card && (
+                    <div className="flex shrink-0 items-center gap-2 pt-0.5">
+                      {sourceBadge}
+                      {actions}
+                    </div>
+                  )}
                 </div>
-              ) : (
-                <div style={{ color: 'var(--text-dim)' }}>{eventSummary(e.type, payload, nameOf)}</div>
-              )}
-            </div>
-          </div>
+              )
+            })}
+          </section>
         )
       })}
     </div>

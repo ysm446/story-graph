@@ -43,7 +43,7 @@ async function main() {
   }
   if (!ready) throw new Error('検証用バックエンドを起動できませんでした')
   trace('backend ready ' + base)
-  for (const [path, value] of process.argv.includes('--import') || process.argv.includes('--cast') || process.argv.includes('--usage') || process.argv.includes('--memories') ? [] : [['/characters', { name: '検証キャラ', profile: '保存済みプロフィール' }], ['/nodes', { title: '検証シーン', beat: '保存済みの本文。' }]]) {
+  for (const [path, value] of process.argv.includes('--import') || process.argv.includes('--cast') || process.argv.includes('--usage') || process.argv.includes('--memories') || process.argv.includes('--events') ? [] : [['/characters', { name: '検証キャラ', profile: '保存済みプロフィール' }], ['/nodes', { title: '検証シーン', beat: '保存済みの本文。' }]]) {
     const response = await fetch(base + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(value) })
     if (!response.ok) throw new Error(await response.text())
   }
@@ -391,6 +391,48 @@ store.save_chat_messages(chat['id'], [
       const r = await js(`(() => { const r = document.querySelector('.scene-detail-meta').getBoundingClientRect(); return { x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(Math.min(r.height, 300, innerHeight - r.y)) } })()`)
       writeFileSync(join(target, 'chapter-scene-list.png'), (await win.webContents.capturePage(r)).toPNG())
     }
+    if (errors.length) throw new Error(errors.join('\n'))
+    console.log('Screenshots: ' + target)
+    win.destroy()
+    return
+  }
+  if (process.argv.includes('--events')) {
+    // 詳細欄のシーンの Events: 記憶 / 関係 / 事実 / その他 の見出しで分け、件数 0 の見出しは出さない
+    const { readFileSync } = require('node:fs')
+    const example = JSON.parse(readFileSync(join(root, 'docs/reference/import-example.json'), 'utf8'))
+    const applied = await fetch(base + '/import/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data: example }) })
+    if (!applied.ok) throw new Error(await applied.text())
+    await new Promise((done) => { win.webContents.once('did-finish-load', () => done()); win.webContents.reload() })
+    for (let i = 0; i < 60; i++) { if (await js(`[...document.querySelectorAll('.react-flow__node')].some(e=>e.textContent.includes('第一幕'))`)) break; await pause(200) }
+    await pause(400)
+    await click('⊞ 全シーン')
+    await pause(800)
+    const title = example.scenes[0].title // 記憶 2・関係 1・事実 2
+    await js(`[...document.querySelectorAll('.react-flow__node')].find(e=>e.textContent.includes(${JSON.stringify(title)})).dispatchEvent(new MouseEvent('click',{bubbles:true}))`)
+    await pause(600)
+    const groups = `[...document.querySelectorAll('[data-event-group]')]`
+    await assert(`${groups}.map(e => e.getAttribute('data-event-group') + ':' + e.querySelectorAll('[data-event-type]').length).join('|') === 'memory:2|relation:1|fact:2'`, 'Events は 記憶 / 関係 / 事実 の見出しに分かれ、件数 0 の「その他」は出さない')
+    await assert(`(() => { const [memory, relation] = ${groups}; return memory.querySelector('[data-event-type]').className.includes('border') && !relation.querySelector('[data-event-type]').className.includes('border') && !memory.textContent.includes('記憶を追加') })()`, '記憶はカード、関係は枠の無い 1 行で、種類の名前は見出しだけに出る')
+    {
+      await js(`document.querySelector('[data-event-group]').scrollIntoView({ block: 'start' })`)
+      await pause(200)
+      const r = await js(`(() => { const all = [...document.querySelectorAll('[data-event-group]')]; const a = all[0].getBoundingClientRect(), b = all[all.length - 1].getBoundingClientRect(); const y = Math.max(a.y - 30, 0); return { x: Math.round(a.x - 8), y: Math.round(y), width: Math.round(a.width + 16), height: Math.round(Math.min(b.bottom - y + 8, innerHeight - y)) } })()`)
+      writeFileSync(join(target, 'events.png'), (await win.webContents.capturePage(r)).toPNG())
+    }
+    {
+      // 関係・事実の 1 行の並びも見る(詳細欄が低いので、関係の見出しまで送って撮る)
+      await js(`document.querySelector('[data-event-group="relation"]').scrollIntoView({ block: 'start' })`)
+      await pause(200)
+      const r = await js(`(() => { const a = document.querySelector('[data-event-group="relation"]').getBoundingClientRect(), b = document.querySelector('[data-event-group="fact"]').getBoundingClientRect(); return { x: Math.round(a.x - 8), y: Math.round(a.y - 4), width: Math.round(a.width + 16), height: Math.round(Math.min(b.bottom - a.y + 12, innerHeight - a.y + 4)) } })()`)
+      writeFileSync(join(target, 'events-rows.png'), (await win.webContents.capturePage(r)).toPNG())
+    }
+    // 見出しの「+」で、その種類の手動イベントのフォームが見出しの下に開く
+    await js(`document.querySelector('[data-event-group="relation"] button[aria-label="関係を手で追加"]').click()`)
+    await pause(300)
+    await assert(`(() => { const sel = document.querySelector('[data-event-group="relation"] select'); return !!sel && sel.value === 'relationship_update' && !document.querySelector('[data-event-group="memory"] select') })()`, '関係の見出しの「+」で、関係の追加フォームがその見出しの下に開く')
+    await js(`document.querySelector('[data-event-group="relation"] button[aria-label="関係を手で追加"]').click()`)
+    await pause(300)
+    await assert(`!document.querySelector('[data-event-group="relation"] select')`, 'もう一度押すとフォームが閉じる')
     if (errors.length) throw new Error(errors.join('\n'))
     console.log('Screenshots: ' + target)
     win.destroy()

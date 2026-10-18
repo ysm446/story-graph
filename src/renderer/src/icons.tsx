@@ -27,6 +27,9 @@ export type IconName =
   | 'skipForward' // 読み上げの次の行へ
   | 'users' // 人が二人(キャラ同士の会話室)
   | 'activity' // 脈拍の折れ線(システムリソース表示の切り替え)
+  | 'relation' // 左右の矢印(イベントの「関係」)
+  | 'fact' // 荷札(イベントの「事実」)
+  | 'more' // 横の三点(イベントの「その他」)
 
 const PATHS: Record<IconName, React.JSX.Element> = {
   alignNodes: (
@@ -178,7 +181,31 @@ const PATHS: Record<IconName, React.JSX.Element> = {
     </>
   ),
   // lucide の activity
-  activity: <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+  activity: <path d="M22 12h-4l-3 9L9 3l-3 9H2" />,
+  // lucide の arrow-left-right
+  relation: (
+    <>
+      <path d="M8 3 4 7l4 4" />
+      <path d="M4 7h16" />
+      <path d="m16 21 4-4-4-4" />
+      <path d="M20 17H4" />
+    </>
+  ),
+  // lucide の tag(旧版。点は線で描く)
+  fact: (
+    <>
+      <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z" />
+      <path d="M7 7h.01" />
+    </>
+  ),
+  // lucide の ellipsis
+  more: (
+    <>
+      <circle cx="12" cy="12" r="1" />
+      <circle cx="19" cy="12" r="1" />
+      <circle cx="5" cy="12" r="1" />
+    </>
+  )
 }
 
 export function Icon({
