@@ -348,11 +348,11 @@ store.save_chat_messages(chat['id'], [
     const example = JSON.parse(readFileSync(join(root, 'docs/reference/import-example.json'), 'utf8'))
     const applied = await fetch(base + '/import/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data: example }) })
     if (!applied.ok) throw new Error(await applied.text())
-    // 最初と最後のシーンにだけ挿絵(アプリのアイコン)を付ける
+    // 1・3・4 番目のシーンにだけ挿絵(アプリのアイコン)を付ける(第二幕は挿絵のあるシーンと無いシーンが混ざる)
     const graph = await (await fetch(base + '/graph')).json()
     const idOf = (title) => graph.nodes.find((n) => n.title === title).id
     const [firstTitle, lastTitle] = [example.scenes[0].title, example.scenes[3].title]
-    const seeded = spawnSync(join(root, '.venv/Scripts/python.exe'), ['-c', 'import sys, shutil, os, db; from store import Store; s = Store(db.connect(sys.argv[1]), root=sys.argv[2]); shutil.copy(sys.argv[3], os.path.join(s.assets_dir(), "test-art.png")); [s.set_node_image(n, "test-art.png") for n in sys.argv[4:]]; s.conn.commit()', join(target, 'story-graph.db'), target, join(root, 'resources/icon.png'), idOf(firstTitle), idOf(lastTitle)], { cwd: join(root, 'backend'), encoding: 'utf8' })
+    const seeded = spawnSync(join(root, '.venv/Scripts/python.exe'), ['-c', 'import sys, shutil, os, db; from store import Store; s = Store(db.connect(sys.argv[1]), root=sys.argv[2]); shutil.copy(sys.argv[3], os.path.join(s.assets_dir(), "test-art.png")); [s.set_node_image(n, "test-art.png") for n in sys.argv[4:]]; s.conn.commit()', join(target, 'story-graph.db'), target, join(root, 'resources/icon.png'), idOf(firstTitle), idOf(example.scenes[2].title), idOf(lastTitle)], { cwd: join(root, 'backend'), encoding: 'utf8' })
     if (seeded.status !== 0) throw new Error(seeded.stderr)
     await new Promise((done) => { win.webContents.once('did-finish-load', () => done()); win.webContents.reload() })
     for (let i = 0; i < 60; i++) { if (await js(`[...document.querySelectorAll('.react-flow__node')].some(e=>e.textContent.includes('第一幕'))`)) break; await pause(200) }
@@ -365,7 +365,7 @@ store.save_chat_messages(chat['id'], [
     await click('状態')
     await pause(600)
     const groups = `[...document.querySelectorAll('[data-memory-group]')]`
-    await assert(`${groups}.length === 4 && ${groups}.filter(e => e.querySelector('img')).length === 2 && ${groups}[0].textContent.includes('(このシーン)') && ${groups}[3].textContent.includes(${JSON.stringify(firstTitle)})`, '記憶はシーンごとのカードで新しい順に並び、挿絵のあるシーンのカードにだけサムネイルが出る')
+    await assert(`${groups}.length === 4 && ${groups}.filter(e => e.querySelector('img')).length === 3 && !${groups}[2].querySelector('img') && ${groups}[0].textContent.includes('(このシーン)') && ${groups}[3].textContent.includes(${JSON.stringify(firstTitle)})`, '記憶はシーンごとのカードで新しい順に並び、挿絵のあるシーンのカードにだけサムネイルが出る')
     // 同じシーンに記憶を足すと、同じカードにまとまる(出どころの行は 1 回だけ)
     await js(`(() => { const el = document.querySelector('input[placeholder^="記憶を追加"]'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, '検証で足した記憶'); el.dispatchEvent(new Event('input', { bubbles: true })) })()`)
     await pause(100)
@@ -379,6 +379,18 @@ store.save_chat_messages(chat['id'], [
     await js(`${groups}[3].querySelector('button img').closest('button').click()`)
     await pause(600)
     await assert(`[...document.querySelectorAll('input')].some(i => i.value === ${JSON.stringify(firstTitle)})`, 'サムネイルをクリックすると、出どころの行と同じくそのシーンが選ばれる')
+    // 章の詳細のシーン一覧: 挿絵のサムネイルを左に出し、挿絵の無いシーンは同じ大きさの空の枠で揃える
+    await js(`[...document.querySelectorAll('[data-cast-table] button')].find(e => e.textContent === '第2章「第二幕 橋」').click()`)
+    await pause(500)
+    const sceneRows = `[...document.querySelectorAll('.scene-detail-meta button[data-view-ok]')]`
+    await assert(`${sceneRows}.length === 2 && ${sceneRows}.every(e => e.querySelector('span.h-10.w-16')) && ${sceneRows}.filter(e => e.querySelector('img')).length === 1 && ${sceneRows}[1].querySelector('img') && ${sceneRows}[0].textContent.includes('1. ' + ${JSON.stringify(example.scenes[1].title)})`, '章の詳細のシーン一覧に挿絵のサムネイルが出て、挿絵の無いシーンは空の枠になる')
+    {
+      // 広さによってはシーン一覧が表紙の下に隠れているので、見える位置まで送ってから撮る
+      await js(`document.querySelector('.scene-detail-meta').scrollIntoView({ block: 'start' })`)
+      await pause(200)
+      const r = await js(`(() => { const r = document.querySelector('.scene-detail-meta').getBoundingClientRect(); return { x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(Math.min(r.height, 300, innerHeight - r.y)) } })()`)
+      writeFileSync(join(target, 'chapter-scene-list.png'), (await win.webContents.capturePage(r)).toPNG())
+    }
     if (errors.length) throw new Error(errors.join('\n'))
     console.log('Screenshots: ' + target)
     win.destroy()
@@ -915,6 +927,7 @@ store.save_chat_messages(chat['id'], [
       else console.log('PASS 広い幅では挿絵・設定 / イベント / 本文の3列')
       await assert(`document.querySelector('.scene-detail-meta').textContent.includes(${JSON.stringify(middle)}) && !document.querySelector('.scene-detail-aside').textContent.includes(${JSON.stringify(middle)})`, (chapterCheck ? 'シーン一覧' : 'イベント') + 'は中央の列に置く')
       if (chapterCheck) await assert(`document.querySelector('.scene-detail-aside').textContent.includes('表紙') && document.querySelector('.scene-detail-main').textContent.includes('まとめ')`, '章は左に表紙、右にまとめを置く')
+      if (chapterCheck) await assert(`!!document.querySelector('.scene-detail-meta button[data-view-ok]') && !document.querySelector('.scene-detail-meta span.h-10.w-16')`, '挿絵が 1 枚も無い章では、シーン一覧にサムネイルの列を出さない')
       const before = wide.meta.width
       await js(`(() => {const el=document.querySelector('.scene-detail-divider');const rect=el.getBoundingClientRect();el.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,clientX:rect.x,clientY:rect.y+30}));window.dispatchEvent(new PointerEvent('pointermove',{clientX:rect.x+60,clientY:rect.y+30}));window.dispatchEvent(new PointerEvent('pointerup'))})()`)
       await pause(200)

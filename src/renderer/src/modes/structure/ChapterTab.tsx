@@ -62,6 +62,8 @@ export function ChapterTab({
   // 章カードの表紙。指定が無ければ章内で最初に挿絵があるシーン(章カードと同じ導出)
   const nodeById = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes])
   const cover = chapterCoverNode(group, nodeById)
+  // シーン一覧にサムネイルの列を出すか(挿絵のあるシーンが 1 つでもあれば)
+  const hasAnyThumb = group.node_ids.some((id) => !!nodeById.get(id)?.image_path)
 
   const refetch = useCallback(async (): Promise<void> => {
     setLoading(true)
@@ -369,12 +371,25 @@ export function ChapterTab({
               <button
                 data-view-ok
                 onClick={() => onSelectScene(id)}
-                className="min-w-0 flex-1 truncate px-2 py-1 text-left text-[12px]"
+                className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1 text-left text-[12px]"
                 style={{ color: 'var(--text-dim)' }}
               >
+                {/* 挿絵のサムネイル(Memories と同じ大きさで中央を切り抜く)。番号付きの一覧なので、
+                    挿絵の無いシーンも同じ大きさの空の枠を置いてタイトルの位置を揃える。
+                    挿絵が 1 枚も無い章は空の枠が並ぶだけなので、列ごと出さない */}
+                {hasAnyThumb && (
+                  <span
+                    className="block h-10 w-16 shrink-0 overflow-hidden rounded-md"
+                    style={{ background: 'var(--bg-canvas)' }}
+                  >
+                    {nodeById.get(id) && <NodeThumb node={nodeById.get(id)!} className="block h-full w-full object-cover" />}
+                  </span>
+                )}
                 {/* ルート(読む道)のシーンだけ番号を振る。分岐・島は番号なし */}
-                {i < group.route.length ? `${i + 1}. ` : '⌁ '}
-                {nodeTitle(id)}
+                <span className="min-w-0 flex-1 truncate">
+                  {i < group.route.length ? `${i + 1}. ` : '⌁ '}
+                  {nodeTitle(id)}
+                </span>
               </button>
               {i >= group.route.length && (
                 <span
