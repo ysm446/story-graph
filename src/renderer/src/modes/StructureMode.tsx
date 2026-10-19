@@ -1,7 +1,7 @@
 import { createPortal } from 'react-dom'
 import { useWorkspace, type ProductionTarget } from '../Workspace'
 import { resolveEffectiveLocations } from '../effectiveLocations'
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   applyNodeChanges,
   Background,
@@ -10,6 +10,7 @@ import {
   ReactFlow,
   ReactFlowProvider,
   SelectionMode,
+  getViewportForBounds,
   useReactFlow,
   type Connection,
   type Edge,
@@ -1478,12 +1479,54 @@ function StructureModeInner({
 
   // ビューを切り替えたらノード構成が大きく変わるので、全体が見える位置へ。
   // 開いた直後のフォーカス指定(鑑賞モードで読んでいたシーン)を消化するまでは、
-  // 全体表示で上書きしない(章の中に入る操作でもこの効果が走るため)
-  useEffect(() => {
+  // 全体表示で上書きしない(章の中に入る操作でもこの効果が走るため)。
+  //
+  // 章に入る / 全体に戻るときは、カメラを横に動かさず**画面の中央から**ズームする(2026-10-19 ユーザー要望)。
+  // 素直に fitView をアニメーションさせると、前の位置から新しいカード群へカメラが横移動するので、
+  // 章の中のシーンは右から、章カードは左から寄ってくるように見えていた。そこで、
+  // 1. 切り替えた瞬間はカード群を隠す(大きさを測るまで全体の範囲が分からず、古い位置にちらっと出るため)
+  // 2. 測り終えたら、新しいカード群の中心を画面の中央に置き、倍率だけ少しずらした位置へ一気に移す
+  // 3. そこから最終の倍率まで中央を基準にズームしつつ、フェードインする
+  // 向きは階層に合わせる: 章に入るときは小さい状態から拡大、全体に戻るときは大きい状態から縮小。
+  // d3-zoom の補間は画面中央の点を基準にするので、2 で中心を合わせておけば横には動かない
+  const viewKey = `${effectiveView}:${chapterView}`
+  const viewKeyRef = useRef(viewKey)
+  useLayoutEffect(() => {
+    if (viewKeyRef.current === viewKey) return
+    viewKeyRef.current = viewKey
     if (!focusDoneRef.current) return
-    const timer = setTimeout(() => void reactFlow.fitView({ duration: 300, maxZoom: 1 }), 60)
-    return () => clearTimeout(timer)
-  }, [effectiveView, chapterView, reactFlow])
+    const pane = canvasRef.current?.querySelector<HTMLElement>('.react-flow')
+    const layer = pane?.querySelector<HTMLElement>('.react-flow__viewport')
+    if (!pane || !layer) {
+      const timer = setTimeout(() => void reactFlow.fitView({ duration: 300, maxZoom: 1 }), 60)
+      return () => clearTimeout(timer)
+    }
+    layer.style.transition = 'none'
+    layer.style.opacity = '0'
+    const timer = setTimeout(() => {
+      const nodes = reactFlow.getNodes()
+      const { width, height } = pane.getBoundingClientRect()
+      if (nodes.length > 0 && width > 0 && height > 0) {
+        // fitView({ maxZoom: 1 }) と同じ到着点(padding 0.1・minZoom はキャンバスの 0.1)
+        const target = getViewportForBounds(reactFlow.getNodesBounds(nodes), width, height, 0.1, 1, 0.1)
+        const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+        if (!reduced) {
+          const start = target.zoom * (effectiveView === 'focused' ? 0.8 : 1.25)
+          // 画面の中央に来るキャンバス上の点を、開始の倍率でも中央に置く
+          const cx = (width / 2 - target.x) / target.zoom
+          const cy = (height / 2 - target.y) / target.zoom
+          void reactFlow.setViewport({ x: width / 2 - cx * start, y: height / 2 - cy * start, zoom: start })
+        }
+        void reactFlow.setViewport(target, { duration: reduced ? 0 : 300 })
+      }
+      layer.style.transition = 'opacity 200ms ease-out'
+      layer.style.opacity = '1'
+    }, 60)
+    return () => {
+      clearTimeout(timer)
+      layer.style.opacity = '1'
+    }
+  }, [viewKey, effectiveView, reactFlow])
 
   /** キャンバスの選択が変わったときにインスペクタの対象を合わせる。
    *

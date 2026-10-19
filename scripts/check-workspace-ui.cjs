@@ -631,6 +631,37 @@ store.save_chat_messages(chat['id'], [
     await pause(400)
     await assert(`${strokes}.includes('var(--edge-selected)')`, '選んだ線は --edge-selected になる')
     writeFileSync(join(target, 'edges-selected.png'), (await win.webContents.capturePage(rect)).toPNG())
+    // 章に入る / 全体に戻るときは、横に動かず画面の中央からズームする(2026-10-19 ユーザー要望)。
+    // 切り替えの間、カメラ(.react-flow__viewport の transform)を細かく記録し、画面中央のキャンバス上の点が動かないことと、
+    // 倍率の向き(戻るときは縮小、入るときは拡大)を見る
+    const sampleTransition = async (trigger) => js(`new Promise((done) => {
+      const pane = document.querySelector('.react-flow'); const layer = pane.querySelector('.react-flow__viewport')
+      const { width, height } = pane.getBoundingClientRect(); const samples = [];
+      ;${trigger};
+      const t0 = performance.now()
+      const tick = () => {
+        const m = new DOMMatrixReadOnly(getComputedStyle(layer).transform)
+        samples.push({ t: performance.now() - t0, zoom: m.a, cx: (width / 2 - m.e) / m.a, cy: (height / 2 - m.f) / m.a, opacity: Number(getComputedStyle(layer).opacity) })
+        if (performance.now() - t0 < 700) requestAnimationFrame(tick); else done(samples)
+      }
+      requestAnimationFrame(tick)
+    })`)
+    // 動きが始まってから(隠している間と、最初の一手の setViewport は除く)の点を見る
+    const judge = (samples) => {
+      const moving = samples.filter((p, i) => i > 0 && p.t > 60 && p.opacity > 0)
+      const zooms = moving.map((p) => p.zoom)
+      const drift = Math.max(...moving.map((p) => Math.hypot(p.cx - moving[moving.length - 1].cx, p.cy - moving[moving.length - 1].cy) * p.zoom))
+      return { first: zooms[0], last: zooms[zooms.length - 1], drift: Math.round(drift), frames: moving.length }
+    }
+    const leave = judge(await sampleTransition(`[...document.querySelectorAll('nav[aria-label="現在の階層"] button')].find(e => e.textContent.trim() === '作品全体').click()`))
+    console.log('全体へ戻る: ' + JSON.stringify(leave))
+    if (!(leave.frames >= 5 && leave.first > leave.last && leave.drift <= 4)) throw new Error('全体に戻るときは、画面の中央を基準に縮小する: ' + JSON.stringify(leave))
+    console.log('PASS 全体に戻るときは、横に動かず画面の中央を基準に縮小する')
+    writeFileSync(join(target, 'edges-overview.png'), (await win.webContents.capturePage(rect)).toPNG())
+    const enter = judge(await sampleTransition(`[...document.querySelectorAll('.react-flow__node-chapterNode')].find(e => e.textContent.includes('第二幕')).dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))`))
+    console.log('章に入る: ' + JSON.stringify(enter))
+    if (!(enter.frames >= 5 && enter.first < enter.last && enter.drift <= 4)) throw new Error('章に入るときは、画面の中央を基準に拡大する: ' + JSON.stringify(enter))
+    console.log('PASS 章に入るときは、横に動かず画面の中央を基準に拡大する')
     if (errors.length) throw new Error(errors.join('\n'))
     console.log('Screenshots: ' + target)
     win.destroy()
