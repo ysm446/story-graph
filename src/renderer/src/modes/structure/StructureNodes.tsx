@@ -130,9 +130,8 @@ export function BeatNodeCard({ data, selected }: NodeProps<BeatFlowNode>): React
         }`}
         style={{
           background: 'var(--bg-card)',
+          // アクティブでない結末も淡くせず、破線にもしない(枠の色と「アクティブ」表示で足りる)
           borderColor: active ? 'var(--accent-border)' : 'var(--border-strong)',
-          // アクティブでない結末も淡くしない(破線と「アクティブ」表示で足りる)
-          borderStyle: active ? 'solid' : 'dashed',
           ['--tw-ring-color' as string]: 'var(--accent-border)'
         }}
         data-tip={
@@ -167,10 +166,10 @@ export function BeatNodeCard({ data, selected }: NodeProps<BeatFlowNode>): React
       } ${busy ? 'node-busy-ring' : ''}`}
       style={{
         background: 'var(--bg-card)',
+        // 正史でないシーンは**バッジだけ**で示し、淡くも破線にもしない。分岐ルートも
+        // 書きかけの本編であって「無効な項目」ではないため(2026-08-11 ユーザー判断。
+        // 破線も「存在しないもの」に見えるので 2026-10-19 にやめた)
         borderColor: busy ? 'var(--accent-border)' : selected ? 'var(--accent-border)' : 'var(--border-strong)',
-        // 正史でないシーンは**破線とバッジだけ**で示し、淡くしない。分岐ルートも
-        // 書きかけの本編であって「無効な項目」ではないため(2026-08-11 ユーザー判断)
-        borderStyle: isDraft ? 'dashed' : 'solid',
         ['--tw-ring-color' as string]: 'var(--accent-border)'
       }}
     >
@@ -323,10 +322,8 @@ export function ChapterNodeCard({ data, selected }: NodeProps<ChapterFlowNode>):
       }`}
       style={{
         background: dropTarget ? 'var(--accent-soft)' : 'var(--bg-card)',
+        // 島・分岐の章は見出しの「別ルートの章」だけで示す(淡くも破線にもしない。シーンカードと同じ)
         borderColor: dropTarget ? 'var(--accent)' : group.color || 'var(--border-strong)',
-        // 島・分岐の章は draft ノードと同じく破線で「別の可能性」を示す
-        // (淡くはしない。見出しの「別ルートの章」と破線で足りる)
-        borderStyle: group.on_canon ? 'solid' : 'dashed',
         ['--tw-ring-color' as string]: 'var(--accent-border)'
       }}
       data-tip="ダブルクリックで章の中を開く(シーンをここに落とすとこの章に入ります)"

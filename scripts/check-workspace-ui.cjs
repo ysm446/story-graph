@@ -43,7 +43,7 @@ async function main() {
   }
   if (!ready) throw new Error('検証用バックエンドを起動できませんでした')
   trace('backend ready ' + base)
-  for (const [path, value] of process.argv.includes('--import') || process.argv.includes('--cast') || process.argv.includes('--usage') || process.argv.includes('--memories') || process.argv.includes('--events') ? [] : [['/characters', { name: '検証キャラ', profile: '保存済みプロフィール' }], ['/nodes', { title: '検証シーン', beat: '保存済みの本文。' }]]) {
+  for (const [path, value] of process.argv.includes('--import') || process.argv.includes('--cast') || process.argv.includes('--usage') || process.argv.includes('--memories') || process.argv.includes('--events') || process.argv.includes('--edges') ? [] : [['/characters', { name: '検証キャラ', profile: '保存済みプロフィール' }], ['/nodes', { title: '検証シーン', beat: '保存済みの本文。' }]]) {
     const response = await fetch(base + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(value) })
     if (!response.ok) throw new Error(await response.text())
   }
@@ -600,6 +600,37 @@ store.save_chat_messages(chat['id'], [
     await pause(1200)
     await assert(`!!document.querySelector('.react-flow') && document.querySelector('.react-flow').getClientRects().length > 0 && [...document.querySelectorAll('input')].some(i => i.value === '翌朝')`, 'セルをクリックすると、フローチャートに移ってそのシーンが選ばれる')
     writeFileSync(join(target, 'usage-jump.png'), (await win.webContents.capturePage()).toPNG())
+    if (errors.length) throw new Error(errors.join('\n'))
+    console.log('Screenshots: ' + target)
+    win.destroy()
+    return
+  }
+  if (process.argv.includes('--edges')) {
+    // フローチャートの線とカード: 正史でない線・カードも破線にせず、線は色と太さで分ける(2026-10-19 ユーザー判断)
+    const { readFileSync } = require('node:fs')
+    const example = JSON.parse(readFileSync(join(root, 'docs/reference/import-example.json'), 'utf8'))
+    const applied = await fetch(base + '/import/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data: example }) })
+    if (!applied.ok) throw new Error(await applied.text())
+    const graph0 = await (await fetch(base + '/graph')).json()
+    const parent = graph0.nodes.find((n) => n.title === example.scenes[1].title).id
+    const branch = await fetch(base + '/nodes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: '別の道', beat: '橋を迂回する。', parent_id: parent }) })
+    if (!branch.ok) throw new Error(await branch.text())
+    await new Promise((done) => { win.webContents.once('did-finish-load', () => done()); win.webContents.reload() })
+    for (let i = 0; i < 60; i++) { if (await js(`!!document.querySelector('.react-flow__node')`)) break; await pause(200) }
+    await pause(400)
+    await showScene('別の道')
+    await pause(600)
+    const strokes = `[...document.querySelectorAll('.react-flow__edge-path')].map(e => e.style.stroke)`
+    await assert(`${strokes}.includes('var(--edge-canon)') && ${strokes}.includes('var(--edge-branch)')`, '正史の線は --edge-canon、分岐の線は --edge-branch で描く')
+    await assert(`[...document.querySelectorAll('.react-flow__edge-path')].every(e => !e.style.strokeDasharray)`, '線はどれも破線にしない')
+    await assert(`[...document.querySelectorAll('.react-flow__node-beatNode')].filter(e => e.textContent.includes('別の道')).every(e => [...e.querySelectorAll('div')].every(d => d.style.borderStyle !== 'dashed'))`, '分岐のシーンのカードも実線の枠')
+    const rect = await js(`(() => { const r = document.querySelector('.react-flow').getBoundingClientRect(); return { x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) } })()`)
+    writeFileSync(join(target, 'edges.png'), (await win.webContents.capturePage(rect)).toPNG())
+    // 分岐の線を選ぶと、いちばん明るい紫になる
+    await js(`(() => { const p = [...document.querySelectorAll('.react-flow__edge-path')].find(e => e.style.stroke === 'var(--edge-branch)'); p.closest('.react-flow__edge').querySelector('.react-flow__edge-interaction').dispatchEvent(new MouseEvent('click', { bubbles: true })) })()`)
+    await pause(400)
+    await assert(`${strokes}.includes('var(--edge-selected)')`, '選んだ線は --edge-selected になる')
+    writeFileSync(join(target, 'edges-selected.png'), (await win.webContents.capturePage(rect)).toPNG())
     if (errors.length) throw new Error(errors.join('\n'))
     console.log('Screenshots: ' + target)
     win.destroy()

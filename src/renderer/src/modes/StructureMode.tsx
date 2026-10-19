@@ -1107,10 +1107,10 @@ function StructureModeInner({
           interactionWidth: 18,
           selected,
           style: selected
-            ? { stroke: 'var(--accent)', strokeWidth: 3 }
+            ? { stroke: 'var(--edge-selected)', strokeWidth: 3 }
             : e.is_canon
-              ? { stroke: '#8a8fb8', strokeWidth: 2.5 }
-              : { stroke: '#4a4f66', strokeWidth: 1.5, strokeDasharray: '7 5' }
+              ? { stroke: 'var(--edge-canon)', strokeWidth: 2.5 }
+              : { stroke: 'var(--edge-branch)', strokeWidth: 1.5 }
         }
       }),
     [graphEdges, selectedEdgeId]
@@ -1321,10 +1321,10 @@ function StructureModeInner({
         interactionWidth: 18,
         selected,
         style: selected
-          ? { stroke: 'var(--accent)', strokeWidth: 3 }
+          ? { stroke: 'var(--edge-selected)', strokeWidth: 3 }
           : e.is_canon
-            ? { stroke: '#8a8fb8', strokeWidth: 2.5 }
-            : { stroke: '#4a4f66', strokeWidth: 1.5, strokeDasharray: '7 5' }
+            ? { stroke: 'var(--edge-canon)', strokeWidth: 2.5 }
+            : { stroke: 'var(--edge-branch)', strokeWidth: 1.5 }
       })
     }
     return { nodes, edges, derived }
