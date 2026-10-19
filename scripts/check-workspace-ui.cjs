@@ -137,11 +137,11 @@ store.save_chat_messages(chat['id'], [
     const visible = `[...document.querySelectorAll('.react-flow__node')].some(e=>!e.classList.contains('react-flow__node-chapterNode') && e.textContent.includes(${JSON.stringify(title)}))`
     if (await js(visible)) return
     // 章カードの並び(DOM の順)は選択で入れ替わるので、章の名前で 1 つずつ開く
-    await js(`[...document.querySelectorAll('[data-structure-toolbar] nav button')].find(e=>e.textContent.trim()==='作品全体')?.click()`)
+    await js(`[...document.querySelectorAll('nav[aria-label="現在の階層"] button')].find(e=>e.textContent.trim()==='作品全体')?.click()`)
     await pause(400)
     const chapters = await js(`[...document.querySelectorAll('.react-flow__node-chapterNode')].map(e=>e.textContent)`)
     for (const text of chapters) {
-      await js(`[...document.querySelectorAll('[data-structure-toolbar] nav button')].find(e=>e.textContent.trim()==='作品全体')?.click()`)
+      await js(`[...document.querySelectorAll('nav[aria-label="現在の階層"] button')].find(e=>e.textContent.trim()==='作品全体')?.click()`)
       await pause(400)
       await js(`[...document.querySelectorAll('.react-flow__node-chapterNode')].find(e=>e.textContent===${JSON.stringify(text)})?.dispatchEvent(new MouseEvent('dblclick',{bubbles:true}))`)
       await pause(600)
@@ -1116,26 +1116,30 @@ store.save_chat_messages(chat['id'], [
     }
     await assert(`(() => {const a=document.querySelector('.scene-detail-main').getBoundingClientRect();const b=(document.querySelector('.scene-detail-side')||document.querySelector('.scene-detail-meta')).getBoundingClientRect(); return (document.querySelector(".detail-main-right, .detail-three") ? a.x>=b.right-1 : b.x>=a.right-1) && Math.abs(a.y-b.y)<1;})()`, '広い詳細欄は本文と補助情報の2列')
     if (chapterCheck) {
-      // 構造モードのツールバーはモード切替の行にある(2026-10-19): [フローチャート|人物] パンくず [+ シーン ▾] [▶ 生成 ▾] … [整列]。
-      // 全シーン表示の切り替えは無い。人物では作る・生成・整列を隠し、パンくずは残す
+      // 構造モードの操作の置き場所(2026-10-19): モード切替の行は [フローチャート|人物] だけ。
+      // キャンバスの左上にパンくず、右上に [+ シーン ▾] [▶ 生成 ▾] [整列]。全シーン表示の切り替えは無い
       const bar = `document.querySelector('nav [data-structure-toolbar]')`
       const barLabels = `[...${bar}.querySelectorAll('button')].map(e=>e.textContent.trim())`
-      await assert(`(() => {const l=${barLabels};return !!${bar} && l.includes('フローチャート') && l.includes('人物') && l.includes('+ シーン') && l.some(t=>t.startsWith('▶ 生成')) && ${bar}.querySelector('nav[aria-label="現在の階層"]').textContent.includes('作品全体') && !document.body.textContent.includes('全シーン') && !${bar}.querySelector('button[aria-label="カードを整列"]') && !!document.querySelector('.react-flow__panel.top.right button[aria-label="カードを整列"]')})()`, '構造のツールバーはモード切替の行にあり(整列はキャンバスの右上)、全シーン表示の切り替えは無い')
-      await js(`${bar}.querySelector('button[aria-label="ほかの追加のしかた"]').click()`)
+      const actions = `document.querySelector('.react-flow__panel.top.right')`
+      const actionLabels = `[...${actions}.querySelectorAll('button')].map(e=>e.textContent.trim() || e.getAttribute('aria-label'))`
+      await assert(`(() => {const l=${barLabels};return !!${bar} && l.join('|') === 'フローチャート|人物' && !${bar}.querySelector('nav[aria-label="現在の階層"]') && document.querySelector('.react-flow nav[aria-label="現在の階層"]').textContent.includes('作品全体') && !document.body.textContent.includes('全シーン')})()`, 'モード切替の行には「フローチャート | 人物」だけ(パンくずはキャンバスの左上)、全シーン表示の切り替えは無い')
+      await assert(`(() => {const l=${actionLabels};return l.join('|') === '+ シーン|▾|▶ 生成 ▾|カードを整列'})()`, 'キャンバスの右上に + シーン ▾・▶ 生成 ▾・整列 の順で並ぶ')
+      await js(`${actions}.querySelector('button[aria-label="ほかの追加のしかた"]').click()`)
       await pause(200)
-      await assert(`(() => {const items=[...${bar}.querySelectorAll('[role="menuitem"]')].map(e=>e.textContent.trim());return items.join('|')==='+続きに追加|間に割り込ませる|⊕どこにも繋げずに追加'})()`, '「+ シーン ▾」のメニューに 続き・割り込み・独立 の追加が並ぶ')
+      await assert(`(() => {const items=[...${actions}.querySelectorAll('[role="menuitem"]')].map(e=>e.textContent.trim());const menu=${actions}.querySelector('[role="menu"]').getBoundingClientRect();return items.join('|')==='+続きに追加|間に割り込ませる|⊕どこにも繋げずに追加' && menu.right <= document.querySelector('.react-flow').getBoundingClientRect().right})()`, '「+ シーン ▾」のメニューに 続き・割り込み・独立 の追加が並び、キャンバスからはみ出さない')
       await js(`document.body.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}))`)
       await pause(200)
-      await assert(`!${bar}.querySelector('[role="menu"]')`, '追加のメニューは外側のクリックで閉じる')
-      await js(`[...${bar}.querySelectorAll('button')].find(e=>e.textContent.trim().startsWith('▶ 生成')).click()`)
+      await assert(`!${actions}.querySelector('[role="menu"]')`, '追加のメニューは外側のクリックで閉じる')
+      await js(`[...${actions}.querySelectorAll('button')].find(e=>e.textContent.trim().startsWith('▶ 生成')).click()`)
       await pause(200)
-      await assert(`(() => {const panel=${bar}.querySelector('textarea[placeholder="生成の指示(任意)"]');const btn=[...${bar}.querySelectorAll('button')].find(e=>e.textContent.trim().startsWith('▶ 生成'));return !!panel && panel.getBoundingClientRect().top >= btn.getBoundingClientRect().bottom})()`, '生成パネルは生成ボタンの真下に開く')
+      await assert(`(() => {const panel=${actions}.querySelector('textarea[placeholder="生成の指示(任意)"]');const btn=[...${actions}.querySelectorAll('button')].find(e=>e.textContent.trim().startsWith('▶ 生成'));return !!panel && panel.getBoundingClientRect().top >= btn.getBoundingClientRect().bottom && panel.closest('.absolute').getBoundingClientRect().right <= document.querySelector('.react-flow').getBoundingClientRect().right})()`, '生成パネルは生成ボタンの真下に開き、キャンバスからはみ出さない')
       writeFileSync(join(target, 'toolbar-gen.png'), (await win.webContents.capturePage()).toPNG())
       await js(`document.body.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}))`)
       await pause(200)
       await click('人物')
       await pause(300)
-      await assert(`(() => {const l=${barLabels};return !l.includes('+ シーン') && !l.some(t=>t.startsWith('▶ 生成')) && !!${bar}.querySelector('nav[aria-label="現在の階層"]') && document.body.textContent.includes('キャラクタービュー')})()`, '人物では作る・生成を隠し、パンくずは残す')
+      const coveredBy = (sel) => `(() => {const r=document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect();return !document.elementFromPoint(r.x+r.width/2,r.y+r.height/2).closest(${JSON.stringify(sel)})})()`
+      await assert(`${coveredBy('.react-flow nav[aria-label="現在の階層"]')} && ${coveredBy('.react-flow__panel.top.right')} && document.body.textContent.includes('キャラクタービュー')`, '人物では、キャンバスの上のパンくずと作る・生成が人物の表に隠れる')
       writeFileSync(join(target, 'toolbar-cast.png'), (await win.webContents.capturePage()).toPNG())
       await click('フローチャート')
       await pause(300)
@@ -1472,7 +1476,7 @@ store.save_chat_messages(chat['id'], [
   await assert(`(() => {const main=document.querySelector('main[data-write-locked="true"]');return !!main && !main.hasAttribute('inert') && !!main.querySelector('.react-flow')})()`, '制作中のキャンバスは操作不可にせず、書き換えだけロックする')
   const lockedNodes = (await (await fetch(base + '/graph')).json()).nodes.length
   // ツールバーはモード切替の行にある(2026-10-19)。制作中はそこも書き換えだけ止まる
-  await js(`[...document.querySelectorAll('[data-structure-toolbar] button')].find(e=>e.textContent.trim()==='+ シーン').click()`)
+  await js(`[...document.querySelectorAll('.react-flow__panel.top.right button')].find(e=>e.textContent.trim()==='+ シーン').click()`)
   await pause(300)
   if ((await (await fetch(base + '/graph')).json()).nodes.length !== lockedNodes) errors.push('制作中にシーンの追加が実行された')
   else console.log('PASS 制作中はキャンバスからシーンを追加できない')
