@@ -636,8 +636,10 @@ function StructureModeInner({
   // いま開いている章と表示の種類。接続・シーン追加の挙動にも効くので、
   // 章ビューのセクション(下)ではなくここで定義する
   const focusedGroup = useMemo(() => groups.find((g) => g.id === chapterView) ?? null, [groups, chapterView])
+  // 章のある作品は常に章ビュー(全シーンのフラット表示は 2026-10-19 にやめた。章をまたいで出口を迂回する線が
+  // 引けてしまう入口だったため)。章が 1 つも無い間だけ、全シーンがそのまま並ぶ 'flat'
   const effectiveView: 'flat' | 'chapters' | 'focused' =
-    groups.length === 0 ? 'flat' : focusedGroup ? 'focused' : chapterView === 'chapters' ? 'chapters' : 'flat'
+    groups.length === 0 ? 'flat' : focusedGroup ? 'focused' : 'chapters'
 
   // 章カードのピンは、章の実シーンに読み替える(出 = 末尾シーン、入 = 先頭シーン)。
   // 章カードは表示上の導出ノードなので、接続は中身のシーンに対して行う
@@ -1460,6 +1462,20 @@ function StructureModeInner({
     [effectiveView, chapterFlow, visibleIds, flowEdges]
   )
 
+  // 見る章を切り替えたら、画面から消えたシーンの選択の印を外す。React Flow は見えているノードの選択しか
+  // 付け替えないので、前の章で選んでいたシーンが印を持ったまま残り、別の章でシーンを押すと「2 シーンを
+  // 選択中」になっていた(全シーン表示で全部が見えていた頃は起きなかった。2026-10-19 に修正)
+  useEffect(() => {
+    const shown = new Set(displayNodes.map((n) => n.id))
+    setFlowNodes((prev) =>
+      prev.some((n) => n.selected && !shown.has(n.id))
+        ? prev.map((n) => (n.selected && !shown.has(n.id) ? { ...n, selected: false } : n))
+        : prev
+    )
+    // 章を切り替えたときだけ見る(displayNodes は選択のたびに変わるので依存に入れない)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chapterView])
+
   // ビューを切り替えたらノード構成が大きく変わるので、全体が見える位置へ。
   // 開いた直後のフォーカス指定(鑑賞モードで読んでいたシーン)を消化するまでは、
   // 全体表示で上書きしない(章の中に入る操作でもこの効果が走るため)
@@ -1608,9 +1624,9 @@ function StructureModeInner({
       // 章ビューでは章カードに畳まれている / 別の章の中を見ている
       // 所属未設定でも章カードに畳まれる枝があるため、表示に使う対応表で判定する。
       const groupId = target.group_id ?? chapterSeq.groupByNode.get(target.id)
-      if (groupId && chapterView !== groupId && chapterView !== 'flat') return setChapterView(groupId)
+      if (groupId && chapterView !== groupId) return setChapterView(groupId)
       // 章外のシーンは章一覧でも見える。描画待ちを理由に全章を展開しない。
-      if (!groupId && chapterView !== 'chapters' && chapterView !== 'flat') return setChapterView('chapters')
+      if (!groupId && chapterView !== 'chapters') return setChapterView('chapters')
       // reload直後はgraphNodesだけが先に更新される。新規ノードの描画を待つ。
       return
     }
@@ -2605,6 +2621,247 @@ function StructureModeInner({
       .catch((e) => setGenStatus(`位置を保存できません: ${String(e)}`))
   })
 
+  // ---- 構造モードのツールバー(モード切替の行に portal で出す。2026-10-19 ユーザー要望) ----
+  // 並び: [フローチャート | 人物] 作品全体 › 章 | [+ シーン ▾] [▶ 生成 ▾]。整列はキャンバスの右上。
+  // 作る・生成はフローチャートのときだけ。パンくずはどちらの表示でも出す(章は人物の表からも選べる)
+  const [addMenuOpen, setAddMenuOpen] = useState(false)
+  const addMenuRef = useRef<HTMLSpanElement | null>(null)
+  const genMenuRef = useRef<HTMLSpanElement | null>(null)
+  // メニューとパネルは外側のクリックで閉じる
+  useEffect(() => {
+    if (!addMenuOpen && !genPanelOpen) return
+    const onDown = (event: PointerEvent): void => {
+      const target = event.target as Element | null
+      if (addMenuOpen && !addMenuRef.current?.contains(target)) setAddMenuOpen(false)
+      if (genPanelOpen && !genMenuRef.current?.contains(target)) setGenPanelOpen(false)
+    }
+    document.addEventListener('pointerdown', onDown, true)
+    return () => document.removeEventListener('pointerdown', onDown, true)
+  }, [addMenuOpen, genPanelOpen])
+  const chapterLabel = (group: Group): string =>
+    `${group.on_canon ? `第${groups.indexOf(group) + 1}章` : '別ルートの章'}「${group.title}」`
+  const menuItemClass =
+    'flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12px] hover:bg-[var(--accent-soft)] disabled:opacity-40 disabled:hover:bg-transparent'
+  const structureToolbar = (
+    <div
+      data-structure-toolbar
+      // 制作中は書き換えだけを止める(キャンバスと同じ。writeLock.ts)
+      data-write-locked={productionEditingLocked ? 'true' : undefined}
+      className="ml-2 flex h-full min-w-0 flex-1 items-center gap-2 border-l pl-3 pr-2"
+      style={{ borderColor: 'var(--border)' }}
+    >
+      {/* 最初の選択: フローチャート(シーンのつながり)か人物(出番の表)か */}
+      <div data-view-ok className="flex shrink-0 overflow-hidden rounded-md border" style={{ borderColor: 'var(--border-strong)' }}>
+        {(
+          [
+            [false, 'フローチャート', 'シーンのつながりを見る'],
+            [true, '人物', '人物ごとの出番を表にして見る(キャラクタービュー)']
+          ] as const
+        ).map(([cast, label, tip]) => (
+          <button
+            key={label}
+            onClick={() => setCastView(cast ? 'table' : null)}
+            aria-pressed={!!castView === cast}
+            className="px-2.5 py-0.5 text-[12px]"
+            style={!!castView === cast ? { background: 'var(--accent-soft)', color: 'var(--text)' } : { color: 'var(--text-faint)' }}
+            data-tip={tip}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {/* パンくず(現在地)。章のある作品だけ。章の中なら「作品全体」で章の一覧へ戻る */}
+      {groups.length > 0 && (
+        <nav aria-label="現在の階層" data-view-ok className="flex min-w-0 items-center gap-1.5 text-[12px]">
+          {focusedGroup ? (
+            <>
+              <button
+                onClick={() => setChapterView('chapters')}
+                className="shrink-0 rounded-md px-1.5 py-0.5 hover:bg-[var(--accent-soft)]"
+                style={{ color: 'var(--text-dim)' }}
+                data-tip="作品全体の章一覧へ戻る"
+              >
+                作品全体
+              </button>
+              <span aria-hidden="true" className="shrink-0" style={{ color: 'var(--text-faint)' }}>›</span>
+              <span aria-current="page" className="min-w-0 truncate font-medium" style={{ color: 'var(--text)' }} data-tip={chapterLabel(focusedGroup)}>
+                {chapterLabel(focusedGroup)}
+              </span>
+            </>
+          ) : (
+            <span aria-current="page" className="shrink-0 px-1.5 font-medium" style={{ color: 'var(--text)' }}>
+              作品全体
+            </span>
+          )}
+        </nav>
+      )}
+      {!castView && (
+        <>
+          <span aria-hidden="true" className="h-4 w-px shrink-0" style={{ background: 'var(--border)' }} />
+          {/* 作る: 本体は「続きに追加」、▾ で割り込み・独立の追加 */}
+          <span ref={addMenuRef} className="relative flex shrink-0 gap-px">
+            <button
+              onClick={() => void handleAddBeat()}
+              className="rounded-l-md px-3 py-1 text-[12px] font-medium text-white"
+              style={{ background: 'var(--accent)' }}
+              data-tip={
+                selectedId
+                  ? '選択したシーンの続きとしてシーンを追加'
+                  : activeGroup
+                    ? `「${activeGroup.title}」の末尾(出口の手前)にシーンを追加`
+                    : '正史の末尾にシーンを追加'
+              }
+            >
+              + シーン
+            </button>
+            <button
+              onClick={() => setAddMenuOpen((v) => !v)}
+              aria-label="ほかの追加のしかた"
+              aria-expanded={addMenuOpen}
+              className="rounded-r-md px-1.5 py-1 text-[11px] text-white"
+              style={{ background: 'var(--accent)' }}
+              data-tip="割り込ませる・どこにも繋げずに追加"
+            >
+              ▾
+            </button>
+            {addMenuOpen && (
+              <div
+                role="menu"
+                className="absolute left-0 top-full z-50 mt-1.5 w-64 rounded-xl border p-1.5 shadow-lg shadow-black/40"
+                style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)', color: 'var(--text)' }}
+              >
+                <button
+                  role="menuitem"
+                  onClick={() => {
+                    setAddMenuOpen(false)
+                    void handleAddBeat()
+                  }}
+                  className={menuItemClass}
+                >
+                  <span className="w-4 shrink-0 text-center" style={{ color: 'var(--text-faint)' }}>+</span>
+                  続きに追加
+                </button>
+                <button
+                  role="menuitem"
+                  onClick={() => {
+                    setAddMenuOpen(false)
+                    void handleInsertAfter()
+                  }}
+                  disabled={!selectedId}
+                  className={menuItemClass}
+                  data-tip={selectedId ? '選択したシーンと次のシーンの間に新しいシーンを割り込ませる' : 'シーンを選択すると使えます'}
+                >
+                  <span className="flex w-4 shrink-0 justify-center" style={{ color: 'var(--text-faint)' }}>
+                    <Icon name="insert" size={13} />
+                  </span>
+                  間に割り込ませる
+                </button>
+                <button
+                  role="menuitem"
+                  onClick={() => {
+                    setAddMenuOpen(false)
+                    // 章の中で作った島は、その章のシーンにする
+                    void handleAddDetached(undefined, focusedGroup?.id)
+                  }}
+                  className={menuItemClass}
+                  data-tip={
+                    focusedGroup
+                      ? `どこにも繋がらないシーンを「${focusedGroup.title}」に追加(あとでハンドルのドラッグで繋げます)`
+                      : 'どこにも繋がらないシーンを画面の中央に追加(あとでハンドルのドラッグで繋げます)'
+                  }
+                >
+                  <span className="w-4 shrink-0 text-center" style={{ color: 'var(--text-faint)' }}>⊕</span>
+                  どこにも繋げずに追加
+                </button>
+              </div>
+            )}
+          </span>
+          {/* 生成: パネルはボタンの真下に開く */}
+          <span ref={genMenuRef} className="relative shrink-0">
+            <button
+              onClick={() => setGenPanelOpen((v) => !v)}
+              aria-expanded={genPanelOpen}
+              className={`accent-action rounded-md border px-2.5 py-1 text-[12px] font-medium ${generating ? 'node-generating-border' : ''}`}
+              data-tip={genPanelOpen ? '生成パネルを閉じる' : 'LLM でシーンを生成する'}
+            >
+              ▶ 生成 {genPanelOpen ? '▴' : '▾'}
+            </button>
+            {genPanelOpen && (
+              <div
+                className={`absolute left-0 top-full z-50 mt-1.5 w-72 rounded-xl border p-3 shadow-lg shadow-black/40 ${generating ? 'node-generating-border' : ''}`}
+                style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)' }}
+              >
+                <textarea
+                  rows={2}
+                  value={instruction}
+                  onChange={(e) => setInstruction(e.target.value)}
+                  placeholder="生成の指示(任意)"
+                  className="mb-2 w-full rounded-lg border px-3 py-1.5 text-[13px] leading-relaxed outline-none"
+                  style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
+                />
+                {/* 実行中でも押せる(キューに積まれる) */}
+                <div className="flex flex-col gap-1.5">
+                  <button
+                    onClick={() => {
+                      setGenPanelOpen(false) // 生成中はキャンバスを広く使えるよう畳む
+                      // 選んでいるシーンの直後へ。後続が居れば間のシーン、居なければ
+                      // その続き(分岐の先端を選んでいれば、その枝が伸びる)
+                      handleGenerate(null, selectedId)
+                    }}
+                    className="w-full rounded-lg px-3 py-1.5 text-[13px] font-medium text-white"
+                    style={{ background: 'var(--accent)' }}
+                    data-tip={
+                      interpolateNext
+                        ? `選択シーンと「${interpolateNext.title || '(無題)'}」の間に起こったことを推測して挟む`
+                        : selectedNode
+                          ? `「${selectedNode.title || '(無題)'}」の続きを生成`
+                          : activeGroup
+                            ? `「${activeGroup.title}」の末尾に次のシーンを生成`
+                            : '物語の末尾に次のシーンを生成'
+                    }
+                  >
+                    {interpolateNext ? '▶ 間のシーンを生成' : '▶ 次のシーンを生成'}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setGenPanelOpen(false)
+                      handleGenerate(selectedId)
+                    }}
+                    disabled={!selectedId}
+                    className="accent-action w-full rounded-lg border px-3 py-1.5 text-[13px] font-medium disabled:opacity-40"
+                    data-tip="選択したシーンから what-if の分岐を下書きとして生成"
+                  >
+                    ⑂ 選択したシーンから分岐を生成
+                  </button>
+                  {generating && (
+                    <button
+                      onClick={() => genTaskIdRef.current && cancelTask(genTaskIdRef.current)}
+                      className="w-full rounded-lg border px-3 py-1.5 text-[13px] font-medium"
+                      style={{ borderColor: 'rgba(239,68,68,0.5)', color: 'var(--danger)' }}
+                      data-tip="いま動いているシーンの生成を止めます"
+                    >
+                      ■ 実行中の生成を中止
+                    </button>
+                  )}
+                </div>
+                {genStatus && (
+                  <div className="mt-2 text-[11px] leading-relaxed" style={{ color: 'var(--text-dim)' }}>
+                    {genStatus}
+                    {generating && (
+                      <span className="ml-1 tabular-nums" style={{ color: 'var(--text-faint)' }}>
+                        <ElapsedLabel active={generating} />
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </span>
+        </>
+      )}
+    </div>
+  )
+
   return (
     <div className="flex h-full flex-col">
       <div ref={rowRef} className="flex min-h-0 flex-1 flex-col">
@@ -2667,236 +2924,56 @@ function StructureModeInner({
           >
             <Background gap={GRID_SIZE} size={1.4} color="#394154" />
             {minimapVisible && <MiniMap pannable zoomable nodeColor="#2e3140" />}
-            <Panel position="top-left" style={{ maxWidth: 'calc(100% - 32px)' }}>
-              {/* 幅は中身に合わせる(パネルの領域はキャンバスのクリックを奪うため)。
-                  生成パネルとステータスの幅は各要素側で持たせ、ツールバーの並びを潰さない */}
-              <div className="flex w-fit max-w-full flex-col gap-2">
-                {/* 章内ビューのパンくず(現在地を示すだけ。名前の変更は下段の章の詳細と、章カードの右クリックから) */}
-                {effectiveView === 'focused' && focusedGroup && (
-                  <div
-                    className="flex w-fit max-w-full items-center gap-1.5 rounded-xl border px-2 py-1.5 text-[12px] shadow-lg shadow-black/30"
-                    style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)' }}
-                  >
-                    <nav aria-label="現在の階層" data-view-ok className="flex min-w-0 items-center gap-1.5">
-                      <button
-                        onClick={() => setChapterView('chapters')}
-                        className="shrink-0 rounded-md px-1.5 py-0.5 hover:bg-[var(--accent-soft)]"
-                        style={{ color: 'var(--text-dim)' }}
-                        data-tip="作品全体の章一覧へ戻る"
-                      >
-                        作品全体
-                      </button>
-                      <span aria-hidden="true" className="shrink-0" style={{ color: 'var(--text-faint)' }}>›</span>
-                      <span aria-current="page" className="min-w-0 max-w-56 truncate font-medium" style={{ color: 'var(--text)' }}
-                        data-tip={`${focusedGroup.on_canon ? `第${groups.indexOf(focusedGroup) + 1}章` : '別ルートの章'}「${focusedGroup.title}」`}>
-                        {focusedGroup.on_canon ? `第${groups.indexOf(focusedGroup) + 1}章` : '別ルートの章'}「{focusedGroup.title}」
-                      </span>
-                    </nav>
-                  </div>
-                )}
-                {/* ツールバー: 補助操作はアイコンだけにして面積を詰める。
-                    下にステータスが出ても折り返さないよう、幅は中身なりに固定する */}
-                <div className="flex w-fit gap-1.5 whitespace-nowrap">
-                  {/* 章がある間だけ、章ビュー ⇄ 全シーンの切替を出す */}
-                  {groups.length > 0 && effectiveView !== 'focused' && (
-                    <button
-                      data-view-ok
-                      onClick={() => setChapterView((v) => (v === 'chapters' ? 'flat' : 'chapters'))}
-                      className="rounded-lg border px-2.5 py-1.5 text-[13px] shadow-lg shadow-black/30"
-                      style={{
-                        background: effectiveView === 'chapters' ? 'var(--accent-soft)' : 'var(--bg-card)',
-                        borderColor: effectiveView === 'chapters' ? 'var(--accent-border)' : 'var(--border-strong)',
-                        color: 'var(--text-dim)'
-                      }}
-                      data-tip={
-                        effectiveView === 'chapters'
-                          ? '全シーンのフラット表示に切り替える'
-                          : '章ビュー(章単位の俯瞰)に切り替える'
-                      }
-                    >
-                      {effectiveView === 'chapters' ? '⊞ 全シーン' : '📖 章ビュー'}
-                    </button>
-                  )}
-                  <button
-                    data-view-ok
-                    onClick={() => setCastView('table')}
-                    className="inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[13px] shadow-lg shadow-black/30"
-                    style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-                    data-tip="キャラクタービュー(人物ごとの出番を表にして見る)に切り替える"
-                  >
-                    <Icon name="users" size={14} /> 人物
-                  </button>
-                  <button
-                    onClick={() => void handleAddBeat()}
-                    className="rounded-lg px-3 py-1.5 text-[13px] font-medium text-white shadow-lg shadow-black/30"
-                    style={{ background: 'var(--accent)' }}
-                    data-tip={
-                      selectedId
-                        ? '選択したシーンの続きとしてシーンを追加'
-                        : activeGroup
-                          ? `「${activeGroup.title}」の末尾(出口の手前)にシーンを追加`
-                          : '正史の末尾にシーンを追加'
-                    }
-                  >
-                    + シーン
-                  </button>
-                  <button
-                    // 章の中で作った島は、その章のシーンにする
-                    onClick={() => void handleAddDetached(undefined, focusedGroup?.id)}
-                    className="rounded-lg border px-2.5 py-1.5 text-[13px] shadow-lg shadow-black/30"
-                    style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-                    aria-label="どこにも繋がらないシーンを追加"
-                    data-tip={
-                      focusedGroup
-                        ? `どこにも繋がらないシーンを「${focusedGroup.title}」に追加(あとでハンドルのドラッグで繋げます)`
-                        : 'どこにも繋がらないシーンを画面の中央に追加(あとでハンドルのドラッグで繋げます)'
-                    }
-                  >
-                    ⊕
-                  </button>
-                  {selectedId && (
-                    <button
-                      onClick={() => void handleInsertAfter()}
-                      className="flex items-center rounded-lg border px-2.5 py-2 shadow-lg shadow-black/30"
-                      style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-                      data-tip="選択したシーンと次のシーンの間に新しいシーンを割り込ませる"
-                      aria-label="選択したシーンの後ろに割り込ませる"
-                    >
-                      <Icon name="insert" size={15} />
-                    </button>
-                  )}
-                  <button
-                    onClick={() => setGenPanelOpen((v) => !v)}
-                    className={`rounded-lg border px-2.5 py-1.5 text-[13px] font-medium shadow-lg shadow-black/30 ${
-                      generating ? 'node-generating-border' : ''
-                    }`}
-                    style={{
-                      background: genPanelOpen ? 'var(--accent-soft)' : 'var(--bg-card)',
-                      borderColor: genPanelOpen ? 'var(--accent-border)' : 'var(--border-strong)',
-                      color: 'var(--accent)'
-                    }}
-                    data-tip={genPanelOpen ? '生成パネルを閉じる' : 'LLM でシーンを生成する'}
-                  >
-                    ▶ 生成 {genPanelOpen ? '▴' : '▾'}
-                  </button>
-                </div>
-                {genPanelOpen && (
-                  <div
-                    className={`w-72 rounded-2xl border p-3 shadow-lg shadow-black/30 ${generating ? 'node-generating-border' : ''}`}
-                    style={{ background: 'var(--bg-card)', borderColor: 'var(--border)' }}
-                  >
-                    <textarea
-                      rows={2}
-                      value={instruction}
-                      onChange={(e) => setInstruction(e.target.value)}
-                      placeholder="生成の指示(任意)"
-                      className="mb-2 w-full rounded-lg border px-3 py-1.5 text-[13px] leading-relaxed outline-none"
-                      style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
-                    />
-                    {/* 実行中でも押せる(キューに積まれる) */}
-                    <div className="flex flex-col gap-1.5">
-                      <button
-                        onClick={() => {
-                          setGenPanelOpen(false) // 生成中はキャンバスを広く使えるよう畳む
-                          // 選んでいるシーンの直後へ。後続が居れば間のシーン、居なければ
-                          // その続き(分岐の先端を選んでいれば、その枝が伸びる)
-                          handleGenerate(null, selectedId)
-                        }}
-                        className="w-full rounded-lg px-3 py-1.5 text-[13px] font-medium text-white"
-                        style={{ background: 'var(--accent)' }}
-                        data-tip={
-                          interpolateNext
-                            ? `選択シーンと「${interpolateNext.title || '(無題)'}」の間に起こったことを推測して挟む`
-                            : selectedNode
-                              ? `「${selectedNode.title || '(無題)'}」の続きを生成`
-                              : activeGroup
-                                ? `「${activeGroup.title}」の末尾に次のシーンを生成`
-                                : '物語の末尾に次のシーンを生成'
-                        }
-                      >
-                        {interpolateNext ? '▶ 間のシーンを生成' : '▶ 次のシーンを生成'}
-                      </button>
-                      <button
-                        onClick={() => {
-                          setGenPanelOpen(false)
-                          handleGenerate(selectedId)
-                        }}
-                        disabled={!selectedId}
-                        className="accent-action w-full rounded-lg border px-3 py-1.5 text-[13px] font-medium disabled:opacity-40"
-                        data-tip="選択したシーンから what-if の分岐を下書きとして生成"
-                      >
-                        ⑂ 選択したシーンから分岐を生成
-                      </button>
-                      {generating && (
-                        <button
-                          onClick={() => genTaskIdRef.current && cancelTask(genTaskIdRef.current)}
-                          className="w-full rounded-lg border px-3 py-1.5 text-[13px] font-medium"
-                          style={{ borderColor: 'rgba(239,68,68,0.5)', color: 'var(--danger)' }}
-                          data-tip="いま動いているシーンの生成を止めます"
-                        >
-                          ■ 実行中の生成を中止
-                        </button>
-                      )}
-                    </div>
-                    {genStatus && (
-                      <div className="mt-2 text-[11px] leading-relaxed" style={{ color: 'var(--text-dim)' }}>
-                        {genStatus}
-                        {generating && (
-                          <span className="ml-1 tabular-nums" style={{ color: 'var(--text-faint)' }}>
-                            <ElapsedLabel active={generating} />
-                          </span>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
+            {/* キャンバスの左上には、生成の進み具合(パネルを畳んでいる間)だけを出す。
+                ツールバーはモード切替の行へ移した(2026-10-19 ユーザー要望。下の structureToolbar) */}
+            {!genPanelOpen && genStatus && (
+              <Panel position="top-left">
                 {/* 再抽出・清書の進捗はステータスバーに集約したので、ここには出さない */}
                 {/* パネルを畳んでいる間の進捗表示。中止もここから行える */}
-                {!genPanelOpen && genStatus && (
-                  <div
-                    className={`flex w-72 items-start gap-2 rounded-xl border px-2.5 py-1.5 text-[11px] leading-relaxed shadow-lg shadow-black/30 ${
-                      generating ? 'node-generating-border' : ''
-                    }`}
-                    style={{ background: 'var(--bg-card)', borderColor: 'var(--border)', color: 'var(--text-dim)' }}
-                  >
-                    <span className="min-w-0 flex-1">
-                      {genStatus}
-                      {generating && (
-                        <span className="ml-1 tabular-nums" style={{ color: 'var(--text-faint)' }}>
-                          <ElapsedLabel active={generating} />
-                        </span>
-                      )}
-                    </span>
-                    {generating ? (
-                      <button
-                        onClick={() => genTaskIdRef.current && cancelTask(genTaskIdRef.current)}
-                        className="shrink-0 rounded-md border px-1.5"
-                        style={{ borderColor: 'rgba(239,68,68,0.5)', color: 'var(--danger)' }}
-                        aria-label="生成を中止"
-                        data-tip="生成を中止"
-                      >
-                        ■
-                      </button>
-                    ) : (
-                      <button
-                        onClick={() => setGenStatus(null)}
-                        className="shrink-0 px-1"
-                        style={{ color: 'var(--text-faint)' }}
-                        aria-label="表示を消す"
-                        data-tip="表示を消す"
-                      >
-                        ✕
-                      </button>
+                <div
+                  className={`flex w-72 items-start gap-2 rounded-xl border px-2.5 py-1.5 text-[11px] leading-relaxed shadow-lg shadow-black/30 ${
+                    generating ? 'node-generating-border' : ''
+                  }`}
+                  style={{ background: 'var(--bg-card)', borderColor: 'var(--border)', color: 'var(--text-dim)' }}
+                >
+                  <span className="min-w-0 flex-1">
+                    {genStatus}
+                    {generating && (
+                      <span className="ml-1 tabular-nums" style={{ color: 'var(--text-faint)' }}>
+                        <ElapsedLabel active={generating} />
+                      </span>
                     )}
-                  </div>
-                )}
-              </div>
-            </Panel>
+                  </span>
+                  {generating ? (
+                    <button
+                      onClick={() => genTaskIdRef.current && cancelTask(genTaskIdRef.current)}
+                      className="shrink-0 rounded-md border px-1.5"
+                      style={{ borderColor: 'rgba(239,68,68,0.5)', color: 'var(--danger)' }}
+                      aria-label="生成を中止"
+                      data-tip="生成を中止"
+                    >
+                      ■
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => setGenStatus(null)}
+                      className="shrink-0 px-1"
+                      style={{ color: 'var(--text-faint)' }}
+                      aria-label="表示を消す"
+                      data-tip="表示を消す"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+              </Panel>
+            )}
+            {/* 整列はキャンバスの操作なので、キャンバスの右上に置く(2026-10-19 ユーザー指摘。ツールバーは上の行) */}
             <Panel position="top-right">
               <button
                 onClick={() => void realignLayout()}
                 aria-label="カードを整列"
-                className="rounded-lg border px-2.5 py-1.5 text-[13px] shadow-lg shadow-black/30"
+                className="flex h-8 w-8 items-center justify-center rounded-lg border shadow-lg shadow-black/30"
                 style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
                 data-tip={
                   effectiveView === 'chapters'
@@ -2910,7 +2987,7 @@ function StructureModeInner({
                         : '手動配置をリセットして全体を自動レイアウトに戻す(複数選択中なら選択分だけ整列)'
                 }
               >
-                <Icon name="alignNodes" size={17} />
+                <Icon name="alignNodes" size={14} />
               </button>
             </Panel>
             {/* 詳細欄のトグルは左下(生成 UI と離し、ミニマップの反対側に置く) */}
@@ -2947,14 +3024,6 @@ function StructureModeInner({
           {castView && (
             <div data-view-ok className="absolute inset-0 z-10 flex flex-col" style={{ background: 'var(--bg-canvas)' }}>
               <div className="flex shrink-0 items-center gap-2 border-b px-3 py-1.5" style={{ borderColor: 'var(--border)' }}>
-                <button
-                  onClick={() => setCastView(null)}
-                  className="shrink-0 whitespace-nowrap rounded-lg border px-2.5 py-1 text-[13px]"
-                  style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
-                  data-tip="フローチャート(シーンのつながり)に戻る"
-                >
-                  ⊞ フローチャート
-                </button>
                 <span className="shrink-0 whitespace-nowrap text-[13px] font-medium" style={{ color: 'var(--text)' }}>キャラクタービュー</span>
                 <span className="min-w-0 truncate text-[11px]" style={{ color: 'var(--text-faint)' }}>
                   横がシーン、縦が人物。縦線でつながっているセルは同じシーンに一緒に登場しています
@@ -3371,6 +3440,7 @@ function StructureModeInner({
           )}
         </main>
         </div>
+        {workspace.toolbarHost && workspace.mode === 'structure' && createPortal(structureToolbar, workspace.toolbarHost)}
         {chatHost && createPortal(<div className="flex h-full min-h-0 flex-col" style={{ background: 'var(--bg-chat)' }}>
               <div className="flex shrink-0 items-center gap-2 border-b px-6 py-1" style={{ background: 'var(--bg-chat)', borderColor: 'var(--border)' }}>
                 <div className="flex overflow-hidden rounded-md border" style={{ borderColor: 'var(--border-strong)' }}>

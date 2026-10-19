@@ -131,6 +131,25 @@ store.save_chat_messages(chat['id'], [
     await js(`(() => { const visible = [...document.querySelectorAll('button')].filter(e => e.getClientRects().length); const el = visible.find(e => e.textContent.trim() === ${JSON.stringify(label)}) ?? visible.find(e => e.getAttribute('aria-label') === ${JSON.stringify(label)}); if (!el) throw new Error('ボタンがありません: ' + ${JSON.stringify(label)}); el.click() })()`)
     await pause(180)
   }
+  // シーンのカードが見えるようにする。全シーン表示を 2026-10-19 に廃止したので、見えていなければ
+  // パンくずの「作品全体」で章の一覧へ戻り、章カードを順に開いて探す(章の中に入るのはダブルクリック)
+  const showScene = async (title) => {
+    const visible = `[...document.querySelectorAll('.react-flow__node')].some(e=>!e.classList.contains('react-flow__node-chapterNode') && e.textContent.includes(${JSON.stringify(title)}))`
+    if (await js(visible)) return
+    // 章カードの並び(DOM の順)は選択で入れ替わるので、章の名前で 1 つずつ開く
+    await js(`[...document.querySelectorAll('[data-structure-toolbar] nav button')].find(e=>e.textContent.trim()==='作品全体')?.click()`)
+    await pause(400)
+    const chapters = await js(`[...document.querySelectorAll('.react-flow__node-chapterNode')].map(e=>e.textContent)`)
+    for (const text of chapters) {
+      await js(`[...document.querySelectorAll('[data-structure-toolbar] nav button')].find(e=>e.textContent.trim()==='作品全体')?.click()`)
+      await pause(400)
+      await js(`[...document.querySelectorAll('.react-flow__node-chapterNode')].find(e=>e.textContent===${JSON.stringify(text)})?.dispatchEvent(new MouseEvent('dblclick',{bubbles:true}))`)
+      await pause(600)
+      // 章に入った直後は章カードの選択が残っているので、少し待ってからシーンを押させる
+      if (await js(visible)) return await pause(400)
+    }
+    throw new Error('シーンのカードが見つかりません: ' + title + ' / 見えているカード: ' + await js(`[...document.querySelectorAll('.react-flow__node')].map(e=>e.className.split(' ').find(c=>c.startsWith('react-flow__node-'))+':'+e.textContent.slice(0,12)).join(', ')`))
+  }
   const assert = async (condition, message) => {
     if (!await js(condition)) {
       try { writeFileSync(join(target, 'fail.png'), (await win.webContents.capturePage()).toPNG()) } catch {}
@@ -336,15 +355,13 @@ store.save_chat_messages(chat['id'], [
     await click('プロフィール')
     await pause(300)
     writeFileSync(join(target, 'cast-library.png'), (await win.webContents.capturePage()).toPNG())
-    await click('⊞ フローチャート')
+    await click('フローチャート')
     await pause(300)
     await assert(`!document.body.textContent.includes('キャラクタービュー') && [...document.querySelectorAll('.react-flow__node')].length > 0`, '「フローチャート」で元の表示に戻る')
     // フローチャートのカードの登場人物の札をクリック → 人物専用の表示(シーンの選択は変えない)。
-    // 章ビューではシーンのカードが章に畳まれているので、全シーンの表示にしてから押す
-    if (await js(`document.body.textContent.includes('⊞ 全シーン')`)) {
-      await click('⊞ 全シーン')
-      await pause(800)
-    }
+    // 章ビューではシーンのカードが章に畳まれているので、章の中に入ってから押す(全シーン表示は 2026-10-19 に廃止)
+    // アヤの出るシーンのカードが見えていればよい(直前の人物の表から第二幕の中に居る。画面外のカードは描画されない)
+    await showScene(example.scenes[1].title)
     await js(`[...document.querySelectorAll('.react-flow__node button[data-tip$="この人物を出す"]')].find(e => e.getAttribute('data-tip').startsWith('アヤ') && e.getClientRects().length).click()`)
     await pause(500)
     await assert(`(() => { const name = [...document.querySelectorAll('[data-character-name]')].find(e => e.getClientRects().length); const chip = [...document.querySelectorAll('.react-flow__node button[data-tip$="この人物を出す"]')].find(e => e.getAttribute('data-tip').startsWith('アヤ') && e.getClientRects().length); return !!name && name.textContent.trim() === 'アヤ' && ${tabLabels}.includes('プロフィール') && chip.closest('.react-flow__node').classList.contains('selected') })()`, 'フローチャートのカードの登場人物の札をクリックすると、そのシーンが選ばれ、詳細欄が人物専用の表示になる')
@@ -380,7 +397,7 @@ store.save_chat_messages(chat['id'], [
     // 同じシーンに記憶を足すと、同じカードにまとまる(出どころの行は 1 回だけ)
     await js(`(() => { const el = document.querySelector('input[placeholder^="記憶を追加"]'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, '検証で足した記憶'); el.dispatchEvent(new Event('input', { bubbles: true })) })()`)
     await pause(100)
-    await js(`document.querySelector('button[aria-label="memory_add イベントとして記録"]').click()`)
+    await js(`document.querySelector('button[aria-label="記憶のイベントとして記録"]').click()`)
     for (let i = 0; i < 30; i++) { if (await js(`document.body.textContent.includes('Memories(5)')`)) break; await pause(200) }
     await assert(`${groups}.length === 4 && ${groups}[0].textContent.includes('検証で足した記憶') && ${groups}[0].querySelectorAll('img').length === 1 && (${groups}[0].textContent.match(/← /g) || []).length === 1`, '同じシーンの記憶は 1 枚のカードにまとまり、挿絵と出どころは 1 回だけ出る')
     writeFileSync(join(target, 'memories.png'), (await win.webContents.capturePage()).toPNG())
@@ -473,9 +490,9 @@ store.save_chat_messages(chat['id'], [
     await new Promise((done) => { win.webContents.once('did-finish-load', () => done()); win.webContents.reload() })
     for (let i = 0; i < 60; i++) { if (await js(`[...document.querySelectorAll('.react-flow__node')].some(e=>e.textContent.includes('第一幕'))`)) break; await pause(200) }
     await pause(400)
-    await click('⊞ 全シーン')
-    await pause(800)
-    const title = example.scenes[0].title // 記憶 2・関係 1・事実 2
+    // 最初のシーンは第一幕の中(全シーン表示は廃止したので章に入る)
+    const title = example.scenes[0].title
+    await showScene(title) // 記憶 2・関係 1・事実 2
     await js(`[...document.querySelectorAll('.react-flow__node')].find(e=>e.textContent.includes(${JSON.stringify(title)})).dispatchEvent(new MouseEvent('click',{bubbles:true}))`)
     await pause(600)
     const groups = `[...document.querySelectorAll('[data-event-group]')]`
@@ -520,10 +537,13 @@ store.save_chat_messages(chat['id'], [
     await pause(300)
     await assert(`!!document.querySelector('[data-event-type] button[aria-label="このイベントを編集"]') && ![...document.querySelector('[data-event-type]').querySelectorAll('button')].some(e=>e.textContent.trim()==='確定')`, 'イベントの編集は Esc で取り消して閉じる')
     // 相手が勢力の関係: アイコンは出さず、名前で出す(ID のまま出さない)
+    await showScene(example.scenes[1].title)
     await js(`[...document.querySelectorAll('.react-flow__node')].find(e=>e.textContent.includes(${JSON.stringify(example.scenes[1].title)})).dispatchEvent(new MouseEvent('click',{bubbles:true}))`)
-    for (let i = 0; i < 20; i++) { if (await js(`document.querySelectorAll('[data-event-group="relation"] [data-event-type]').length === 2`)) break; await pause(150) }
+    // 章を移ると詳細欄が作り直され、勢力の名前はそのあと読み込まれるので、名前が出るまで待つ
+    for (let i = 0; i < 20; i++) { if (await js(`document.querySelectorAll('[data-event-group="relation"] [data-event-type]').length === 2 && document.querySelector('[data-event-group="relation"]').textContent.includes('港の組合')`)) break; await pause(150) }
     await assert(`(() => { const cards = [...document.querySelectorAll('[data-event-group="relation"] [data-event-type]')]; const f = cards.find(c => c.textContent.includes('雇い主')); return !!f && f.textContent.replace(/\s/g, '').includes('アヤ→港の組合') && f.querySelectorAll('[aria-label], img[alt]').length - f.querySelectorAll('button[aria-label]').length === 1 })()`, '相手が勢力の関係は、アイコンを出さずに勢力の名前で出す')
     // 直前に関係があるシーン: 通行止め では 老技師 → アヤ が 反感(-0.30) から ふつう(0.00) へ
+    await showScene(example.scenes[2].title)
     await js(`[...document.querySelectorAll('.react-flow__node')].find(e=>e.textContent.includes(${JSON.stringify(example.scenes[2].title)})).dispatchEvent(new MouseEvent('click',{bubbles:true}))`)
     for (let i = 0; i < 20; i++) { if (await js(`(${card('relation')}?.textContent ?? '').includes('良くなった')`)) break; await pause(150) }
     await assert(`(() => { const t = ${card('relation')}.textContent; return t.replace(/\s/g, '').includes('老技師→アアヤ') && t.includes('反感 → ふつう') && t.includes('▲ 良くなった') })()`, '直前に関係があれば「反感 → ふつう」と前後の段階を出す')
@@ -1065,6 +1085,29 @@ store.save_chat_messages(chat['id'], [
     }
     await assert(`(() => {const a=document.querySelector('.scene-detail-main').getBoundingClientRect();const b=(document.querySelector('.scene-detail-side')||document.querySelector('.scene-detail-meta')).getBoundingClientRect(); return (document.querySelector(".detail-main-right, .detail-three") ? a.x>=b.right-1 : b.x>=a.right-1) && Math.abs(a.y-b.y)<1;})()`, '広い詳細欄は本文と補助情報の2列')
     if (chapterCheck) {
+      // 構造モードのツールバーはモード切替の行にある(2026-10-19): [フローチャート|人物] パンくず [+ シーン ▾] [▶ 生成 ▾] … [整列]。
+      // 全シーン表示の切り替えは無い。人物では作る・生成・整列を隠し、パンくずは残す
+      const bar = `document.querySelector('nav [data-structure-toolbar]')`
+      const barLabels = `[...${bar}.querySelectorAll('button')].map(e=>e.textContent.trim())`
+      await assert(`(() => {const l=${barLabels};return !!${bar} && l.includes('フローチャート') && l.includes('人物') && l.includes('+ シーン') && l.some(t=>t.startsWith('▶ 生成')) && ${bar}.querySelector('nav[aria-label="現在の階層"]').textContent.includes('作品全体') && !document.body.textContent.includes('全シーン') && !${bar}.querySelector('button[aria-label="カードを整列"]') && !!document.querySelector('.react-flow__panel.top.right button[aria-label="カードを整列"]')})()`, '構造のツールバーはモード切替の行にあり(整列はキャンバスの右上)、全シーン表示の切り替えは無い')
+      await js(`${bar}.querySelector('button[aria-label="ほかの追加のしかた"]').click()`)
+      await pause(200)
+      await assert(`(() => {const items=[...${bar}.querySelectorAll('[role="menuitem"]')].map(e=>e.textContent.trim());return items.join('|')==='+続きに追加|間に割り込ませる|⊕どこにも繋げずに追加'})()`, '「+ シーン ▾」のメニューに 続き・割り込み・独立 の追加が並ぶ')
+      await js(`document.body.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}))`)
+      await pause(200)
+      await assert(`!${bar}.querySelector('[role="menu"]')`, '追加のメニューは外側のクリックで閉じる')
+      await js(`[...${bar}.querySelectorAll('button')].find(e=>e.textContent.trim().startsWith('▶ 生成')).click()`)
+      await pause(200)
+      await assert(`(() => {const panel=${bar}.querySelector('textarea[placeholder="生成の指示(任意)"]');const btn=[...${bar}.querySelectorAll('button')].find(e=>e.textContent.trim().startsWith('▶ 生成'));return !!panel && panel.getBoundingClientRect().top >= btn.getBoundingClientRect().bottom})()`, '生成パネルは生成ボタンの真下に開く')
+      writeFileSync(join(target, 'toolbar-gen.png'), (await win.webContents.capturePage()).toPNG())
+      await js(`document.body.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}))`)
+      await pause(200)
+      await click('人物')
+      await pause(300)
+      await assert(`(() => {const l=${barLabels};return !l.includes('+ シーン') && !l.some(t=>t.startsWith('▶ 生成')) && !!${bar}.querySelector('nav[aria-label="現在の階層"]') && document.body.textContent.includes('キャラクタービュー')})()`, '人物では作る・生成を隠し、パンくずは残す')
+      writeFileSync(join(target, 'toolbar-cast.png'), (await win.webContents.capturePage()).toPNG())
+      await click('フローチャート')
+      await pause(300)
       // 章を選んでいるときのタブは 章 / 関係図 / 事実。関係図・事実は章の最後のシーンまでを表示する。
       await assert(`(() => {const tab=[...document.querySelectorAll('button')].find(e=>e.getClientRects().length && e.textContent.trim()==='関係図');const labels=[...tab.parentElement.querySelectorAll('button')].map(e=>e.textContent.trim());return labels.slice(0,3).join('|')==='章|関係図|事実' && !labels.some(e=>['シーン','清書','キャラ'].includes(e))})()`, '章を選ぶとタブは 章 / 関係図 / 事実 だけ')
       await click('関係図')
@@ -1397,7 +1440,8 @@ store.save_chat_messages(chat['id'], [
   await pause(300)
   await assert(`(() => {const main=document.querySelector('main[data-write-locked="true"]');return !!main && !main.hasAttribute('inert') && !!main.querySelector('.react-flow')})()`, '制作中のキャンバスは操作不可にせず、書き換えだけロックする')
   const lockedNodes = (await (await fetch(base + '/graph')).json()).nodes.length
-  await js(`[...document.querySelectorAll('main button')].find(e=>e.textContent.trim()==='+ シーン').click()`)
+  // ツールバーはモード切替の行にある(2026-10-19)。制作中はそこも書き換えだけ止まる
+  await js(`[...document.querySelectorAll('[data-structure-toolbar] button')].find(e=>e.textContent.trim()==='+ シーン').click()`)
   await pause(300)
   if ((await (await fetch(base + '/graph')).json()).nodes.length !== lockedNodes) errors.push('制作中にシーンの追加が実行された')
   else console.log('PASS 制作中はキャンバスからシーンを追加できない')

@@ -7,6 +7,8 @@ export type ProductionTarget = { kind: 'scene' | 'chapter' | 'character' | 'plac
 export const WorkspaceContext = createContext<{
   mode: WorkspaceMode
   chatHost: HTMLDivElement | null
+  /** モード切替の行の、そのモードの操作を置く場所(構造モードのツールバー。2026-10-19) */
+  toolbarHost: HTMLDivElement | null
   chatOpen: boolean
   toggleChat: () => void
   manual: boolean

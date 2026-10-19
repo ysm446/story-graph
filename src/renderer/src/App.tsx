@@ -173,6 +173,7 @@ export default function App(): React.JSX.Element {
   useEffect(() => installWriteLockGuard(), [])
   const [mode, setMode] = useState<Mode>('structure')
   const [chatHost, setChatHost] = useState<HTMLDivElement | null>(null)
+  const [toolbarHost, setToolbarHost] = useState<HTMLDivElement | null>(null)
   const [chatOpen, setChatOpen] = useState(() => localStorage.getItem('chatDrawerOpen') === '1')
   const [chatWidth, setChatWidth] = useState(() => {
     const saved = Number(localStorage.getItem('workspaceChatWidth'))
@@ -318,8 +319,8 @@ export default function App(): React.JSX.Element {
   // Context の値は中身が変わったときだけ作り直す。毎レンダー新しいオブジェクトを渡すと、
   // シーンの選択や通知で App が再レンダーされるたびに全モードが再レンダーされる
   const workspaceValue = useMemo(
-    () => ({ mode, chatHost, chatOpen, toggleChat, manual, setManual, revision, changed, libraryDirty, productionTarget, followTarget, openScene }),
-    [mode, chatHost, chatOpen, toggleChat, manual, revision, changed, productionTarget, followTarget, openScene]
+    () => ({ mode, chatHost, toolbarHost, chatOpen, toggleChat, manual, setManual, revision, changed, libraryDirty, productionTarget, followTarget, openScene }),
+    [mode, chatHost, toolbarHost, chatOpen, toggleChat, manual, revision, changed, productionTarget, followTarget, openScene]
   )
 
   return (
@@ -373,6 +374,8 @@ export default function App(): React.JSX.Element {
             {m.label}
           </button>
         ))}
+        {/* そのモードの操作を置く場所(構造モードはツールバーをここへ portal で出す) */}
+        <div ref={setToolbarHost} className="flex h-full min-w-0 flex-1 items-center" />
         {mode !== 'reader' && <button onClick={toggleChat}
           className="ml-auto rounded-md border px-2 py-0.5 text-[11px]"
           style={{ borderColor: 'var(--border-strong)', color: chatOpen ? 'var(--text)' : 'var(--text-dim)', background: chatOpen ? 'var(--accent-soft)' : undefined }}
