@@ -57,21 +57,6 @@
         "max_shift": 1.15,
         "base_shift": 0.5
       }
-    },
-    {
-      "id": "qwen21",
-      "label": "Qwen Image 2.1",
-      "t2i": "qwen21_t2i",
-      "edit": "qwen21_edit",
-      "ref_label": "<image{n}>",
-      "values": {
-        "unet": "qwen_image_2.1_int8_convrot.safetensors",
-        "clip": "qwen3vl_8b_int8_convrot.safetensors",
-        "vae": "qwen_image_2.1_vae_bf16.safetensors",
-        "ref_resolution": 1024,
-        "steps": 25,
-        "cfg": 1.0
-      }
     }
   ]
 }

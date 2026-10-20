@@ -98,8 +98,11 @@ def test_portrait_workflow_without_reference_falls_back_to_t2i_with_description(
     assert latent["width"] == latent["height"] == auto_images.PORTRAIT_SIZE
 
 
-def test_portrait_workflow_rewrites_reference_label_for_variant():
-    wf = auto_images.portrait_workflow({}, "x", "ref.png", seed=1, variant="qwen21")
+def test_portrait_workflow_rewrites_reference_label_for_variant(monkeypatch):
+    v = {"id": "labeled", "label": "テスト", "t2i": "ref_t2i", "edit": "scene_edit", "ref_label": "<image{n}>",
+         "values": {"checkpoint": "c.safetensors"}}
+    monkeypatch.setattr(comfy, "list_variants", lambda: [v])
+    wf = auto_images.portrait_workflow({}, "x", "ref.png", seed=1, variant="labeled")
     assert "<image1>" in _positive(wf) and "image1," not in _positive(wf)
 
 

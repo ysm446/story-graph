@@ -1,7 +1,7 @@
 # 画像生成(ComfyUI 連携)— キャラクターの参照画像・場面の挿絵・場所の画像
 
 作成日時: 2026-08-26 15:15
-更新日時: 2026-10-17 00:32
+更新日時: 2026-10-21 04:00
 
 ローカルの ComfyUI で挿絵を作る仕組みの設計メモ。2026-08-26 のユーザー発案
 ([progress.md](../plan/progress.md) の「場面の画像生成」)。画像は**装飾専用**で、
@@ -250,7 +250,10 @@ API 形式の JSON テンプレート `workflows/ref_t2i.json` を `comfy.build_
 - 組は `krea2`(identity のみ)と `krea2_zeniji`(+ `krea2-zeniji-style` を "13" で重ねる)。
   設定画面のチェックポイントは使わず、モデル名は `values` で持つ。
 
-## 11. Qwen Image 2.1 の組
+## 11. Qwen Image 2.1 の組(削除済み)
+
+> 2026-10-21 04:00 ユーザー要望で外した(`variants.json` の行と `qwen21_t2i.json` / `qwen21_edit.json` を削除)。
+> 組の `ref_label` と `build_edit_workflow` の配線の外し方は汎用なので残してある。以下は当時の記録。
 
 2026-10-10 ユーザー要望「Qwen Image 2.1 を追加」。組の id は `qwen21`。
 
