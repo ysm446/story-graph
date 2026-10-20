@@ -152,6 +152,9 @@ function StructureModeInner({
   const [pendingFocusId, setPendingFocusId] = useState<string | null>(focusNodeId ?? null)
   // 初回フォーカスを消化したか。済むまでは自動の全体表示(fitView)を止める
   const focusDoneRef = useRef(!focusNodeId)
+  // フォーカス予約が一度でも入ったか(React Flow の初期の全体表示を止めるのに使う。fitView の所を参照)
+  const focusRequestedRef = useRef(false)
+  if (pendingFocusId) focusRequestedRef.current = true
   const [inspectorTab, setInspectorTab] = useState<'beat' | 'render' | 'char' | 'graph' | 'facts'>('beat')
   // 詳細欄の対象。scene = 選択中のシーン(章・マーカー)のタブ、character = 人物専用のタブ
   // (人物をクリックすると character、シーンを選ぶと scene に戻る)
@@ -1524,7 +1527,8 @@ function StructureModeInner({
     }, 60)
     return () => {
       clearTimeout(timer)
-      layer.style.opacity = '1'
+      // ← → で章をまたぐ切り替え(下の navTransitionRef)が隠している間は、そちらに出させる
+      if (!navTransitionRef.current) layer.style.opacity = '1'
     }
   }, [viewKey, effectiveView, reactFlow])
 
@@ -1557,9 +1561,10 @@ function StructureModeInner({
    * 選択の持ち場所はシーンと章カードで別なので、どちらか一方だけが選ばれるようにする。
    */
   const focusNodeOnCanvas = useCallback(
-    (nodeId: string): void => {
+    (nodeId: string, options?: { camera?: boolean }): void => {
       const flow = reactFlow.getNode(nodeId)
-      if (flow) {
+      // camera: false は選択だけ付け替える(カメラは呼び出し側が動かす。← → で章をまたぐときの切り替え)
+      if (flow && options?.camera !== false) {
         // ズームは保ったまま中央へ寄せる(F の fitBounds とは役割を分ける)
         void reactFlow.setCenter(
           flow.position.x + (flow.measured?.width ?? 288) / 2,
@@ -1645,21 +1650,86 @@ function StructureModeInner({
     setPendingFocusId(nodeId)
   }, [workspace.followTarget])
 
+  // ← → で章をまたいで移るときの切り替えの動き(2026-10-20 ユーザー要望)。
+  // 章に入る / 全体に戻るときと同じく、切り替えた瞬間はカード群を隠し、移った先のシーンが描けたら
+  // そのシーンを画面の中央に置いて(倍率はいまのまま)フェードインする。動きは行き先で分ける:
+  // - 前後の章へ: 押した向きから短く横にスライド(→ なら右から、← なら左から入ってくる)
+  // - 章の外へ(全体に出る): 全体に戻るときと同じ縮小 / 全体から章の中へ: 拡大
+  const navTransitionRef = useRef<{
+    kind: 'slide' | 'zoomIn' | 'zoomOut'
+    dir: 1 | -1
+    zoom: number
+    layer: HTMLElement
+    fallback: number
+  } | null>(null)
+  const endNavTransition = useCallback((): void => {
+    const transition = navTransitionRef.current
+    if (!transition) return
+    navTransitionRef.current = null
+    window.clearTimeout(transition.fallback)
+    transition.layer.style.transition = 'opacity 200ms ease-out'
+    transition.layer.style.opacity = '1'
+  }, [])
+  const startNavTransition = useCallback(
+    (kind: 'slide' | 'zoomIn' | 'zoomOut', dir: 1 | -1): void => {
+      const layer = canvasRef.current?.querySelector<HTMLElement>('.react-flow__viewport')
+      if (!layer) return
+      endNavTransition()
+      layer.style.transition = 'none'
+      layer.style.opacity = '0'
+      // 行き先が描けないまま終わったときに、隠したままにしない
+      const fallback = window.setTimeout(endNavTransition, 1500)
+      navTransitionRef.current = { kind, dir, zoom: reactFlow.getZoom(), layer, fallback }
+    },
+    [reactFlow, endNavTransition]
+  )
+  /** 隠しておいたカード群を、移った先のシーンを中心にして出す。切り替え中でなければ何もせず false */
+  const playNavTransition = useCallback(
+    (nodeId: string): boolean => {
+      const transition = navTransitionRef.current
+      const flow = reactFlow.getNode(nodeId)
+      const pane = canvasRef.current?.querySelector<HTMLElement>('.react-flow')
+      if (!transition || !flow || !pane) return false
+      const { width, height } = pane.getBoundingClientRect()
+      const cx = flow.position.x + (flow.measured?.width ?? 288) / 2
+      const cy = flow.position.y + (flow.measured?.height ?? FALLBACK_NODE_HEIGHT) / 2
+      const zoom = transition.zoom
+      const target = { x: width / 2 - cx * zoom, y: height / 2 - cy * zoom, zoom }
+      const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      if (!reduced) {
+        if (transition.kind === 'slide') {
+          void reactFlow.setViewport({ ...target, x: target.x + transition.dir * 48 })
+        } else {
+          // 中央のシーンを中心に置いたまま、倍率だけずらした所から始める(章に入る / 全体に戻ると同じ倍率)
+          const start = zoom * (transition.kind === 'zoomIn' ? 0.8 : 1.25)
+          void reactFlow.setViewport({ x: width / 2 - cx * start, y: height / 2 - cy * start, zoom: start })
+        }
+      }
+      void reactFlow.setViewport(target, { duration: reduced ? 0 : 300 })
+      endNavTransition()
+      return true
+    },
+    [reactFlow, endNavTransition]
+  )
+
   // 鑑賞モードで読んでいたシーン、または制作の対象にフォーカスして開く(戻ったときに迷子にならない)。
   // 章に畳まれて見えないときは、その章の中に入ってから寄せる
   useEffect(() => {
     // 画面に何か出てから判断する(ノードの構築前は「見えない」と区別が付かない)
     if (workspace.mode !== 'structure' || !pendingFocusId || graphNodes.length === 0 || displayNodes.length === 0) return
     const finish = (): void => {
+      endNavTransition()
       focusDoneRef.current = true
       setPendingFocusId(null)
     }
+    // ← → で章をまたいだときは切り替えの動きでカメラを動かし、選択だけ付け替える
+    const focus = (nodeId: string): void => focusNodeOnCanvas(nodeId, { camera: !playNavTransition(nodeId) })
     const target = graphNodes.find((n) => n.id === pendingFocusId)
     if (pendingFocusId.startsWith('chapter:')) {
       if (!groups.some((group) => `chapter:${group.id}` === pendingFocusId)) return finish()
       if (chapterView !== 'chapters') return setChapterView('chapters')
       if (!displayNodes.some((node) => node.id === pendingFocusId)) return
-      const timer = setTimeout(() => { focusNodeOnCanvas(pendingFocusId); finish() }, 80)
+      const timer = setTimeout(() => { focus(pendingFocusId); finish() }, 80)
       return () => clearTimeout(timer)
     }
     if (!target) return finish() // 鑑賞モードにいる間に消えたシーン
@@ -1675,11 +1745,11 @@ function StructureModeInner({
     }
     // ノードの実寸が入ってから寄せる(初回描画では measured が空で中心がずれる)
     const timer = setTimeout(() => {
-      focusNodeOnCanvas(pendingFocusId)
+      focus(pendingFocusId)
       finish()
     }, 80)
     return () => clearTimeout(timer)
-  }, [workspace.mode, pendingFocusId, displayNodes, graphNodes, groups, chapterView, chapterSeq, focusNodeOnCanvas])
+  }, [workspace.mode, pendingFocusId, displayNodes, graphNodes, groups, chapterView, chapterSeq, focusNodeOnCanvas, playNavTransition, endNavTransition])
 
   // ---- キーボード操作 -------------------------------------------------
 
@@ -1782,7 +1852,14 @@ function StructureModeInner({
         if (!targetId) return
         if (!displayNodes.some((n) => n.id === targetId)) {
           // 別の章の中、または章の外のシーン。表示を切り替えてから寄せる
-          // (pendingFocus の仕組み。制作・鑑賞からの復帰と同じ)
+          // (pendingFocus の仕組み。制作・鑑賞からの復帰と同じ)。
+          // 切り替えの動きは行き先で選ぶ: 別の章の中へは横スライド、章の外へは縮小、全体から章の中へは拡大
+          const groupId = byId.get(targetId)?.group_id ?? chapterSeq.groupByNode.get(targetId)
+          const inOverview = chapterView === 'chapters'
+          startNavTransition(
+            groupId ? (inOverview ? 'zoomIn' : 'slide') : inOverview ? 'slide' : 'zoomOut',
+            direction === 'right' ? 1 : -1
+          )
           setSelectedChapterId(null)
           setSelectedEdgeId(null)
           setSelectedId(targetId)
@@ -1795,7 +1872,7 @@ function StructureModeInner({
       if (!targetId) return
       focus(targetId)
     },
-    [displayNodes, selectedId, navGraph, focusNodeOnCanvas, graphNodes, graphEdges]
+    [displayNodes, selectedId, navGraph, focusNodeOnCanvas, graphNodes, graphEdges, chapterSeq, chapterView, startNavTransition]
   )
 
   const copyNodes = useCallback(async (ids: string[]): Promise<void> => {
@@ -2929,8 +3006,11 @@ function StructureModeInner({
             zoomOnDoubleClick={false}
             // 鑑賞モードからの復帰でフォーカス予約があるときは初期の全体表示を
             // 止める(描画が遅いと init の fitView が setCenter の後に走って、
-            // 当てたフォーカスを全体表示で上書きすることがある)
-            fitView={!pendingFocusId}
+            // 当てたフォーカスを全体表示で上書きすることがある)。
+            // 一度でもフォーカス予約が入ったら true に戻さない: React Flow はこの値が true に変わるたびに
+            // 全体表示を予約し直し、次にカードの寸法が測られた瞬間に(アニメーション無しで)全体表示へ飛ぶため。
+            // 以前は予約を消化した直後にそれが起き、← → で章をまたいだ先のシーンが中央に来なかった(2026-10-20 に修正)
+            fitView={!focusRequestedRef.current}
             panOnDrag={PAN_ON_DRAG}
             selectionOnDrag
             selectionMode={SelectionMode.Partial}

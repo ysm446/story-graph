@@ -641,7 +641,7 @@ store.save_chat_messages(chat['id'], [
       const t0 = performance.now()
       const tick = () => {
         const m = new DOMMatrixReadOnly(getComputedStyle(layer).transform)
-        samples.push({ t: performance.now() - t0, zoom: m.a, cx: (width / 2 - m.e) / m.a, cy: (height / 2 - m.f) / m.a, opacity: Number(getComputedStyle(layer).opacity) })
+        samples.push({ t: performance.now() - t0, zoom: m.a, x: m.e, y: m.f, cx: (width / 2 - m.e) / m.a, cy: (height / 2 - m.f) / m.a, opacity: Number(getComputedStyle(layer).opacity) })
         if (performance.now() - t0 < 700) requestAnimationFrame(tick); else done(samples)
       }
       requestAnimationFrame(tick)
@@ -662,6 +662,42 @@ store.save_chat_messages(chat['id'], [
     console.log('章に入る: ' + JSON.stringify(enter))
     if (!(enter.frames >= 5 && enter.first < enter.last && enter.drift <= 4)) throw new Error('章に入るときは、画面の中央を基準に拡大する: ' + JSON.stringify(enter))
     console.log('PASS 章に入るときは、横に動かず画面の中央を基準に拡大する')
+    // ← → で章をまたぐとき(2026-10-20 ユーザー要望): 前後の章へは押した向きから短く横にスライドし(倍率は変えない)、
+    // 章の外へ出るときは縮小する。どちらも移った先のシーンが選ばれ、画面の中央に来る
+    await pause(500)
+    const selectCard = (title) => js(`[...document.querySelectorAll('.react-flow__node-beatNode')].find(e => e.textContent.includes(${JSON.stringify(title)})).dispatchEvent(new MouseEvent('click', { bubbles: true }))`)
+    const press = (k) => `document.body.dispatchEvent(new KeyboardEvent('keydown', { key: '${k}', bubbles: true, cancelable: true }))`
+    const slide = (samples) => {
+      const moving = samples.filter((p, i) => i > 0 && p.t > 60 && p.opacity > 0)
+      const first = moving[0]; const last = moving[moving.length - 1]
+      return { dx: Math.round(first.x - last.x), dy: Math.round(first.y - last.y), zoom: +(first.zoom - last.zoom).toFixed(4), frames: moving.length, hidden: samples.some((p) => p.opacity === 0) }
+    }
+    const centered = (title) => `(() => { const pane = document.querySelector('.react-flow').getBoundingClientRect(); const card = document.querySelector('.react-flow__node.selected'); if (!card || !card.textContent.includes(${JSON.stringify(title)})) return false; const r = card.getBoundingClientRect(); return Math.abs(r.x + r.width / 2 - (pane.x + pane.width / 2)) <= 4 && Math.abs(r.y + r.height / 2 - (pane.y + pane.height / 2)) <= 4 })()`
+    await selectCard('通行止め')
+    await pause(500)
+    const next = slide(await sampleTransition(press('ArrowRight')))
+    console.log('→ で次の章へ: ' + JSON.stringify(next))
+    if (!(next.hidden && next.frames >= 5 && next.dx >= 30 && next.dx <= 60 && Math.abs(next.dy) <= 2 && next.zoom === 0)) throw new Error('→ で次の章へ移るときは、右から横にスライドして入る: ' + JSON.stringify(next))
+    console.log('PASS → で次の章へ移るときは、倍率を変えずに右から横にスライドして入る')
+    await pause(300)
+    await assert(centered('帰港'), '→ で移った先のシーン(次の章の最初)が選ばれ、画面の中央に来る')
+    const prev = slide(await sampleTransition(press('ArrowLeft')))
+    console.log('← で前の章へ: ' + JSON.stringify(prev))
+    if (!(prev.hidden && prev.frames >= 5 && prev.dx <= -30 && prev.dx >= -60 && Math.abs(prev.dy) <= 2 && prev.zoom === 0)) throw new Error('← で前の章へ移るときは、左から横にスライドして入る: ' + JSON.stringify(prev))
+    console.log('PASS ← で前の章へ移るときは、倍率を変えずに左から横にスライドして入る')
+    await pause(300)
+    await assert(centered('通行止め'), '← で移った先のシーン(前の章の最後)が選ばれ、画面の中央に来る')
+    // 第一幕の最初のシーンから ← で章の外(はじまり)へ出ると、全体に戻るときと同じく縮小する
+    await sampleTransition(press('ArrowLeft'))
+    await pause(300)
+    await sampleTransition(press('ArrowLeft'))
+    await pause(300)
+    await assert(centered('夜明けの港'), '← を続けると第一幕の最初のシーンへ移る')
+    const out = judge(await sampleTransition(press('ArrowLeft')))
+    console.log('← で章の外へ: ' + JSON.stringify(out))
+    if (!(out.frames >= 5 && out.first > out.last && out.drift <= 4)) throw new Error('← で章の外へ出るときは、画面の中央を基準に縮小する: ' + JSON.stringify(out))
+    console.log('PASS ← で章の外へ出るときは、画面の中央を基準に縮小する')
+    writeFileSync(join(target, 'edges-arrow-out.png'), (await win.webContents.capturePage(rect)).toPNG())
     if (errors.length) throw new Error(errors.join('\n'))
     console.log('Screenshots: ' + target)
     win.destroy()
