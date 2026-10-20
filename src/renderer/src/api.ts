@@ -188,7 +188,7 @@ export const api = {
     ownerId: string,
     path: string,
     select = true,
-    set?: Pick<GeneratedImage, 'prompt' | 'instructions' | 'seed' | 'ref_chars' | 'workflow'>
+    set?: Pick<GeneratedImage, 'prompt' | 'instructions' | 'seed' | 'ref_chars' | 'workflow' | 'source_path'>
   ) =>
     request<MediaItem>('/media', {
       method: 'POST',
@@ -504,6 +504,22 @@ export const api = {
       body: JSON.stringify({ prompt, char_ids: charIds, instructions, seed, workflow }),
       signal
     }),
+  /** できた画像を指示どおりに加工し(鉛筆画にする など)、候補として保存する(採用は addMedia)。
+   *  指示は日本語のまま渡す。生成ウインドウの保存状態には書かない */
+  imageEffect: (
+    ownerType: MediaItem['owner_type'],
+    ownerId: string,
+    sourcePath: string,
+    prompt: string,
+    seed: number | null,
+    workflow: string | null,
+    signal?: AbortSignal
+  ) =>
+    request<GeneratedImage>('/images/effect', {
+      method: 'POST',
+      body: JSON.stringify({ owner_type: ownerType, owner_id: ownerId, source_path: sourcePath, prompt, seed, workflow }),
+      signal
+    }),
   // signal はキュー(tasks.ts)からの中止用
   extractEvents: (nodeId: string, signal?: AbortSignal) =>
     request<{ events: StoryEvent[]; validation: string[] }>(`/nodes/${nodeId}/extract_events`, {
@@ -712,12 +728,16 @@ export interface GeneratedImage {
   ref_chars: string[] | null
   /** 使ったワークフローの組(variants.json の id) */
   workflow: string
+  /** 加工した画像のときだけ: 元の画像(prompt は加工の指示) */
+  source_path?: string | null
 }
 
 /** 生成ウインドウで選べるワークフローの組(workflows/variants.json) */
 export interface WorkflowVariant {
   id: string
   label: string
+  /** できた画像の加工に使える組か(variants.json の effect) */
+  effect: boolean
   /** 使うモデルファイル(check = true のときだけ。name が空 = variants.json に書かれていない) */
   models?: WorkflowModel[]
   /** ComfyUI のモデルフォルダに見つからないモデル(check = true のときだけ。null = ComfyUI が止まっていて確かめられない) */

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, isAbortError, nodeImagePromptStream, type GeneratedImage, type SceneImagePromptMeta } from './api'
 import { CandidatePreview, SeedField, WorkflowSelect } from './ImageCandidate'
+import { ImageEffectModal, ImageModeSwitch, type ImageWindowMode } from './ImageEffect'
 import type { Character, StoryNode } from './types'
 import { useElapsedSeconds } from './useElapsed'
 
@@ -12,7 +13,8 @@ const MAX_REFS = 3
  *  - cast のトグルで「誰の参照画像を渡すか」を選べる(最大 3 人。参照画像が無いキャラは文章のみ)
  *  - 参照画像の選び方や追加指示を変えるとプロンプトと食い違うので、「書き直す」を押すまで生成を止める
  *  - 生成しても即決定にはしない: プレビューを見て「決定」で挿絵にする。seed を変えて何度でも引き直せる
- *  - プロンプト・追加指示・seed・参照キャラはシーンに保存し、次に開いたとき復元する(保存済みなら LLM は呼ばない) */
+ *  - プロンプト・追加指示・seed・参照キャラはシーンに保存し、次に開いたとき復元する(保存済みなら LLM は呼ばない)
+ *  - 見出しの右の「生成 | 加工」で、いまの挿絵に加工を掛けるウインドウ(ImageEffectModal)に切り替える */
 export default function SceneImageModal({
   node,
   characters,
@@ -44,6 +46,8 @@ export default function SceneImageModal({
   // ワークフローの組(workflows/variants.json の id。null = 既定)。seed と同じく生成に使ったものが保存される
   const [workflow, setWorkflow] = useState<string | null>(node.image_workflow ?? null)
   const [candidate, setCandidate] = useState<GeneratedImage | null>(null)
+  const [mode, setMode] = useState<ImageWindowMode>('generate')
+  const [effectBusy, setEffectBusy] = useState(false)
   const abortRef = useRef<AbortController | null>(null)
   const elapsed = useElapsedSeconds(phase !== null)
 
@@ -159,6 +163,42 @@ export default function SceneImageModal({
   const stale = prompt.trim() !== '' && (selectionChanged || instructionsChanged)
   const busy = phase !== null
 
+  const switchMode = (next: ImageWindowMode): void => {
+    // 加工へ移るときは、開いたときに走り出したプロンプトの作成を止める(加工では使わない)
+    if (next === 'effect' && phase === 'prompt') abortRef.current?.abort()
+    setMode(next)
+  }
+  const modeSwitch = (
+    <ImageModeSwitch
+      mode={mode}
+      onChange={switchMode}
+      disabled={phase === 'generate' || phase === 'apply' || effectBusy}
+      source={node.image_path}
+    />
+  )
+
+  if (mode === 'effect' && node.image_path) {
+    return (
+      <ImageEffectModal
+        ownerType="node"
+        ownerId={node.id}
+        title="この場面の画像を加工"
+        source={node.image_path}
+        sourceLabel="いまの挿絵"
+        targetLabel="挿絵"
+        aspect="1216 / 832"
+        widthClass="w-[720px]"
+        modeSwitch={modeSwitch}
+        onBusyChange={setEffectBusy}
+        onApplied={() => {
+          onGenerated()
+          onClose()
+        }}
+        onClose={close}
+      />
+    )
+  }
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center"
@@ -173,7 +213,10 @@ export default function SceneImageModal({
         style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)' }}
         onClick={(e) => e.stopPropagation()}
       >
-        <h3 className="mb-1 text-[14px] font-semibold">この場面の画像を生成</h3>
+        <div className="mb-1 flex items-center gap-2">
+          <h3 className="text-[14px] font-semibold">この場面の画像を生成</h3>
+          <div className="ml-auto">{modeSwitch}</div>
+        </div>
         <p className="mb-3 text-[11px]" style={{ color: 'var(--text-faint)' }}>
           ビート・場所・登場人物・追加指示から LLM が英語のプロンプトを書きます。参照画像を渡す人物は image1〜 で参照されます。
           生成した画像は「決定」を押すまで挿絵にはなりません(決定した画像だけがストックに残ります)。プロンプト・追加指示・seed・参照キャラは「生成」したときの組み合わせでこのシーンに保存されます(閉じるだけでは保存しません)。

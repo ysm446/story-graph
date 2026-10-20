@@ -344,6 +344,9 @@ def init_schema(conn: sqlite3.Connection) -> None:
         # 単位は immediate / same_day / hour / day / week / month / year、数は hour 以降だけが持つ
         "ALTER TABLE nodes ADD COLUMN elapsed_unit TEXT",
         "ALTER TABLE nodes ADD COLUMN elapsed_count INTEGER",
+        # 加工した画像の元の画像(assets のファイル名。docs/design/image-gen.md §15)。NULL = 生成物か手持ち。
+        # 加工物の prompt は作者の指示そのもので、生成ウインドウの保存状態には戻さない
+        "ALTER TABLE media ADD COLUMN source_path TEXT",
     ):
         try:
             conn.execute(ddl)

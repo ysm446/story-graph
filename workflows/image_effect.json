@@ -1,0 +1,36 @@
+{
+  "_comment": "できた画像の加工(鉛筆画にする・モノクロにする など)。Qwen-Image-Edit 2509 系の 1 枚入力。ComfyUI の API 形式。{{name}} は comfy.build_edit_workflow が埋める(元の画像は {{ref_image_1}})。元の画像を約 0.96MP(16 の倍数。アプリの 1216×832 / 832×1216 はそのままの大きさになる)にそろえてから、エンコードの手本と最初の latent の両方に使うので、縦横比は元の画像のまま。ノード ID はテストが参照するので変えない。",
+  "1": { "class_type": "CheckpointLoaderSimple", "inputs": { "ckpt_name": "{{checkpoint}}" } },
+  "2": { "class_type": "ModelSamplingAuraFlow", "inputs": { "model": ["1", 0], "shift": "{{shift}}" } },
+  "10": { "class_type": "LoadImage", "inputs": { "image": "{{ref_image_1}}", "upload": "image" } },
+  "13": {
+    "class_type": "ImageScaleToTotalPixels",
+    "inputs": { "image": ["10", 0], "upscale_method": "lanczos", "megapixels": 0.96, "resolution_steps": 16 }
+  },
+  "3": {
+    "class_type": "TextEncodeQwenImageEditPlus",
+    "inputs": { "clip": ["1", 1], "vae": ["1", 2], "prompt": "{{positive}}", "image1": ["13", 0] }
+  },
+  "4": {
+    "class_type": "TextEncodeQwenImageEditPlus",
+    "inputs": { "clip": ["1", 1], "vae": ["1", 2], "prompt": "{{negative}}", "image1": ["13", 0] }
+  },
+  "5": { "class_type": "VAEEncode", "inputs": { "pixels": ["13", 0], "vae": ["1", 2] } },
+  "6": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": ["2", 0],
+      "positive": ["3", 0],
+      "negative": ["4", 0],
+      "latent_image": ["5", 0],
+      "seed": "{{seed}}",
+      "steps": "{{steps}}",
+      "cfg": "{{cfg}}",
+      "sampler_name": "{{sampler}}",
+      "scheduler": "{{scheduler}}",
+      "denoise": 1.0
+    }
+  },
+  "7": { "class_type": "VAEDecode", "inputs": { "samples": ["6", 0], "vae": ["1", 2] } },
+  "8": { "class_type": "SaveImage", "inputs": { "images": ["7", 0], "filename_prefix": "{{filename_prefix}}" } }
+}

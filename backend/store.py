@@ -1353,17 +1353,19 @@ class Store:
         ref_chars: list[str] | None = None,
         thumb_path: str | None = None,
         workflow: str | None = None,
+        source_path: str | None = None,
     ) -> dict[str, Any]:
-        """ストックに 1 枚足す(選択はしない)。手持ちの画像は prompt 以下を空のまま。"""
+        """ストックに 1 枚足す(選択はしない)。手持ちの画像は prompt 以下を空のまま。
+        加工した画像は source_path に元の画像を持ち、prompt は加工の指示。"""
         if owner_type not in MEDIA_OWNER_TYPES:
             raise ValueError(f"unknown owner_type: {owner_type}")
         media_id = _new_id()
         self.conn.execute(
             "INSERT INTO media(id, owner_type, owner_id, path, thumb_path, prompt, instructions, seed, ref_chars,"
-            " workflow, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            " workflow, source_path, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 media_id, owner_type, owner_id, path, thumb_path, prompt, instructions, seed,
-                json.dumps(ref_chars) if ref_chars is not None else None, workflow, _now(),
+                json.dumps(ref_chars) if ref_chars is not None else None, workflow, source_path, _now(),
             ),
         )
         self.conn.commit()
@@ -1384,17 +1386,19 @@ class Store:
 
         生成物なら、生成ウインドウの保存状態(プロンプト・追加指示・seed・参照キャラ)も
         その画像を作ったセットに戻す(次に開いたとき同じ絵を引き直せる)。手持ちの画像
-        (セットが空)では保存状態に触れない。
+        (セットが空)と加工した画像(prompt は加工の指示で、生成のプロンプトではない)では
+        保存状態に触れない。
         """
         m = self.get_media(media_id)
         if m is None:
             raise KeyError(media_id)
+        has_set = bool(m["prompt"]) and not m.get("source_path")
         if m["owner_type"] == "node":
             self.conn.execute(
                 "UPDATE nodes SET image_path = ?, thumb_path = ? WHERE id = ?",
                 (m["path"], m["thumb_path"], m["owner_id"]),
             )
-            if m["prompt"]:
+            if has_set:
                 self.conn.execute(
                     "UPDATE nodes SET image_prompt = ?, image_instructions = ?, image_seed = ?, image_ref_chars = ?,"
                     " image_workflow = ? WHERE id = ?",
@@ -1407,7 +1411,7 @@ class Store:
         elif m["owner_type"] == "place":
             # 場所の画像は装飾専用(清書に渡らない)ので、差し替えても renders は stale にしない
             self.conn.execute("UPDATE places SET image_path = ? WHERE id = ?", (m["path"], m["owner_id"]))
-            if m["prompt"]:
+            if has_set:
                 self.conn.execute(
                     "UPDATE places SET image_prompt = ?, image_instructions = ?, image_seed = ?, image_workflow = ?"
                     " WHERE id = ?",
@@ -1417,7 +1421,7 @@ class Store:
             self.conn.execute(
                 "UPDATE characters SET ref_image_path = ? WHERE id = ?", (m["path"], m["owner_id"])
             )
-            if m["prompt"]:
+            if has_set:
                 self.conn.execute(
                     "UPDATE characters SET ref_image_prompt = ?, ref_image_instructions = ?, ref_image_seed = ?,"
                     " ref_image_workflow = ? WHERE id = ?",

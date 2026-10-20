@@ -1,11 +1,12 @@
 {
-  "_comment": "生成ウインドウで選べるワークフローの組。設定画面の「既定のワークフロー」で、新しく描くときに使う組を選ぶ(未設定なら先頭)。id は DB(nodes.image_workflow / characters.ref_image_workflow / media.workflow)と設定(comfy_workflow)に保存されるので変えない。t2i はキャラの参照画像と参照画像なしの場面、edit は参照画像ありの場面に使う(workflows/ 内のファイル名、拡張子なし)。values はテンプレートの {{name}} に入る値で、モデル名(checkpoint / unet / clip / vae / lora)と steps / cfg / shift はここに書く(モデルごとに向く値が違うため。設定画面には出さない)。書かなかった steps / cfg / shift は Qwen-Rapid の推奨値(4 / 1 / 3.1)になり、checkpoint は以前の設定 comfy_checkpoint に落ちる。テンプレートの _optional ノードは、その名前の値が values に無ければ配線ごと外れる。ref_label は参照画像の指し方がモデルで違うときに書く({n} が番号。プロンプト中の image1 をこの形に直してから渡す)。",
+  "_comment": "生成ウインドウで選べるワークフローの組。設定画面の「既定のワークフロー」で、新しく描くときに使う組を選ぶ(未設定なら先頭)。id は DB(nodes.image_workflow / characters.ref_image_workflow / media.workflow)と設定(comfy_workflow)に保存されるので変えない。t2i はキャラの参照画像と参照画像なしの場面、edit は参照画像ありの場面に使う(workflows/ 内のファイル名、拡張子なし)。values はテンプレートの {{name}} に入る値で、モデル名(checkpoint / unet / clip / vae / lora)と steps / cfg / shift はここに書く(モデルごとに向く値が違うため。設定画面には出さない)。書かなかった steps / cfg / shift は Qwen-Rapid の推奨値(4 / 1 / 3.1)になり、checkpoint は以前の設定 comfy_checkpoint に落ちる。テンプレートの _optional ノードは、その名前の値が values に無ければ配線ごと外れる。ref_label は参照画像の指し方がモデルで違うときに書く({n} が番号。プロンプト中の image1 をこの形に直してから渡す)。effect はできた画像の加工(生成ウインドウの「加工」)に使うテンプレートで、書いた組だけが加工で選べる。",
   "variants": [
     {
       "id": "default",
       "label": "既定(Qwen)",
       "t2i": "ref_t2i",
       "edit": "scene_edit",
+      "effect": "image_effect",
       "values": { "checkpoint": "Qwen-Rapid-AIO-NSFW-v23.safetensors", "steps": 4, "cfg": 1.0, "shift": 3.1 }
     },
     {

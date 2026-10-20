@@ -477,3 +477,58 @@ async def generate_scene_image(
     names = [await comfy.upload_image(comfy_base_url, data, name) for name, data in ref_files]
     wf = scene_workflow(settings, description, names, seed, variant)
     return await comfy.run_workflow(comfy_base_url, wf), seed
+
+
+# ---- できた画像の加工 ---------------------------------------------------
+# 選択中の画像 1 枚 + 作者の指示(日本語のまま。LLM で書き直さない)→ 画像編集モデルで描き直す。
+# 鉛筆画にする・モノクロにする など(2026-10-21 ユーザー要望。docs/design/image-gen.md §15)
+
+
+def resolve_effect_variant(settings: dict[str, str], variant: str | None) -> dict[str, Any]:
+    """加工に使う組。選んだ組 → 設定の既定の組の順で、`effect` を持つものだけを使う。
+    どちらも持たなければ `effect` を持つ先頭の組。1 つも無ければ RuntimeError。"""
+    v = resolve_variant(settings, variant)
+    if v.get("effect"):
+        return v
+    for other in comfy.list_variants():
+        if other.get("effect"):
+            return other
+    raise RuntimeError(
+        "加工に使えるワークフローがありません(workflows/variants.json の組に effect のテンプレートを書いてください)"
+    )
+
+
+def effect_workflow(
+    settings: dict[str, str], instruction: str, source_name: str, seed: int | None = None, variant: str | None = None
+) -> dict[str, Any]:
+    """source_name は ComfyUI にアップロード済みの元の画像。大きさはテンプレートが元の画像から決める。
+    指示には何も足さない(場面の接尾辞「cinematic illustration」などは加工の向きとぶつかるため)。"""
+    v = resolve_effect_variant(settings, variant)
+    return _build(
+        v,
+        comfy.build_edit_workflow,
+        template=v["effect"],
+        positive=instruction.strip(),
+        ref_images=[source_name],
+        seed=seed,
+        filename_prefix="story-graph/effect",
+        **_common_values(settings, v),
+    )
+
+
+async def generate_effect_image(
+    settings: dict[str, str],
+    instruction: str,
+    source: tuple[str, bytes],
+    *,
+    comfy_base_url: str,
+    seed: int | None = None,
+    variant: str | None = None,
+) -> tuple[bytes, int, str]:
+    """source は (assets のファイル名, バイト列)。(PNG, 使った seed, 使った組の id)。"""
+    if seed is None or seed < 0:
+        seed = new_seed()
+    v = resolve_effect_variant(settings, variant)
+    name = await comfy.upload_image(comfy_base_url, source[1], source[0])
+    wf = effect_workflow(settings, instruction, name, seed, v["id"])
+    return await comfy.run_workflow(comfy_base_url, wf), seed, v["id"]

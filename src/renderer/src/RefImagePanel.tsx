@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, assetUrl, characterRefImagePromptStream, isAbortError, uploadAsset, type GeneratedImage } from './api'
 import { CandidatePreview, SeedField, WorkflowSelect } from './ImageCandidate'
+import { ImageEffectModal, ImageModeSwitch, type ImageWindowMode } from './ImageEffect'
 import { Icon } from './icons'
 import Lightbox from './Lightbox'
 import MediaPicker from './MediaPicker'
@@ -12,6 +13,7 @@ import { useElapsedSeconds } from './useElapsed'
  *  - 外見の記述 → LLM が英語プロンプトを作る → 確認・手直し → ComfyUI で生成、の 2 段
  *  - 手持ちの画像のドロップ / ファイル選択も同じ枠で受ける(内部生成と外部読み込みの両立)
  *  - 顔を切り抜いてプロフィール画像にする導線はプロフィール画像の側(CharacterEditor)に置く
+ *  - 生成ウインドウの見出しの右の「生成 | 加工」で、いまの参照画像に加工を掛けるウインドウに切り替える
  *  場面画像の編集モデルへ input として渡す前提なので、生成側は無地背景・全身・正面に固定している。 */
 export default function RefImagePanel({
   character,
@@ -35,6 +37,9 @@ export default function RefImagePanel({
   // 生成した候補。「決定」を押すまでキャラには設定しない
   const [candidate, setCandidate] = useState<GeneratedImage | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // 生成ウインドウの「生成 | 加工」
+  const [mode, setMode] = useState<ImageWindowMode>('generate')
+  const [effectBusy, setEffectBusy] = useState(false)
   const [dragOver, setDragOver] = useState(false)
   // 参照画像をクリックしたときの拡大表示
   const [lightboxOpen, setLightboxOpen] = useState(false)
@@ -56,6 +61,7 @@ export default function RefImagePanel({
     setError(null)
     setInstructions('')
     setStockOpen(false)
+    setMode('generate')
     // パネルを離れたときも進行中のプロンプト生成 / 画像生成を止める
     return () => abortRef.current?.abort()
   }, [character?.id])
@@ -78,6 +84,7 @@ export default function RefImagePanel({
 
   const openGenerate = async (): Promise<void> => {
     setError(null)
+    setMode('generate')
     // 保存済みのプロンプト・追加指示・seed があればそのまま復元する(LLM は呼ばない)。
     // 外見を書き換えたときは「外見から書き直す」で LLM に書き直させる
     const savedInstructions = character.ref_image_instructions ?? ''
@@ -185,6 +192,21 @@ export default function RefImagePanel({
     setModal(null)
     setCandidate(null)
   }
+
+  const switchMode = (next: ImageWindowMode): void => {
+    // 加工へ移るときは、開いたときに走り出したプロンプトの作成を止める(加工では使わない)
+    if (next === 'effect' && phase === 'prompt') abortRef.current?.abort()
+    setMode(next)
+  }
+  const modeSwitch = (
+    <ImageModeSwitch
+      mode={mode}
+      onChange={switchMode}
+      disabled={phase === 'generate' || phase === 'apply' || effectBusy}
+      source={path}
+    />
+  )
+  const effectOpen = !!modal && mode === 'effect' && !!path
 
   const remove = async (): Promise<void> => {
     setError(null)
@@ -345,7 +367,28 @@ export default function RefImagePanel({
           onClose={() => setStockOpen(false)}
         />
       )}
-      {modal && (
+      {effectOpen && path && (
+        <ImageEffectModal
+          ownerType="character"
+          ownerId={character.id}
+          title="参照画像を加工"
+          source={path}
+          sourceLabel="いまの参照画像"
+          targetLabel="参照画像"
+          aspect="832 / 1216"
+          widthClass="w-[640px]"
+          previewClass="mx-auto w-[440px] max-w-full"
+          modeSwitch={modeSwitch}
+          onBusyChange={setEffectBusy}
+          onApplied={async (m) => {
+            setModal(null)
+            setCandidate(null)
+            await onChanged({ ref_image_path: m.path })
+          }}
+          onClose={closeModal}
+        />
+      )}
+      {modal && !effectOpen && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center"
           style={{ background: 'rgba(0,0,0,0.6)' }}
@@ -359,7 +402,10 @@ export default function RefImagePanel({
             style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)' }}
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 className="mb-1 text-[14px] font-semibold">参照画像を生成</h3>
+            <div className="mb-1 flex items-center gap-2">
+              <h3 className="text-[14px] font-semibold">参照画像を生成</h3>
+              <div className="ml-auto">{modeSwitch}</div>
+            </div>
             <p className="mb-3 text-[11px]" style={{ color: 'var(--text-faint)' }}>
               人物の見た目(英語)。手直しできます。全身・正面・無地背景の指示は後ろに自動で足されます。
               生成した画像は「決定」を押すまで参照画像にはなりません(決定した画像だけがストックに残ります)。プロンプト・追加指示・seed は「生成」したときの組み合わせでキャラに保存されます(閉じるだけでは保存しません)。

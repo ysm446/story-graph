@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, isAbortError, placeImagePromptStream, type GeneratedImage } from './api'
 import { CandidatePreview, SeedField, WorkflowSelect } from './ImageCandidate'
+import { ImageEffectModal, ImageModeSwitch, type ImageWindowMode } from './ImageEffect'
 import type { Place } from './types'
 import { useElapsedSeconds } from './useElapsed'
 
@@ -8,7 +9,8 @@ import { useElapsedSeconds } from './useElapsed'
  *
  *  人物なし・横長の全景に固定する(後で場面生成の背景の手本にも回せるように)。生成した候補は
  *  「決定」を押すまで場所の画像にしない。プロンプト・追加指示・seed・組は「生成」したときに
- *  場所の保存状態へ 1 セットで書かれ(サーバ側)、次に開いたときに復元する。 */
+ *  場所の保存状態へ 1 セットで書かれ(サーバ側)、次に開いたときに復元する。
+ *  見出しの右の「生成 | 加工」で、いまの画像に加工を掛けるウインドウ(ImageEffectModal)に切り替える。 */
 export default function PlaceImageModal({
   place,
   onChanged,
@@ -29,6 +31,8 @@ export default function PlaceImageModal({
   const [workflow, setWorkflow] = useState<string | null>(place.image_workflow ?? null)
   const [candidate, setCandidate] = useState<GeneratedImage | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [mode, setMode] = useState<ImageWindowMode>('generate')
+  const [effectBusy, setEffectBusy] = useState(false)
   const abortRef = useRef<AbortController | null>(null)
   const elapsed = useElapsedSeconds(phase !== null)
 
@@ -109,6 +113,42 @@ export default function PlaceImageModal({
     onClose()
   }
 
+  const switchMode = (next: ImageWindowMode): void => {
+    // 加工へ移るときは、開いたときに走り出したプロンプトの作成を止める(加工では使わない)
+    if (next === 'effect' && phase === 'prompt') abortRef.current?.abort()
+    setMode(next)
+  }
+  const modeSwitch = (
+    <ImageModeSwitch
+      mode={mode}
+      onChange={switchMode}
+      disabled={phase === 'generate' || phase === 'apply' || effectBusy}
+      source={place.image_path}
+    />
+  )
+
+  if (mode === 'effect' && place.image_path) {
+    return (
+      <ImageEffectModal
+        ownerType="place"
+        ownerId={place.id}
+        title="場所の画像を加工"
+        source={place.image_path}
+        sourceLabel="いまの場所の画像"
+        targetLabel="場所の画像"
+        aspect="1216 / 832"
+        widthClass="w-[640px]"
+        modeSwitch={modeSwitch}
+        onBusyChange={setEffectBusy}
+        onApplied={async () => {
+          await onChanged()
+          onClose()
+        }}
+        onClose={close}
+      />
+    )
+  }
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center"
@@ -123,7 +163,10 @@ export default function PlaceImageModal({
         style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)' }}
         onClick={(e) => e.stopPropagation()}
       >
-        <h3 className="mb-1 text-[14px] font-semibold">場所の画像を生成</h3>
+        <div className="mb-1 flex items-center gap-2">
+          <h3 className="text-[14px] font-semibold">場所の画像を生成</h3>
+          <div className="ml-auto">{modeSwitch}</div>
+        </div>
         <p className="mb-3 text-[11px]" style={{ color: 'var(--text-faint)' }}>
           景色の見た目(英語)。手直しできます。人物なし・横長の全景の指示は後ろに自動で足されます。
           生成した画像は「決定」を押すまで場所の画像にはなりません(決定した画像だけがストックに残ります)。プロンプト・追加指示・seed は「生成」したときの組み合わせで場所に保存されます(閉じるだけでは保存しません)。

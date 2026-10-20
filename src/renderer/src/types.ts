@@ -44,6 +44,8 @@ export interface MediaItem {
   ref_chars: string[] | null
   /** 生成に使ったワークフローの組(workflows/variants.json の id。null = 既定 / 手持ち) */
   workflow: string | null
+  /** 加工した画像の元の画像(null = 生成物か手持ち)。このとき prompt は加工の指示 */
+  source_path: string | null
   created_at: string
 }
 

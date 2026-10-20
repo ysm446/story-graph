@@ -933,6 +933,7 @@ class MediaIn(BaseModel):
     seed: int | None = None
     ref_chars: list[str] | None = None
     workflow: str | None = None  # 生成に使ったワークフローの組(variants.json の id)
+    source_path: str | None = None  # 加工した画像の元の画像(加工の戻り値をそのまま渡す)
 
 
 def _check_media_owner(owner_type: str, owner_id: str) -> None:
@@ -964,7 +965,7 @@ async def add_media(body: MediaIn) -> dict[str, Any]:
     m = store.add_media(
         body.owner_type, body.owner_id, body.path,
         prompt=body.prompt, instructions=body.instructions, seed=body.seed, ref_chars=body.ref_chars,
-        workflow=body.workflow,
+        workflow=body.workflow, source_path=body.source_path,
     )
     if body.select:
         store.select_media(m["id"])
@@ -1890,7 +1891,10 @@ async def comfy_workflows(check: bool = False) -> dict[str, Any]:
     settings = store.get_settings()
     variants = comfy.list_variants()
     default_id = image_gen.resolve_variant(settings, None)["id"]
-    out: list[dict[str, Any]] = [{"id": v["id"], "label": v.get("label") or v["id"]} for v in variants]
+    # effect = できた画像の加工に使える組(生成ウインドウの「加工」はこの組だけを出す)
+    out: list[dict[str, Any]] = [
+        {"id": v["id"], "label": v.get("label") or v["id"], "effect": bool(v.get("effect"))} for v in variants
+    ]
     if check:
         # checkpoint は組に書かれていなければ以前の設定を使う(image_gen._common_values と同じ)
         fallback = {"checkpoint": (settings.get("comfy_checkpoint") or "").strip()}
@@ -2161,6 +2165,54 @@ async def node_image_generate(node_id: str, body: SceneImageGenerateIn) -> dict[
     return {
         "image_path": name, "seed": seed, "prompt": body.prompt, "instructions": instructions,
         "ref_chars": body.char_ids, "workflow": workflow,
+    }
+
+
+class ImageEffectIn(BaseModel):
+    owner_type: str  # 'node' | 'character' | 'place'
+    owner_id: str
+    source_path: str  # 加工する画像(assets のファイル名。ふつうは選択中の画像か、加工した候補)
+    prompt: str  # 作者の指示(日本語のまま渡す)
+    seed: int | None = None
+    workflow: str | None = None  # workflows/variants.json の id(None = 既定。effect を持つ組だけ)
+
+
+@app.post("/images/effect")
+async def image_effect(body: ImageEffectIn) -> dict[str, Any]:
+    """できた画像を指示どおりに加工し(鉛筆画にする など)、assets に**候補として**保存する。
+
+    生成と同じく、採用は UI の「決定」→ POST /media(戻り値をそのまま渡す。source_path 付き)。
+    生成ウインドウの保存状態(プロンプト・seed など)には書かない(加工の指示は生成のプロンプトではない)。"""
+    import uuid
+    from pathlib import Path as _Path
+
+    import image_gen
+
+    _check_media_owner(body.owner_type, body.owner_id)
+    assets = store.assets_dir()
+    if assets is None:
+        raise HTTPException(500, "ライブラリが未設定です")
+    if not body.prompt.strip():
+        raise HTTPException(400, "加工の指示が空です")
+    if _Path(body.source_path).suffix.lower() in ALLOWED_VIDEO_EXTS:
+        raise HTTPException(400, "動画は加工できません")
+    src = _Path(assets) / _Path(body.source_path).name
+    if not src.exists():
+        raise HTTPException(400, "元の画像ファイルが見つかりません")
+    settings = store.get_settings()
+    try:
+        base_url = await comfy_mgr.ensure_running(settings)
+        data, seed, workflow = await image_gen.generate_effect_image(
+            settings, body.prompt, (src.name, await asyncio.to_thread(src.read_bytes)),
+            comfy_base_url=base_url, seed=body.seed, variant=body.workflow,
+        )
+    except RuntimeError as e:
+        raise HTTPException(500, str(e))
+    name = f"{uuid.uuid4().hex[:12]}.png"
+    await asyncio.to_thread((_Path(assets) / name).write_bytes, data)
+    return {
+        "image_path": name, "seed": seed, "prompt": body.prompt.strip(), "instructions": None,
+        "ref_chars": None, "workflow": workflow, "source_path": src.name,
     }
 
 

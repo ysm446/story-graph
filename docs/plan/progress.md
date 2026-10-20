@@ -1,10 +1,11 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-07-24 22:38
-更新日時: 2026-10-21 04:00
+更新日時: 2026-10-21 04:22
 
 ## 現在の状態
 
+- 2026-10-21 04:22 **できた画像の加工**(ユーザー要望「生成した画像にさらにエフェクトを掛けたい」。入口は生成ウインドウの切り替えだけ・モデルは選べる形で当面 Qwen-Rapid-AIO・指示は日本語のまま・1 枚ずつ、はユーザー判断)。3 つの生成ウインドウの見出しの右に「生成 | 加工」(`ImageEffect.tsx` の `ImageModeSwitch` / `ImageEffectModal`)。`workflows/image_effect.json`(元の画像を 0.96MP にそろえて image1 と最初の latent に使う)、`variants.json` の `effect`、`image_gen.effect_workflow` / `resolve_effect_variant`、`POST /images/effect`、`media.source_path`(加工物を選んでも生成ウインドウの保存状態に戻さない)。前回の指示は localStorage に覚える。pytest 707 件成功、typecheck・build 成功。実機: 別ポートの ComfyUI で場面 1 枚・立ち絵 1 枚を鉛筆画に(18 秒 / 7 秒。構図・顔はそのまま)。隔離 Electron: `--effect` 8 項目成功、既定 59 + 既知の 1 項目で停止。**未確認**: アプリ画面から実際に加工して決定するまでの通し、人物・場所のウインドウの見た目(場面と同じ部品)。**未着手**: よく使う指示のチップ、ストックから元の画像を選ぶ口。詳細は [image-gen.md §15](../design/image-gen.md)。
 - 2026-10-21 04:00 **画像生成から Qwen Image 2.1 の組(`qwen21`)を外した**(ユーザー要望)。`variants.json` の行と `workflows/qwen21_t2i.json` / `qwen21_edit.json` を削除し、qwen21 を使っていたテストを消す / テスト用の組に置き換えた。組の `ref_label`(参照画像の指し方の書き換え)と、使わない LoadImage の配線を入力名によらず外す処理は汎用なので残した。保存済みの `qwen21` は `resolve_variant` の既定へのフォールバックで描ける。pytest 704 件成功。
 - 2026-10-20 11:23 **← → で章をまたぐときにも切り替えの動きを付けた**(ユーザー要望「章のノードで左右キーで前後の章や全体へ戻るときにトランジション」。前後の章は押した向きからの短いスライド・章の外へは縮小、はこちらの提案で了承済み)。`navigateSelection` で画面に無い行き先へ移るとき `startNavTransition` でカード群を隠し、`pendingFocus` の効果で行き先が描けたら `playNavTransition` が倍率を保ってそのシーンを中央に置く(選択は `focusNodeOnCanvas(id, { camera: false })`)。**根本の不具合も直した**: `<ReactFlow fitView={!pendingFocusId}>` は予約を消化して true に戻るたびに React Flow が全体表示を予約し直し、次の寸法測定でアニメーション無しに全体表示へ飛んでいた(鑑賞からの復帰なども同じ経路)。一度でも予約が入ったら true に戻さない `focusRequestedRef` に変更。章の切り替えの効果の後始末が隠しているカード群を先に出してしまう点も、切り替え中は出さないようにした。`--edges` に 5 項目(→ / ← のスライド 48px・倍率不変・隠してから出る、移った先が選ばれて中央、章の外へ縮小)を追加。typecheck・build 成功、隔離 Electron: `--edges` 11 成功(`edges-arrow-out.png` を目視)、`--chapter` 31 成功、既定 59 + 既知の 1 項目で停止。
 

@@ -722,6 +722,55 @@ store.save_chat_messages(chat['id'], [
     win.destroy()
     return
   }
+  if (process.argv.includes('--effect')) {
+    // 生成ウインドウの「生成 | 加工」: 挿絵のあるシーンで加工に切り替え、指示欄・元 ⇄ 候補の並び・決定の無効を確かめる。
+    // ストックの加工物には「加工 ·」と加工の指示が出る(ComfyUI は呼ばない)
+    const { copyFileSync } = require('node:fs')
+    mkdirSync(join(target, 'assets', 'images'), { recursive: true })
+    copyFileSync(join(root, 'resources/icon.png'), join(target, 'assets', 'images', 'scene-art.png'))
+    copyFileSync(join(root, 'resources/icon.png'), join(target, 'assets', 'images', 'scene-fx.png'))
+    const node = (await (await fetch(base + '/graph')).json()).nodes.find(n => !n.kind)
+    const seed = spawnSync(join(root, '.venv/Scripts/python.exe'), ['-c', `from app import store
+nid = ${JSON.stringify(node.id)}
+store.add_media('node', nid, 'scene-fx.png', prompt='モノクロの鉛筆画にして', seed=7, workflow='default', source_path='scene-art.png')
+m = store.add_media('node', nid, 'scene-art.png', prompt='a scene', seed=1, ref_chars=[])
+store.select_media(m['id'])
+`], {cwd:join(root,'backend'),env:{...process.env,STORY_GRAPH_LIBRARY:target},windowsHide:true,encoding:'utf8'})
+    if (seed.status !== 0) throw new Error(seed.stderr)
+    await new Promise((done) => { win.webContents.once('did-finish-load', () => done()); win.webContents.reload() })
+    for (let i = 0; i < 60; i++) { if (await js(`[...document.querySelectorAll('.react-flow__node')].some(e=>e.textContent.includes('検証シーン'))`)) break; await pause(200) }
+    await showScene('検証シーン')
+    await js(`[...document.querySelectorAll('.react-flow__node')].find(e=>e.textContent.includes('検証シーン')).dispatchEvent(new MouseEvent('click',{bubbles:true}))`)
+    await pause(600)
+    // 生成 / 加工ウインドウの中だけを見る(アンカーの「ここまで | 全体」など、外にも aria-pressed がある)
+    const modal = `[...document.querySelectorAll('h3')].find(e=>e.textContent.startsWith('この場面の画像を')).closest('.rounded-2xl')`
+    await js(`[...document.querySelectorAll('button[data-tip^="ビート・場所・登場人物"]')].find(e=>e.getClientRects().length).click()`)
+    await pause(500)
+    await assert(`[...document.querySelectorAll('h3')].some(e=>e.textContent==='この場面の画像を生成') && [...${modal}.querySelectorAll('button[aria-pressed]')].map(e=>e.textContent).join('|')==='生成|加工'`, '生成ウインドウの見出しの右に「生成 | 加工」が出る')
+    writeFileSync(join(target, 'effect-generate.png'), (await win.webContents.capturePage()).toPNG())
+    await js(`[...${modal}.querySelectorAll('button[aria-pressed]')].find(e=>e.textContent==='加工').click()`)
+    await pause(500)
+    await assert(`[...document.querySelectorAll('h3')].some(e=>e.textContent==='この場面の画像を加工') && ${modal}.querySelector('button[aria-pressed="true"]').textContent==='加工'`, '「加工」で加工ウインドウに切り替わる')
+    await assert(`(() => {const t=document.querySelector('textarea[placeholder^="例: モノクロの鉛筆画"]'); const imgs=[...${modal}.querySelectorAll('img')].filter(e=>e.getClientRects().length && e.src.includes('scene-art.png')); return !!t && imgs.length===1 && document.body.textContent.includes('いまの挿絵') && document.body.textContent.includes('加工するとここにプレビューが出ます')})()`, '加工の指示欄と、元の画像(いまの挿絵)・候補の枠が並ぶ')
+    await assert(`(() => {const b=[...${modal}.querySelectorAll('button')].filter(e=>e.getClientRects().length); const fx=b.find(e=>e.textContent==='加工'&&!e.hasAttribute('aria-pressed')); const ok=b.find(e=>e.textContent==='決定'); const chain=b.find(e=>e.textContent==='この結果をさらに加工'); return fx && ok && chain && ok.disabled && chain.disabled && (${modal}.querySelector('textarea').value.trim() ? !fx.disabled : fx.disabled)})()`, '加工する前は「決定」「この結果をさらに加工」が押せない(指示が空なら「加工」も押せない)')
+    await input('textarea[placeholder^="例: モノクロの鉛筆画"]', 'モノクロの鉛筆画にして。クロスハッチングを入れて')
+    await assert(`!([...${modal}.querySelectorAll('button')].find(e=>e.getClientRects().length&&e.textContent==='加工'&&!e.hasAttribute('aria-pressed')).disabled)`, '指示を書くと「加工」が押せる')
+    writeFileSync(join(target, 'effect-window.png'), (await win.webContents.capturePage()).toPNG())
+    await js(`[...${modal}.querySelectorAll('button[aria-pressed]')].find(e=>e.textContent==='生成').click()`)
+    await pause(400)
+    await assert(`[...document.querySelectorAll('h3')].some(e=>e.textContent==='この場面の画像を生成') && document.querySelector('textarea[rows="5"]').value==='a scene'`, '「生成」に戻ると生成側の欄はそのまま')
+    await js(`[...${modal}.querySelectorAll('button')].find(e=>e.textContent==='閉じる').click()`)
+    await pause(300)
+    await assert(`![...document.querySelectorAll('h3')].some(e=>e.textContent.startsWith('この場面の画像を'))`, '「閉じる」で生成ウインドウが閉じる')
+    await click('ストック')
+    await pause(600)
+    await assert(`document.body.textContent.includes('加工 · seed 7') && [...document.querySelectorAll('[data-tip]')].some(e=>e.getAttribute('data-tip').includes('加工の指示: モノクロの鉛筆画にして'))`, 'ストックの加工物に「加工 ·」と加工の指示が出る')
+    writeFileSync(join(target, 'effect-stock.png'), (await win.webContents.capturePage()).toPNG())
+    if (errors.length) throw new Error(errors.join('\n'))
+    console.log('Screenshots: ' + target)
+    win.destroy()
+    return
+  }
   if (process.argv.includes('--relations')) {
     // 資料庫の関係図(直角の線): 線が人物のアイコン・名前を通らず、ラベルが人物・他のラベルに重ならない
     const { copyFileSync } = require('node:fs')

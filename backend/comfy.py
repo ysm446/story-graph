@@ -98,14 +98,14 @@ LOADER_FOLDERS = {
 
 
 def variant_models(variant: dict[str, Any], fallback: dict[str, Any] | None = None) -> list[dict[str, Any]]:
-    """組が使うモデルファイル `[{key, folder, name}]`(t2i と edit のテンプレートの和。重複は除く)。
+    """組が使うモデルファイル `[{key, folder, name}]`(t2i・edit・effect のテンプレートの和。重複は除く)。
 
     ローダーの入力に `{{key}}` だけが書かれている欄を拾い、値は組の values(無ければ fallback)から引く。
     `_optional` で外れるノードは数えない。値が決まっていなければ name は空文字。"""
     values = {**(fallback or {}), **(variant.get("values") or {})}
     out: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
-    for name in (variant.get("t2i"), variant.get("edit")):
+    for name in (variant.get("t2i"), variant.get("edit"), variant.get("effect")):
         if not name:
             continue
         try:
@@ -263,7 +263,7 @@ def build_edit_workflow(
     `TextEncodeQwenImageEditPlus` の image1..3 に順に繋ぎ、プロンプト側は
     「image1 = 誰」で参照する(docs/design/image-gen.md §3)。テンプレートは 3 枚分の
     LoadImage("10"〜"12")を持っているので、渡した枚数より後ろのノードと配線を外す。
-    Krea2 / Qwen Image 2.1 の組も同じ形のテンプレートでここを通る。"""
+    Krea2 の組と、できた画像の加工(`image_effect.json`。1 枚)も同じ形のテンプレートでここを通る。"""
     if not ref_images:
         raise ValueError("ref_images が空です(参照画像が無いときは build_t2i_workflow を使う)")
     if len(ref_images) > 3:

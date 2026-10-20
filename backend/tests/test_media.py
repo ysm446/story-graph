@@ -36,6 +36,18 @@ def test_select_uploaded_media_keeps_generation_state():
     assert got["image_prompt"] == "p" and got["image_seed"] == 1  # 保存状態は触らない
 
 
+def test_select_effect_media_keeps_generation_state():
+    store = _store()
+    n = store.append_node({"beat": "b", "cast": []})
+    store.set_node_image_gen(n["id"], prompt="p", instructions="i", seed=1, ref_chars=None)
+    m = store.add_media("node", n["id"], "fx.png", prompt="鉛筆画にして", seed=9, workflow="default", source_path="a.png")
+    assert m["source_path"] == "a.png"
+    store.select_media(m["id"])
+    got = store.get_node(n["id"])
+    assert got["image_path"] == "fx.png"
+    assert got["image_prompt"] == "p" and got["image_seed"] == 1  # 加工の指示は生成のプロンプトに戻さない
+
+
 def test_select_character_media():
     store = _store()
     c = store.create_character({"name": "A"})

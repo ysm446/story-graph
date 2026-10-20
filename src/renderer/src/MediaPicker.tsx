@@ -163,7 +163,10 @@ export default function MediaPicker({
                 m.seed !== null ? `seed ${m.seed}` : '手持ちの画像(プロンプトなし)',
                 m.workflow && m.workflow !== 'default' ? `ワークフロー: ${m.workflow}` : null,
                 m.instructions ? `追加指示: ${m.instructions}` : null,
-                m.prompt ? `prompt: ${m.prompt.length > 160 ? `${m.prompt.slice(0, 160)}…` : m.prompt}` : null
+                // 加工した画像の prompt は作者の加工の指示
+                m.prompt
+                  ? `${m.source_path ? '加工の指示' : 'prompt'}: ${m.prompt.length > 160 ? `${m.prompt.slice(0, 160)}…` : m.prompt}`
+                  : null
               ]
                 .filter((x): x is string => !!x)
                 .join('\n')
@@ -208,7 +211,7 @@ export default function MediaPicker({
                   </button>
                   <div className="flex items-center justify-between gap-1 px-0.5">
                     <span className="truncate text-[11px] tabular-nums" style={{ color: 'var(--text-faint)' }}>
-                      {m.seed !== null ? `seed ${m.seed}` : '手持ち'}
+                      {m.seed !== null ? `${m.source_path ? '加工 · ' : ''}seed ${m.seed}` : '手持ち'}
                     </span>
                     <button
                       onClick={() => remove(m)}

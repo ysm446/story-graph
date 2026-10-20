@@ -9,14 +9,17 @@ import { api, assetUrl, isVideoAsset, type GeneratedImage, type WorkflowVariant 
 export function WorkflowSelect({
   value,
   onChange,
-  disabled
+  disabled,
+  effect = false
 }: {
   /** variants.json の id。null = 設定の既定の組 */
   value: string | null
   onChange: (id: string) => void
   disabled: boolean
+  /** 加工ウインドウ用: 加工に使える組(variants.json の effect)だけを出す */
+  effect?: boolean
 }): React.JSX.Element | null {
-  const [variants, setVariants] = useState<WorkflowVariant[]>([])
+  const [allVariants, setVariants] = useState<WorkflowVariant[]>([])
   const [defaultId, setDefaultId] = useState<string | null>(null)
   useEffect(() => {
     let alive = true
@@ -32,6 +35,7 @@ export function WorkflowSelect({
       alive = false
     }
   }, [])
+  const variants = effect ? allVariants.filter((v) => v.effect) : allVariants
   if (variants.length < 2) return null
   const current = variants.some((v) => v.id === value)
     ? value!
@@ -124,7 +128,9 @@ export function CandidatePreview({
   candidate,
   current,
   currentLabel,
-  aspect
+  aspect,
+  candidateLabel = '生成した候補(未決定)',
+  placeholder = '生成するとここにプレビューが出ます'
 }: {
   candidate: GeneratedImage | null
   /** 生成前に見せる、いま設定されている画像(表示専用。「決定」の対象にはしない)。
@@ -135,11 +141,15 @@ export function CandidatePreview({
   currentLabel: string
   /** プレビュー枠の縦横比(CSS の aspect-ratio。場面は横長、参照画像は縦長) */
   aspect: string
+  /** 候補を出しているときのラベル(加工ウインドウは「加工した候補」) */
+  candidateLabel?: string
+  /** 何も出していないときの文 */
+  placeholder?: string
 }): React.JSX.Element {
   const showCurrent = !candidate && !!current
   const path = candidate?.image_path ?? (showCurrent ? current : null)
   const url = assetUrl(path)
-  const label = candidate ? '生成した候補(未決定)' : showCurrent ? currentLabel : null
+  const label = candidate ? candidateLabel : showCurrent ? currentLabel : null
   return (
     <div>
       <div className="mb-1 flex h-4 items-center">
@@ -160,8 +170,8 @@ export function CandidatePreview({
             <img src={url} className="h-full w-full object-contain" />
           )
         ) : (
-          <span className="text-[12px]" style={{ color: 'var(--text-faint)' }}>
-            生成するとここにプレビューが出ます
+          <span className="px-2 text-center text-[12px]" style={{ color: 'var(--text-faint)' }}>
+            {placeholder}
           </span>
         )}
       </div>

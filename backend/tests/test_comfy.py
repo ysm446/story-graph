@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 import comfy
 import comfy_installer as ci
 import image_gen
@@ -269,6 +271,28 @@ def test_variant_models_lists_loader_files_by_folder():
     v = {"id": "x", "t2i": "ref_t2i", "edit": "scene_edit", "values": {}}
     assert comfy.variant_models(v) == [{"key": "checkpoint", "folder": "checkpoints", "name": ""}]
     assert comfy.variant_models(v, {"checkpoint": "old.safetensors"})[0]["name"] == "old.safetensors"
+
+
+def test_effect_workflow_keeps_source_size_and_passes_instruction_as_is():
+    wf = image_gen.effect_workflow({}, " モノクロの鉛筆画にして。クロスハッチングを入れて ", "story-graph/a.png", seed=3)
+    assert wf["10"]["inputs"]["image"] == "story-graph/a.png"
+    assert "11" not in wf and "12" not in wf
+    assert wf["3"]["inputs"]["prompt"] == "モノクロの鉛筆画にして。クロスハッチングを入れて"  # 接尾辞を足さない
+    assert wf["3"]["inputs"]["image1"] == ["13", 0] and wf["13"]["class_type"] == "ImageScaleToTotalPixels"
+    # 最初の latent は元の画像(縮めたもの)から作る = 縦横比は元の画像のまま
+    assert wf["6"]["inputs"]["latent_image"] == ["5", 0] and wf["5"]["inputs"]["pixels"] == ["13", 0]
+    assert wf["6"]["inputs"]["seed"] == 3 and wf["1"]["class_type"] == "CheckpointLoaderSimple"
+
+
+def test_effect_variant_falls_back_to_one_with_effect(monkeypatch):
+    plain = {"id": "plain", "label": "効果なし", "t2i": "ref_t2i", "edit": "scene_edit", "values": {}}
+    fx = {"id": "fx", "label": "効果あり", "t2i": "ref_t2i", "edit": "scene_edit", "effect": "image_effect", "values": {}}
+    monkeypatch.setattr(comfy, "list_variants", lambda: [plain, fx])
+    assert image_gen.resolve_effect_variant({"comfy_workflow": "plain"}, None)["id"] == "fx"
+    assert image_gen.resolve_effect_variant({}, "plain")["id"] == "fx"
+    monkeypatch.setattr(comfy, "list_variants", lambda: [plain])
+    with pytest.raises(RuntimeError, match="加工に使えるワークフロー"):
+        image_gen.resolve_effect_variant({}, None)
 
 
 def test_ref_label_is_only_applied_when_variant_asks():
