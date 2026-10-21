@@ -10,6 +10,7 @@ export type IconName =
   | 'arrowUp' // 送信
   | 'list' // 会話一覧
   | 'chatPlus' // 新しい会話(吹き出しに +)
+  | 'trash' // ゴミ箱(今の会話を削除)
   | 'mask' // 芝居の仮面(キャラクターと話す)
   | 'search' // ツール実行(調査)
   | 'recall' // 記憶をたどる
@@ -82,6 +83,15 @@ const PATHS: Record<IconName, React.JSX.Element> = {
     <>
       <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
       <path d="M12 7v6M9 10h6" />
+    </>
+  ),
+  // lucide の trash-2
+  trash: (
+    <>
+      <path d="M3 6h18" />
+      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+      <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+      <path d="M10 11v6M14 11v6" />
     </>
   ),
   // lucide の arrow-up
