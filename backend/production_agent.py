@@ -280,7 +280,7 @@ class ProductionMiddleware:
         # 自動配置の座標保存は内容・経路を変えないので許可する。
         position = path.endswith("/position") or path == "/layout/positions"
         control = scope["method"] == "POST" and path in ("/production/instruction", "/production/pause")
-        manual = gate.run is not None and gate.run.paused and bool(re.fullmatch(r"/(nodes(?:/[^/]+(?:/(?:insert_after|make_canon|ending|detach|normalize_chain|events|target_chars))?)?|edges|endings|groups(?:/[^/]+(?:/(?:move|digest|route/[^/]+|nodes/[^/]+))?)?|layout/reset)", path))
+        manual = gate.run is not None and gate.run.paused and bool(re.fullmatch(r"/(nodes(?:/[^/]+(?:/(?:insert_after|make_canon|ending|detach|normalize_chain|events|target_chars))?)?|edges|endings|groups(?:/[^/]+(?:/(?:move|duplicate|digest|route/[^/]+|nodes/[^/]+))?)?|layout/reset)", path))
         writing = scope["method"] not in ("GET", "HEAD", "OPTIONS") and not position and not control
         if writing and gate.active and not manual:
             from starlette.responses import JSONResponse

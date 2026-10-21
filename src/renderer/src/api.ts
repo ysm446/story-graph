@@ -222,6 +222,12 @@ export const api = {
     // cover_node_id: null を渡すと表紙の指定を外して自動導出に戻す
     data: { title?: string; color?: string; cover_node_id?: string | null }
   ) => request<Group>(`/groups/${groupId}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  // 章の複製: 元の章と同じ親から生える別の章になる(後ろの章にはつながない)。at は章カードの位置
+  duplicateGroup: (groupId: string, title: string, at?: { x: number; y: number }) =>
+    request<Group>(`/groups/${groupId}/duplicate`, {
+      method: 'POST',
+      body: JSON.stringify({ title, x: at?.x ?? null, y: at?.y ?? null })
+    }),
   // 章の解除(シーンは残る)
   deleteGroup: (groupId: string) => request<unknown>(`/groups/${groupId}`, { method: 'DELETE' }),
   // 章ビューでの章カードの配置(並べ替えではなく表示位置)

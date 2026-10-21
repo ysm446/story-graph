@@ -108,3 +108,84 @@ def test_api_paste_and_production_lock(store, monkeypatch):
             assert (await client.post("/nodes/paste", json=body)).status_code == 409
             assert store.graph() == before
     asyncio.run(check())
+
+
+def _chapters_with_extras(store):
+    """第1章 = a, b(+ 分岐 branch)、第2章 = c。清書・挿絵のストック・まとめ・表紙を付ける。"""
+    store.append_node({"id": "c", "beat": "次の章"})
+    first = store.create_group("第1章", ["a", "b", "branch"])
+    store.create_group("第2章", ["c"])
+    store.conn.execute("INSERT INTO renders(id, node_id, preset_id, prose, created_at) VALUES('r1', 'b', 'p', '清書', 'now')")
+    store.conn.execute("INSERT INTO media(id, owner_type, owner_id, path, created_at) VALUES('m1', 'node', 'a', 'a.png', 'now')")
+    store.conn.execute("UPDATE nodes SET image_path = 'a.png' WHERE id = 'a'")
+    store.update_group(first["id"], {"cover_node_id": "a"})
+    store.save_group_digest(first["id"], [{"id": "d1", "type": "memory_compress",
+        "payload": {"char": "aya", "summary": "旅のまとめ", "replaces": ["memory", "compressed"]}}])
+    store.conn.commit()
+    return store.get_group(first["id"])
+
+
+def test_duplicate_chapter_branches_from_the_same_parent(store):
+    original = _chapters_with_extras(store)
+    before, canon = store.graph(), store.canon_path()
+    copy = clipboard.duplicate_group(store, original["id"], "第1章のコピー", 40, 600)
+    assert copy["title"] == "第1章のコピー" and not copy["on_canon"] and copy["warning"] is None
+    assert (copy["pos_x"], copy["pos_y"]) == (40, 600)
+    assert len(copy["node_ids"]) == 3 and not set(copy["node_ids"]) & set(original["node_ids"])
+    a, b = [store.get_node(n) for n in copy["route"]]
+    assert (a["beat"], b["beat"]) == ("村を出る", "村に戻る")
+    assert a["image_path"] == "a.png" and copy["cover_node_id"] == a["id"]
+    # 入口は元の章と同じ親から生え、出口の先(後ろの章)にはつながない
+    assert store.parent_of(copy["in_id"]) == store.parent_of(original["in_id"])
+    assert not [e for e in store.graph()["edges"] if e["from_node"] == copy["out_id"]]
+    assert store.get_node(copy["in_id"])["title"] == "第1章のコピー 入口"
+    # 元の章・正史は変わらない
+    assert store.canon_path() == canon
+    after = {n["id"]: n for n in store.graph()["nodes"]}
+    assert all(after[n["id"]] == n for n in before["nodes"])
+    assert all(e in store.graph()["edges"] for e in before["edges"])
+    # 記憶の参照は複製した記憶へ。状態も前提から同じに流れる
+    assert b["events"][0]["payload"]["replaces"] == [a["events"][0]["id"]]
+    assert store.get_state(b["id"])["chars"]["aya"]["memories"] == [b["events"][0]["id"]]
+    # 清書・挿絵のストック・まとめも写る(まとめは中身が同じなので古い扱いにしない)
+    assert store.conn.execute("SELECT prose FROM renders WHERE node_id = ?", (b["id"],)).fetchone()["prose"] == "清書"
+    assert store.conn.execute("SELECT path FROM media WHERE owner_id = ?", (a["id"],)).fetchone()["path"] == "a.png"
+    digest = copy["digest_events"][0]
+    assert digest["id"] != "d1" and digest["payload"]["replaces"] == [a["events"][0]["id"], b["events"][0]["id"]]
+    assert copy["digest_stale"] == 0
+    assert store.conn.execute("SELECT content FROM memories WHERE id = ?", (digest["id"],)).fetchone()["content"] == "旅のまとめ"
+    # 複製を書き換えても元の章のまとめは古くならない
+    store.update_node(b["id"], {"beat": "書き換え"})
+    store.replace_events(b["id"], [])
+    assert store.get_group(original["id"])["digest_stale"] == 0
+    assert store.get_group(copy["id"])["digest_stale"] == 1
+
+
+def test_duplicate_keeps_references_to_memories_before_the_chapter(store):
+    group = store.create_group("帰還の章", ["b"])
+    copy = clipboard.duplicate_group(store, group["id"], "帰還の章のコピー")
+    b = store.get_node(copy["route"][0])
+    assert b["events"][0]["payload"]["replaces"] == ["memory"]
+    assert store.get_state(b["id"])["chars"]["aya"]["memories"] == [b["events"][0]["id"]]
+    assert copy["pos_x"] is None
+
+
+def test_api_duplicate_chapter(store, monkeypatch):
+    import app as api
+    async def snapshot(*args):
+        pass
+    monkeypatch.setattr(api, "store", store)
+    monkeypatch.setattr(api.snapshots, "auto", snapshot)
+    monkeypatch.setattr(api.production_agent.gate, "active", False)
+    group = store.create_group("第1章", ["a", "b", "branch"])
+    async def check():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=api.app), base_url="http://test") as client:
+            response = await client.post(f"/groups/{group['id']}/duplicate", json={"title": "案2", "x": 0, "y": 300})
+            assert response.status_code == 200 and response.json()["title"] == "案2"
+            assert (await client.post("/groups/missing/duplicate", json={"title": "案3"})).status_code == 404
+            assert (await client.post(f"/groups/{group['id']}/duplicate", json={"title": " "})).status_code == 400
+            before = store.graph()
+            api.production_agent.gate.active = True
+            assert (await client.post(f"/groups/{group['id']}/duplicate", json={"title": "案4"})).status_code == 409
+            assert store.graph() == before
+    asyncio.run(check())

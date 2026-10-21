@@ -67,6 +67,7 @@ import {
   COLUMN_GAP_X,
   FALLBACK_NODE_HEIGHT,
   GRID_SIZE,
+  LANE_GAP_Y,
   layoutDag,
   shiftDownstreamX,
   snapped
@@ -2260,6 +2261,36 @@ function StructureModeInner({
     }
   }
 
+  /** 章を複製する。元の章と同じ親から生える別の章になり、後ろの章にはつながない。
+   *  章カードは元のカードの下(重なるならさらに下)に置く */
+  const duplicateChapter = (group: Group): void => {
+    setNamePrompt({
+      label: '複製した章の名前',
+      value: `${group.title}のコピー`,
+      onSubmit: (title) => {
+        void (async () => {
+          try {
+            const heightOf = (id: string): number =>
+              reactFlow.getNode(id)?.measured?.height ?? FALLBACK_NODE_HEIGHT
+            const cardId = `chapter:${group.id}`
+            const card = displayNodes.find((n) => n.id === cardId)
+            const at = card
+              ? avoidingOverlap(
+                  { x: card.position.x, y: snapped(card.position.y + heightOf(cardId) + LANE_GAP_Y) },
+                  heightOf(cardId),
+                  displayNodes.map((n) => ({ x: n.position.x, y: n.position.y, height: heightOf(n.id) }))
+                )
+              : undefined
+            await api.duplicateGroup(group.id, title, at)
+            await reload()
+          } catch (e) {
+            setGenStatus(`章を複製できません: ${String(e)}`)
+          }
+        })()
+      }
+    })
+  }
+
   const renameChapter = (group: Group): void => {
     setNamePrompt({
       label: '章の名前を変更',
@@ -3303,6 +3334,15 @@ function StructureModeInner({
                           hint: '章のタイトル',
                           group: 'chapter',
                           run: () => renameChapter(group)
+                        },
+                        {
+                          label: '章を複製',
+                          hint: productionEditingLocked
+                            ? '制作中は複製できません'
+                            : '同じ入口から分かれる別の章として複製(元の章と後ろの章はそのまま)',
+                          group: 'chapter',
+                          disabled: productionEditingLocked,
+                          run: () => duplicateChapter(group)
                         },
                         {
                           label: '章を解除',

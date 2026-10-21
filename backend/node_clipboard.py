@@ -1,5 +1,7 @@
-"""コピー時のシーンと内部接続を、別IDの独立した枝として貼り付ける。"""
+"""コピー時のシーンと内部接続を、別IDの独立した枝として貼り付ける。章の複製もここ。"""
 
+import json
+from datetime import datetime, timezone
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -88,3 +90,99 @@ def paste(store, body: PasteIn):
         if body.group_id:
             tx._mark_group_digest_stale(body.group_id)
     return {"node_ids": list(ids.values())}
+
+
+def _insert_row(conn, table: str, row: dict[str, Any]) -> None:
+    cols = list(row)
+    names = ",".join('"' + c + '"' for c in cols)  # cast は SQL のキーワードなので引用する
+    conn.execute(
+        f"INSERT INTO {table}({names}) VALUES({','.join('?' for _ in cols)})",
+        [row[c] for c in cols],
+    )
+
+
+def duplicate_group(store, group_id: str, title: str, x: float | None = None, y: float | None = None):
+    """章を丸ごと複製し、元の章と同じ親から生える別の章にする(docs/design/chapters.md「章の複製」)。
+
+    写すのは章のシーン(分岐・島を含む)・入口 / 出口・中のつながり・イベント・清書・
+    挿絵のストック・章のまとめ。入口は元の章の入口と同じ親につなぐので、前の章までの
+    状態がそのまま流れ込む。出口の先(後ろの章)にはつながない。音声台本は写さない。
+    挿絵のファイルは共有する(参照が残る限り gc_assets は消さない)。
+    """
+    title = (title or "").strip()
+    if not title:
+        raise ValueError("章の名前を入力してください")
+    with atomic_store(store) as tx:
+        group = tx.get_group(group_id)
+        if group is None:
+            raise KeyError(f"group not found: {group_id}")
+        if not group["in_id"] or not group["out_id"]:
+            raise ValueError("入口 / 出口の無い章は複製できません")
+        rows = [dict(r) for r in tx.conn.execute(
+            "SELECT * FROM nodes WHERE group_id = ? ORDER BY created_at", (group_id,))]
+        ids = {r["id"]: uuid4().hex[:12] for r in rows}
+        source_events = {
+            nid: [dict(e) for e in tx.conn.execute(
+                "SELECT id, type, source, payload FROM events WHERE node_id = ? ORDER BY seq", (nid,))]
+            for nid in ids
+        }
+        event_ids = {e["id"]: uuid4().hex[:12] for events in source_events.values() for e in events}
+        new_group = uuid4().hex[:12]
+        now = datetime.now(timezone.utc).isoformat()
+        original = tx.conn.execute("SELECT * FROM groups WHERE id = ?", (group_id,)).fetchone()
+        tx.conn.execute(
+            "INSERT INTO groups(id, title, color, created_at, pos_x, pos_y, cover_node_id) VALUES(?,?,?,?,?,?,?)",
+            (new_group, title, original["color"], now, x, y, ids.get(original["cover_node_id"])),
+        )
+        markers = {"chapter_in": f"{title} 入口", "chapter_out": f"{title} 出口"}
+        for row in rows:
+            _insert_row(tx.conn, "nodes", {
+                **row,
+                "id": ids[row["id"]],
+                "group_id": new_group,
+                "title": markers.get(row["kind"], row["title"]),
+                "created_at": now,
+                "updated_at": now,
+            })
+        # 章の中のつながりだけを写す。出口の先・章の外へ出る線は写さない
+        for edge in tx.conn.execute("SELECT from_node, to_node FROM edges").fetchall():
+            if edge["from_node"] in ids and edge["to_node"] in ids:
+                tx.conn.execute("INSERT INTO edges(id, from_node, to_node, is_canon) VALUES(?,?,?,0)",
+                                (uuid4().hex[:12], ids[edge["from_node"]], ids[edge["to_node"]]))
+        parent = tx.parent_of(group["in_id"])
+        if parent is not None:
+            tx.conn.execute("INSERT INTO edges(id, from_node, to_node, is_canon) VALUES(?,?,?,0)",
+                            (uuid4().hex[:12], parent, ids[group["in_id"]]))
+        _check_connections(tx.graph())
+        tx._resync_canon()
+
+        def remap(events):
+            result = []
+            for event in events:
+                data = {**event, "id": event_ids.get(event["id"]) or uuid4().hex[:12]}
+                data["payload"] = dict(data["payload"])
+                if data["type"] == "memory_compress":
+                    # 章の中の記憶は複製した記憶へ。前の章の記憶は同じ親を通るので共有のまま
+                    data["payload"]["replaces"] = [event_ids.get(eid, eid) for eid in data["payload"].get("replaces", [])]
+                result.append(data)
+            return result
+
+        for nid, events in source_events.items():
+            if events:
+                tx.replace_events(ids[nid], remap(
+                    [{**e, "payload": json.loads(e["payload"])} for e in events]))
+        for render in tx.conn.execute(
+                f"SELECT * FROM renders WHERE node_id IN ({','.join('?' for _ in ids)})", list(ids)).fetchall():
+            _insert_row(tx.conn, "renders", {**dict(render), "id": uuid4().hex[:12], "node_id": ids[render["node_id"]]})
+        for media in tx.conn.execute(
+                f"SELECT * FROM media WHERE owner_type = 'node' AND owner_id IN ({','.join('?' for _ in ids)})",
+                list(ids)).fetchall():
+            _insert_row(tx.conn, "media", {**dict(media), "id": uuid4().hex[:12], "owner_id": ids[media["owner_id"]]})
+        # まとめは中身が同じなので古い扱いにはしない(元の章の状態を引き継ぐ)
+        if original["digest_events"]:
+            digest = remap(json.loads(original["digest_events"]))
+            tx.conn.execute("UPDATE groups SET digest_events = ?, digest_stale = ? WHERE id = ?",
+                            (json.dumps(digest, ensure_ascii=False), original["digest_stale"], new_group))
+            tx._sync_digest_memories(tx.get_group(new_group), [], digest)
+        tx._resync_memory_orders(commit=False)
+        return tx.get_group(new_group)

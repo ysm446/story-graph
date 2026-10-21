@@ -20,7 +20,7 @@ from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, FiniteFloat
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 import app_settings
@@ -656,6 +656,25 @@ async def update_group(group_id: str, body: GroupPatch) -> dict[str, Any]:
     if group is None:
         raise HTTPException(404, "group not found")
     return group
+
+
+class GroupDuplicateIn(BaseModel):
+    title: str
+    # 複製した章カードの位置(null = 導出位置)
+    x: FiniteFloat | None = None
+    y: FiniteFloat | None = None
+
+
+@app.post("/groups/{group_id}/duplicate")
+async def duplicate_group(group_id: str, body: GroupDuplicateIn) -> dict[str, Any]:
+    """章を複製する。元の章と同じ親から生える別の章になり、後ろの章にはつながない。"""
+    await snapshots.auto(store, "章の複製の前", 30)
+    try:
+        return node_clipboard.duplicate_group(store, group_id, body.title, body.x, body.y)
+    except KeyError:
+        raise HTTPException(404, "group not found")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 @app.delete("/groups/{group_id}")

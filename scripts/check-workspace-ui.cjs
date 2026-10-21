@@ -1437,6 +1437,30 @@ store.select_media(m['id'])
       await assert(`[...document.querySelectorAll('.react-flow__node')].some(e=>e.textContent.includes('三つ目') && e.textContent.includes('未保存')) && ![...document.querySelectorAll('.react-flow__node')].some(e=>e.textContent.includes('選択中の下書き') && e.textContent.includes('未保存'))`, '選択していないシーンのカードには未保存の印が残る')
       if (errors.length) throw new Error(errors.join('\n'))
     }
+    if (chapterCheck) {
+      // 章の複製(2026-10-22): 章カードの右クリック →「章を複製」→ 名前を確定すると、元の章と同じ親から
+      // 生える別ルートの章になり、元のカードの下に重ならずに出る。後ろの章にはつながない
+      const chapterCard = (title) => `[...document.querySelectorAll('.react-flow__node-chapterNode')].find(e=>e.textContent.includes(${JSON.stringify(title)}) && !e.textContent.includes('のコピー'))`
+      await js(`(() => {const node=${chapterCard('検証章')};const r=node.getBoundingClientRect();node.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:r.x+20,clientY:r.y+20}))})()`)
+      await pause(250)
+      await click('章を複製')
+      await assert(`document.body.textContent.includes('複製した章の名前') && [...document.querySelectorAll('input')].some(e=>e.value==='検証章のコピー')`, '章カードの右クリックの「章を複製」で、名前の欄に「〜のコピー」が入って開く')
+      await click('確定')
+      let copied
+      for (let i = 0; i < 50 && !copied; i++) {
+        copied = (await (await fetch(base + '/groups')).json()).find((g) => g.title === '検証章のコピー')
+        if (!copied) await pause(100)
+      }
+      const original = (await (await fetch(base + '/groups')).json()).find((g) => g.title === '検証章')
+      const edges = (await (await fetch(base + '/graph')).json()).edges
+      const parentOf = (id) => edges.find((e) => e.to_node === id)?.from_node
+      if (!copied || copied.on_canon || !original.on_canon || copied.node_ids.length !== original.node_ids.length || parentOf(copied.in_id) !== parentOf(original.in_id) || edges.some((e) => e.from_node === copied.out_id)) errors.push('複製した章のつながりが違う: ' + JSON.stringify({ copied, original }))
+      else console.log('PASS 複製した章は元の章と同じ親から生える別ルートの章で、出口の先にはつながない')
+      await pause(400)
+      await assert(`(() => {const a=${chapterCard('検証章')}.getBoundingClientRect();const b=[...document.querySelectorAll('.react-flow__node-chapterNode')].find(e=>e.textContent.includes('検証章のコピー'))?.getBoundingClientRect();return !!b && b.top>=a.bottom && Math.abs(b.left-a.left)<2})()`, '複製した章のカードは元のカードの真下に重ならずに出る')
+      writeFileSync(join(target, 'chapter-duplicate.png'), (await win.webContents.capturePage()).toPNG())
+      if (errors.length) throw new Error(errors.join('\n'))
+    }
     writeFileSync(join(target, 'details-wide.png'), (await win.webContents.capturePage()).toPNG())
     win.setSize(1050, 800)
     await pause(300)
