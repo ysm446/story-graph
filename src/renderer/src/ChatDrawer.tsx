@@ -929,7 +929,7 @@ export default function ChatDrawer({
         deleteChat={deleteChat} commitRename={commitRename}
         newChatTip="選択中のシーンをアンカーに新しい会話を始める" />
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <div ref={panelRef} className="inspector-scrollbar flex min-h-0 flex-1 flex-col overflow-y-auto px-6 pb-3 pt-2">
+        <div ref={panelRef} className="inspector-scrollbar flex min-h-0 flex-1 flex-col overflow-y-auto px-6 pb-4 pt-2">
           {/* ヘッダー: 相手 / アンカー / スコープ */}
           <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px]" style={{ color: 'var(--text-faint)' }}>
             {/* 話す相手: 相談(編集者) or キャラ本人。切替は新規チャット扱い */}
@@ -1391,11 +1391,12 @@ export default function ChatDrawer({
               </button>
             </div>
           </div>
-          {/* 入力 */}
-          <div className={`mt-1.5 flex items-end gap-2${room ? ' room-composer' : ''}`}>
+          {/* 入力。制作チャットと同じく、入力欄と下の操作の行を1つの箱にまとめる(枠は箱が持つ)。
+              上の段 = 入力欄、下の段 = 左に会話室の指名・発言数、右に使用量・送信 */}
+          <div className="chat-composer mt-2 shrink-0 rounded-lg border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}>
             <textarea
               ref={inputRef}
-              rows={1}
+              rows={2}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => {
@@ -1405,69 +1406,82 @@ export default function ChatDrawer({
                   void send()
                 }
               }}
+              aria-label={room ? '演出の指示' : activeChar ? `${activeChar.name} への発言` : '相談の入力'}
               placeholder={
                 room
-                  ? '演出の指示(空のまま進めてもよい)…(Enter で進める)'
+                  ? '演出の指示(空のまま進めてもよい)'
                   : activeChar
-                    ? `${activeChar.name} に話しかける…(Enter で送信)`
-                    : '物語について相談…(Enter で送信)'
+                    ? `${activeChar.name} に話しかける`
+                    : '物語について相談'
               }
-              className="min-w-0 flex-1 resize-none rounded-lg border px-3 py-1.5 text-[13px] outline-none"
-              style={{ background: 'var(--bg-input)', borderColor: 'var(--border)' }}
+              className="block w-full resize-none px-3 pb-1 pt-2 text-[12px] outline-none"
+              style={{ background: 'transparent' }}
             />
-            {room && (
-              <>
-                {/* 次に話す人の指名(1 回きり)と、続けて話させる発言数 */}
-                <IconPicker
-                  name="次に話す人"
-                  tall
-                  value={nextSpeaker ?? ''}
-                  onChange={(next) => setNextSpeaker(next || null)}
-                  disabled={busy || !roomReady}
-                  tip="次に話す人。「順に」は前に話した人の次"
-                  disabledTip={busy ? '発言が終わるか停止してから選べます' : '参加者を2人以上選ぶと指名できます'}
-                  items={[
-                    { value: '', label: '順に', icon: 'list' },
-                    ...roomChars.map((c) => ({ value: c.id, label: c.name, buttonLabel: `${c.name}から`, char: c }))
-                  ]}
-                />
-                <select
-                  value={turns}
-                  onChange={(e) => setTurns(Number(e.target.value))}
-                  disabled={busy}
-                  className="shrink-0 rounded-md border px-1.5 py-1 text-[11px]"
-                  style={{ background: 'var(--bg-input)', borderColor: 'var(--border)', color: 'var(--text-dim)' }}
-                  data-tip="1 回「進める」で続けて話させる発言数"
+            <div className="flex items-center gap-2 px-2 pb-2 pt-1">
+              <div className="flex min-w-0 flex-1 basis-0 items-center gap-2">
+                {room && (
+                  <>
+                    {/* 次に話す人の指名(1 回きり)と、続けて話させる発言数 */}
+                    <IconPicker
+                      name="次に話す人"
+                      value={nextSpeaker ?? ''}
+                      onChange={(next) => setNextSpeaker(next || null)}
+                      disabled={busy || !roomReady}
+                      tip="次に話す人。「順に」は前に話した人の次"
+                      disabledTip={busy ? '発言が終わるか停止してから選べます' : '参加者を2人以上選ぶと指名できます'}
+                      items={[
+                        { value: '', label: '順に', icon: 'list' },
+                        ...roomChars.map((c) => ({ value: c.id, label: c.name, buttonLabel: `${c.name}から`, char: c }))
+                      ]}
+                    />
+                    <select
+                      value={turns}
+                      onChange={(e) => setTurns(Number(e.target.value))}
+                      disabled={busy}
+                      className="h-[26px] shrink-0 rounded-md border px-1.5 text-[11px]"
+                      style={{ background: 'var(--bg-input)', borderColor: 'var(--border)', color: 'var(--text-dim)' }}
+                      data-tip="1 回「進める」で続けて話させる発言数"
+                    >
+                      {ROOM_TURN_OPTIONS.map((n) => (
+                        <option key={n} value={n}>
+                          {n} 発言
+                        </option>
+                      ))}
+                    </select>
+                  </>
+                )}
+              </div>
+              {/* コンテキスト使用量のリング(lm-chat の token-ring を移植) */}
+              {usage && <ContextUsageRing usage={{ token_count: usage.tokens, ctx_size: usage.ctx, estimated: usage.estimated }} />}
+              {/* 送信の↑と処理中の停止■は、同じ位置・同じ丸い形のまま中身だけ替える(制作チャットと同じ) */}
+              {busy ? (
+                <button
+                  onClick={() => abortRef.current?.abort()}
+                  aria-label="停止"
+                  className="inline-flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full border hover:bg-[var(--accent-soft)]"
+                  style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+                  data-tip="停止(生成を止めます)"
                 >
-                  {ROOM_TURN_OPTIONS.map((n) => (
-                    <option key={n} value={n}>
-                      {n} 発言
-                    </option>
-                  ))}
-                </select>
-              </>
-            )}
-            {/* コンテキスト使用量のリング(lm-chat の token-ring を移植) */}
-            {usage && <ContextUsageRing usage={{ token_count: usage.tokens, ctx_size: usage.ctx, estimated: usage.estimated }} />}
-            {busy ? (
-              <button
-                onClick={() => abortRef.current?.abort()}
-                className="rounded-lg border px-3 py-1.5 text-[13px]"
-                style={{ borderColor: 'rgba(239,68,68,0.5)', color: 'var(--danger)' }}
-              >
-                ■ 中止
-              </button>
-            ) : (
-              <button
-                onClick={() => void send()}
-                disabled={room ? !roomReady : !input.trim()}
-                className="rounded-lg px-4 py-1.5 text-[13px] font-medium text-white disabled:opacity-50"
-                style={{ background: 'var(--accent)' }}
-                data-tip={room ? (roomReady ? `${turns} 発言ぶん会話を進める` : '参加者を 2 人以上選んでください') : undefined}
-              >
-                {room ? '進める' : '送信'}
-              </button>
-            )}
+                  <Icon name="stop" size={12} />
+                </button>
+              ) : (
+                <button
+                  onClick={() => void send()}
+                  disabled={room ? !roomReady : !input.trim()}
+                  aria-label={room ? '進める' : '送信'}
+                  className="accent-action inline-flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full border disabled:opacity-40"
+                  data-tip={
+                    room
+                      ? roomReady
+                        ? `${turns} 発言ぶん会話を進める\nEnter で進める、Shift＋Enter で改行`
+                        : '参加者を 2 人以上選んでください'
+                      : '送信\nEnter で送信、Shift＋Enter で改行'
+                  }
+                >
+                  <Icon name="arrowUp" size={14} strokeWidth={2.4} />
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </div>

@@ -81,31 +81,6 @@ textarea {
   resize: vertical;
 }
 
-/* 会話室の入力行。複数行の入力は上へ伸ばし、操作部品は下端に揃える。 */
-.room-composer > textarea {
-  min-height: 36px;
-}
-.room-composer > button,
-.room-composer > select {
-  height: 36px;
-  flex-shrink: 0;
-  border-radius: 8px;
-}
-.room-composer > button[aria-haspopup='listbox'] {
-  width: 96px;
-}
-.room-composer > button[aria-haspopup='listbox'] > span:last-child {
-  margin-left: auto;
-}
-.room-composer > select {
-  width: 72px;
-}
-.room-composer > button:not([aria-haspopup]) {
-  width: 80px;
-  padding-inline: 8px;
-  white-space: nowrap;
-}
-
 /* フォーカス表示。キーボードで辿ったときに現在地が分かるようにする。
    - :focus-visible なので、ボタンをマウスで押しただけでは出ない
      (テキスト入力はクリックでも出る。編集中の欄が分かるほうが良いため)
