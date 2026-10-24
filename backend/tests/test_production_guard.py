@@ -481,7 +481,9 @@ def test_step_limit_gets_a_closing_report(store, monkeypatch):
     assert len(prompts) == production.MAX_STEPS + 1
     assert any("上限までの報告" in e.get("delta", "") for e in events)
     history = store.get_chat(events[0]["chat_id"])["messages"]
-    assert history[-2].get("closing") and history[-1].get("outcome") == "limit"
+    closing = next(i for i, m in enumerate(history) if m.get("closing"))
+    outcome = next(i for i, m in enumerate(history) if m.get("outcome") == "limit")
+    assert closing < outcome  # まとめ → 停止の知らせ(→ 取り消しの案内)の順
 
 
 def test_closing_text_that_is_a_tool_call_string_is_hidden(store, monkeypatch):

@@ -1536,3 +1536,133 @@ def test_reset_memory_only_and_restart_revision(store, monkeypatch):
     assert store.list_chats() == before_chats
     assert store.get_settings()["author_chat_rules"] == "600文字程度"
     assert production_memory.write(store, "新しい方針", "再開", "user")["revision"] == 1
+
+
+def test_undo_offer_restores_the_run_and_keeps_the_chat_record(store, monkeypatch):
+    import production_undo
+    fake_extraction(monkeypatch)
+    args = {"after_id": "first", "title": "葛藤", "beat": "約束を思い出す", "cast": ["aya"], "reason": "補強"}
+    fake_llm(monkeypatch, [call("insert_scene", args), {"content": "変更しました"}])
+    events = run(collect(store, True))
+    chat_id = events[0]["chat_id"]
+    offer = next(e for e in events if "undo" in e)
+    assert offer["undo"]["changes"] == 1 and offer["undo"]["undone"] is False and "戻せます" in offer["notice"]
+    # 取り消しの案内は done より前、変更の後に 1 件だけ
+    assert [k for e in events for k in ("undo", "done") if k in e] == ["undo", "done"]
+    saved = store.get_chat(chat_id)["messages"]
+    assert production_undo.find_offer(saved, offer["undo"]["snapshot_id"]) is not None
+    assert len(store.canon_path()) == 3
+    # 作業の後の手動編集も戻る(確認文で伝える)
+    store.update_node("last", {"beat": "村に戻って眠る"})
+    result = production_undo.undo(store, chat_id, offer["undo"]["snapshot_id"])
+    assert result["restored"] == offer["undo"]["snapshot_id"]
+    assert store.canon_path() == ["first", "last"]
+    assert store.get_node("last")["beat"] == "村に戻る"
+    messages = store.get_chat(chat_id)["messages"]
+    # 会話は作業の記録ごと残り、案内は戻し済みになり、取り消しの記録が末尾に付く
+    assert any(m.get("operation") for m in messages)
+    assert production_undo.find_offer(messages, offer["undo"]["snapshot_id"])["undo"]["undone"] is True
+    assert messages[-1].get("undo_done") is True
+    # 2 回目は拒否。「復元の前」の自動保存は制作の保存ではないので、順番の判定に混ざらない
+    with pytest.raises(ValueError, match="すでに元に戻しています"):
+        production_undo.undo(store, chat_id, offer["undo"]["snapshot_id"])
+
+
+def test_undo_only_the_latest_production_run(store, monkeypatch):
+    import production_undo
+    fake_extraction(monkeypatch)
+    first = {"after_id": "first", "title": "葛藤", "beat": "約束を思い出す", "cast": ["aya"], "reason": "補強"}
+    fake_llm(monkeypatch, [call("insert_scene", first), {"content": "変更しました"}])
+    events_a = run(collect(store, True))
+    second = {"after_id": "first", "title": "回想", "beat": "別れの朝を思い返す", "cast": ["aya"], "reason": "補強"}
+    fake_llm(monkeypatch, [call("insert_scene", second), {"content": "変更しました"}])
+    events_b = run(collect(store, True))
+    undo_a = next(e for e in events_a if "undo" in e)["undo"]
+    undo_b = next(e for e in events_b if "undo" in e)["undo"]
+    with pytest.raises(ValueError, match="新しい作業から順に"):
+        production_undo.undo(store, events_a[0]["chat_id"], undo_a["snapshot_id"])
+    production_undo.undo(store, events_b[0]["chat_id"], undo_b["snapshot_id"])
+    assert len(store.canon_path()) == 3
+    # 新しい方を戻した後なら古い方も戻せる
+    production_undo.undo(store, events_a[0]["chat_id"], undo_a["snapshot_id"])
+    assert store.canon_path() == ["first", "last"]
+    # 変更が無い作業(相談)には案内を付けない
+    fake_llm(monkeypatch, [{"content": "回答"}])
+    assert not any("undo" in e for e in run(collect(store, False)))
+
+
+def test_undo_api_refuses_while_production_is_active(store, monkeypatch):
+    import app as api
+    monkeypatch.setattr(api, "store", store)
+    monkeypatch.setattr(production, "gate", production.ProductionGate())
+    fake_extraction(monkeypatch)
+    args = {"after_id": "first", "title": "葛藤", "beat": "約束を思い出す", "cast": ["aya"], "reason": "補強"}
+    fake_llm(monkeypatch, [call("insert_scene", args), {"content": "変更しました"}])
+    events = run(collect(store, True))
+    chat_id = events[0]["chat_id"]
+    undo = next(e for e in events if "undo" in e)["undo"]
+    async def check():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=api.app), base_url="http://test") as client:
+            body = {"chat_id": chat_id, "snapshot_id": undo["snapshot_id"]}
+            production.gate.active = True
+            assert (await client.post("/production/undo", json=body)).status_code == 409
+            production.gate.active = False
+            assert (await client.post("/production/undo", json={**body, "snapshot_id": "missing"})).status_code == 409
+            done = await client.post("/production/undo", json=body)
+            assert done.status_code == 200 and done.json()["restored"] == undo["snapshot_id"]
+    run(check())
+    assert store.canon_path() == ["first", "last"]
+
+
+def test_length_hint_and_inferred_setting_on_insert(store, monkeypatch):
+    # 3 シーン未満では目安を出さない
+    assert production.scene_length_hint(store) == ""
+    store.append_node({"id": "third", "title": "夜", "beat": "焚き火を囲んで眠る。" * 3, "cast": ["aya"]})
+    hint = production.scene_length_hint(store)
+    assert "中央値" in hint and "語り口" in hint
+    policy = production.ProductionPolicy(store)
+    assert hint in production.build_messages(store, [], "追記して", True, policy, None, [], [])[0]["content"]
+    assert hint not in production.build_messages(store, [], "追記して", False, policy, None, [], [])[0]["content"]
+    # 挿入で経過・場所を指定しなかったら本文から推測して入れる(根拠が無ければ入れない)
+    fake_extraction(monkeypatch)
+    store.create_place({"id": "forest", "name": "森", "description": "深い森"})
+    calls = []
+    async def suggest(store_, base_url, node_id, beat, field):
+        calls.append(field)
+        if field == "elapsed":
+            return {"found": True, "evidence": "三日後の朝", "elapsed_unit": "day", "elapsed_count": 3, "label": "3日後"}
+        return {"found": False, "evidence": "", "location": None, "label": None}
+    monkeypatch.setattr(generation, "suggest_scene_setting", suggest)
+    change = run(production.apply_edit(store, "fake", "insert_scene", {
+        "after_id": "first", "title": "再会", "beat": "三日後の朝、森で再会する", "cast": ["aya"], "reason": "補強",
+    }))
+    assert sorted(calls) == ["elapsed", "location"]
+    node = store.get_node(change["node_id"])
+    assert (node["elapsed_unit"], node["elapsed_count"], node["location"]) == ("day", 3, None)
+    assert change["inferred"] == {"elapsed": {"label": "3日後", "evidence": "三日後の朝"}}
+    # 指定があれば推測しない。推測の失敗は追加を妨げない
+    calls.clear()
+    async def broken(*args):
+        raise RuntimeError("down")
+    monkeypatch.setattr(generation, "suggest_scene_setting", broken)
+    change = run(production.apply_edit(store, "fake", "insert_scene", {
+        "after_id": "first", "title": "出立", "beat": "森を出て街へ向かう", "cast": ["aya"], "reason": "補強",
+        "elapsed_unit": "same_day", "location": "forest",
+    }))
+    assert "inferred" not in change and store.get_node(change["node_id"])["location"] == "forest"
+
+
+def test_stale_render_notice_after_run(store, monkeypatch):
+    import production_report
+    fake_extraction(monkeypatch)
+    store.conn.execute("INSERT INTO renders(id, node_id, preset_id, pov_char, prose, stale, created_at) VALUES ('r1', 'first', 'p', NULL, '清書', 0, '2026-01-01')")
+    store.conn.execute("INSERT INTO renders(id, node_id, preset_id, pov_char, prose, stale, created_at) VALUES ('r2', 'last', 'p', NULL, '古い清書', 1, '2026-01-01')")
+    store.conn.commit()
+    assert production_report.stale_state(store)[0] == {"last"}
+    fake_llm(monkeypatch, [call("patch_scene", {"node_id": "first", "mode": "append", "text": "朝霧が深い。", "reason": "描写"}), {"content": "変更しました"}])
+    events = run(collect(store, True))
+    notice = next(e["delta"] for e in events if "清書が古くなった" in e.get("delta", ""))
+    # 前から古かった「帰還」は数えず、今回の編集で古くなった「出発」だけ
+    assert "1 件" in notice and "「出発」" in notice and "帰還" not in notice
+    chat = store.get_chat(events[0]["chat_id"])
+    assert any(m.get("stale_notice") for m in chat["messages"])

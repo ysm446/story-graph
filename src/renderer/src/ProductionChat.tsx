@@ -6,7 +6,7 @@ import ProductionPreviewPanel from './ProductionPreviewPanel'
 import AutoTextarea from './AutoTextarea'
 import { useInputHistory } from './useInputHistory'
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { chatApi, isAbortError, productionApi, type ChatSummary, type ProductionInstruction, type ProductionPolicy, type ProductionOperation, type ProductionSelectedNode, type ProductionStep } from './api'
+import { chatApi, isAbortError, productionApi, type ChatSummary, type ProductionInstruction, type ProductionPolicy, type ProductionOperation, type ProductionSelectedNode, type ProductionStep, type ProductionUndo } from './api'
 import { Markdown } from './Markdown'
 import { showStatusNotice } from './statusNotice'
 import { setProductionPreview } from './productionPreview'
@@ -37,6 +37,10 @@ interface Message {
   instruction_review?: boolean
   memory_review?: boolean
   memory_revision?: number
+  /** 作業単位の取り消し(作業前のスナップショットへ戻す)の案内。undone は戻し済み */
+  undo?: ProductionUndo
+  /** 取り消しを実行した記録 */
+  undo_done?: boolean
 }
 
 const operationLabels = { insert_scene: '追加', branch_scene: '分岐を追加', update_scene: '編集', delete_scene: '削除', reconnect_scene: 'つなぎ替え',
@@ -84,12 +88,28 @@ function TimelineItem({ color, label, time, children, pulse = false }: {
 
 /** 発言の一覧。入力や進捗表示のたびに全発言を描き直さないよう、発言が変わったときだけ更新する。
  *  作者の発言は右寄せの吹き出し、制作側(読み取り・操作・報告)は時系列の線と丸で並べる。 */
-const MessageList = memo(function MessageList({ messages, nodes, groups }: {
-  messages: Message[]; nodes: StoryNode[]; groups: Group[]
+const MessageList = memo(function MessageList({ messages, nodes, groups, busy, onUndo }: {
+  messages: Message[]; nodes: StoryNode[]; groups: Group[]; busy: boolean; onUndo: (undo: ProductionUndo) => void
 }): React.JSX.Element {
   return (
     <>
       {messages.map((m, i) => {
+        if (m.undo) return (
+          <TimelineItem key={i} time={m.created_at} color="var(--text-faint)" label="元に戻す">
+            <p className="text-[12px]" style={{ color: 'var(--text-dim)' }}>{m.content}</p>
+            {!m.undo.undone && <button type="button" onClick={() => onUndo(m.undo!)} disabled={busy}
+              className="mt-1.5 rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-50"
+              style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+              data-tip="作業前のスナップショットへ戻します(ライブラリ全体の復元。戻す前の状態は「復元の前」として自動保存されます)">
+              この作業を元に戻す
+            </button>}
+          </TimelineItem>
+        )
+        if (m.undo_done) return (
+          <TimelineItem key={i} time={m.created_at} color="var(--accent)" label="元に戻す">
+            <Markdown text={m.content} />
+          </TimelineItem>
+        )
         if (m.role === 'user') return (
           <div key={i} className="mb-6 ml-auto w-fit max-w-[85%] rounded-lg border px-3 py-1.5 [overflow-wrap:anywhere]" style={{
             background: 'var(--accent-soft)', borderColor: 'var(--border)'
@@ -137,6 +157,12 @@ const MessageList = memo(function MessageList({ messages, nodes, groups }: {
                 <summary className="cursor-pointer">本文を表示({operation.scene.beat.length} 字)</summary>
                 <p className="mt-1.5 whitespace-pre-wrap break-words text-[12px] leading-relaxed" style={{ color: 'var(--text)' }}>{operation.scene.beat}</p>
               </details>}
+              {'inferred' in operation && operation.inferred && (operation.inferred.elapsed || operation.inferred.location) && <p className="mb-1 text-[11px]" style={{ color: 'var(--text-dim)' }}>
+                本文から推測して入れた設定: {[
+                  operation.inferred.elapsed && `経過「${operation.inferred.elapsed.label ?? ''}」(${operation.inferred.elapsed.evidence})`,
+                  operation.inferred.location && `場所「${operation.inferred.location.label ?? ''}」(${operation.inferred.location.evidence})`,
+                ].filter(Boolean).join('、')}
+              </p>}
               {operation.connection && <p className="mb-1 text-[11px]" style={{ color: 'var(--text-dim)' }}>
                 {operation.connection.mode === 'scene' ? '1シーンを移動' : '枝ごと親を変更'}: {operation.connection.old_parent_title || '接続なし'} → {operation.connection.parent_title || operation.connection.parent_id} の後
               </p>}
@@ -406,6 +432,20 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
     } finally { setSwitching(false) }
   }
 
+  /** 作業単位の取り消し。作業前のスナップショットへ戻し、ライブラリ切替と同じ作法で全体を読み直す */
+  const undoRun = useCallback((undo: ProductionUndo): void => {
+    if (!chatId || busy) return
+    if (!window.confirm(
+      `この作業の変更 ${undo.changes} 件を取り消し、作業前の状態に戻しますか?
+` +
+      '作業の後に手で直した分も戻ります。戻す前の状態は「復元の前」として自動保存されます。'
+    )) return
+    setError('')
+    productionApi.undo(chatId, undo.snapshot_id)
+      .then(() => window.location.reload())
+      .catch((e) => setError(String(e)))
+  }, [chatId, busy])
+
   /** text を渡すと入力欄の代わりにその文面を送る(候補のボタン用) */
   const send = (execute: boolean, text = input): void => {
     const message = text.trim()
@@ -496,6 +536,9 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
             if (event.snapshot) {
               const snapshot = event.snapshot
               setMessages((prev) => [...prev, { role: 'assistant', content: '作業前の状態を保存しました。', snapshot, created_at }])
+            }
+            if (event.undo) {
+              setMessages((prev) => [...prev, { role: 'assistant', content: event.notice ?? '', undo: event.undo, created_at }])
             }
             if (event.changed) {
               const operation = event.changed
@@ -618,7 +661,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
         {messages.length === 0 && !live && !busy && <p className="px-2 pb-2 pt-6 text-center text-[12px] leading-relaxed" style={{ color: 'var(--text-faint)' }}>
           全体の接続関係と資料庫のキャラクター・場所を参照できます。<br />相談するだけでは作品を変更しません。
         </p>}
-        <MessageList messages={messages} nodes={nodes} groups={groups} />
+        <MessageList messages={messages} nodes={nodes} groups={groups} busy={busy} onUndo={undoRun} />
         {live && <TimelineItem color="var(--text-dim)" label="制作" pulse><Markdown text={live} /></TimelineItem>}
         {/* 書いている途中の本文(未確定)。確定すると消え、同じ場所に操作の項目が入る */}
         <ProductionPreviewPanel nodes={nodes} />

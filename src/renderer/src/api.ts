@@ -1277,6 +1277,8 @@ export type ProductionOperation = ProductionOperationBase & ({
   node_id: string
   /** 確定した後のシーン(削除以外)。制作チャットで、確定した本文を折りたたんで見せるのに使う */
   scene?: { id: string; title: string | null; beat: string | null; cast: string[]; location: string | null }
+  /** 追加のときに LLM が指定しなかった経過・場所を、本文から推測して入れた分(根拠付き) */
+  inferred?: { elapsed?: { label: string | null; evidence: string }; location?: { label: string | null; evidence: string } }
 } | {
   action: 'create_character' | 'update_character' | 'delete_character' | 'create_place' | 'update_place' | 'delete_place' | 'create_setting_document' | 'update_setting_document' | 'create_chapter' | 'rename_chapter' | 'add_scenes_to_chapter'
   entity_type: 'character' | 'place' | 'setting_document' | 'chapter'
@@ -1337,7 +1339,13 @@ export interface ProductionEvent {
   /** done に付く終了理由と要約(実行時のみ)。completed / limit / stalled / empty / truncated */
   outcome?: string
   summary?: string | null
+  /** 作業の終わりに付く「元に戻せる」情報(実行で変更があったときだけ) */
+  undo?: ProductionUndo
+  /** undo に添える案内文(履歴の項目の本文) */
+  notice?: string
 }
+
+export interface ProductionUndo { snapshot_id: string; changes: number; undone: boolean }
 
 /** 読み取りの手順の記録(制作チャットの時系列に出す)。本文は含まない */
 export interface ProductionStep {
@@ -1373,6 +1381,10 @@ export const productionApi = {
   ),
   list: () => request<ChatSummary[]>('/production/chats'),
   status: () => request<{ active: boolean }>('/production/status'),
+  /** 制作の 1 回の作業を作業前のスナップショットへ戻す(ライブラリ全体の復元。成功したらリロードする) */
+  undo: (chat_id: string, snapshot_id: string) => request<{ restored: string; chat_id: string }>(
+    '/production/undo', { method: 'POST', body: JSON.stringify({ chat_id, snapshot_id }) }
+  ),
   /** 直前の応答に合わせた依頼候補(LLM が作る)。設定オフ・未起動・失敗・打ち切りは空配列で generated が false */
   suggest: (chat_id: string, signal?: AbortSignal) => request<{ suggestions: { label: string; text: string; execute: boolean }[]; generated: boolean }>(
     '/production/suggest', { method: 'POST', body: JSON.stringify({ chat_id }), signal }

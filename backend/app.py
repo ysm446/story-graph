@@ -36,6 +36,7 @@ import node_operations
 import node_clipboard
 import production_agent
 import production_suggest
+import production_undo
 import rendering
 import setting_documents
 import snapshots
@@ -2867,6 +2868,28 @@ async def production_suggest_post(body: ProductionSuggestIn) -> dict[str, Any]:
     finally:
         if _production_suggest_task is task:
             _production_suggest_task = None
+
+
+class ProductionUndoIn(BaseModel):
+    chat_id: str = Field(min_length=1, max_length=64)
+    snapshot_id: str = Field(min_length=1, max_length=64)
+
+
+@app.post("/production/undo")
+async def production_undo_run(body: ProductionUndoIn) -> dict[str, Any]:
+    """制作の 1 回の作業を作業前のスナップショットへ戻す(production_undo)。成功したらフロントはリロードする。"""
+    if production_agent.gate.active:
+        raise HTTPException(409, "制作中は元に戻せません。終了を待ってください")
+    try:
+        result = production_undo.undo(store, body.chat_id, body.snapshot_id)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+    except KeyError:
+        raise HTTPException(404, "snapshot not found")
+    except RuntimeError as e:
+        raise HTTPException(400, str(e))
+    _schedule_audio_gc()
+    return result
 
 
 @app.post("/production/send")

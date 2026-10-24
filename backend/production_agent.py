@@ -25,6 +25,8 @@ import production_library
 import production_chapters
 import production_continuity
 import production_guard
+import production_undo
+import production_report
 import auto_images
 from store import Store
 from generated_text import normalize_scene_text
@@ -324,7 +326,7 @@ def tools(allow_write: bool, memory: bool = True):
     }})
     scene = {
         "title": {"type": "string"},
-        "beat": {"type": "string", "description": "シーンの本文全文"},
+        "beat": {"type": "string", "description": "シーンの本文全文。長さと語り口は既存のシーンに揃える"},
         "cast": {"type": "array", "items": {"type": "string"}, "description": "既存キャラID"},
         "location": {"type": ["string", "null"], "description": "登録済み場所ID。nullで親から引継ぐ。省略時は維持"},
         "elapsed_unit": {"type": "string", "enum": [*story_clock.UNITS, "unset"],
@@ -499,6 +501,10 @@ async def apply_edit(store: Store, base_url: str, name: str, args: dict, before_
             policy.committed(name, node_id)
         result = {"action": name, "node_id": node_id,
                   "title": data.get("title", original.get("title")), "reason": args["reason"]}
+        if name in CREATE_SCENE_TOOLS:
+            inferred = await infer_scene_setting(store, base_url, node_id, args)
+            if inferred:
+                result["inferred"] = inferred
         if name == "reconnect_scene":
             result["connection"] = connection
         if name != "delete_scene":
@@ -511,6 +517,37 @@ async def apply_edit(store: Store, base_url: str, name: str, args: dict, before_
         return result
     finally:
         candidate_conn.close()
+
+
+async def infer_scene_setting(store, base_url, node_id, args):
+    """新しいシーンの経過・場所を、LLM が指定しなかったときだけ本文から推測して入れる。
+
+    制作の挿入では経過は「分かるときだけ」なので、ほぼ未設定で積まれていた(2026-10-25 レビュー)。
+    シーンタブの「推測」(generation.suggest_scene_setting)と同じ処理を確定の直後に掛ける。根拠が無ければ入れない。
+    失敗しても追加は成立しているので、推測だけを諦める。
+    """
+    node = store.get_node(node_id)
+    if node is None:
+        return {}
+    inferred = {}
+    pending = {}
+    if "elapsed_unit" not in args and story_clock.previous_scene(store, node_id):
+        pending["elapsed"] = None
+    if "location" not in args and node.get("location") is None and store.known_place_ids():
+        pending["location"] = None
+    for field in pending:
+        try:
+            found = await generation.suggest_scene_setting(store, base_url, node_id, node.get("beat") or "", field)
+        except Exception:  # noqa: BLE001 — 推測は補助。追加の成立に影響させない
+            continue
+        if not found.get("found"):
+            continue
+        if field == "elapsed":
+            store.update_node(node_id, {"elapsed_unit": found["elapsed_unit"], "elapsed_count": found["elapsed_count"]})
+        else:
+            store.update_node(node_id, {"location": found["location"]})
+        inferred[field] = {"label": found.get("label"), "evidence": found.get("evidence")}
+    return inferred
 
 
 def _patch_args(store, args):
@@ -608,6 +645,20 @@ CONSULT_RULES = (
 )
 
 
+def scene_length_hint(store):
+    """既存シーンの本文の長さの目安。制作が書く本文(beat)に長さの指針が無く、既存より極端に短い・長い
+    場面を積みやすい(2026-10-25 レビュー)。3 シーン未満なら目安を出さない。"""
+    lengths = sorted(len(r[0]) for r in store.conn.execute(
+        "SELECT beat FROM nodes WHERE kind IS NULL AND beat IS NOT NULL AND length(beat) > 0").fetchall())
+    if len(lengths) < 3:
+        return ""
+    def at(ratio):
+        return lengths[min(len(lengths) - 1, int(len(lengths) * ratio))]
+    return (f"\n既存シーンの本文の長さの目安: 中央値 {at(0.5)} 字(おおむね {at(0.25)}〜{at(0.75)} 字)。"
+            "新しいシーンや書き直しの本文もこの長さに揃え、既存の本文の語り口(人称・時制・文体・ト書きの有無)に合わせてください。"
+            "作者が長さや文体を指定したときはそれに従います。")
+
+
 def recent_reads(results):
     """次の判断に渡す取得結果。直近3件に加えて、最後に読んだ章の構成を残す。
 
@@ -629,6 +680,8 @@ def build_messages(store, history, message, execute, policy, previous_checkpoint
         system += ("実行記録にある変更はすでに確定しています。方針変更だけを理由に取り消してはいけません。"
                    "『ここまでの場面は残す』と指示されたら、追加済みの場面も含めて削除・統合・置き換えで失わせず、指定された残りの作業だけを進めてください。")
     system += chat_rules.prompt(store)
+    if execute:
+        system += scene_length_hint(store)
     system += production_memory.prompt(store, previous_checkpoint, allow_write=execute)
     system += "\n作者が画面で指定した変更条件（最優先）: " + policy.describe()
     system += cancelled_text
@@ -714,6 +767,7 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
              if m.get("instruction", {}).get("run_id") == run.id], report)
     try:
         yield _sse({"chat_id": chat_id, "run_id": run.id, "accepting_instructions": execute})
+        stale_before = production_report.stale_state(store) if execute else None
         if execute:
             snapshot = await snapshots.create_async(store, "制作: " + message[:60], kind="manual")
             history.append({"role": "assistant", "content": "作業前の状態を保存しました。", "snapshot": snapshot})
@@ -1097,6 +1151,20 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
                 store.save_chat_messages(chat_id, history)
                 yield _sse({"delta": notice})
                 yield _sse({"response_end": True})
+        if execute and changes and stale_before is not None:
+            # 清書・章のまとめが今回の作業で古くなったことを知らせる(production_report)
+            stale = production_report.stale_notice(store, stale_before)
+            if stale:
+                history.append({"role": "assistant", "content": stale, "stale_notice": True})
+                store.save_chat_messages(chat_id, history)
+                yield _sse({"delta": stale})
+                yield _sse({"response_end": True})
+        if execute and snapshot is not None and changes:
+            # 作業単位の取り消し(production_undo)。操作ごとの取り消しは持たない
+            offer = production_undo.offer(snapshot, len(changes))
+            history.append(offer)
+            store.save_chat_messages(chat_id, history)
+            yield _sse({"undo": offer["undo"], "notice": offer["content"]})
         # doneを送った後に届く途中指示を受け付けないよう、通知の前に閉じる。
         run.close()
         summary = ((production_guard.OUTCOME_LABELS[outcome] + f"（変更 {len(changes)} 件"
@@ -1116,7 +1184,8 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
     finally:
         run.close()  # 未反映の指示を「未反映のまま終了」にしてから記録する。
         if checkpoint_started:
-            report = next((m["content"] for m in reversed(history) if m.get("role") == "assistant" and not m.get("step") and not m.get("operation") and not m.get("snapshot") and not m.get("memory_revision") and not m.get("memory_review")), "")
+            report = next((m["content"] for m in reversed(history) if m.get("role") == "assistant" and not m.get("step") and not m.get("operation") and not m.get("snapshot") and not m.get("memory_revision") and not m.get("memory_review")
+                           and not m.get("undo") and not m.get("stale_notice")), "")
             save_checkpoint(outcome, report)
         request_message["policy_after"] = policy.spec()
         if gate.run is run:
