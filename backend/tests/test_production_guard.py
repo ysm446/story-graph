@@ -287,6 +287,8 @@ def test_patch_is_not_subject_to_rewrite_guard(store, monkeypatch):
 def test_cancelled_target_from_instruction_is_rejected(store, monkeypatch):
     reconciled = []
     async def chat_json(messages, **kwargs):
+        if kwargs.get("label") == "制作の計画":
+            return {"needs_plan": False, "steps": [], "note": ""}
         reconciled.append(messages)
         return {"cancelled_node_ids": ["first", "unknown"], "remaining": "帰還だけに約束の描写を足す"}
     monkeypatch.setattr(llm, "chat_json", chat_json)

@@ -6,7 +6,7 @@ import ProductionPreviewPanel from './ProductionPreviewPanel'
 import AutoTextarea from './AutoTextarea'
 import { useInputHistory } from './useInputHistory'
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { chatApi, isAbortError, productionApi, type ChatSummary, type ProductionInstruction, type ProductionPolicy, type ProductionOperation, type ProductionSelectedNode, type ProductionStep, type ProductionUndo } from './api'
+import { chatApi, isAbortError, productionApi, type ChatSummary, type ProductionInstruction, type ProductionPolicy, type ProductionOperation, type ProductionSelectedNode, type ProductionPlan, type ProductionStep, type ProductionUndo } from './api'
 import { Markdown } from './Markdown'
 import { showStatusNotice } from './statusNotice'
 import { setProductionPreview } from './productionPreview'
@@ -41,13 +41,15 @@ interface Message {
   undo?: ProductionUndo
   /** 取り消しを実行した記録 */
   undo_done?: boolean
+  /** 実行の前に決めた手順 */
+  plan?: ProductionPlan
 }
 
 const operationLabels = { insert_scene: '追加', branch_scene: '分岐を追加', update_scene: '編集', delete_scene: '削除', reconnect_scene: 'つなぎ替え',
   create_character: 'キャラクター登録', update_character: 'キャラクター編集', delete_character: 'キャラクター削除',
   create_place: '場所登録', update_place: '場所編集', delete_place: '場所削除',
   create_setting_document: '設定資料作成', update_setting_document: '設定資料編集',
-  create_chapter: '章を作成', rename_chapter: '章名を変更', add_scenes_to_chapter: '章にシーンを追加' }
+  create_chapter: '章を作成', rename_chapter: '章名を変更', add_scenes_to_chapter: '章にシーンを追加', remove_scenes_from_chapter: '章からシーンを外す', delete_chapter: '章を解除' }
 const libraryFieldLabels: Record<string, string> = {
   name: '名前', profile: 'プロフィール', appearance: '外見', voice: '口調', reading: '読み', color: '色',
   description: '説明', atmosphere: '雰囲気', title: 'タイトル', node_ids: '所属シーンID'
@@ -103,6 +105,14 @@ const MessageList = memo(function MessageList({ messages, nodes, groups, busy, o
               data-tip="作業前のスナップショットへ戻します(ライブラリ全体の復元。戻す前の状態は「復元の前」として自動保存されます)">
               この作業を元に戻す
             </button>}
+          </TimelineItem>
+        )
+        if (m.plan) return (
+          <TimelineItem key={i} time={m.created_at} color="var(--accent)" label="計画">
+            <ol className="mt-1 list-decimal space-y-0.5 pl-5 text-[12px]" style={{ color: 'var(--text)' }}>
+              {m.plan.steps.map((step, index) => <li key={index} className="[overflow-wrap:anywhere]">{step.summary}</li>)}
+            </ol>
+            {m.plan.note && <p className="mt-1 text-[11px]" style={{ color: 'var(--text-dim)' }}>{m.plan.note}</p>}
           </TimelineItem>
         )
         if (m.undo_done) return (
@@ -539,6 +549,9 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
             }
             if (event.undo) {
               setMessages((prev) => [...prev, { role: 'assistant', content: event.notice ?? '', undo: event.undo, created_at }])
+            }
+            if (event.plan) {
+              setMessages((prev) => [...prev, { role: 'assistant', content: event.notice ?? '', plan: event.plan, created_at }])
             }
             if (event.changed) {
               const operation = event.changed

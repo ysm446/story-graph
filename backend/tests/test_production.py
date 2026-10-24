@@ -1666,3 +1666,44 @@ def test_stale_render_notice_after_run(store, monkeypatch):
     assert "1 件" in notice and "「出発」" in notice and "帰還" not in notice
     chat = store.get_chat(events[0]["chat_id"])
     assert any(m.get("stale_notice") for m in chat["messages"])
+
+
+def test_plan_is_made_before_execution_and_widens_the_step_budget(store, monkeypatch):
+    import production_plan
+    fake_extraction(monkeypatch)
+    plan_steps = [{"summary": f"シーン {i} を追加", "target_ids": ["first"]} for i in range(10)]
+    seen = {}
+    async def chat_json(messages, **kwargs):
+        if kwargs.get("label") != "制作の計画":
+            raise RuntimeError("推測は無し")
+        seen["user"] = messages[1]["content"]
+        return {"needs_plan": True, "steps": plan_steps, "note": "文体は既存に合わせる"}
+    monkeypatch.setattr(llm, "chat_json", chat_json)
+    args = {"after_id": "first", "title": "葛藤", "beat": "約束を思い出す", "cast": ["aya"], "reason": "補強"}
+    prompts = []
+    responses = iter([call("insert_scene", args), {"content": "終えました"}])
+    async def stream(messages, **kwargs):
+        prompts.append(messages)
+        item = next(responses)
+        if item.get("content"):
+            yield "content", item["content"]
+        yield "done", item
+    monkeypatch.setattr(llm, "chat_stream_tools", stream)
+    events = run(collect(store, True))
+    plan_event = next(e for e in events if "plan" in e)
+    assert len(plan_event["plan"]["steps"]) == 10 and "10 手順" in plan_event["notice"]
+    # 計画係には依頼と作品の構成が渡る。毎ステップの system に計画が入り、上限は 4 + 2×10 = 24 に広がる
+    assert "動機を補強して" in seen["user"] and '"id": "first"' in seen["user"]
+    assert all("今回の計画" in p[0]["content"] and "1. シーン 0 を追加(対象: first)" in p[0]["content"] for p in prompts)
+    assert any("/24)" in e.get("stage", "") for e in events)
+    saved = store.get_chat(events[0]["chat_id"])["messages"]
+    assert any(m.get("plan") for m in saved)
+    # 計画の項目は LLM へ渡す会話には入れない(system に入れる)
+    assert not any("計画を立てました" in m["content"] for p in prompts for m in p[1:])
+    # 相談では計画を立てない。計画係が needs_plan=false なら従来の 16
+    async def no_plan(messages, **kwargs):
+        return {"needs_plan": False, "steps": [], "note": ""}
+    monkeypatch.setattr(llm, "chat_json", no_plan)
+    fake_llm(monkeypatch, [{"content": "回答"}])
+    assert not any("plan" in e for e in run(collect(store, False)))
+    assert production_plan.step_budget(None) == 16

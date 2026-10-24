@@ -358,3 +358,65 @@ def test_stream_permissions_history_and_snapshot(store, monkeypatch, execute):
     else:
         assert not any("tool_error" in event for event in events)
         assert sum("相談モード" in event.get("delta", "") for event in events) == 1
+
+
+def test_empty_chapter_can_be_placed_after_a_scene(store, monkeypatch):
+    import node_operations
+    async def continuity_ok(*args):
+        pass
+    monkeypatch.setattr(production.production_continuity, "check", continuity_ok)
+    async def extract(candidate, base_url, node_id):
+        candidate.replace_events(node_id, [])
+    monkeypatch.setattr(generation, "extract_events", extract)
+    async def no_suggestion(*args, **kwargs):
+        return {"found": False}
+    monkeypatch.setattr(generation, "suggest_scene_setting", no_suggestion)
+    # after_id で空の章を物語の途中に挟む: first → in → out → last。正史が章を通る
+    created = edit(store, "create_chapter", title="森の夜", node_ids=[], after_id="first")
+    assert created["after_id"] == "first"
+    assert store.parent_of(created["in_id"]) == "first" and store.parent_of(created["out_id"]) == created["in_id"]
+    assert store.parent_of("last") == created["out_id"]
+    node_operations._check_connections(store.graph())
+    assert store.canon_path() == ["first", "last"]
+    # 入口の後ろに入れたシーンは章の中で正史に乗る
+    scene = edit(store, "insert_scene", after_id=created["in_id"], title="焚き火", beat="森で火を起こす", cast=["aya"])
+    assert store.get_node(scene["node_id"])["group_id"] == created["entity_id"]
+    assert store.canon_path() == ["first", scene["node_id"], "last"]
+    # 章の中のシーンの後ろには置けない。前の章の出口の後ろなら置ける
+    with pytest.raises(ValueError, match="章の中のシーン"):
+        edit(store, "create_chapter", title="無理", node_ids=[], after_id=scene["node_id"])
+    second = edit(store, "create_chapter", title="次の章", node_ids=[], after_id=created["out_id"])
+    assert store.parent_of(second["in_id"]) == created["out_id"] and store.parent_of("last") == second["out_id"]
+    # 既存シーンをまとめる章には after_id を付けない
+    with pytest.raises(ValueError, match="空の章"):
+        edit(store, "create_chapter", title="混在", node_ids=["last"], after_id="first")
+    with pytest.raises(ValueError, match="ありません"):
+        edit(store, "create_chapter", title="迷子", node_ids=[], after_id="missing")
+
+
+def test_chapter_remove_scenes_and_delete_chapter(store):
+    import node_operations
+    created = edit(store, "create_chapter", title="旅", node_ids=["first", "last"])
+    chapter_id = created["entity_id"]
+    with pytest.raises(ValueError, match="通常のシーン"):
+        edit(store, "remove_scenes_from_chapter", chapter_id=chapter_id, node_ids=["missing"])
+    removed = edit(store, "remove_scenes_from_chapter", chapter_id=chapter_id, node_ids=["last"])
+    assert removed["action"] == "remove_scenes_from_chapter"
+    assert store.get_node("last")["group_id"] is None and store.get_node("first")["group_id"] == chapter_id
+    assert store.canon_path() == ["first", "last"]
+    with pytest.raises(ValueError, match="属していない"):
+        edit(store, "remove_scenes_from_chapter", chapter_id=chapter_id, node_ids=["last"])
+    deleted = edit(store, "delete_chapter", chapter_id=chapter_id)
+    assert deleted["action"] == "delete_chapter" and deleted["title"] == "旅"
+    assert not store.list_groups()
+    assert store.get_node("first")["group_id"] is None and store.get_node("first")["beat"] == "出発"
+    assert store.canon_path() == ["first", "last"]
+    node_operations._check_connections(store.graph())
+    with pytest.raises(ValueError, match="指定した章がありません"):
+        edit(store, "delete_chapter", chapter_id=chapter_id)
+    # 保護されたシーンが属する章は解除できない(所属が変わる)
+    other = edit(store, "create_chapter", title="守", node_ids=["first"])
+    policy = ProductionPolicy(store, protected_ids=["first"])
+    with pytest.raises(ValueError):
+        asyncio.run(production.apply_edit(store, "fake", "delete_chapter", {"chapter_id": other["entity_id"], "reason": "x"}, policy=policy))
+    assert store.get_node("first")["group_id"] == other["entity_id"]

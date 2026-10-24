@@ -27,6 +27,7 @@ import production_continuity
 import production_guard
 import production_undo
 import production_report
+import production_plan
 import auto_images
 from store import Store
 from generated_text import normalize_scene_text
@@ -314,10 +315,8 @@ def tools(allow_write: bool, memory: bool = True):
         }})
     result.append({"type": "function", "function": {
         "name": "generate_images",
-        "description": "人物・場所の画像やシーンの挿絵を描く予約をする。作者が画像を頼んだときだけ使う。人物は外見から参照画像(全身)とプロフィール画像(顔)、"
-                       "場所は説明から全景、シーンは本文・登場人物・場所から場面の挿絵(参照画像のある人物を手本にする)を描く。"
-                       "実際に描くのは今回の作業の終わり(1件 15〜60 秒)で、予約の結果はすぐには返らない。"
-                       "画像がある資料・シーンでも頼まれたら描き直す(前の画像はストックに残る)。外見(説明・本文)が空だと描けないので、先に補う。",
+        "description": "人物・場所の画像やシーンの挿絵を描く予約。作者が画像を頼んだときだけ使う。人物は外見から、場所は説明から、シーンは本文から描く。"
+                       "描くのは今回の作業の終わりで、結果はすぐには返らない。画像がある対象も頼まれたら描き直す。外見・説明が空だと描けないので先に補う。",
         "parameters": {"type": "object", "properties": {
             "kind": {"type": "string", "enum": [*auto_images.KINDS], "description": "character(人物)/ place(場所)/ scene(シーンの挿絵)"},
             "ids": {"type": "array", "items": {"type": "string"}, "description": "read_libraryで確認した資料のID、またはシーンのID(node_id)"},
@@ -330,26 +329,25 @@ def tools(allow_write: bool, memory: bool = True):
         "cast": {"type": "array", "items": {"type": "string"}, "description": "既存キャラID"},
         "location": {"type": ["string", "null"], "description": "登録済み場所ID。nullで親から引継ぐ。省略時は維持"},
         "elapsed_unit": {"type": "string", "enum": [*story_clock.UNITS, "unset"],
-                         "description": "前のシーンからの経過。" + story_clock.UNIT_HELP + "。unsetで未設定に戻す。省略時は維持(新規は未設定)。"
-                                        "本文や依頼から経過が分かるときだけ指定し、推測では入れない"},
+                         "description": "前のシーンからの経過(immediate=直後 / same_day=同じ日 / hour / day / week / month / year。unset=未設定)。本文や依頼から分かるときだけ指定し、省略時は維持"},
         "elapsed_count": {"type": "integer", "description": "elapsed_unitがhour/day/week/month/yearのときの数(1以上。省略時は1)"},
     }
     for name, description, properties, required in [
-        ("insert_scene", "既存ルートの途中への挿入、または枝の末尾を延長する。後続があればその間に入り、正史上では正史が変わる。別ルート・分岐の新規作成には使わずbranch_sceneを使う。",
+        ("insert_scene", "after_idの直後にシーンを挿入する(後続があればその間に入る)。別ルートの新規作成はbranch_scene。",
          {"after_id": {"type": "string"}, **scene}, ["after_id", "title", "beat", "cast"]),
-        ("branch_scene", "指定地点から新しい別ルートの先頭シーンを作る。after_idは分岐元のID。既存の後続・正史・結末を変更しない。枝の続きを作るときは返された新規IDの後ろにinsert_sceneで追加する。",
+        ("branch_scene", "after_id(分岐元)から別ルートの先頭シーンを作る。既存の後続・正史は変えない。枝の続きは返された新規IDの後ろへinsert_scene。",
          {"after_id": {"type": "string"}, **scene}, ["after_id", "title", "beat", "cast"]),
-        ("update_scene", "構成や文章全体の書き直しが必要な場合に本文を全文置換する。追記や一部の修正にはpatch_sceneを優先する。title/cast省略時は維持する。",
+        ("update_scene", "本文の全文置換(構成や文章全体の書き直し)。追記や一部の修正はpatch_sceneを優先。title/cast省略時は維持。",
          {"node_id": {"type": "string"}, **scene,
-          "rewrite": {"type": "boolean", "description": "元の本文の大半を意図して書き直すときだけtrue。省略時は既存の内容を保つ修正として検証し、元の文の半分以上が失われる置換は保存されない"}},
+          "rewrite": {"type": "boolean", "description": "元の本文の大半を意図して書き直すときだけtrue。無いと、元の文の半分以上が失われる置換は保存されない"}},
          ["node_id", "beat"]),
-        ("patch_scene", "本文の指定箇所だけを編集し、他の文章・タイトル・登場人物・場所を保持する。appendは末尾にtextをそのまま追記。replaceは本文中に1か所だけ存在するold_textをtextに置換（textが空ならその箇所を削除）。先にget_beatsで原文を読み、置換元を正確にコピーする。",
+        ("patch_scene", "本文の一部だけを編集する。append=末尾にtextを追記、replace=本文中に1か所だけあるold_textをtextに置換(textが空なら削除)。先にget_beatsで原文を読み、置換元を正確に写す。",
          {"node_id": {"type": "string"}, "mode": {"type": "string", "enum": ["append", "replace"]},
           "old_text": {"type": "string", "description": "replaceで必須。本文の一意な連続部分。appendでは指定しない。"},
           "text": {"type": "string", "description": "追加または置換する部分だけ。必要な改行・句読点も含める。全文を送らない。"}}, ["node_id", "mode", "text"]),
         ("delete_scene", "指定シーンのみを削除し、親と子を直結する。子孫は削除しない。マーカーは削除不可。",
          {"node_id": {"type": "string"}}, ["node_id"]),
-        ("reconnect_scene", "既存シーンを移動する。mode=sceneは1シーンだけ取り出し旧前後を直結してparent_idの直後へ挿入。mode=branchはその先の枝ごと親を付け替える（移動先の既存の子はそのまま）。本文・イベントは保持。",
+        ("reconnect_scene", "既存シーンを移動する。scene=1シーンだけ取り出し旧前後を直結してparent_idの直後へ、branch=その先の枝ごと親を付け替える。本文・イベントは保持。",
          {"node_id": {"type": "string"}, "parent_id": {"type": "string"},
           "mode": {"type": "string", "enum": ["scene", "branch"]}}, ["node_id", "parent_id", "mode"]),
     ]:
@@ -593,43 +591,36 @@ EXECUTE_RULES = (
     "現在は実行モードです。作者が対象と変更内容を指定して編集を依頼した場合、その範囲の実行は許可済みです。"
     "途中指示による対象・内容の変更も同じ扱いです。必要な情報を読んだら編集ツールで反映し、『実行してよいですか』と再承認を求めて終了しないでください。"
     "ただし実行モードでも、質問・相談だけの発言は編集許可ではありません。対象や変更内容が特定できない場合、明示的な確認待ちの指示がある場合は質問して待ってください。"
+    "『この案で進めて』などの実行依頼では、直前の会話で提示した変更案を参照し、その範囲だけを実施してください。案が特定できなければ確認してください。"
     "一度にツールは1つ。編集前に対象と前後の本文を読んでください。"
     "場面の追加では前後の出来事の成立順を確認し、後で初めて起きる出来事を前提にした場面を先に入れないでください。"
-    "追記や一部分の訂正・削除はpatch_sceneを優先し、既存本文を全文書き直さないでください。"
     "作者が追加・置換する文章を明示した場合は、その文章をそのまま使い、理由や新設定を補わないでください。"
-    "編集ツールが返すscene.beatは保存後の本文です。依頼が反映されていれば完了を報告し、同じ追記・置換・削除を再実行しないでください。"
-    "「ここから分岐」「別ルート」「正史を残して別展開」の依頼ではbranch_sceneで枝の先頭を作ってください。"
-    "insert_sceneを正史の分岐元に使うと正史の間へ割り込むため、分岐作成の代用にはできません。"
-    "枝の続きは作成した枝の末尾IDをafter_idにしてinsert_sceneで延長し、元の分岐元へ繰り返し挿入しないでください。"
     "追記・補強では既存の出来事や約束を維持してください。依頼にない証拠・秘密・人物設定を新たに確定したり、既存の約束と矛盾する制限を加えたりしないでください。"
+    "「ここから分岐」「別ルート」「正史を残して別展開」の依頼ではbranch_sceneで枝の先頭を作り、枝の続きはその末尾IDの後ろへinsert_sceneで延長してください。"
     "既存シーンを複数に分割するときは、先にpatch_sceneまたはupdate_sceneで元のシーンを前半だけに縮め、"
     "その結果のprevious_beatに残る続きの本文を、縮めたシーンの後ろへinsert_sceneで1場面ずつ追加してください。"
-    "元のシーンに同じ本文が残ったまま後半を追加すると、前後照合で重複として拒否されます。"
-    "質問・意見を求められただけなら編集しないで回答してください。"
-    "『この案で進めて』などの実行依頼では、直前の会話で提示した変更案を参照し、その範囲だけを実施してください。案が特定できなければ確認してください。"
     "変更は短い理由を添え、目的を達成したら通常の文章で報告して終了してください。"
-    "通常の文章だけを返すと今回の制作は終了します。終了報告では実行記録にある確定済みの変更と未実施の作業を区別してください。"
-    "未実施の作業を『次は編集します』『このまま続けます』と進行中のように告げて終了しないでください。必要な作業が残るならツールで続け、進められない場合は残件と理由を報告してください。"
+    "通常の文章だけを返すと今回の制作は終了します。終了報告では実行記録にある確定済みの変更と未実施の作業を区別し、"
+    "未実施の作業を『次は編集します』と進行中のように告げて終了しないでください。必要な作業が残るならツールで続け、進められない場合は残件と理由を報告してください。"
     "資料庫のキャラクター・場所はread_libraryで一覧と詳細を確認し、新規登録・編集・削除できます。"
     "作者が言う『キャラクターの設定』『人物の設定』『場所の設定』(プロフィール・外見・口調・説明・雰囲気)はupdate_character / update_placeで編集します。"
     "設定資料は世界観・制度・文化・用語などの文書であり、人物や場所そのものの設定を書く場所ではありません。人物名・場所名の設定資料を新しく作らないでください。"
-    "章はread_chaptersで所属と入口・出口を確認し、create_chapterで作成、rename_chapterで改名、add_scenes_to_chapterで指定シーンを追加できます。"
-    "章立ての依頼には実際に章を作ってください。空の章を作ったら返されたin_idをinsert_sceneのafter_idに使って中身を作れます。"
     "設定資料はsearch_setting_documentsで探し、read_setting_documentで全文とrevisionを読んでから編集します。"
-    "create_setting_documentで新規作成、update_setting_documentで指定項目を更新できます。"
     "新規資料は構想(draft)・必要に応じて検索(search)が既定です。作者の明示指示なしに確定設定へ変更せず、AI参照方法も維持してください。"
     "既存設定は省略で維持し、作者が頼んでいない項目は変更しません。物語中の変化や記憶は固定プロフィールに混ぜません。"
-    "資料の登録・編集では、作者が明記した各項目を対応する引数へ漏れなく入れてください。場所の説明の引数はplace_description（保存結果ではdescription）、雰囲気はatmosphereです。"
-    "操作結果のafterを依頼された項目と照合し、抜けた設定があればupdateで補ってから完了を報告してください。"
+    "資料の登録・編集では、作者が明記した各項目を対応する引数へ漏れなく入れ、操作結果のafterと照合して抜けがあればupdateで補ってから完了を報告してください。"
     "新しい人物・場所をシーンに使うときは先に資料庫へ登録し、返されたIDをcast/locationに指定してください。"
-    "このアプリは人物・場所の画像とシーンの挿絵をComfyUIで描けます。『画像を生成する機能は無い』と答えないでください。"
-    "作者が人物・場所の画像を頼んだらread_libraryでIDを確かめて、シーンの挿絵を頼んだらそのシーンのIDで、generate_imagesで予約してください(今回の作業の終わりに描かれます)。"
+    "章はread_chaptersで所属と入口・出口を確認し、create_chapterで作成、rename_chapterで改名、add_scenes_to_chapterで指定シーンを追加、"
+    "remove_scenes_from_chapterで章から外し、delete_chapterで章を解除(シーンは残る)できます。"
+    "章立ての依頼には実際に章を作ってください。新しい章を物語の途中に置くときはcreate_chapterのafter_idにその位置(章の外のシーン、または直前の章のout_id)を指定し、"
+    "返されたin_idをinsert_sceneのafter_idに使って中身を順に作ります。after_idを省いた空の章はどこにもつながりません。"
+    "このアプリは人物・場所の画像とシーンの挿絵をComfyUIで描けます(『画像を生成する機能は無い』と答えない)。"
+    "作者が画像を頼んだら、人物・場所はread_libraryで、シーンはそのIDで確かめてgenerate_imagesで予約してください(今回の作業の終わりに描かれます)。"
     "対象が資料庫に無ければ、依頼や本文から外見・説明を書いて先に登録し、そのIDで予約します。頼まれていない画像は予約しません。"
     "使用中の資料の削除が拒否されたら、参照や会話を勝手に消して回避せず作者へ報告してください。"
     "派閥・画像・音声の編集には未対応です。マーカーは変更しません。"
-    "ツール結果と最新の接続図を使い、同じ変更を繰り返さないでください。"
     "作者の途中指示は当初の依頼より優先し、変更済みの内容も踏まえて計画を調整してください。"
-    "同じ取得・同じエラー・適用済みの変更を繰り返すと作業は自動で停止します。保存済みの結果は実行記録とツール結果にあります。"
+    "同じ取得・同じエラー・適用済みの変更の繰り返しはアプリが止めます。保存済みの結果は実行記録とツール結果にあります。"
     "\n今回は編集が許可されています。"
 )
 CONSULT_RULES = (
@@ -673,7 +664,7 @@ def recent_reads(results):
 
 
 def build_messages(store, history, message, execute, policy, previous_checkpoint, changes, recent_results, run_id=None, selection=None,
-                   cancelled_text="", notes=()):
+                   cancelled_text="", notes=(), plan=None):
     system = (chat_agent.build_system(store, store.canon_path(), "all", production=True) + "\n" + EXECUTE_RULES
               if execute else chat_agent.build_system(store, store.canon_path(), "all") + CONSULT_RULES)
     if any(m.get("instruction", {}).get("run_id") == run_id and m.get("instruction", {}).get("status") == "reflected" for m in history):
@@ -685,6 +676,7 @@ def build_messages(store, history, message, execute, policy, previous_checkpoint
     system += production_memory.prompt(store, previous_checkpoint, allow_write=execute)
     system += "\n作者が画面で指定した変更条件（最優先）: " + policy.describe()
     system += cancelled_text
+    system += production_plan.prompt_text(plan)
     system += ("\n『今選択しているノード』『このシーン』は、その発言に添付された送信時の選択を参照します。"
                "選択は後から変わりません。本文はget_beatsで読み直し、選択だけを編集命令と見なさないでください。"
                "選択なしで対象が不明なら推測せず確認し、複数選択で単数の対象が曖昧な場合も確認してください。"
@@ -693,7 +685,7 @@ def build_messages(store, history, message, execute, policy, previous_checkpoint
     # step は読み取りの手順の記録(画面の時系列用)。LLM へ渡す会話には入れない。
     conversation = [{"role": m["role"], "content": message_content(m)} for m in history
                     if m.get("role") in ("user", "assistant") and not m.get("operation") and not m.get("snapshot")
-                    and not m.get("step")
+                    and not m.get("step") and not m.get("plan") and not m.get("undo") and not m.get("stale_notice")
                     and m.get("instruction", {}).get("status") != "unapplied"][-12:]
     messages = [{"role": "system", "content": system}, *conversation]
     messages.append({"role": "user", "content": "今回の依頼: " + message + selection_context(selection or []) + "\n今回の実行記録: "
@@ -706,11 +698,8 @@ def build_messages(store, history, message, execute, policy, previous_checkpoint
                      + json.dumps(recent_reads(recent_results), ensure_ascii=False)})
     if execute:
         messages[-1]["content"] += (
-            "\n次の判断: まず最新の本文・保存結果と途中指示を照合してください。"
-            "依頼された変更がすでに反映されていれば、ツールを呼ばず完了を報告してください。"
-            "実行記録は予定ではなく保存済みです。完了後の言い換え・強調・重複追記は不要です。"
-            "未反映の明確な編集依頼だけをツールで実行し、再承認は求めません。"
-            "対象や変更内容が不明、質問だけ、または作者が確認待ちを指定した場合は編集せず回答・確認してください。"
+            "\n次の判断: 最新の本文・実行記録(保存済み)・途中指示を照合し、依頼された変更がすでに反映されていればツールを呼ばず完了を報告してください。"
+            "完了後の言い換え・強調・重複追記は不要です。未反映の明確な編集依頼だけをツールで実行してください。"
         )
     if notes:
         messages[-1]["content"] += "\n制作ハーネスからの注記（保存結果の点検）: " + json.dumps(list(notes), ensure_ascii=False)
@@ -776,10 +765,23 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
         if execute:
             save_checkpoint("running")
             checkpoint_started = True
+        plan = None
+        if execute:
+            # 実行の前に手順を決めて固定する(production_plan)。小さい依頼・質問は計画なし。
+            # 手動編集の受付より前に、作業前の保存と同じ状態で決める
+            yield _sse({"stage": "依頼を手順に分けています…"})
+            plan = await production_plan.make(store, base_url, message_content(request_message), history[:-1],
+                                              selection=selection, policy_label=policy.label)
+            if plan:
+                item = production_plan.history_item(plan)
+                history.append(item)
+                store.save_chat_messages(chat_id, history)
+                yield _sse({"plan": plan, "notice": item["content"]})
+        step_limit = production_plan.step_budget(plan)
         run.ready = True
         yield _sse({"manual_edit_ready": execute})
         previous_epoch = run.epoch
-        for step in range(MAX_STEPS):
+        for step in range(step_limit):
             if run.paused or run.epoch != previous_epoch:
                 recent_results.clear()
             while run.paused:
@@ -811,10 +813,10 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
                     continue
             messages = build_messages(store, history, message, execute, policy, previous_checkpoint,
                                       changes, recent_results, run.id, selection=selection,
-                                      cancelled_text=monitor.cancelled_prompt(), notes=monitor.take_notes())
+                                      cancelled_text=monitor.cancelled_prompt(), notes=monitor.take_notes(), plan=plan)
             steps_used = step + 1
             yield _sse({"usage": await context_usage(store, base_url, messages, execute)})
-            yield _sse({"stage": f"確認しています… ({step + 1}/{MAX_STEPS})"})
+            yield _sse({"stage": f"確認しています… ({step + 1}/{step_limit})"})
             result: dict[str, Any] = {}
             last_preview_at = 0.0
             async for kind, value in llm.chat_stream_tools(
@@ -1091,7 +1093,7 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
             try:
                 closing_messages = build_messages(store, history, message, execute, policy, previous_checkpoint,
                                                   changes, recent_results, run.id, selection=selection,
-                                                  cancelled_text=monitor.cancelled_prompt(), notes=[closing_note])
+                                                  cancelled_text=monitor.cancelled_prompt(), notes=[closing_note], plan=plan)
                 closing_text = ""
                 # ツール呼び出しを文字列で書いてしまう応答を画面に流さないよう、まとめは溜めてから出す。
                 async for kind, value in llm.chat_stream_tools(
@@ -1185,7 +1187,7 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
         run.close()  # 未反映の指示を「未反映のまま終了」にしてから記録する。
         if checkpoint_started:
             report = next((m["content"] for m in reversed(history) if m.get("role") == "assistant" and not m.get("step") and not m.get("operation") and not m.get("snapshot") and not m.get("memory_revision") and not m.get("memory_review")
-                           and not m.get("undo") and not m.get("stale_notice")), "")
+                           and not m.get("undo") and not m.get("stale_notice") and not m.get("plan")), "")
             save_checkpoint(outcome, report)
         request_message["policy_after"] = policy.spec()
         if gate.run is run:

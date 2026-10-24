@@ -11,14 +11,14 @@ FIELDS = {
     "place": ("name", "description", "atmosphere", "reading", "color"),
 }
 FIELD_DESCRIPTIONS = {
-    "name": "資料の名前。作者が指定した表記を使う。",
-    "profile": "人物のプロフィール・役割・背景。作者が指定した設定。",
-    "appearance": "人物の外見。髪・服装など、作者が指定した設定。",
-    "voice": "人物の口調・一人称。音声モデルの指定ではない。",
-    "description": "場所の説明・造り・地形などの固定設定。『説明は〜』という依頼はこの項目に保存する。保存結果のdescriptionに対応する。",
-    "atmosphere": "場所の雰囲気・空気感。説明(place_description)とは別項目。",
-    "reading": "名前の読み。読み上げに使う。",
-    "color": "表示色。#RRGGBB形式。",
+    "name": "資料の名前(作者の表記)",
+    "profile": "人物のプロフィール・役割・背景",
+    "appearance": "人物の外見(髪・服装など)",
+    "voice": "人物の口調・一人称",
+    "description": "場所の説明・造り・地形。『説明は〜』はここ(保存結果のdescription)",
+    "atmosphere": "場所の雰囲気・空気感(説明とは別)",
+    "reading": "名前の読み",
+    "color": "表示色 #RRGGBB",
 }
 WRITE_TOOLS = {f"{action}_{kind}" for kind in FIELDS for action in ("create", "update", "delete")} | production_settings.WRITE_TOOLS
 
@@ -26,7 +26,7 @@ WRITE_TOOLS = {f"{action}_{kind}" for kind in FIELDS for action in ("create", "u
 def tools(allow_write):
     result = [{"type": "function", "function": {
         "name": "read_library",
-        "description": "資料庫のキャラクター・場所の固定設定と参照先を読む。ID省略は一覧、指定時は設定全文と使用先。編集・削除前に必ず読む。",
+        "description": "資料庫のキャラクター・場所の固定設定と使用先を読む。ID省略で一覧。編集・削除前に読む。",
         "parameters": {"type": "object", "properties": {
             "kind": {"type": "string", "enum": ["character", "place"]},
             "id": {"type": "string", "description": "資料のID。省略すると一覧"},
@@ -50,9 +50,9 @@ def tools(allow_write):
                 if action == "create":
                     required.append("name")
             description = {
-                "create": f"{label}を資料庫に新規登録する。同名は重複登録不可。返されたIDをシーンに使う。",
-                "update": f"{label}の固定設定を編集する。作者が『{label}の設定を更新』と言うものはこれ(設定資料ではない)。指定した項目だけ更新し、省略項目は維持。空文字で項目を消去する。物語中の出来事・記憶はここに書かない。",
-                "delete": f"{label}を資料庫から削除する。シーン・イベント・記憶などから使用中の資料は削除不可。参照を勝手に消さず作者へ報告する。",
+                "create": f"{label}を資料庫に新規登録する(同名は不可)。返されたIDをシーンに使う。",
+                "update": f"{label}の固定設定を編集する(『{label}の設定を更新』はこれ。設定資料ではない)。指定項目だけ更新、省略は維持、空文字で消去。物語中の出来事・記憶は書かない。",
+                "delete": f"{label}を資料庫から削除する。使用中の資料は削除不可(参照を勝手に消さず報告)。",
             }[action]
             result.append({"type": "function", "function": {
                 "name": f"{action}_{kind}", "description": description,

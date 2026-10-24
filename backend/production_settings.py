@@ -6,25 +6,24 @@ WRITE_TOOLS = {"create_setting_document", "update_setting_document"}
 
 def tools():
     fields = {
-        "title": {"type": "string", "description": "設定資料のタイトル"},
-        "body": {"type": "string", "description": "Markdown本文。更新時は全文。指定外の内容を維持する"},
-        "category": {"type": "string", "description": "分類（社会情勢・制度・文化など）"},
-        "scope": {"type": "string", "description": "適用範囲・物語内の時点。自由記述"},
-        "status": {"type": "string", "enum": ["draft", "confirmed", "reference"], "description": "既定はdraft（構想）。confirmedへの変更は作者の明示指示時のみ"},
-        "ai_mode": {"type": "string", "enum": ["search", "always", "never"], "description": "既定はsearch。作者が指定した場合のみ変更"},
-        "reason": {"type": "string", "description": "作者の依頼に対する変更理由"},
+        "title": {"type": "string"},
+        "body": {"type": "string", "description": "Markdown本文(更新時は全文)"},
+        "category": {"type": "string", "description": "分類(制度・文化など)"},
+        "scope": {"type": "string", "description": "適用範囲・時点"},
+        "status": {"type": "string", "enum": ["draft", "confirmed", "reference"], "description": "既定draft。confirmedは作者の明示指示時のみ"},
+        "ai_mode": {"type": "string", "enum": ["search", "always", "never"], "description": "既定search。作者の指定時のみ変更"},
+        "reason": {"type": "string", "description": "変更理由"},
     }
     result = []
     for action in ("create", "update"):
         properties = dict(fields)
         required = ["reason", "title", "body"] if action == "create" else ["reason", "id", "revision"]
         if action == "update":
-            properties.update(id={"type": "string"}, revision={"type": "integer", "description": "read_setting_documentで読んだrevision"})
+            properties.update(id={"type": "string"}, revision={"type": "integer", "description": "読んだ全文のrevision"})
         result.append({"type": "function", "function": {
             "name": action + "_setting_document",
-            "description": ("設定資料(世界観・制度・文化・用語などの文書)を新規作成する。同名は作らず既存を確認する。"
-                            "人物・場所そのものの設定には使わない(資料庫のupdate_character / update_placeを使う)。")
-            if action == "create" else "設定資料を編集する。先に全文を読み、指定した項目だけ更新する。省略項目は維持する。",
+            "description": ("設定資料(世界観・制度・文化・用語の文書)を新規作成する。同名は作らない。人物・場所そのものの設定には使わない(update_character / update_place)。")
+            if action == "create" else "設定資料を編集する。先に全文を読み、指定項目だけ更新(省略は維持)。",
             "parameters": {"type": "object", "properties": properties, "required": required, "additionalProperties": False},
         }})
     return result

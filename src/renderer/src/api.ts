@@ -1280,7 +1280,7 @@ export type ProductionOperation = ProductionOperationBase & ({
   /** 追加のときに LLM が指定しなかった経過・場所を、本文から推測して入れた分(根拠付き) */
   inferred?: { elapsed?: { label: string | null; evidence: string }; location?: { label: string | null; evidence: string } }
 } | {
-  action: 'create_character' | 'update_character' | 'delete_character' | 'create_place' | 'update_place' | 'delete_place' | 'create_setting_document' | 'update_setting_document' | 'create_chapter' | 'rename_chapter' | 'add_scenes_to_chapter'
+  action: 'create_character' | 'update_character' | 'delete_character' | 'create_place' | 'update_place' | 'delete_place' | 'create_setting_document' | 'update_setting_document' | 'create_chapter' | 'rename_chapter' | 'add_scenes_to_chapter' | 'remove_scenes_from_chapter' | 'delete_chapter'
   entity_type: 'character' | 'place' | 'setting_document' | 'chapter'
   entity_id: string
   before: Record<string, string | null> | null
@@ -1341,11 +1341,14 @@ export interface ProductionEvent {
   summary?: string | null
   /** 作業の終わりに付く「元に戻せる」情報(実行で変更があったときだけ) */
   undo?: ProductionUndo
+  /** 実行の前に決めた手順(小さい依頼では付かない) */
+  plan?: ProductionPlan
   /** undo に添える案内文(履歴の項目の本文) */
   notice?: string
 }
 
 export interface ProductionUndo { snapshot_id: string; changes: number; undone: boolean }
+export interface ProductionPlan { steps: { summary: string; target_ids: string[] }[]; note: string }
 
 /** 読み取りの手順の記録(制作チャットの時系列に出す)。本文は含まない */
 export interface ProductionStep {
