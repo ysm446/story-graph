@@ -70,8 +70,11 @@ store.set_chat_title(chat['id'], 'optext-chat')
 scene = {'id': ${JSON.stringify(node.id)}, 'title': '検証シーン', 'beat': '確定した本文です。二行目もあります。', 'cast': [], 'location': None}
 store.save_chat_messages(chat['id'], [
   {'role': 'user', 'content': '本文を直して', 'execute': True},
+  {'role': 'assistant', 'content': '計画を立てました(2 手順)。', 'plan': {'steps': [{'summary': '検証シーンの語尾を整える', 'target_ids': [scene['id']]}, {'summary': '直後に再会のシーンを追加', 'target_ids': []}], 'note': '文体は既存に合わせる'}},
   {'role': 'assistant', 'content': '語尾を整えました', 'operation': {'action': 'update_scene', 'node_id': scene['id'], 'title': '検証シーン', 'reason': '語尾を整えました', 'scene': scene}},
-  {'role': 'assistant', 'content': '完了しました。'}
+  {'role': 'assistant', 'content': '再会を足しました', 'operation': {'action': 'insert_scene', 'node_id': 'x1', 'title': '再会', 'reason': '再会を足しました', 'scene': {**scene, 'id': 'x1', 'title': '再会', 'beat': '三日後の朝に再会する。'}, 'inferred': {'elapsed': {'label': '3日後', 'evidence': '三日後の朝'}}}},
+  {'role': 'assistant', 'content': '完了しました。'},
+  {'role': 'assistant', 'content': 'この作業の変更 2 件は、作業前の状態へまとめて戻せます。', 'undo': {'snapshot_id': 'snap-1', 'changes': 2, 'undone': False}}
 ])
 `], {cwd:join(root,'backend'),env:{...process.env,STORY_GRAPH_LIBRARY:target},windowsHide:true,encoding:'utf8'})
     if (seed.status !== 0) throw new Error(seed.stderr)
@@ -870,6 +873,10 @@ store.select_media(m['id'])
     await js(`${details}.querySelector('summary').click()`)
     await pause(200)
     await assert(`(() => { const d = ${details}; return d.open && d.textContent.includes('確定した本文です。二行目もあります。') })()`, '開くと確定した本文が読める')
+    // 計画は番号付きの一覧、推測で入れた設定は操作の行に根拠付き、作業の終わりに「この作業を元に戻す」の二次ボタン(2026-10-25)
+    await assert(`(() => { const ol = [...document.querySelectorAll('[aria-live="polite"] ol')].find(e => e.textContent.includes('語尾を整える')); return !!ol && ol.querySelectorAll('li').length === 2 && document.body.textContent.includes('文体は既存に合わせる') })()`, '計画は番号付きの 2 手順と注意の文で出る')
+    await assert(`document.body.textContent.includes('本文から推測して入れた設定: 経過「3日後」(三日後の朝)')`, '推測で入れた経過が根拠付きで操作の行に出る')
+    await assert(`(() => { const b = [...document.querySelectorAll('[aria-live="polite"] button')].find(e => e.textContent.trim() === 'この作業を元に戻す'); return !!b && !b.disabled && b.className.includes('rounded-md') && b.className.includes('text-[11px]') })()`, '作業の終わりに「この作業を元に戻す」の二次ボタンが押せる状態で出る')
     writeFileSync(join(target, 'operation-text.png'), (await win.webContents.capturePage()).toPNG())
     // ↑ で前に送った依頼文を呼び出し、↓ で空に戻る。打ちかけがあるときの ↑ は置き換えない
     const area = `document.querySelector('textarea[aria-label="制作への依頼"]')`
