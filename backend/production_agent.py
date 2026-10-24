@@ -387,14 +387,29 @@ def _validate_args(store, name, args):
         if not isinstance(args.get("beat"), str) or not args["beat"].strip():
             raise ValueError("シーン本文が必要です")
         if "cast" in args:
+            # 名前で指定されたら ID に読み替える(ベンチで 31B が場所を名前や "null" の文字列で送った)
+            if isinstance(args["cast"], list):
+                by_name = {c["name"]: c["id"] for c in store.list_characters()}
+                args["cast"] = [by_name.get(c, c) if isinstance(c, str) else c for c in args["cast"]]
             if not isinstance(args["cast"], list) or not set(args["cast"]) <= store.known_char_ids():
-                raise ValueError("castには既存のキャラクターIDを指定してください")
+                raise ValueError("castには既存のキャラクターIDを指定してください(登録済み: "
+                                 + ", ".join(f"{c['id']}={c['name']}" for c in store.list_characters()) + ")")
         if "title" in args and not isinstance(args["title"], str):
             raise ValueError("タイトルは文字列で指定してください")
         if "rewrite" in args and not isinstance(args["rewrite"], bool):
             raise ValueError("rewriteはtrue/falseで指定してください")
         if "location" in args and args["location"] is not None:
-            if not isinstance(args["location"], str) or args["location"] not in store.known_place_ids():
+            location = args["location"]
+            if isinstance(location, str) and location.strip().lower() in ("", "null", "none"):
+                args["location"] = None  # 文字列の "null" は未指定として扱う
+            elif isinstance(location, str) and location not in store.known_place_ids():
+                by_name = {p["name"]: p["id"] for p in store.list_places()}
+                if location in by_name:
+                    args["location"] = by_name[location]
+                else:
+                    raise ValueError(f"locationには登録済みの場所IDかnullを指定してください(指定: {location!r}。登録済み: "
+                                     + (", ".join(f"{p['id']}={p['name']}" for p in store.list_places()) or "なし") + ")")
+            elif not isinstance(location, str):
                 raise ValueError("locationには登録済みの場所IDかnullを指定してください")
         if "elapsed_count" in args and "elapsed_unit" not in args:
             raise ValueError("elapsed_countはelapsed_unitと一緒に指定してください")

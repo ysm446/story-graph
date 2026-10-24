@@ -54,6 +54,9 @@ def error_guidance(name: str, message: str) -> str:
     if name == "update_scene":
         return ("update_sceneは全文置換です。一部の修正ならpatch_sceneを使い、意図した全文の書き直しならrewrite: trueを付けてください。")
     if name in ("insert_scene", "branch_scene"):
+        if "location" in message or "cast" in message:
+            return ("引数の値が登録済みのIDと一致していません。エラー文の『登録済み』にあるIDをそのまま使うか、"
+                    "場所が不要ならlocationを省略(またはnull)にして、本文は変えずに送り直してください。")
         return ("前後照合で拒否された場合は、同じ本文を再送せず、出来事の順序か重複を直した本文にするか、"
                 "既存シーンの分割なら先に元のシーンを縮めてください。")
     return "同じ引数で再試行しても結果は変わりません。引数を直すか、別の方法を選ぶか、できない理由を作者へ報告してください。"

@@ -1707,3 +1707,29 @@ def test_plan_is_made_before_execution_and_widens_the_step_budget(store, monkeyp
     fake_llm(monkeypatch, [{"content": "回答"}])
     assert not any("plan" in e for e in run(collect(store, False)))
     assert production_plan.step_budget(None) == 16
+
+
+def test_scene_args_accept_place_and_character_names_and_null_string(store, monkeypatch):
+    fake_extraction(monkeypatch)
+    async def no_suggestion(*args, **kwargs):
+        return {"found": False}
+    monkeypatch.setattr(generation, "suggest_scene_setting", no_suggestion)
+    store.create_place({"id": "village", "name": "村", "description": "川沿い"})
+    # 31B が "null" の文字列や場所・人物の名前で送ることがある(ベンチ 2026-10-25)。ID に読み替える
+    change = run(production.apply_edit(store, "fake", "insert_scene", {
+        "after_id": "first", "title": "回想", "beat": "村を思い出す", "cast": ["アヤ"], "location": "null", "reason": "補強",
+    }))
+    node = store.get_node(change["node_id"])
+    assert node["cast"] == ["aya"] and node["location"] is None
+    change = run(production.apply_edit(store, "fake", "insert_scene", {
+        "after_id": "first", "title": "広場", "beat": "村の広場に立つ", "cast": ["aya"], "location": "村", "reason": "補強",
+    }))
+    assert store.get_node(change["node_id"])["location"] == "village"
+    with pytest.raises(ValueError, match="登録済み: village=村"):
+        run(production.apply_edit(store, "fake", "insert_scene", {
+            "after_id": "first", "title": "x", "beat": "どこかに立つ", "cast": ["aya"], "location": "森", "reason": "補強",
+        }))
+    with pytest.raises(ValueError, match="登録済み: aya=アヤ"):
+        run(production.apply_edit(store, "fake", "insert_scene", {
+            "after_id": "first", "title": "y", "beat": "誰かが立つ", "cast": ["ケン"], "reason": "補強",
+        }))
