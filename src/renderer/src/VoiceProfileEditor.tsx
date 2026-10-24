@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { isAbortError, ttsSpeak, uploadVoiceRef, voiceApi, voiceFileUrl, type VoiceProfile } from './api'
+import { api, isAbortError, ttsSpeak, uploadVoiceRef, voiceApi, voiceFileUrl, type VoiceProfile } from './api'
 import AutoTextarea from './AutoTextarea'
 import { Icon } from './icons'
 import { enqueueTask, useTasks } from './tasks'
@@ -188,6 +188,17 @@ export default function VoiceProfileEditor({
     }
   }
 
+  // 参照音声のファイルをエクスプローラーで見せる(ライブラリの assets/voices にある)
+  const revealRef = async (file: string): Promise<void> => {
+    const { root } = await api.getLibrary()
+    const path = root ? `${root}/assets/voices/${file}` : null
+    if (path && (await window.storyGraph.revealInFolder(path))) {
+      setError(null)
+      return
+    }
+    setError(`参照音声のファイルが見つかりませんでした: ${path ?? file}`)
+  }
+
   // 気に入った試し読みを参照音声にする。説明文だけの声は文ごとに声色が揺れるので、録音を手本にして固定する
   const handlePin = async (): Promise<void> => {
     if (!lastTested) return
@@ -338,6 +349,14 @@ export default function VoiceProfileEditor({
                 <span className="shrink-0 text-[11px]" style={{ color: 'var(--text-faint)' }}>
                   {file}
                 </span>
+                <button
+                  onClick={() => void revealRef(file)}
+                  className="shrink-0 rounded-md border px-1.5 py-0.5 text-[11px]"
+                  style={secondaryStyle}
+                  data-tip="このファイルのある場所をエクスプローラーで開きます"
+                >
+                  場所を開く
+                </button>
                 <button
                   onClick={() => void save({ ref_paths: profile.ref_paths.filter((p) => p !== file) })}
                   className="shrink-0 rounded-md border px-1.5 py-0.5 text-[11px]"

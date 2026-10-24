@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, screen, shell } from 'electron'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { execSync } from 'node:child_process'
-import { join } from 'node:path'
+import { join, normalize } from 'node:path'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { findAvailablePort, isPortInUse, isStoryGraphHealthy } from './sidecarNetwork'
 
@@ -353,8 +353,8 @@ app.whenReady().then(async () => {
   })
   // スクリーンショット通知のクリックから、保存先をエクスプローラーで開く
   ipcMain.handle('shell:reveal', (_event, filePath: string) => {
-    if (!existsSync(filePath)) return false
-    shell.showItemInFolder(filePath)
+    if (!filePath || !existsSync(filePath)) return false
+    shell.showItemInFolder(normalize(filePath)) // 区切りが / 混じりでも Windows のエクスプローラーが選択できるよう揃える
     return true
   })
   // フォルダ自体を開く(バックアップの保存先など)。
