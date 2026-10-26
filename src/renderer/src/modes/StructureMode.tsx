@@ -2624,9 +2624,10 @@ function StructureModeInner({
 
   // チャット部品(memo)へ渡す props。参照を保たないと memo が効かない
   const nodesById = useMemo(() => Object.fromEntries(graphNodes.map((n) => [n.id, n])), [graphNodes])
+  // 章カードは章IDで渡す(制作側で kind="chapter" として扱う)
   const productionSelectedNodeIds = useMemo(() => {
     if (workspace.mode !== 'structure') return []
-    const ids = displayNodes.filter((n) => n.selected && n.type !== 'chapterNode').map((n) => n.id)
+    const ids = displayNodes.filter((n) => n.selected).map((n) => n.id.startsWith('chapter:') ? n.id.slice('chapter:'.length) : n.id)
     return ids
   }, [workspace.mode, displayNodes])
   // 選択の中身が同じなら前の配列を返す(displayNodes はドラッグ・位置更新でも変わるため)
@@ -2637,8 +2638,13 @@ function StructureModeInner({
     if (!same) productionSelectedRef.current = productionSelectedNodeIds
     return productionSelectedRef.current
   }, [productionSelectedNodeIds])
-  const productionChapterSelected = workspace.mode === 'structure' && displayNodes.some((n) => n.selected && n.type === 'chapterNode')
-  // 制作の章レビュー候補の対象。シーン選択中は選択レビューを優先するので渡さない
+  // 制作へ添える「いま見ている階層」。章は入れ子にならないので、作品全体か章の中か
+  const productionViewChapterId = focusedGroup?.id ?? null
+  const productionView = useMemo(
+    () => (workspace.mode === 'structure' ? { chapter_id: productionViewChapterId } : null),
+    [workspace.mode, productionViewChapterId]
+  )
+  // 制作の章レビュー候補の対象(章の中で何も選んでいないとき)。章カードの選択は選択として渡る
   const productionChapterId = workspace.mode === 'structure' && productionSelectedStable.length === 0 ? (activeGroup?.id ?? null) : null
   const productionChapterTitle = activeGroup?.title ?? ''
   const productionChapter = useMemo(
@@ -3643,7 +3649,7 @@ function StructureModeInner({
                 policy={productionPolicy} setPolicy={setProductionPolicy}
                 nodes={graphNodes} groups={groups}
                 selectedNodeIds={productionSelectedStable}
-                chapterSelected={productionChapterSelected}
+                view={productionView}
                 chapter={productionChapter}
                 active={chatOpen && chatKind === 'production' && workspace.mode !== 'reader'}
                 beforeExecute={beforeProductionExecute}

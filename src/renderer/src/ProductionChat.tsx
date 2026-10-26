@@ -6,7 +6,7 @@ import ProductionPreviewPanel from './ProductionPreviewPanel'
 import AutoTextarea from './AutoTextarea'
 import { useInputHistory } from './useInputHistory'
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { chatApi, isAbortError, productionApi, type ChatSummary, type ProductionInstruction, type ProductionPolicy, type ProductionOperation, type ProductionSelectedNode, type ProductionPlan, type ProductionStep, type ProductionUndo } from './api'
+import { chatApi, isAbortError, productionApi, type ChatSummary, type ProductionInstruction, type ProductionPolicy, type ProductionOperation, type ProductionSelectedNode, type ProductionView, type ProductionViewRequest, type ProductionPlan, type ProductionStep, type ProductionUndo } from './api'
 import { Markdown } from './Markdown'
 import { showStatusNotice } from './statusNotice'
 import { setProductionPreview } from './productionPreview'
@@ -20,6 +20,7 @@ import ContextUsageRing, { type ContextUsage } from './ContextUsageRing'
 
 interface Message {
   selected_nodes?: ProductionSelectedNode[]
+  view?: ProductionView
   created_at?: string
   policy?: ProductionPolicy
   policy_after?: ProductionPolicy
@@ -136,8 +137,9 @@ const MessageList = memo(function MessageList({ messages, nodes, groups, busy, o
                 変更範囲と保護は相談では使われないので、相談の発言には出さない */}
             {m.policy && m.execute !== false && (m.policy.allowed_ids !== null || m.policy.group_id !== null || m.policy.protected_ids.length > 0) &&
               <p className="mb-1 text-[11px]" style={{ color: 'var(--text-dim)' }}>{m.policy_label || policySummary(m.policy, nodes, groups)}</p>}
-            {!!m.selected_nodes?.length && <p className="mb-1 text-[11px]" style={{ color: 'var(--text-dim)' }}>
-              送信時の選択: {m.selected_nodes.map((node) => node.title).join('、')}
+            {(!!m.selected_nodes?.length || m.view?.level === 'chapter') && <p className="mb-1 text-[11px]" style={{ color: 'var(--text-dim)' }}>
+              {[m.view?.level === 'chapter' && `送信時の階層: ${viewLabel(m.view)}`,
+                !!m.selected_nodes?.length && `送信時の選択: ${m.selected_nodes.map(selectionLabel).join('、')}`].filter(Boolean).join(' / ')}
             </p>}
             <Markdown text={m.content} />
           </div>
@@ -201,14 +203,25 @@ const MessageList = memo(function MessageList({ messages, nodes, groups, busy, o
   )
 })
 
+/** 選択の表示名。章カードは「章「…」」と書いてシーンと区別する */
+function selectionLabel(node: ProductionSelectedNode): string {
+  return node.kind === 'chapter' ? `章「${node.title}」` : node.title
+}
+
+function viewLabel(view: ProductionView): string {
+  return view.level === 'chapter' ? `章「${view.title}」の中` : '作品全体'
+}
+
 /** 制作専用チャット。相談履歴とは分け、選択した送信モードで書き込みの可否を決める。 */
-export default function ProductionChat({ beforeExecute, onChanged, onFollowTarget, onManualEdit, nodes, groups, policy, setPolicy, selectedNodeIds, chapterSelected, chapter, active = true }: {
+export default function ProductionChat({ beforeExecute, onChanged, onFollowTarget, onManualEdit, nodes, groups, policy, setPolicy, selectedNodeIds, view, chapter, active = true }: {
+  /** 選択中のシーンと章カード(章は章ID) */
   selectedNodeIds: string[]
+  /** いま見ている階層(作品全体 / 章の中)。構造モード以外は null で、依頼に添えない */
+  view: ProductionViewRequest | null
   /** レビュー候補の対象にする章(選択中の章カード、無ければ開いている章)。シーン選択中は null */
   chapter: { id: string; title: string } | null
   /** 画面に出ているか。隠れている間はコンテキスト量の問い合わせ(サーバーで全文を組み立てる)を止める */
   active?: boolean
-  chapterSelected: boolean
   policy: ProductionPolicy
   setPolicy: React.Dispatch<React.SetStateAction<ProductionPolicy>>
   onManualEdit: (paused: boolean) => void
@@ -255,12 +268,16 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
   // 待機列で順番待ちのまま停止されたとき、入力欄へ戻す依頼文(動き出したら null)
   const pendingMessageRef = useRef<string | null>(null)
   const [sendingInstruction, setSendingInstruction] = useState(false)
-  const instructionRequest = useRef<{ runId: string; text: string; id: string; selectedIds: string[] } | null>(null)
-  const selectionKey = JSON.stringify(selectedNodeIds)
-  const selection = selectedNodeIds.map((id) => {
+  const instructionRequest = useRef<{ runId: string; text: string; id: string; selectedIds: string[]; view: ProductionViewRequest | null } | null>(null)
+  const selectionKey = JSON.stringify([selectedNodeIds, view])
+  const selection: ProductionSelectedNode[] = selectedNodeIds.map((id) => {
     const node = nodes.find((item) => item.id === id)
-    return { id, title: node?.title || '(無題)', kind: node?.kind ?? null }
+    const group = node ? undefined : groups.find((item) => item.id === id)
+    return group ? { id, title: group.title || '(無題)', kind: 'chapter' } : { id, title: node?.title || '(無題)', kind: node?.kind ?? null }
   })
+  const viewGroup = view?.chapter_id ? groups.find((item) => item.id === view.chapter_id) : undefined
+  const currentView: ProductionView | null = !view ? null
+    : view.chapter_id ? { level: 'chapter', chapter_id: view.chapter_id, title: viewGroup?.title || '(無題)' } : { level: 'work' }
   // 上段の条件パネル(指示 / 作業メモ / 変更範囲)のうち開いているもの。同時に開くのは 1 つだけ
   const [openPanel, setOpenPanel] = useState<'rules' | 'memory' | 'policy' | null>(null)
   const toggleRules = useCallback(() => setOpenPanel((p) => (p === 'rules' ? null : 'rules')), [])
@@ -310,7 +327,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
     if (busy || !active) return
     let stale = false
     const timer = window.setTimeout(() => {
-      void productionApi.tokenUsage({ chat_id: chatId, message: input, execute: sendMode === 'execute', policy, selected_node_ids: selectedNodeIds })
+      void productionApi.tokenUsage({ chat_id: chatId, message: input, execute: sendMode === 'execute', policy, selected_node_ids: selectedNodeIds, view })
         .then((result) => { if (!stale) setUsage(result) })
         .catch(() => { if (!stale) setUsage(null) })
     }, 400)
@@ -406,12 +423,12 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
     const activeRun = runId
     const previous = instructionRequest.current
     const request = previous?.runId === activeRun && previous.text === text
-      ? previous : { runId: activeRun, text, id: crypto.randomUUID(), selectedIds: [...selectedNodeIds] }
+      ? previous : { runId: activeRun, text, id: crypto.randomUUID(), selectedIds: [...selectedNodeIds], view }
     instructionRequest.current = request
     setSendingInstruction(true)
     setError('')
     try {
-      const item = await productionApi.instruct(activeRun, request.id, text, request.selectedIds)
+      const item = await productionApi.instruct(activeRun, request.id, text, request.selectedIds, request.view)
       if (runRef.current === activeRun) recordInstruction(item)
       setInput((value) => value.trim() === text ? '' : value)
       instructionRequest.current = null
@@ -467,6 +484,8 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
     if (execute && policy.allowed_ids?.length === 0) { setError('変更できるシーンを1つ以上選んでください'); return }
     const selectedIds = [...selectedNodeIds]
     const selectedNodes = selection.map((node) => ({ ...node }))
+    const sentView = view
+    const sentViewItem = currentView ?? undefined
     clearDynamic()
     setError('')
     setStatus('')
@@ -486,7 +505,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
         pendingMessageRef.current = null
         setStatus('開始の準備をしています…')
         setStatusAt(new Date().toISOString())
-        setMessages((prev) => [...prev, { role: 'user', content: message, selected_nodes: selectedNodes, created_at: new Date().toISOString(), execute, policy, policy_label: policySummary(policy, nodes, groups) }])
+        setMessages((prev) => [...prev, { role: 'user', content: message, selected_nodes: selectedNodes, view: sentViewItem, created_at: new Date().toISOString(), execute, policy, policy_label: policySummary(policy, nodes, groups) }])
         let text = ''
         let receivedAt: string | undefined
         let finished = false
@@ -503,7 +522,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
           setLive('')
         }
         try {
-          await productionApi.send({ chat_id: currentChatId, message, execute, policy, selected_node_ids: selectedIds }, async (event) => {
+          await productionApi.send({ chat_id: currentChatId, message, execute, policy, selected_node_ids: selectedIds, view: sentView }, async (event) => {
             receivedAt = event.timestamp ?? new Date().toISOString()
             const created_at = receivedAt
             if (event.usage) setUsage(event.usage)
@@ -728,15 +747,14 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
         className="block w-full resize-none px-3 pb-1 pt-2 text-[12px] outline-none disabled:opacity-50"
         style={{ background: 'transparent' }} />
       <div className="flex items-center gap-2 px-2 pb-2 pt-1">
-        {/* 送信時に添える選択。長い名前は1行で省略して、送信ボタンを次の行へ落とさない(全文はツールチップ) */}
+        {/* 送信時に添える階層と選択。長い名前は1行で省略して、送信ボタンを次の行へ落とさない(全文はツールチップ) */}
         <span className="min-w-0 flex-1 basis-0 truncate pl-1 text-[11px]" style={{ color: selection.length ? 'var(--text-dim)' : 'var(--text-faint)' }}
           data-tip={[
-            `選択中: ${selection.length ? selection.map((node) => node.title).join('、') : 'なし'}`,
-            ...(chapterSelected ? ['章カードは添付されません。章全体は候補の章レビューから、本文はシーンを選んで依頼できます。'] : []),
-            '送信時の選択を依頼に添えます。送信後に選択を変えても対象は変わりません。変更範囲・AI保護は引き続き適用されます。本文は保存済みの内容を参照します。'
+            ...(currentView ? [`階層: ${viewLabel(currentView)}`] : []),
+            `選択中: ${selection.length ? selection.map(selectionLabel).join('、') : 'なし'}`,
+            '送信時の階層と選択(シーン・章カード)を依頼に添えます。送信後に選択を変えても対象は変わりません。変更範囲・AI保護は引き続き適用されます。本文は保存済みの内容を参照します。'
           ].join('\n')}>
-          選択中: {selection.length ? selection.map((node) => node.title).join('、') : 'なし'}
-          {chapterSelected && '(章カードは添付されません)'}
+          {currentView && `${viewLabel(currentView)} · `}選択中: {selection.length ? selection.map(selectionLabel).join('、') : 'なし'}
         </span>
         {usage && <ContextUsageRing usage={usage} />}
         <div role="group" aria-label="制作チャットの送信モード"

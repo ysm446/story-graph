@@ -2705,8 +2705,18 @@ class ProductionPolicyIn(BaseModel):
     group_id: str | None = None
 
 
+class ProductionViewIn(BaseModel):
+    """送信時に作者が見ていた階層。chapter_id が無ければ作品全体。構造モード以外では view 自体を送らない"""
+    chapter_id: str | None = Field(default=None, max_length=64)
+
+
+def _production_view(body) -> dict[str, Any] | None:
+    return production_agent.screen_view(store, body.view.chapter_id) if body.view else None
+
+
 class ProductionIn(BaseModel):
     selected_node_ids: list[str] = Field(default_factory=list, max_length=1000)
+    view: ProductionViewIn | None = None
     policy: ProductionPolicyIn = Field(default_factory=ProductionPolicyIn)
     chat_id: str | None = None
     message: str = Field(min_length=1, max_length=20000)
@@ -2720,6 +2730,7 @@ class ProductionMemoryIn(BaseModel):
 
 class ProductionUsageIn(BaseModel):
     selected_node_ids: list[str] = Field(default_factory=list, max_length=1000)
+    view: ProductionViewIn | None = None
     policy: ProductionPolicyIn = Field(default_factory=ProductionPolicyIn)
     chat_id: str | None = None
     message: str = Field(default="", max_length=20000)
@@ -2734,13 +2745,14 @@ async def production_token_usage(body: ProductionUsageIn) -> dict[str, Any]:
     try:
         policy = production_agent.ProductionPolicy(store, **body.policy.model_dump())
         selection = production_agent.selected_nodes(store, body.selected_node_ids)
+        view = _production_view(body)
     except ValueError as e:
         raise HTTPException(400, str(e))
     history = list(chat["messages"]) if chat else []
     if body.message.strip():
-        history.append({"role": "user", "content": body.message.strip(), "selected_nodes": selection})
+        history.append({"role": "user", "content": body.message.strip(), "selected_nodes": selection, **({"view": view} if view else {})})
     messages = production_agent.build_messages(store, history, body.message.strip(), body.execute, policy,
-        production_agent.production_memory.read(store)["checkpoint"], [], [], selection=selection)
+        production_agent.production_memory.read(store)["checkpoint"], [], [], selection=selection, view=view)
     settings = store.get_settings()
     return await production_agent.context_usage(store, settings.get("llm_base_url") or llm.DEFAULT_BASE_URL,
                                                 messages, body.execute)
@@ -2803,6 +2815,7 @@ async def production_pause(body: ProductionPauseIn) -> dict[str, bool]:
 
 class ProductionInstructionIn(BaseModel):
     selected_node_ids: list[str] = Field(default_factory=list, max_length=1000)
+    view: ProductionViewIn | None = None
     run_id: str = Field(min_length=1, max_length=64)
     instruction_id: str = Field(min_length=1, max_length=64)
     message: str = Field(min_length=1, max_length=20000)
@@ -2818,11 +2831,14 @@ async def production_instruction(body: ProductionInstructionIn) -> dict[str, Any
     try:
         existing = next((m for m in run.history if m.get("instruction", {}).get("id") == body.instruction_id), None)
         # 再送では受付済みの名称を保持する。受付後に改名・削除されても二重登録しない。
-        if existing and [n["id"] for n in existing.get("selected_nodes", [])] == list(dict.fromkeys(body.selected_node_ids)):
-            selection = existing.get("selected_nodes", [])
+        # 階層は None(構造モード外) / ""(作品全体) / 章ID で照合する
+        view_key = None if body.view is None else body.view.chapter_id or ""
+        same_view = existing is not None and (existing["view"].get("chapter_id") or "" if "view" in existing else None) == view_key
+        if same_view and [n["id"] for n in existing.get("selected_nodes", [])] == list(dict.fromkeys(body.selected_node_ids)):
+            selection, view = existing.get("selected_nodes", []), existing.get("view")
         else:
-            selection = production_agent.selected_nodes(store, body.selected_node_ids)
-        return run.submit(body.instruction_id, body.message.strip(), selection)
+            selection, view = production_agent.selected_nodes(store, body.selected_node_ids), _production_view(body)
+        return run.submit(body.instruction_id, body.message.strip(), selection, view)
     except ValueError as e:
         raise HTTPException(409, str(e))
 
@@ -2900,6 +2916,7 @@ async def production_send(body: ProductionIn) -> StreamingResponse:
         raise HTTPException(404, "制作チャットが見つかりません")
     try:
         selection = production_agent.selected_nodes(store, body.selected_node_ids)
+        view = _production_view(body)
     except ValueError as e:
         raise HTTPException(400, str(e))
     # 依頼候補の生成が残っていると、開始待ち(gate.begin)とモデルの順番待ちが延びる。送信を優先して打ち切る
@@ -2925,7 +2942,7 @@ async def production_send(body: ProductionIn) -> StreamingResponse:
 
     return StreamingResponse(
         production_agent.stream(store, base_url, body.chat_id, body.message, body.execute, _schedule_audio_gc, policy=policy, selection=selection,
-                                image_hook=image_hook),
+                                image_hook=image_hook, view=view),
         media_type="text/event-stream",
     )
 

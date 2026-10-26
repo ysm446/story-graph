@@ -17,7 +17,7 @@ const IMAGE_REQUEST = /(画像|イラスト|絵|アイコン|立ち絵|ポート
 
 /**
  * 初期版は選択・開いている章・直近の応答・確定済み操作から候補を組み立てる。
- * 選択と章のレビューは会話の起点になるので、会話が空でも出す。章はシーンを選択していないときだけ。
+ * 選択と章のレビューは会話の起点になるので、会話が空でも出す。章は選択が章カード1つだけか、何も選んでいないときの開いている章。
  * どちらも無い(作品全体の画面で何も選んでいない)ときは作品全体のレビューを出す(2026-10-15)。
  * 「この案で進めて」は、応答に案があるときだけ・案を指して出したいので LLM の候補に任せている。
  * proceedFallback は、LLM の候補が使えないとき(設定オフ・未起動・失敗・過去の会話)に代わりを出す指定。
@@ -45,12 +45,15 @@ export function productionSuggestions(messages: ContextMessage[], selection: Pro
     text: 'この会話の直前の回答で提示された案で進めてください。対象と作業範囲はその案に従い、画面の選択だけを理由に変更しないでください。完了済みの変更は繰り返さず、残りの作業を進めてください。複数の案があり採用案が特定できない場合は確認してください。'
   })
   const review = '保存内容は変更せず、気になる点と改善案を示してください。'
-  if (selection.length) {
+  // 章カードを1つだけ選んでいるときは、開いている章と同じ章レビューにする
+  const selectedChapter = selection.length === 1 && selection[0].kind === 'chapter' ? selection[0] : null
+  const reviewChapter = selectedChapter ?? (selection.length ? null : chapter)
+  if (selection.length && !selectedChapter) {
     const label = selection.length === 1 ? `選択中の「${selection[0].title}」をレビュー` : `選択中の${selection.length}件をレビュー`
-    result.push({ label, execute: false, text: `次の選択対象をレビューしてください。対象はこの一覧に固定し、送信時の選択が変わっていても変更しないでください。\n${selection.map((node) => `・${node.title}（ID: ${node.id}）`).join('\n')}\n${review}` })
-  } else if (chapter) {
-    const title = chapter.title || '無題'
-    result.push({ label: `章「${title}」をレビュー`, execute: false, text: `次の章をレビューしてください。対象はこの章に固定し、送信時の画面や選択が変わっていても変更しないでください。\n・${title}（章ID: ${chapter.id}）\nまず章の構成で読む順と分岐を確認し、その順に本文を読んでください。シーンの前後は本文の並びではなく接続（prev / next）で判断し、章全体の流れも見たうえで、${review}` })
+    result.push({ label, execute: false, text: `次の選択対象をレビューしてください。対象はこの一覧に固定し、送信時の選択が変わっていても変更しないでください。\n${selection.map((node) => `・${node.title}（${node.kind === 'chapter' ? '章ID' : 'ID'}: ${node.id}）`).join('\n')}\n${review}` })
+  } else if (reviewChapter) {
+    const title = reviewChapter.title || '無題'
+    result.push({ label: `章「${title}」をレビュー`, execute: false, text: `次の章をレビューしてください。対象はこの章に固定し、送信時の画面や選択が変わっていても変更しないでください。\n・${title}（章ID: ${reviewChapter.id}）\nまず章の構成で読む順と分岐を確認し、その順に本文を読んでください。シーンの前後は本文の並びではなく接続（prev / next）で判断し、章全体の流れも見たうえで、${review}` })
   } else {
     // 作品全体の画面で何も選んでいない: 全部を読む全体レビュー(章のまとめだけで済ませる軽い版は、作品が大きくなって遅いと感じたら足す)
     result.push({ label: '作品全体をレビュー', execute: false, text: `作品全体をレビューしてください。対象は作品全体に固定し、送信時の画面や選択が変わっていても変更しないでください。

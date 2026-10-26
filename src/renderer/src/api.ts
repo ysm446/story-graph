@@ -1291,6 +1291,7 @@ export type ProductionOperation = ProductionOperationBase & ({
 
 export interface ProductionInstruction {
   selected_nodes?: ProductionSelectedNode[]
+  view?: ProductionView
   created_at?: string
   role: string
   content: string
@@ -1362,11 +1363,17 @@ export interface ProductionStep {
 export interface ProductionSelectedNode {
   id: string
   title: string
+  /** 章カードは 'chapter'(id は章ID) */
   kind: string | null
 }
 
+/** 送信時に作者が見ていた階層(送る形)。chapter_id が null なら作品全体。構造モード以外では送らない */
+export interface ProductionViewRequest { chapter_id: string | null }
+/** 発言に保存された階層 */
+export type ProductionView = { level: 'work' } | { level: 'chapter'; chapter_id: string; title: string }
+
 export const productionApi = {
-  tokenUsage: (body: { chat_id: string | null; message: string; execute: boolean; policy: ProductionPolicy; selected_node_ids?: string[] }) =>
+  tokenUsage: (body: { chat_id: string | null; message: string; execute: boolean; policy: ProductionPolicy; selected_node_ids?: string[]; view?: ProductionViewRequest | null }) =>
     request<{ token_count: number; ctx_size: number; estimated: boolean }>('/production/token_usage', {
       method: 'POST', body: JSON.stringify(body)
     }),
@@ -1379,8 +1386,8 @@ export const productionApi = {
   pause: (run_id: string, paused: boolean) => request<{ paused: boolean }>(
     '/production/pause', { method: 'POST', body: JSON.stringify({ run_id, paused }) }
   ),
-  instruct: (run_id: string, instruction_id: string, message: string, selected_node_ids: string[] = []) => request<ProductionInstruction>(
-    '/production/instruction', { method: 'POST', body: JSON.stringify({ run_id, instruction_id, message, selected_node_ids }) }
+  instruct: (run_id: string, instruction_id: string, message: string, selected_node_ids: string[] = [], view: ProductionViewRequest | null = null) => request<ProductionInstruction>(
+    '/production/instruction', { method: 'POST', body: JSON.stringify({ run_id, instruction_id, message, selected_node_ids, view }) }
   ),
   list: () => request<ChatSummary[]>('/production/chats'),
   status: () => request<{ active: boolean }>('/production/status'),
@@ -1393,7 +1400,7 @@ export const productionApi = {
     '/production/suggest', { method: 'POST', body: JSON.stringify({ chat_id }), signal }
   ),
   send: (
-    body: { chat_id: string | null; message: string; execute: boolean; policy: ProductionPolicy; selected_node_ids?: string[] },
+    body: { chat_id: string | null; message: string; execute: boolean; policy: ProductionPolicy; selected_node_ids?: string[]; view?: ProductionViewRequest | null },
     onEvent: (event: ProductionEvent) => void | Promise<void>,
     signal: AbortSignal
   ) => chatSse<ProductionEvent>('/production/send', body, onEvent, signal)

@@ -68,14 +68,33 @@ class ProductionHistory(list):
 
 
 def selected_nodes(store, node_ids):
-    """送信時の選択をIDと名称で固定する。本文はget_beatsで最新の保存内容を読む。"""
+    """送信時の選択をIDと名称で固定する。本文はget_beatsで最新の保存内容を読む。
+
+    章カードの選択は章IDで受け、kind="chapter" にする。
+    """
+    groups = None
     result = []
     for node_id in dict.fromkeys(node_ids):
         node = store.get_node(node_id)
-        if node is None:
+        if node is not None:
+            result.append({"id": node_id, "title": node.get("title") or "(無題)", "kind": node.get("kind")})
+            continue
+        if groups is None:
+            groups = {g["id"]: g for g in store.list_groups()}
+        if node_id not in groups:
             raise ValueError(f"選択したノードがありません。選び直してください: {node_id}")
-        result.append({"id": node_id, "title": node.get("title") or "(無題)", "kind": node.get("kind")})
+        result.append({"id": node_id, "title": groups[node_id].get("title") or "(無題)", "kind": "chapter"})
     return result
+
+
+def screen_view(store, chapter_id):
+    """送信時に作者が見ていた階層。章は入れ子にならないので、作品全体か章の中かの2段。"""
+    if not chapter_id:
+        return {"level": "work"}
+    chapter = next((g for g in store.list_groups() if g["id"] == chapter_id), None)
+    if chapter is None:
+        raise ValueError(f"開いている章がありません。章を開き直してください: {chapter_id}")
+    return {"level": "chapter", "chapter_id": chapter_id, "title": chapter.get("title") or "(無題)"}
 
 
 READ_STEP_LABELS = {
@@ -134,8 +153,17 @@ def selection_context(selection):
     return "\nこの発言の送信時に選択していたノード（参照対象。編集許可ではありません）: " + json.dumps(selection, ensure_ascii=False)
 
 
+def view_context(view):
+    if not view:
+        return ""
+    if view.get("level") == "chapter":
+        return f"\nこの発言の送信時に作者が見ていた階層: 章「{view['title']}」の中（章ID: {view['chapter_id']}）"
+    return "\nこの発言の送信時に作者が見ていた階層: 作品全体（章カードと、章に入っていないシーンが並ぶ画面）"
+
+
 def message_content(item):
-    return item["content"] + (selection_context(item["selected_nodes"]) if "selected_nodes" in item else "")
+    return (item["content"] + (selection_context(item["selected_nodes"]) if "selected_nodes" in item else "")
+            + view_context(item.get("view")))
 
 
 class ProductionGate:
@@ -233,17 +261,17 @@ class ProductionRun:
         if self.paused or self.epoch != epoch:
             raise ManualEditPending("手動編集に切り替わったため、未確定の操作を破棄して読み直します")
 
-    def submit(self, instruction_id, content, selection=None):
+    def submit(self, instruction_id, content, selection=None, view=None):
         if not self.accepting:
             raise ValueError("この作業は途中指示を受け付けていません")
         existing = next((m for m in self.history if m.get("instruction", {}).get("id") == instruction_id), None)
         if existing:
-            if existing["content"] != content or existing.get("selected_nodes", []) != (selection or []):
+            if existing["content"] != content or existing.get("selected_nodes", []) != (selection or []) or existing.get("view") != view:
                 raise ValueError("同じ指示IDで異なる内容は送れません")
             return existing
         if len(self.pending) >= 8:
             raise ValueError("未反映の指示が8件あります。反映を待ってから送ってください")
-        item = {"role": "user", "content": content, "selected_nodes": selection or [],
+        item = {"role": "user", "content": content, "selected_nodes": selection or [], **({"view": view} if view else {}),
                 "instruction": {"id": instruction_id, "status": "accepted", "run_id": self.id}}
         self.history.append(item)
         self.store.save_chat_messages(self.chat_id, self.history)
@@ -679,7 +707,7 @@ def recent_reads(results):
 
 
 def build_messages(store, history, message, execute, policy, previous_checkpoint, changes, recent_results, run_id=None, selection=None,
-                   cancelled_text="", notes=(), plan=None):
+                   cancelled_text="", notes=(), plan=None, view=None):
     system = (chat_agent.build_system(store, store.canon_path(), "all", production=True) + "\n" + EXECUTE_RULES
               if execute else chat_agent.build_system(store, store.canon_path(), "all") + CONSULT_RULES)
     if any(m.get("instruction", {}).get("run_id") == run_id and m.get("instruction", {}).get("status") == "reflected" for m in history):
@@ -695,7 +723,10 @@ def build_messages(store, history, message, execute, policy, previous_checkpoint
     system += ("\n『今選択しているノード』『このシーン』は、その発言に添付された送信時の選択を参照します。"
                "選択は後から変わりません。本文はget_beatsで読み直し、選択だけを編集命令と見なさないでください。"
                "選択なしで対象が不明なら推測せず確認し、複数選択で単数の対象が曖昧な場合も確認してください。"
-               "過去の発言の選択を今回の選択として扱わないでください。変更範囲・保護指定は選択より優先です。")
+               "過去の発言の選択を今回の選択として扱わないでください。変更範囲・保護指定は選択より優先です。"
+               "選択のkind=chapterは章カードです。章の構成はread_chaptersで読み、本文はその章のシーンのIDでget_beatsへ渡してください(章IDはget_beatsに渡せません)。"
+               "『この章』は選択した章、選択が無ければ送信時に見ていた階層の章を指します。"
+               "見ていた階層は作者がどこを見ているかの手がかりで、選択があれば選択が対象です。")
     # 各ステップで最新図を作り、本文を含むツール結果は直近だけ保持する。
     # step は読み取りの手順の記録(画面の時系列用)。LLM へ渡す会話には入れない。
     conversation = [{"role": m["role"], "content": message_content(m)} for m in history
@@ -703,7 +734,7 @@ def build_messages(store, history, message, execute, policy, previous_checkpoint
                     and not m.get("step") and not m.get("plan") and not m.get("undo") and not m.get("stale_notice")
                     and m.get("instruction", {}).get("status") != "unapplied"][-12:]
     messages = [{"role": "system", "content": system}, *conversation]
-    messages.append({"role": "user", "content": "今回の依頼: " + message + selection_context(selection or []) + "\n今回の実行記録: "
+    messages.append({"role": "user", "content": "今回の依頼: " + message + selection_context(selection or []) + view_context(view) + "\n今回の実行記録: "
                      + json.dumps(changes, ensure_ascii=False)
                      + "\n今回の途中指示（当初の依頼より優先）: "
                      + json.dumps([message_content(m) for m in history
@@ -730,7 +761,7 @@ async def context_usage(store, base_url, messages, execute):
 
 
 async def stream(store: Store, base_url: str, chat_id: str | None, message: str, execute: bool, on_delete, policy=None, selection=None,
-                 image_hook=None):
+                 image_hook=None, view=None):
     """image_hook(char_ids) は制作で作った人物の画像を描く非同期生成器(auto_images.run)。作業の終わりに呼ぶ。"""
     policy = policy or ProductionPolicy(store)
     chat = store.get_chat(chat_id) if chat_id else store.create_chat(None, "all", mode="production")
@@ -740,6 +771,8 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
     chat_id = chat["id"]
     history = ProductionHistory(chat["messages"])
     request_message = {"role": "user", "content": message, "selected_nodes": selection or [], "execute": execute, "policy": policy.initial, "policy_label": policy.label}
+    if view:
+        request_message["view"] = view
     history.append(request_message)
     store.save_chat_messages(chat_id, history)
     run = ProductionRun(store, chat_id, history, execute)
@@ -827,7 +860,7 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
                 if run.pending or run.paused or run.epoch != epoch:
                     continue
             messages = build_messages(store, history, message, execute, policy, previous_checkpoint,
-                                      changes, recent_results, run.id, selection=selection,
+                                      changes, recent_results, run.id, selection=selection, view=view,
                                       cancelled_text=monitor.cancelled_prompt(), notes=monitor.take_notes(), plan=plan)
             steps_used = step + 1
             yield _sse({"usage": await context_usage(store, base_url, messages, execute)})
@@ -1107,7 +1140,7 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
             yield _sse({"stage": "停止前に、ここまでの情報で回答をまとめています…", "active_node": None})
             try:
                 closing_messages = build_messages(store, history, message, execute, policy, previous_checkpoint,
-                                                  changes, recent_results, run.id, selection=selection,
+                                                  changes, recent_results, run.id, selection=selection, view=view,
                                                   cancelled_text=monitor.cancelled_prompt(), notes=[closing_note], plan=plan)
                 closing_text = ""
                 # ツール呼び出しを文字列で書いてしまう応答を画面に流さないよう、まとめは溜めてから出す。

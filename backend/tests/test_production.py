@@ -481,6 +481,51 @@ def test_selection_api_usage_instruction_retry_and_missing_ids(store, monkeypatc
     run(check())
 
 
+def test_selection_accepts_chapter_cards_and_view_is_sent_with_request(store, monkeypatch):
+    import app as api
+    monkeypatch.setattr(api, "store", store)
+    monkeypatch.setattr(production, "gate", production.ProductionGate())
+    group = store.create_group("第一章", ["first"])
+    assert production.selected_nodes(store, [group["id"], "last"]) == [
+        {"id": group["id"], "title": "第一章", "kind": "chapter"}, {"id": "last", "title": "帰還", "kind": None}]
+    chapter_view = production.screen_view(store, group["id"])
+    assert chapter_view == {"level": "chapter", "chapter_id": group["id"], "title": "第一章"}
+    assert production.screen_view(store, None) == {"level": "work"}
+    with pytest.raises(ValueError, match="開いている章がありません"):
+        production.screen_view(store, "missing")
+    messages = production.build_messages(store, [], "この章を見直して", False, production.ProductionPolicy(store),
+                                         None, [], [], selection=[], view=chapter_view)
+    assert "章「第一章」の中" in messages[-1]["content"]
+    # 発言に保存した階層は、次の依頼の会話にも送信時のまま残る(今回の階層で上書きしない)
+    item = {"role": "user", "content": "前の依頼", "selected_nodes": [], "view": chapter_view}
+    later = production.build_messages(store, [item], "次", False, production.ProductionPolicy(store),
+                                      None, [], [], selection=[], view={"level": "work"})
+    assert "章「第一章」の中" in later[1]["content"] and "作品全体" in later[-1]["content"]
+
+    captured = []
+    async def usage(store, base_url, messages, execute):
+        captured.append(messages)
+        return {"token_count": 1, "ctx_size": 16384, "estimated": True}
+    monkeypatch.setattr(production, "context_usage", usage)
+    chat = store.create_chat(None, "all", mode="production")
+    history = production.ProductionHistory([])
+    active = production.ProductionRun(store, chat["id"], history, True)
+    active.ready = True
+    async def check():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=api.app), base_url="http://test") as client:
+            body = {"message": "この章", "selected_node_ids": [group["id"]], "view": {"chapter_id": group["id"]}}
+            assert (await client.post("/production/token_usage", json=body)).status_code == 200
+            assert "章「第一章」の中" in captured[-1][-1]["content"]
+            assert (await client.post("/production/token_usage", json={**body, "view": {"chapter_id": "missing"}})).status_code == 400
+            production.gate.run = active
+            instruction = {**body, "run_id": active.id, "instruction_id": "view-test"}
+            accepted = await client.post("/production/instruction", json=instruction)
+            assert accepted.status_code == 200 and accepted.json()["view"] == chapter_view
+            assert (await client.post("/production/instruction", json=instruction)).json() == accepted.json()
+            assert (await client.post("/production/instruction", json={**instruction, "view": {"chapter_id": None}})).status_code == 409
+    run(check())
+
+
 def test_selected_protected_node_still_cannot_be_edited(store, monkeypatch):
     fake_extraction(monkeypatch)
     fake_llm(monkeypatch, [call("update_scene", {"node_id": "first", "beat": "変更", "reason": "依頼"}), {"content": "保護されています"}])
