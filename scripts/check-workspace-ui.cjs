@@ -1395,10 +1395,12 @@ store.select_media(m['id'])
         await js(`document.querySelector('.scene-detail-meta button[data-shown-key]:not([data-shown-key=""])').click()`)
         await pause(400)
         await assert(`(() => {const main=document.querySelector('.scene-detail-main').textContent;return main.includes('検証シーン') && main.includes('シーンを開く →') && main.includes('保存済みの本文。') && main.includes('(本文を表示しています)') && !main.includes('まとめを作り直す') && document.querySelector('.scene-detail-meta button[data-shown-key]:not([data-shown-key=""])').getAttribute('aria-current')==='true' && document.body.textContent.includes('第1章')})()`, '章のシーン一覧をクリックすると、章の詳細のままで右にそのシーンの内容が出る(清書が無ければ本文)')
+        await assert(`(() => {const aside=document.querySelector('.scene-detail-aside').textContent;return aside.includes('挿絵') && aside.includes('検証シーン') && aside.includes('このシーンには挿絵がありません。') && !aside.includes('表紙')})()`, 'シーンを見ているときは、左が表紙ではなくそのシーンの挿絵の欄になる(挿絵が無ければ無いと出す)')
         writeFileSync(join(target, 'chapter-scene-preview.png'), (await win.webContents.capturePage()).toPNG())
         await js(`document.querySelector('.scene-detail-meta button[data-shown-key]:not([data-shown-key=""])').dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowUp',bubbles:true}))`)
         await pause(300)
         await assert(`document.querySelector('.scene-detail-main').textContent.includes('まとめを作り直す') && document.querySelector('.scene-detail-meta button[data-shown-key=""]').getAttribute('aria-current')==='true' && document.activeElement===document.querySelector('.scene-detail-meta button[data-shown-key=""]')`, 'シーン一覧で ↑ を押すと先頭の「章のまとめ」に戻り、右がまとめになる')
+        await assert(`document.querySelector('.scene-detail-aside').textContent.includes('表紙')`, '章のまとめに戻ると、左も表紙に戻る')
         // 章のまとめのカード: 読む表示が既定で、鉛筆を押したカードだけ編集欄になり、確定でそのカードを保存する(下の帯の保存は無い)
         // 以降の編集の確かめは、項目が 2 つある検証キャラのカード(先頭の項目)で行う
         const card = `[...document.querySelectorAll('[data-digest-card]')].find(c=>c.textContent.includes('検証キャラ'))`

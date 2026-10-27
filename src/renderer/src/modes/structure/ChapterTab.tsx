@@ -482,8 +482,27 @@ export function ChapterTab({
           </div>
         )}
       </div>      </>} aside={<>
-      {/* 表紙(章カードのサムネイル)。挿絵はシーンのもので、章はどれを使うかだけを持つ */}
-      {cover ? (
+      {/* 左の絵は右の列に出しているものに合わせる。シーンを見ているときはそのシーンの挿絵
+          (無ければ無いと書く。表紙を残すとそのシーンの絵に見えるため)、章のまとめのときは表紙 */}
+      {shownNode ? (
+        <div>
+          <div className="mb-1 flex items-center gap-2">
+            <span className="text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
+              挿絵
+            </span>
+            <span className="min-w-0 flex-1 truncate text-[11px]" style={{ color: 'var(--text-faint)' }}>
+              {nodeTitle(shownNode.id)}
+            </span>
+          </div>
+          {shownNode.image_path ? (
+            <NodeThumb node={shownNode} className="h-auto w-full rounded-xl" />
+          ) : (
+            <p className="text-[11px] leading-relaxed" style={{ color: 'var(--text-faint)' }}>
+              このシーンには挿絵がありません。
+            </p>
+          )}
+        </div>
+      ) : /* 表紙(章カードのサムネイル)。挿絵はシーンのもので、章はどれを使うかだけを持つ */ cover ? (
         <div>
           <div className="mb-1 flex items-center gap-2">
             <span className="text-[11px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-faint)' }}>
