@@ -203,6 +203,11 @@ export const api = {
     request<{ deleted: number }>(`/media/${ownerType}/${ownerId}/unselected`, { method: 'DELETE' }),
   /** 作品全体のストック(新しい順。資料庫のメディアページと「作品全体から選ぶ」) */
   listAllMedia: () => request<{ items: MediaEntry[] }>('/media'),
+  /** ファイルを作品全体のストックから外す(使っている持ち主があれば画像を外してから。メディアページの削除) */
+  deleteMediaFile: (path: string) =>
+    request<{ deleted: number; unset: number }>('/media/files/delete', { method: 'POST', body: JSON.stringify({ path }) }),
+  /** どの持ち主も選んでいないファイルを、作品全体のストックからまとめて外す */
+  deleteUnusedMedia: () => request<{ deleted: number }>('/media/unused/delete', { method: 'POST' }),
   /** ほかの持ち主のストックの 1 枚をこの持ち主のストックへ写す(ファイルは共有)。select で現在の画像にする */
   reuseMedia: (id: string, ownerType: MediaItem['owner_type'], ownerId: string, select = true) =>
     request<MediaItem>(`/media/${id}/reuse`, {

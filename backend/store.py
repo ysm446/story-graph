@@ -1499,6 +1499,37 @@ class Store:
         self.conn.commit()
         return cur.rowcount
 
+    def delete_media_file(self, path: str) -> dict[str, int]:
+        """ファイルを作品全体のストックから外す(メディアページの「削除」)。
+
+        持ち主が選んでいれば、先にその画像を外す(挿絵・参照画像・場所の画像を空にする)。
+        使い回して同じファイルを指す行も全部消す。ファイルは参照が無くなれば gc_assets が回収する
+        (人物のアイコンの元画像やスナップショットが参照していれば残る)。
+        戻り値: 消した行数(deleted)と、画像を外した持ち主の数(unset)。
+        """
+        unset = 0
+        for sql in (
+            "UPDATE nodes SET image_path = NULL, thumb_path = NULL WHERE image_path = ?",
+            "UPDATE characters SET ref_image_path = NULL WHERE ref_image_path = ?",
+            "UPDATE places SET image_path = NULL WHERE image_path = ?",
+        ):
+            unset += self.conn.execute(sql, (path,)).rowcount
+        deleted = self.conn.execute("DELETE FROM media WHERE path = ?", (path,)).rowcount
+        self.conn.commit()
+        return {"deleted": deleted, "unset": unset}
+
+    def delete_unused_media(self) -> int:
+        """どの持ち主も選んでいないファイルを、作品全体のストックからまとめて外す。消した行数を返す。
+        どこかで選ばれているファイルは、ほかの持ち主の候補の行も残す(使用中のファイルなので)。"""
+        cur = self.conn.execute(
+            "DELETE FROM media WHERE path NOT IN ("
+            " SELECT image_path FROM nodes WHERE image_path IS NOT NULL"
+            " UNION SELECT ref_image_path FROM characters WHERE ref_image_path IS NOT NULL"
+            " UNION SELECT image_path FROM places WHERE image_path IS NOT NULL)"
+        )
+        self.conn.commit()
+        return cur.rowcount
+
     def assets_dir(self) -> str | None:
         """現在のライブラリの画像フォルダ(assets/images)。"""
         if not self.root:

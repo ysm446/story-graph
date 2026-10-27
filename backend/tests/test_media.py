@@ -232,3 +232,34 @@ def test_list_all_media_has_owner_name_and_selected():
     assert items["r.png"]["owner_name"] == "アヤ" and items["r.png"]["selected"] is True
     assert items["h.png"]["owner_name"] == "港" and items["h.png"]["selected"] is False
     assert list(items) == ["h.png", "r.png", "s2.png", "s1.png"]  # 新しい順
+
+
+def test_delete_media_file_unsets_owners_and_removes_all_rows():
+    """メディアページの「削除」: 使っている持ち主の画像を外し、使い回した行も含めて全部消す。"""
+    store = _store()
+    n = store.append_node({"beat": "b", "cast": []})
+    c = store.create_character({"name": "A"})
+    a = store.add_media("node", n["id"], "a.png", thumb_path="a_t.webp")
+    store.select_media(a["id"])
+    store.select_media(store.reuse_media(a["id"], "character", c["id"])["id"])
+    keep = store.add_media("node", n["id"], "b.png")
+    assert store.delete_media_file("a.png") == {"deleted": 2, "unset": 2}
+    got = store.get_node(n["id"])
+    assert got["image_path"] is None and got["thumb_path"] is None
+    assert store.get_character(c["id"])["ref_image_path"] is None
+    assert [m["id"] for m in store.list_all_media()] == [keep["id"]]
+
+
+def test_delete_unused_media_keeps_files_in_use():
+    store = _store()
+    n = store.append_node({"beat": "b", "cast": []})
+    c = store.create_character({"name": "A"})
+    used = store.add_media("node", n["id"], "used.png")
+    store.select_media(used["id"])
+    store.reuse_media(used["id"], "character", c["id"])  # 使用中のファイルの候補の行(人物側は未選択)
+    store.add_media("node", n["id"], "spare.png")
+    store.add_media("character", c["id"], "spare2.png")
+    assert store.delete_unused_media() == 2
+    assert sorted((m["owner_type"], m["path"]) for m in store.list_all_media()) == [
+        ("character", "used.png"), ("node", "used.png")
+    ]

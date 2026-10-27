@@ -1008,6 +1008,22 @@ async def reuse_media(media_id: str, body: MediaReuseIn) -> dict[str, Any]:
     return m
 
 
+class MediaFileIn(BaseModel):
+    path: str  # assets/images 内のファイル名
+
+
+@app.post("/media/files/delete")
+async def delete_media_file(body: MediaFileIn) -> dict[str, int]:
+    """ファイルを作品全体のストックから外す。使っている持ち主があれば画像を外してから消す(メディアページ)。"""
+    return store.delete_media_file(body.path)
+
+
+@app.post("/media/unused/delete")
+async def delete_unused_media() -> dict[str, int]:
+    """どの持ち主も選んでいないファイルを、作品全体のストックからまとめて外す。"""
+    return {"deleted": store.delete_unused_media()}
+
+
 @app.get("/media/{owner_type}/{owner_id}")
 async def list_media(owner_type: str, owner_id: str) -> dict[str, Any]:
     """持ち主のストック(新しい順)と、いま選択中のファイル名。"""
