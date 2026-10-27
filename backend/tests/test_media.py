@@ -188,3 +188,47 @@ def test_migration_registers_existing_place_images_as_media(tmp_path):
     assert store._selected_media_path("place", "p1") == "harbor.png"
     store2 = Store(db.connect(str(path)))
     assert len(store2.list_media("place", "p1")) == 1
+
+
+def test_reuse_media_shares_file_and_keeps_owner_generation_state():
+    """ほかの持ち主のストックから使い回す: ファイルは共有し、写し先の生成ウインドウの保存状態は変えない。"""
+    store = _store()
+    a = store.append_node({"beat": "a", "cast": []})
+    b = store.append_node({"beat": "b", "cast": []}, parent_id=a["id"])
+    src = store.add_media("node", a["id"], "a.png", prompt="scene a", seed=5, thumb_path="a_t.webp")
+    store.select_media(src["id"])
+    store.set_node_image_gen(b["id"], prompt="scene b", instructions=None, seed=1, ref_chars=None)
+    m = store.reuse_media(src["id"], "node", b["id"])
+    assert m["path"] == "a.png" and m["reused_from"] == src["id"] and m["seed"] == 5
+    store.select_media(m["id"])
+    got = store.get_node(b["id"])
+    assert got["image_path"] == "a.png" and got["thumb_path"] == "a_t.webp"
+    assert got["image_prompt"] == "scene b" and got["image_seed"] == 1  # 写し先のプロンプトは残る
+    # 同じファイルをもう一度写しても二重に溜めない
+    assert store.reuse_media(src["id"], "node", b["id"])["id"] == m["id"]
+    assert len(store.list_media("node", b["id"])) == 1
+    # 元の行を消しても写した行は残り、ファイルの参照も残る
+    store.set_node_image(a["id"], None)
+    assert store.delete_media(src["id"]) is True
+    assert [x["path"] for x in store.list_media("node", b["id"])] == ["a.png"]
+    with pytest.raises(KeyError):
+        store.reuse_media("nope", "node", b["id"])
+
+
+def test_list_all_media_has_owner_name_and_selected():
+    store = _store()
+    n = store.append_node({"title": "出発", "beat": "b", "cast": []})
+    c = store.create_character({"name": "アヤ"})
+    p = store.create_place({"name": "港"})
+    s1 = store.add_media("node", n["id"], "s1.png")
+    store.add_media("node", n["id"], "s2.png")
+    store.select_media(s1["id"])
+    r = store.add_media("character", c["id"], "r.png")
+    store.select_media(r["id"])
+    store.add_media("place", p["id"], "h.png")
+    items = {m["path"]: m for m in store.list_all_media()}
+    assert items["s1.png"]["owner_name"] == "出発" and items["s1.png"]["selected"] is True
+    assert items["s2.png"]["selected"] is False
+    assert items["r.png"]["owner_name"] == "アヤ" and items["r.png"]["selected"] is True
+    assert items["h.png"]["owner_name"] == "港" and items["h.png"]["selected"] is False
+    assert list(items) == ["h.png", "r.png", "s2.png", "s1.png"]  # 新しい順

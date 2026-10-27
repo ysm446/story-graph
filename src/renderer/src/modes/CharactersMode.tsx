@@ -8,10 +8,11 @@ import { useWorkspace } from '../Workspace'
 import UnsavedBadge from '../UnsavedBadge'
 import CharAvatar from '../CharAvatar'
 import SettingDocumentEditor, { type SettingDocumentEdits } from './SettingDocumentEditor'
+import MediaLibrary from './MediaLibrary'
 import type { SettingDocument } from '../types'
 
-/** 資料の種類。「関係図」はキャラクターの表示方法として扱う。 */
-type Tab = 'characters' | 'places' | 'settings'
+/** 資料の種類。「関係図」はキャラクターの表示方法として扱う。「メディア」は作品全体の画像の一覧 */
+type Tab = 'characters' | 'places' | 'settings' | 'media'
 
 /** 資料庫。キャラクターと場所を同じシェル(リサイズ可能なサイドバー + 編集ペイン)で扱う。
  *  場所も登録制のエンティティなので、庫としては同じ性格のもの(docs/design/places.md)。 */
@@ -290,6 +291,13 @@ function CharactersMode(): React.JSX.Element {
               </div>
             </section>
           ))}
+          {/* 作品全体の画像・動画(一覧を持たない 1 ページなので、開閉も追加も無い) */}
+          <button onClick={() => setTab('media')} aria-pressed={tab === 'media'}
+            className="flex w-full min-w-0 items-center gap-1 rounded-md px-2 py-1 text-left text-[12px] font-medium hover:bg-[var(--accent-soft)]"
+            style={{ color: 'var(--text)', background: tab === 'media' ? 'var(--accent-soft)' : undefined }}
+            data-tip="シーン・人物・場所のストックにある画像と動画を一覧します">
+            <span className="truncate">メディア</span>
+          </button>
         </nav>
       </aside>
       {/* サイドバー幅のリサイズハンドル(構造モードのインスペクタと同じ作り) */}
@@ -305,6 +313,15 @@ function CharactersMode(): React.JSX.Element {
         />
       </div>
       <main className="inspector-scrollbar min-w-0 flex-1 overflow-y-auto p-6">
+        {tab === 'media' && (
+          <MediaLibrary onOpenOwner={(ownerType, ownerId) => {
+            if (ownerType === 'character') {
+              setTab('characters'); setShowRelations(false); setExpanded((value) => ({ ...value, characters: true })); setSelectedId(ownerId)
+            } else {
+              setTab('places'); setExpanded((value) => ({ ...value, places: true })); setSelectedPlaceId(ownerId)
+            }
+          }} />
+        )}
         <div hidden={tab !== 'settings'}>
           <SettingDocumentEditor documents={documents} selectedId={selectedDocumentId} onChanged={reload}
             onDirty={setDocumentEdits} onDeleted={() => setSelectedDocumentId(null)}

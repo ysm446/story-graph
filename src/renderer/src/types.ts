@@ -46,7 +46,16 @@ export interface MediaItem {
   workflow: string | null
   /** 加工した画像の元の画像(null = 生成物か手持ち)。このとき prompt は加工の指示 */
   source_path: string | null
+  /** ほかの持ち主のストックから使い回したときの元の media.id(null = 自分の生成物か手持ち)。
+   *  選んでも生成ウインドウの設定は戻らない */
+  reused_from: string | null
   created_at: string
+}
+
+/** 作品全体のストックの 1 枚(GET /media)。持ち主の名前と、持ち主がいま選んでいるかを添える */
+export interface MediaEntry extends MediaItem {
+  owner_name: string | null
+  selected: boolean
 }
 
 /** 場所。キャラクターと同型の登録制エンティティ(docs/design/places.md)。

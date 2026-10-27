@@ -1354,22 +1354,69 @@ class Store:
         thumb_path: str | None = None,
         workflow: str | None = None,
         source_path: str | None = None,
+        reused_from: str | None = None,
     ) -> dict[str, Any]:
         """ストックに 1 枚足す(選択はしない)。手持ちの画像は prompt 以下を空のまま。
-        加工した画像は source_path に元の画像を持ち、prompt は加工の指示。"""
+        加工した画像は source_path に元の画像を持ち、prompt は加工の指示。
+        使い回した画像は reused_from に元の media.id を持つ(reuse_media)。"""
         if owner_type not in MEDIA_OWNER_TYPES:
             raise ValueError(f"unknown owner_type: {owner_type}")
         media_id = _new_id()
         self.conn.execute(
             "INSERT INTO media(id, owner_type, owner_id, path, thumb_path, prompt, instructions, seed, ref_chars,"
-            " workflow, source_path, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            " workflow, source_path, reused_from, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 media_id, owner_type, owner_id, path, thumb_path, prompt, instructions, seed,
-                json.dumps(ref_chars) if ref_chars is not None else None, workflow, source_path, _now(),
+                json.dumps(ref_chars) if ref_chars is not None else None, workflow, source_path, reused_from, _now(),
             ),
         )
         self.conn.commit()
         return self.get_media(media_id)  # type: ignore[return-value]
+
+    def list_all_media(self) -> list[dict[str, Any]]:
+        """作品全体のストック(新しい順)。持ち主の名前(owner_name)と、持ち主がいま選んでいる
+        1 枚かどうか(selected)を添える。資料庫のメディアページと、ストックの「作品全体から選ぶ」が使う。"""
+        rows = self.conn.execute(
+            "SELECT m.*,"
+            " CASE m.owner_type WHEN 'node' THEN n.title WHEN 'character' THEN c.name ELSE p.name END AS owner_name,"
+            " CASE m.owner_type WHEN 'node' THEN n.image_path WHEN 'character' THEN c.ref_image_path"
+            "  ELSE p.image_path END AS owner_selected"
+            " FROM media m"
+            " LEFT JOIN nodes n ON m.owner_type = 'node' AND n.id = m.owner_id"
+            " LEFT JOIN characters c ON m.owner_type = 'character' AND c.id = m.owner_id"
+            " LEFT JOIN places p ON m.owner_type = 'place' AND p.id = m.owner_id"
+            " ORDER BY m.created_at DESC, m.rowid DESC"
+        ).fetchall()
+        items = []
+        for row in rows:
+            m = self._media_dict(row)
+            m["selected"] = m.pop("owner_selected") == m["path"]
+            items.append(m)
+        return items
+
+    def reuse_media(self, media_id: str, owner_type: str, owner_id: str) -> dict[str, Any]:
+        """ストックの 1 枚を別の持ち主のストックへ写す(選択はしない)。
+
+        ファイルは複製せず同じ path を指す行を足すだけ(gc_assets はどれか 1 行が参照していれば消さない)。
+        生成のセットは表示用に写すが、reused_from があるので select_media は写し先の保存状態に戻さない。
+        同じファイルが既に写し先のストックにあれば、その行を返す(二重に溜めない)。
+        """
+        src = self.get_media(media_id)
+        if src is None:
+            raise KeyError(media_id)
+        row = self.conn.execute(
+            "SELECT * FROM media WHERE owner_type = ? AND owner_id = ? AND path = ?"
+            " ORDER BY created_at DESC, rowid DESC LIMIT 1",
+            (owner_type, owner_id, src["path"]),
+        ).fetchone()
+        if row is not None:
+            return self._media_dict(row)
+        return self.add_media(
+            owner_type, owner_id, src["path"],
+            prompt=src["prompt"], instructions=src["instructions"], seed=src["seed"], ref_chars=src["ref_chars"],
+            thumb_path=src["thumb_path"], workflow=src.get("workflow"), source_path=src.get("source_path"),
+            reused_from=src["id"],
+        )
 
     def _selected_media_path(self, owner_type: str, owner_id: str) -> str | None:
         if owner_type == "node":
@@ -1386,13 +1433,13 @@ class Store:
 
         生成物なら、生成ウインドウの保存状態(プロンプト・追加指示・seed・参照キャラ)も
         その画像を作ったセットに戻す(次に開いたとき同じ絵を引き直せる)。手持ちの画像
-        (セットが空)と加工した画像(prompt は加工の指示で、生成のプロンプトではない)では
-        保存状態に触れない。
+        (セットが空)と加工した画像(prompt は加工の指示で、生成のプロンプトではない)、
+        ほかの持ち主から使い回した画像(セットはその持ち主のもの)では保存状態に触れない。
         """
         m = self.get_media(media_id)
         if m is None:
             raise KeyError(media_id)
-        has_set = bool(m["prompt"]) and not m.get("source_path")
+        has_set = bool(m["prompt"]) and not m.get("source_path") and not m.get("reused_from")
         if m["owner_type"] == "node":
             self.conn.execute(
                 "UPDATE nodes SET image_path = ?, thumb_path = ? WHERE id = ?",

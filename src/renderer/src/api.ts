@@ -7,6 +7,7 @@ import type {
   EventInput,
   GraphEdge,
   Group,
+  MediaEntry,
   MediaItem,
   Place,
   SettingDocument,
@@ -200,6 +201,14 @@ export const api = {
   deleteMedia: (id: string) => request<{ ok: boolean }>(`/media/${id}`, { method: 'DELETE' }),
   deleteUnselectedMedia: (ownerType: MediaItem['owner_type'], ownerId: string) =>
     request<{ deleted: number }>(`/media/${ownerType}/${ownerId}/unselected`, { method: 'DELETE' }),
+  /** 作品全体のストック(新しい順。資料庫のメディアページと「作品全体から選ぶ」) */
+  listAllMedia: () => request<{ items: MediaEntry[] }>('/media'),
+  /** ほかの持ち主のストックの 1 枚をこの持ち主のストックへ写す(ファイルは共有)。select で現在の画像にする */
+  reuseMedia: (id: string, ownerType: MediaItem['owner_type'], ownerId: string, select = true) =>
+    request<MediaItem>(`/media/${id}/reuse`, {
+      method: 'POST',
+      body: JSON.stringify({ owner_type: ownerType, owner_id: ownerId, select })
+    }),
   resetLayout: () => request<unknown>('/layout/reset', { method: 'POST' }),
   putEvents: (nodeId: string, events: EventInput[]) =>
     request<{ events: StoryEvent[]; validation: string[] }>(`/nodes/${nodeId}/events`, {

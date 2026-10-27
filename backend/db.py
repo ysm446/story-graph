@@ -347,6 +347,9 @@ def init_schema(conn: sqlite3.Connection) -> None:
         # 加工した画像の元の画像(assets のファイル名。docs/design/image-gen.md §15)。NULL = 生成物か手持ち。
         # 加工物の prompt は作者の指示そのもので、生成ウインドウの保存状態には戻さない
         "ALTER TABLE media ADD COLUMN source_path TEXT",
+        # ほかの持ち主のストックから使い回したときの元の media.id(docs/design/image-gen.md §7)。NULL = 自分の生成物か手持ち。
+        # セットは表示用に写すが、写し先の生成ウインドウの保存状態には戻さない(その持ち主のプロンプトではない)
+        "ALTER TABLE media ADD COLUMN reused_from TEXT",
     ):
         try:
             conn.execute(ddl)

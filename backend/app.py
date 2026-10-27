@@ -970,6 +970,44 @@ def _check_media_owner(owner_type: str, owner_id: str) -> None:
         raise HTTPException(400, f"unknown owner_type: {owner_type}")
 
 
+class MediaReuseIn(BaseModel):
+    owner_type: str  # 写し先(いまストックを開いている持ち主)
+    owner_id: str
+    select: bool = True
+
+
+# 持ち主ごとに使える形式(MediaPicker に渡す accept と同じ)。参照画像は ComfyUI の編集モデルへ渡すので
+# 静止画だけ(gif も外す)、場所の画像は動画を使わない
+MEDIA_OWNER_EXTS = {
+    "node": ALLOWED_IMAGE_EXTS | ALLOWED_VIDEO_EXTS,
+    "character": {".png", ".jpg", ".jpeg", ".webp"},
+    "place": ALLOWED_IMAGE_EXTS,
+}
+
+
+@app.get("/media")
+async def list_all_media() -> dict[str, Any]:
+    """作品全体のストック(新しい順)。持ち主の名前と、持ち主の選択中かどうかを添える。"""
+    return {"items": store.list_all_media()}
+
+
+@app.post("/media/{media_id}/reuse")
+async def reuse_media(media_id: str, body: MediaReuseIn) -> dict[str, Any]:
+    """ほかの持ち主のストックの 1 枚を、この持ち主のストックへ写す(ファイルは共有)。"""
+    from pathlib import Path as _Path
+
+    _check_media_owner(body.owner_type, body.owner_id)
+    src = store.get_media(media_id)
+    if src is None:
+        raise HTTPException(404, "media not found")
+    if _Path(src["path"]).suffix.lower() not in MEDIA_OWNER_EXTS[body.owner_type]:
+        raise HTTPException(400, "この形式の画像はここでは使えません")
+    m = store.reuse_media(media_id, body.owner_type, body.owner_id)
+    if body.select:
+        store.select_media(m["id"])
+    return m
+
+
 @app.get("/media/{owner_type}/{owner_id}")
 async def list_media(owner_type: str, owner_id: str) -> dict[str, Any]:
     """持ち主のストック(新しい順)と、いま選択中のファイル名。"""
