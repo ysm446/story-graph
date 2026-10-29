@@ -251,6 +251,55 @@ def test_branch_node_render_is_retrievable(store, monkeypatch):
     assert store.latest_render(branch["id"], preset["id"], None)["prose"] == "分岐の本文"
 
 
+def test_render_history_is_capped_per_scene_preset_pov(store):
+    """清書は書き直すたびに行が増えるので、組ごとに RENDER_HISTORY_LIMIT 件までに整理する。
+    消す行の朗読台本も一緒に消し、別の組(視点違い・別シーン)には触れない。"""
+    import store as store_mod
+
+    limit = store_mod.RENDER_HISTORY_LIMIT
+    preset = store.list_presets()[0]
+    a, b = store.canon_path()
+    first = store.save_render(a, preset["id"], None, "版0")
+    store.save_voice_script(first["id"], a, [], "rule")
+    other_pov = store.save_render(a, preset["id"], "aya", "アヤ視点")
+    other_scene = store.save_render(b, preset["id"], None, "別シーン")
+    for i in range(1, limit + 2):
+        store.save_render(a, preset["id"], None, f"版{i}")
+
+    rows = store.conn.execute(
+        "SELECT prose FROM renders WHERE node_id = ? AND preset_id = ? AND pov_char IS NULL"
+        " ORDER BY created_at DESC, rowid DESC",
+        (a, preset["id"]),
+    ).fetchall()
+    assert [r["prose"] for r in rows] == [f"版{i}" for i in range(limit + 1, 1, -1)]
+    assert store.get_render(first["id"]) is None
+    assert store.get_voice_script(first["id"]) is None
+    assert store.get_render(other_pov["id"]) is not None
+    assert store.get_render(other_scene["id"]) is not None
+
+
+def test_prune_renders_tidies_existing_rows(store):
+    """上限を入れる前に溜まった分は、起動時・ライブラリを開いたときに全シーンまとめて整理する。"""
+    import store as store_mod
+
+    limit = store_mod.RENDER_HISTORY_LIMIT
+    preset = store.list_presets()[0]
+    a, b = store.canon_path()
+    for node_id in (a, b):
+        for i in range(limit + 3):  # 上限なしの時代の溜まり方を直接作る
+            store.conn.execute(
+                "INSERT INTO renders(id, node_id, preset_id, pov_char, prose, created_at)"
+                " VALUES(?,?,?,NULL,?,?)",
+                (f"{node_id}-{i}", node_id, preset["id"], f"版{i}", f"2026-01-01T00:00:{i:02d}"),
+            )
+    assert store.prune_renders() == 6
+    for node_id in (a, b):
+        assert store.latest_render(node_id, preset["id"], None)["prose"] == f"版{limit + 2}"
+        count = store.conn.execute("SELECT COUNT(*) FROM renders WHERE node_id = ?", (node_id,)).fetchone()[0]
+        assert count == limit
+    assert store.prune_renders() == 0
+
+
 def test_stale_marked_on_upstream_edit(store, monkeypatch):
     async def fake_stream(messages, **kwargs):
         yield "本文"

@@ -115,6 +115,16 @@ def _schedule_audio_gc(delay: float = AUDIO_GC_DELAY_SEC) -> None:
     _spawn_bg(run())
 
 
+def _prune_renders() -> None:
+    """ライブラリを開いたときに、上限を超えて溜まった古い清書を整理する。失敗しても開くのは止めない。"""
+    try:
+        removed = store.prune_renders()
+        if removed:
+            print(f"[renders] 古い清書を {removed} 件整理しました")
+    except Exception as e:  # noqa: BLE001
+        print(f"[renders] 古い清書の整理に失敗: {e}")
+
+
 def _voice_housekeeping() -> None:
     """ライブラリを開いたときの声まわりの片付け。Step 1 の語り手の設定キーを声に移し、
     どの声からも参照されない参照音声(assets/voices)を消す。失敗しても開くのは止めない。"""
@@ -189,6 +199,7 @@ async def _startup() -> None:
             print(f"[assets] 未参照ファイルを {removed} 件削除しました")
     except Exception as e:  # GC の失敗で起動を止めない
         print(f"[assets] GC に失敗: {e}")
+    _prune_renders()
     _voice_housekeeping()
     _schedule_audio_gc()
     _spawn_bg(_deferred_auto_backup())
@@ -329,6 +340,7 @@ async def switch_library(body: LibrarySwitchIn) -> dict[str, Any]:
         store.gc_assets()
     except Exception as e:  # GC の失敗で切替を止めない
         print(f"[assets] GC に失敗: {e}")
+    _prune_renders()
     _voice_housekeeping()
     _schedule_audio_gc()
     _spawn_bg(_auto_backup_quietly())  # 開いたライブラリの日次チェック

@@ -51,6 +51,10 @@ VOICE_REF_SQLS = ("SELECT j.value FROM voice_profiles p, json_each(p.ref_paths) 
 
 MEDIA_OWNER_TYPES = ("node", "character", "place")
 
+# 清書の履歴をシーン × スタイルプリセット × 視点ごとに何件まで残すか(最新を含む)。
+# 書き直すたびに行が増え、生成時の messages の控えも入るので上限なしだと溜まり続ける
+RENDER_HISTORY_LIMIT = 5
+
 
 def _is_turn_start(message: dict[str, Any]) -> bool:
     if message.get("role") != "user":
@@ -3073,8 +3077,32 @@ class Store:
                 json.dumps(prompt_messages, ensure_ascii=False) if prompt_messages else None,
             ),
         )
+        self.prune_renders(node_id, commit=False)
         self.conn.commit()
         return self._render_row(self.conn.execute("SELECT * FROM renders WHERE id = ?", (render_id,)).fetchone())
+
+    def prune_renders(self, node_id: str | None = None, commit: bool = True) -> int:
+        """清書の履歴を組(シーン × スタイルプリセット × 視点)ごとに RENDER_HISTORY_LIMIT 件までにし、
+        古い行とその朗読台本を消す。node_id 省略時は全シーン(起動時・ライブラリを開いたときの整理)。
+        台本の引き継ぎは直前の清書の台本しか使わないので、2 件以上残せば壊れない。"""
+        where, params = ("WHERE node_id = ?", [node_id]) if node_id else ("", [])
+        ids = [
+            row["id"]
+            for row in self.conn.execute(
+                f"""SELECT id FROM (
+                      SELECT id, ROW_NUMBER() OVER (
+                        PARTITION BY node_id, preset_id, pov_char ORDER BY created_at DESC, rowid DESC
+                      ) AS rn FROM renders {where}
+                    ) WHERE rn > ?""",
+                [*params, RENDER_HISTORY_LIMIT],
+            )
+        ]
+        if ids:
+            self.conn.executemany("DELETE FROM voice_scripts WHERE render_id = ?", [(i,) for i in ids])
+            self.conn.executemany("DELETE FROM renders WHERE id = ?", [(i,) for i in ids])
+        if commit:
+            self.conn.commit()
+        return len(ids)
 
     # ---- 朗読台本(docs/design/voice.md §4) ---------------------------
 
