@@ -22,6 +22,10 @@ import { ElapsedSeconds } from './ElapsedLabel'
 import { frameSetter } from './frameSetter'
 import { useWorkspace } from './Workspace'
 import { askConfirm } from './ConfirmDialog'
+import { Segment } from './Segment'
+
+const ROLEPLAY_FIXED_TIP = '枠組みはチャット開始時に固定されます(変えるには新規)'
+const SCOPE_FIXED_TIP = 'スコープはチャット開始時に固定されます(変えるには新規)'
 
 // 旧形式の会話履歴に保存された提案を文章として復元するための型。
 interface LegacyProposal {
@@ -987,49 +991,27 @@ export default function ChatDrawer({
                 {!chatId && !roomReady && <span>2 人以上選んでください</span>}
               </div>
             ) : charId ? (
-              <div className="flex overflow-hidden rounded-md border" style={{ borderColor: 'var(--border-strong)' }}>
-                {([false, true] as const).map((rp) => (
-                  <button
-                    key={String(rp)}
-                    onClick={() => !chatId && setRoleplay(rp)}
-                    disabled={!!chatId}
-                    className="px-2 py-0.5 disabled:cursor-not-allowed"
-                    style={
-                      roleplay === rp
-                        ? { background: 'var(--accent-soft)', color: 'var(--text)' }
-                        : { color: 'var(--text-faint)' }
-                    }
-                    data-tip={
-                      chatId
-                        ? '枠組みはチャット開始時に固定されます(変えるには新規)'
-                        : rp
-                          ? '劇中の一場面として話す(あなたは見知らぬ相手。会話は本編に含まれない)'
-                          : '物語の外から、作者としてキャラにインタビューする'
-                    }
-                  >
-                    {rp ? '劇中会話' : 'インタビュー'}
-                  </button>
-                ))}
-              </div>
+              <Segment
+                options={[
+                  { value: false, label: 'インタビュー', tip: chatId ? ROLEPLAY_FIXED_TIP : '物語の外から、作者としてキャラにインタビューする' },
+                  { value: true, label: '劇中会話', tip: chatId ? ROLEPLAY_FIXED_TIP : '劇中の一場面として話す(あなたは見知らぬ相手。会話は本編に含まれない)' }
+                ]}
+                value={roleplay}
+                onChange={setRoleplay}
+                disabled={!!chatId}
+                buttonClassName="px-2 py-0.5 disabled:cursor-not-allowed"
+              />
             ) : (
-              <div className="flex overflow-hidden rounded-md border" style={{ borderColor: 'var(--border-strong)' }}>
-                {(['upto', 'all'] as const).map((s) => (
-                  <button
-                    key={s}
-                    onClick={() => !chatId && setScope(s)}
-                    disabled={!!chatId}
-                    className="px-2 py-0.5 disabled:cursor-not-allowed"
-                    style={
-                      scope === s
-                        ? { background: 'var(--accent-soft)', color: 'var(--text)' }
-                        : { color: 'var(--text-faint)' }
-                    }
-                    data-tip={chatId ? 'スコープはチャット開始時に固定されます(変えるには新規)' : s === 'upto' ? 'アンカーまでの情報のみ' : '物語全体'}
-                  >
-                    {s === 'upto' ? 'ここまで' : '全体'}
-                  </button>
-                ))}
-              </div>
+              <Segment
+                options={[
+                  { value: 'upto', label: 'ここまで', tip: chatId ? SCOPE_FIXED_TIP : 'アンカーまでの情報のみ' },
+                  { value: 'all', label: '全体', tip: chatId ? SCOPE_FIXED_TIP : '物語全体' }
+                ]}
+                value={scope}
+                onChange={setScope}
+                disabled={!!chatId}
+                buttonClassName="px-2 py-0.5 disabled:cursor-not-allowed"
+              />
             )}
             <button
               onClick={() => voice.setEnabled(!voice.enabled)}

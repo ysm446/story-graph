@@ -4,6 +4,7 @@ import { api } from '../api'
 import AutoTextarea from '../AutoTextarea'
 import { CHAT_RULES_EVENT } from '../ChatRulesPanel'
 import { DEFAULT_VIDEO_CROSSFADE_SECONDS } from '../CrossfadeLoopVideo'
+import { ON_OFF, SHOW_HIDE, Segment } from '../Segment'
 import { useElapsedSeconds } from '../useElapsed'
 import VoiceSettingsSection from '../VoiceSettings'
 import EmbeddingStatusLine from './settings/EmbeddingStatusLine'
@@ -784,27 +785,7 @@ export default function SettingsMode({ onImported }: {
                 <div className="settings-field-header">
                   <span className="settings-field-label">ミニマップ</span>
                   <div className="settings-field-controls">
-                    <div className="flex overflow-hidden rounded-md border" style={{ borderColor: 'var(--border-strong)' }}>
-                      {(
-                        [
-                          ['1', '表示'],
-                          ['0', '非表示']
-                        ] as const
-                      ).map(([value, label]) => (
-                        <button
-                          key={value}
-                          onClick={() => void save({ minimap_visible: value })}
-                          className="px-2.5 py-0.5 text-[12px]"
-                          style={
-                            minimapVisible === (value === '1')
-                              ? { background: 'var(--accent-soft)', color: 'var(--text)' }
-                              : { color: 'var(--text-faint)' }
-                          }
-                        >
-                          {label}
-                        </button>
-                      ))}
-                    </div>
+                    <Segment options={SHOW_HIDE} value={minimapVisible} onChange={(v) => void save({ minimap_visible: v ? '1' : '0' })} />
                   </div>
                 </div>
                 <p className="settings-field-hint">キャンバスの右下に表示される全体図です。</p>
@@ -813,27 +794,7 @@ export default function SettingsMode({ onImported }: {
                 <div className="settings-field-header">
                   <span className="settings-field-label">ズームアウト時のタイトル</span>
                   <div className="settings-field-controls">
-                    <div className="flex overflow-hidden rounded-md border" style={{ borderColor: 'var(--border-strong)' }}>
-                      {(
-                        [
-                          ['1', '表示'],
-                          ['0', '非表示']
-                        ] as const
-                      ).map(([value, label]) => (
-                        <button
-                          key={value}
-                          onClick={() => void save({ zoomed_out_titles: value })}
-                          className="px-2.5 py-0.5 text-[12px]"
-                          style={
-                            zoomedOutTitles === (value === '1')
-                              ? { background: 'var(--accent-soft)', color: 'var(--text)' }
-                              : { color: 'var(--text-faint)' }
-                          }
-                        >
-                          {label}
-                        </button>
-                      ))}
-                    </div>
+                    <Segment options={SHOW_HIDE} value={zoomedOutTitles} onChange={(v) => void save({ zoomed_out_titles: v ? '1' : '0' })} />
                   </div>
                 </div>
                 <p className="settings-field-hint">
@@ -844,27 +805,7 @@ export default function SettingsMode({ onImported }: {
                 <div className="settings-field-header">
                   <span className="settings-field-label">グリッドにスナップ</span>
                   <div className="settings-field-controls">
-                    <div className="flex overflow-hidden rounded-md border" style={{ borderColor: 'var(--border-strong)' }}>
-                      {(
-                        [
-                          ['1', 'オン'],
-                          ['0', 'オフ']
-                        ] as const
-                      ).map(([value, label]) => (
-                        <button
-                          key={value}
-                          onClick={() => void save({ grid_snap: value })}
-                          className="px-2.5 py-0.5 text-[12px]"
-                          style={
-                            gridSnap === (value === '1')
-                              ? { background: 'var(--accent-soft)', color: 'var(--text)' }
-                              : { color: 'var(--text-faint)' }
-                          }
-                        >
-                          {label}
-                        </button>
-                      ))}
-                    </div>
+                    <Segment options={ON_OFF} value={gridSnap} onChange={(v) => void save({ grid_snap: v ? '1' : '0' })} />
                   </div>
                 </div>
                 <p className="settings-field-hint">
@@ -923,28 +864,7 @@ export default function SettingsMode({ onImported }: {
                 <div className="settings-field-header">
                   <span className="settings-field-label">起動時に Embedding を読み込む</span>
                   <div className="settings-field-controls">
-                    <div className="flex overflow-hidden rounded-md border" style={{ borderColor: 'var(--border-strong)' }}>
-                      {(
-                        [
-                          ['1', 'オン'],
-                          ['0', 'オフ']
-                        ] as const
-                      ).map(([value, label]) => (
-                        <button
-                          key={value}
-                          aria-pressed={embeddingOnStartup === (value === '1')}
-                          onClick={() => void save({ embedding_load_on_startup: value })}
-                          className="px-2.5 py-0.5 text-[12px]"
-                          style={
-                            embeddingOnStartup === (value === '1')
-                              ? { background: 'var(--accent-soft)', color: 'var(--text)' }
-                              : { color: 'var(--text-faint)' }
-                          }
-                        >
-                          {label}
-                        </button>
-                      ))}
-                    </div>
+                    <Segment options={ON_OFF} value={embeddingOnStartup} onChange={(v) => void save({ embedding_load_on_startup: v ? '1' : '0' })} />
                   </div>
                 </div>
                 <p className="settings-field-hint">
@@ -964,27 +884,7 @@ export default function SettingsMode({ onImported }: {
                 <div className="settings-field-header">
                   <span className="settings-field-label">内容から質問候補を作る</span>
                   <div className="settings-field-controls">
-                    <div className="flex overflow-hidden rounded-md border" style={{ borderColor: 'var(--border-strong)' }}>
-                      {(
-                        [
-                          ['1', 'オン'],
-                          ['0', 'オフ']
-                        ] as const
-                      ).map(([value, label]) => (
-                        <button
-                          key={value}
-                          onClick={() => void save({ chat_dynamic_suggestions: value })}
-                          className="px-2.5 py-0.5 text-[12px]"
-                          style={
-                            chatDynamicSuggestions === (value === '1')
-                              ? { background: 'var(--accent-soft)', color: 'var(--text)' }
-                              : { color: 'var(--text-faint)' }
-                          }
-                        >
-                          {label}
-                        </button>
-                      ))}
-                    </div>
+                    <Segment options={ON_OFF} value={chatDynamicSuggestions} onChange={(v) => void save({ chat_dynamic_suggestions: v ? '1' : '0' })} />
                   </div>
                 </div>
                 <p className="settings-field-hint">

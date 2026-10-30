@@ -8,6 +8,7 @@ import ProofreadTextarea from '../ProofreadTextarea'
 import type { Place } from '../types'
 import SceneUsage, { type SceneUsageProps } from '../SceneUsage'
 import { askConfirm, showAlert } from '../ConfirmDialog'
+import { useFileDrop } from '../useFileDrop'
 
 /** 新しい場所の色。色の欄の「既定の色に戻す」もこの色にする */
 export const DEFAULT_PLACE_COLOR = '#5a8fa7'
@@ -63,10 +64,8 @@ export default function PlaceEditor({
   }, [])
   const [uploading, setUploading] = useState(false)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
-  // 参考画像へのドラッグ&ドロップ。子要素をまたぐと dragleave が誤発火するので、
-  // 深さを数えて 0 になったときだけハイライトを消す(シーンの挿絵と同じ作り)
-  const [imageDragOver, setImageDragOver] = useState(false)
-  const imageDragDepth = useRef(0)
+  // 参考画像へのドラッグ&ドロップ
+  const { dragOver: imageDragOver, bind: imageDrop } = useFileDrop()
   // 画像のストック(候補の一覧)と生成ウインドウ
   const [stockOpen, setStockOpen] = useState(false)
   const [generateOpen, setGenerateOpen] = useState(false)
@@ -205,25 +204,7 @@ export default function PlaceEditor({
       {/* 参考画像(装飾専用。景色なので丸く切り抜かず、横長のまま置く) */}
       <div className="mb-4 flex flex-col items-start gap-1.5">
         <div
-          onDragEnter={(e) => {
-            e.preventDefault()
-            imageDragDepth.current += 1
-            setImageDragOver(true)
-          }}
-          onDragOver={(e) => e.preventDefault()}
-          onDragLeave={() => {
-            imageDragDepth.current -= 1
-            if (imageDragDepth.current <= 0) {
-              imageDragDepth.current = 0
-              setImageDragOver(false)
-            }
-          }}
-          onDrop={(e) => {
-            e.preventDefault()
-            imageDragDepth.current = 0
-            setImageDragOver(false)
-            void acceptImageFile(e.dataTransfer.files?.[0])
-          }}
+          {...imageDrop((file) => void acceptImageFile(file))}
           data-write-action
           onClick={() => {
             if (!draft.image_path) fileInputRef.current?.click()

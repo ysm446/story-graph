@@ -61,18 +61,6 @@ CREATE TABLE IF NOT EXISTS places(
   created_at TEXT
 );
 
-CREATE TABLE IF NOT EXISTS factions(
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  description TEXT
-);
-
-CREATE TABLE IF NOT EXISTS faction_members(
-  char_id TEXT,
-  faction_id TEXT,
-  PRIMARY KEY(char_id, faction_id)
-);
-
 CREATE TABLE IF NOT EXISTS nodes(
   id TEXT PRIMARY KEY,
   title TEXT,
@@ -359,6 +347,9 @@ def init_schema(conn: sqlite3.Connection) -> None:
                 raise
     # group_id は ALTER で足す列なので、索引も列が揃ってから作る
     conn.execute("CREATE INDEX IF NOT EXISTS idx_nodes_group ON nodes(group_id)")
+    # 勢力(factions)は作る画面も使い道も無いまま廃止した。古いライブラリに残ったテーブルを消す
+    conn.execute("DROP TABLE IF EXISTS faction_members")
+    conn.execute("DROP TABLE IF EXISTS factions")
     version = conn.execute("PRAGMA user_version").fetchone()[0]
     if version < SCHEMA_VERSION:
         # 一回限りのデータ変換(lm-chat の作法)

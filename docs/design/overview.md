@@ -1,7 +1,7 @@
 # 全体設計(アーキテクチャ)
 
 作成日時: 2026-08-09 15:30
-更新日時: 2026-10-30 01:28
+更新日時: 2026-10-30 17:28
 
 このアプリが **どう組まれているか** をまとめた入口。「何を作るか」は
 [story-graph-spec.md](../story-graph-spec.md)(仕様)と [plan/goals.md](../plan/goals.md)(目的・価値)、
@@ -171,7 +171,7 @@ memories の同期を書き忘れる場所を作らない)。
 - `modes/StructureMode.tsx` — React Flow(`@xyflow/react`)のキャンバス。DAG の編集、
   章ビュー、インスペクタ。アプリで最も大きい画面
 - `modes/ReaderMode.tsx` — 鑑賞(ページ / 縦読み / 挿絵分割)。読んでいるシーンを App に返す
-- `modes/CharactersMode.tsx` / `CharacterEditor.tsx` / `PlaceEditor.tsx` — 資料庫(キャラ・場所・派閥)。
+- `modes/CharactersMode.tsx` / `CharacterEditor.tsx` / `PlaceEditor.tsx` — 資料庫(キャラ・場所)。
   `CharacterEditor` は構造モードの詳細欄「資料」タブからも使う(キャラクターの編集画面を 1 か所にする)
 - `modes/SettingsMode.tsx` — モデル・プロンプト・スナップショット・バックアップ
 - `RelationGraph.tsx` — d3-force の関係グラフ(初回レイアウトのみ。座標はピン留め)

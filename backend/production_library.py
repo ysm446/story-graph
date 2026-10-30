@@ -94,9 +94,8 @@ def references(store, kind, entity_id):
         for row in store.conn.execute("SELECT id, char_id, participants FROM chats"):
             if row["char_id"] == entity_id or entity_id in json.loads(row["participants"] or "[]"):
                 other.add("キャラクター会話: " + row["id"])
-        for table in ("memories", "faction_members"):
-            if store.conn.execute(f"SELECT 1 FROM {table} WHERE char_id = ? LIMIT 1", (entity_id,)).fetchone():
-                other.add("記憶" if table == "memories" else "派閥の所属")
+        if store.conn.execute("SELECT 1 FROM memories WHERE char_id = ? LIMIT 1", (entity_id,)).fetchone():
+            other.add("記憶")
         for row in store.conn.execute("SELECT id, image_ref_chars FROM nodes"):
             if entity_id in json.loads(row["image_ref_chars"] or "[]"):
                 nodes.add(row["id"])

@@ -1,11 +1,12 @@
 import DetailSplit from '../../DetailSplit'
 import { createPortal } from 'react-dom'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api, assetUrl, isVideoAsset, uploadAsset } from '../../api'
 import { showStatusNotice } from '../../statusNotice'
 import EventsEditor from '../../EventsEditor'
 import { Icon } from '../../icons'
 import ProofreadTextarea from '../../ProofreadTextarea'
+import AutoTextarea from '../../AutoTextarea'
 import Lightbox from '../../Lightbox'
 import MediaPicker from '../../MediaPicker'
 import SceneImageModal from '../../SceneImageModal'
@@ -14,6 +15,7 @@ import type { Character, ElapsedUnit, Place, StoryNode } from '../../types'
 import { beatDraftCache, deleteBeatDraft, savedBeatDraft, setBeatDraft } from './beatDrafts'
 import { latestEventInputs } from './events'
 import { askConfirm } from '../../ConfirmDialog'
+import { useFileDrop } from '../../useFileDrop'
 
 // ---- ビートタブ ------------------------------------------------------
 
@@ -67,16 +69,14 @@ export function BeatTab({
   // 退場の入力中(理由をインラインで入力する。Electron は window.prompt が使えない)
   const [retireTarget, setRetireTarget] = useState<string | null>(null)
   const [retireReason, setRetireReason] = useState('death')
-  const [imageDragOver, setImageDragOver] = useState(false)
+  const { dragOver: imageDragOver, bind: imageDrop } = useFileDrop()
   const [sceneImageOpen, setSceneImageOpen] = useState(false)
   // 挿絵のストック(候補の一覧)ウインドウ
   const [stockOpen, setStockOpen] = useState(false)
   // 挿絵のサムネイルをクリックしたときの拡大表示
   const [lightboxOpen, setLightboxOpen] = useState(false)
   const suggestElapsed = useElapsedSeconds(suggesting !== null)
-  const imageDragDepth = useRef(0) // 子要素との境界で dragleave が発火してもチラつかないよう深さを数える
   const imageInputRef = useRef<HTMLInputElement | null>(null)
-  const coreTextareaRef = useRef<HTMLTextAreaElement | null>(null)
   // いま表示しているシーン。自動生成の応答が別のシーンの下書きに混ざらないよう突き合わせる
   const shownNodeId = useRef(node.id)
   shownNodeId.current = node.id
@@ -93,33 +93,34 @@ export function BeatTab({
       .catch((err) => setError(String(err)))
   }
 
-  // 感情の核はスクロールさせず、内容に合わせて高さを自動調整する
-  // (シーン本文は ProofreadTextarea が自前で行う)
-  const autosize = useCallback((textarea: HTMLTextAreaElement | null): void => {
-    if (!textarea) return
-    textarea.style.height = 'auto'
-    textarea.style.height = `${textarea.scrollHeight + 2}px`
-  }, [])
-
-  useEffect(() => {
-    autosize(coreTextareaRef.current)
-  }, [draft.emotional_core, node.id, autosize])
-
-  // サイドバーのリサイズ等で幅が変わると折り返しが変わるため、幅の変化でも再計算する
-  useEffect(() => {
-    const textarea = coreTextareaRef.current
-    if (!textarea) return
-    let lastWidth = textarea.clientWidth
-    const observer = new ResizeObserver(() => {
-      const width = textarea.clientWidth
-      if (width !== lastWidth) {
-        lastWidth = width
-        autosize(textarea)
-      }
-    })
-    observer.observe(textarea)
-    return () => observer.disconnect()
-  }, [node.id, autosize])
+  // 見出しの右端の「自動生成 / 推測」ボタン(色は index.css の .accent-action。LLM を走らせるボタン共通)
+  const suggestButton = (
+    kind: NonNullable<typeof suggesting>,
+    run: () => void,
+    verb: '生成' | '推測',
+    tip: string,
+    extraDisabled = false
+  ): React.JSX.Element => (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.preventDefault()
+        run()
+      }}
+      disabled={suggesting !== null || !(draft.beat ?? '').trim() || extraDisabled}
+      className="accent-action inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium disabled:opacity-40"
+      data-tip={tip}
+    >
+      {suggesting === kind ? (
+        `${verb}中… (${suggestElapsed}s)`
+      ) : (
+        <>
+          <Icon name="sparkle" size={11} />
+          {verb === '生成' ? '自動生成' : '推測'}
+        </>
+      )}
+    </button>
+  )
 
   const suggestField = (field: 'title' | 'emotional_core'): void => {
     const beat = (draft.beat ?? '').trim()
@@ -316,25 +317,7 @@ export function BeatTab({
               <span className={labelClass.replace('mb-1 block ', '')} style={{ color: 'var(--text-faint)' }}>
                 Title
               </span>
-              <button
-                onClick={(e) => {
-                  e.preventDefault()
-                  suggestField('title')
-                }}
-                disabled={suggesting !== null || !(draft.beat ?? '').trim()}
-                // 色は index.css の .accent-action(校正ボタンなど LLM を走らせるボタン共通)
-                className="accent-action inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium disabled:opacity-40"
-                data-tip="シーン本文からタイトルを自動生成"
-              >
-                {suggesting === 'title' ? (
-                  `生成中… (${suggestElapsed}s)`
-                ) : (
-                  <>
-                    <Icon name="sparkle" size={11} />
-                    自動生成
-                  </>
-                )}
-              </button>
+              {suggestButton('title', () => suggestField('title'), '生成', 'シーン本文からタイトルを自動生成')}
             </span>
             <input
               value={draft.title ?? ''}
@@ -365,33 +348,13 @@ export function BeatTab({
               <span className={labelClass.replace('mb-1 block ', '')} style={{ color: 'var(--text-faint)' }}>
                 Emotional core
               </span>
-              <button
-                onClick={(e) => {
-                  e.preventDefault()
-                  suggestField('emotional_core')
-                }}
-                disabled={suggesting !== null || !(draft.beat ?? '').trim()}
-                // 色は index.css の .accent-action(校正ボタンなど LLM を走らせるボタン共通)
-                className="accent-action inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium disabled:opacity-40"
-                data-tip="シーン本文から感情の核を自動生成"
-              >
-                {suggesting === 'emotional_core' ? (
-                  `生成中… (${suggestElapsed}s)`
-                ) : (
-                  <>
-                    <Icon name="sparkle" size={11} />
-                    自動生成
-                  </>
-                )}
-              </button>
+              {suggestButton('emotional_core', () => suggestField('emotional_core'), '生成', 'シーン本文から感情の核を自動生成')}
             </span>
             {/* 長い一文になることがあるので、input ではなく自動で高さが伸びる textarea */}
-            <textarea
-              ref={coreTextareaRef}
-              rows={1}
+            <AutoTextarea
               value={draft.emotional_core ?? ''}
-              onChange={(e) => setDraft((d) => ({ ...d, emotional_core: e.target.value }))}
-              className="w-full resize-none overflow-hidden rounded-lg border px-3 py-1.5 text-[13px] leading-relaxed outline-none"
+              onChange={(next) => setDraft((d) => ({ ...d, emotional_core: next }))}
+              className="w-full rounded-lg border px-3 py-1.5 text-[13px] leading-relaxed outline-none"
               style={inputStyle}
             />
           </label>
@@ -474,26 +437,9 @@ export function BeatTab({
               }}
             />
             <div
-              onDragEnter={(e) => {
-                e.preventDefault()
-                imageDragDepth.current += 1
-                setImageDragOver(true)
-              }}
-              onDragOver={(e) => e.preventDefault()}
-              onDragLeave={() => {
-                imageDragDepth.current -= 1
-                if (imageDragDepth.current <= 0) {
-                  imageDragDepth.current = 0
-                  setImageDragOver(false)
-                }
-              }}
-              onDrop={(e) => {
-                e.preventDefault()
-                imageDragDepth.current = 0
-                setImageDragOver(false)
-                const file = e.dataTransfer.files?.[0]
+              {...imageDrop((file) => {
                 if (file) handleImageFile(file)
-              }}
+              })}
               onClick={() => {
                 // 挿絵が無ければファイル選択、あれば拡大表示
                 if (!node.image_path) imageInputRef.current?.click()
@@ -648,26 +594,15 @@ export function BeatTab({
               <span className={labelClass.replace('mb-1 block ', '')} style={{ color: 'var(--text-faint)' }}>
                 Location
               </span>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.preventDefault()
-                  suggestSetting('location')
-                }}
-                disabled={suggesting !== null || !(draft.beat ?? '').trim() || places.length === 0}
-                className="accent-action inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium disabled:opacity-40"
-                data-tip={places.length === 0 ? '場所が登録されていません。資料庫で場所を登録すると推測できます'
-                  : 'シーン本文から、登録済みの場所のどれに当たるかを推測(保存するまで確定しません。本文に手がかりが無ければ変えません)'}
-              >
-                {suggesting === 'location' ? (
-                  `推測中… (${suggestElapsed}s)`
-                ) : (
-                  <>
-                    <Icon name="sparkle" size={11} />
-                    推測
-                  </>
-                )}
-              </button>
+              {suggestButton(
+                'location',
+                () => suggestSetting('location'),
+                '推測',
+                places.length === 0
+                  ? '場所が登録されていません。資料庫で場所を登録すると推測できます'
+                  : 'シーン本文から、登録済みの場所のどれに当たるかを推測(保存するまで確定しません。本文に手がかりが無ければ変えません)',
+                places.length === 0
+              )}
               </span>
               {/* 場所は登録制。未指定なら親から引き継ぐ(docs/design/places.md) */}
               <select
@@ -704,25 +639,12 @@ export function BeatTab({
                   '・時間後 / 日後 … — はっきり分かるときに、数を入れる'].join('\n')}>
                 Elapsed
               </span>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.preventDefault()
-                  suggestSetting('elapsed')
-                }}
-                disabled={suggesting !== null || !(draft.beat ?? '').trim()}
-                className="accent-action inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium disabled:opacity-40"
-                data-tip="前のシーンの終わりとこのシーンの本文から、経過を推測(保存するまで確定しません。本文に手がかりが無ければ未設定のままにします)"
-              >
-                {suggesting === 'elapsed' ? (
-                  `推測中… (${suggestElapsed}s)`
-                ) : (
-                  <>
-                    <Icon name="sparkle" size={11} />
-                    推測
-                  </>
-                )}
-              </button>
+              {suggestButton(
+                'elapsed',
+                () => suggestSetting('elapsed'),
+                '推測',
+                '前のシーンの終わりとこのシーンの本文から、経過を推測(保存するまで確定しません。本文に手がかりが無ければ未設定のままにします)'
+              )}
               </span>
               {/* 数は「時間後」以降だけが持つ。単位を選ぶと左に数の欄が出る(「3」「日後」と読める並び) */}
               <div className="flex gap-1.5">

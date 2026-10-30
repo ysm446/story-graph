@@ -9,14 +9,17 @@ from __future__ import annotations
 import json
 import sqlite3
 import struct
+import time
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 import app_settings
 import db as db_mod
 import embed
 import setting_documents
+import snapshots
 import story_clock
 import fold as fold_mod
 from validation import validate_node
@@ -78,8 +81,6 @@ class Store:
         self.ensure_chapter_markers()
 
     def switch_library(self, root: str) -> None:
-        from pathlib import Path
-
         db_path = Path(root) / "story-graph.db"
         new_conn = db_mod.connect(db_path)
         old_conn = self.conn
@@ -88,6 +89,13 @@ class Store:
         old_conn.close()
         self.ensure_story_markers()
         self.ensure_chapter_markers()
+
+    def rollback_quietly(self) -> None:
+        """コミット前の半端な書き込みを捨てる(エラー時用。捨てる側の失敗は無視する)。"""
+        try:
+            self.conn.rollback()
+        except Exception:  # noqa: BLE001
+            pass
 
     # ---- 設定資料 ---------------------------------------------------
     def list_setting_documents(self):
@@ -158,7 +166,6 @@ class Store:
 
     def delete_character(self, char_id: str) -> None:
         self.conn.execute("DELETE FROM characters WHERE id = ?", (char_id,))
-        self.conn.execute("DELETE FROM faction_members WHERE char_id = ?", (char_id,))
         self.conn.execute("DELETE FROM media WHERE owner_type = 'character' AND owner_id = ?", (char_id,))
         self.conn.commit()
 
@@ -298,51 +305,6 @@ class Store:
                                              "description": None, "atmosphere": None}
         return {**place, "inherited": inherited}
 
-    # ---- factions ---------------------------------------------------
-
-    def list_factions(self) -> list[dict[str, Any]]:
-        factions = [dict(r) for r in self.conn.execute("SELECT * FROM factions ORDER BY name")]
-        for f in factions:
-            f["members"] = [
-                r["char_id"]
-                for r in self.conn.execute(
-                    "SELECT char_id FROM faction_members WHERE faction_id = ?", (f["id"],)
-                )
-            ]
-        return factions
-
-    def create_faction(self, data: dict[str, Any]) -> dict[str, Any]:
-        faction_id = data.get("id") or _new_id()
-        self.conn.execute(
-            "INSERT INTO factions(id, name, description) VALUES(?,?,?)",
-            (faction_id, data["name"], data.get("description")),
-        )
-        self.conn.commit()
-        return {"id": faction_id, "name": data["name"], "description": data.get("description"), "members": []}
-
-    def update_faction(self, faction_id: str, data: dict[str, Any]) -> None:
-        if "name" in data or "description" in data:
-            row = self.conn.execute("SELECT * FROM factions WHERE id = ?", (faction_id,)).fetchone()
-            if not row:
-                return
-            self.conn.execute(
-                "UPDATE factions SET name = ?, description = ? WHERE id = ?",
-                # name は NOT NULL なので、明示的な null は「変えない」として扱う
-                (data.get("name") or row["name"], data.get("description", row["description"]), faction_id),
-            )
-        if "members" in data:
-            self.conn.execute("DELETE FROM faction_members WHERE faction_id = ?", (faction_id,))
-            self.conn.executemany(
-                "INSERT OR IGNORE INTO faction_members(char_id, faction_id) VALUES(?,?)",
-                [(char_id, faction_id) for char_id in data["members"]],
-            )
-        self.conn.commit()
-
-    def delete_faction(self, faction_id: str) -> None:
-        self.conn.execute("DELETE FROM factions WHERE id = ?", (faction_id,))
-        self.conn.execute("DELETE FROM faction_members WHERE faction_id = ?", (faction_id,))
-        self.conn.commit()
-
     # ---- nodes / timeline -------------------------------------------
 
     def get_node(self, node_id: str) -> dict[str, Any] | None:
@@ -390,15 +352,9 @@ class Store:
         except sqlite3.OperationalError:
             return  # kind 列の無い接続(スキーマ未初期化)では何もしない
         legacy = self._legacy_canon_path()
-        now = _now()
         start = self.conn.execute("SELECT id FROM nodes WHERE kind = 'start'").fetchone()
         if start is None:
-            start_id = _new_id()
-            self.conn.execute(
-                "INSERT INTO nodes(id, title, beat, cast, status, kind, created_at, updated_at)"
-                " VALUES(?,?,?,?,?,?,?,?)",
-                (start_id, "はじまり", "", "[]", "canon", "start", now, now),
-            )
+            start_id = self._new_marker("start", "はじまり", status="canon")
             if legacy:
                 self.conn.execute(
                     "INSERT INTO edges(id, from_node, to_node, is_canon) VALUES(?,?,?,1)",
@@ -408,12 +364,7 @@ class Store:
             start_id = start["id"]
         endings = [r["id"] for r in self.conn.execute("SELECT id FROM nodes WHERE kind = 'ending'")]
         if not endings:
-            ending_id = _new_id()
-            self.conn.execute(
-                "INSERT INTO nodes(id, title, beat, cast, status, kind, created_at, updated_at)"
-                " VALUES(?,?,?,?,?,?,?,?)",
-                (ending_id, "結末", "", "[]", "canon", "ending", now, now),
-            )
+            ending_id = self._new_marker("ending", "結末", status="canon")
             tail = legacy[-1] if legacy else start_id
             self.conn.execute(
                 "INSERT INTO edges(id, from_node, to_node, is_canon) VALUES(?,?,?,1)",
@@ -697,6 +648,24 @@ class Store:
             ).fetchone()
             if prow is not None and prow["group_id"] and prow["kind"] != "chapter_out":
                 group_id = prow["group_id"]
+        node_id = self._insert_scene_row(data, on_canon_path, group_id)
+        if parent_id:
+            self.conn.execute(
+                "INSERT INTO edges(id, from_node, to_node, is_canon) VALUES(?,?,?,?)",
+                (_new_id(), parent_id, node_id, 1 if as_canon else 0),
+            )
+        if events:
+            self.replace_events(node_id, events, source=source, commit=False)
+        # is_canon / status は導出キャッシュなので、貼り直して整合を取る。
+        # as_canon は「親に連鎖の子が居なければ延長」という当て推量で、島や
+        # 正史でない章の中では**どのエッジも is_canon=0** なので必ず真になり、
+        # 正史でないのに実線のエッジができていた(2026-08-02 ユーザー報告)
+        self._resync_canon()
+        self.conn.commit()
+        return self.get_node(node_id)  # type: ignore[return-value]
+
+    def _insert_scene_row(self, data: dict[str, Any], on_canon_path: bool, group_id: str | None) -> str:
+        """シーンの行を nodes に足して id を返す(エッジ・コミットは呼び出し側)。"""
         node_id = data.get("id") or _new_id()
         now = _now()
         self.conn.execute(
@@ -717,20 +686,7 @@ class Store:
                 now,
             ),
         )
-        if parent_id:
-            self.conn.execute(
-                "INSERT INTO edges(id, from_node, to_node, is_canon) VALUES(?,?,?,?)",
-                (_new_id(), parent_id, node_id, 1 if as_canon else 0),
-            )
-        if events:
-            self.replace_events(node_id, events, source=source, commit=False)
-        # is_canon / status は導出キャッシュなので、貼り直して整合を取る。
-        # as_canon は「親に連鎖の子が居なければ延長」という当て推量で、島や
-        # 正史でない章の中では**どのエッジも is_canon=0** なので必ず真になり、
-        # 正史でないのに実線のエッジができていた(2026-08-02 ユーザー報告)
-        self._resync_canon()
-        self.conn.commit()
-        return self.get_node(node_id)  # type: ignore[return-value]
+        return node_id
 
     def insert_node_after(self, parent_id: str, data: dict[str, Any],
                           events: list[dict[str, Any]] | None = None,
@@ -775,8 +731,6 @@ class Store:
             # 後続が無い(分岐していてどれとも決められない)ので通常の追加と同じ
             return self.append_node(data, events, source=source, parent_id=parent_id)
 
-        node_id = data.get("id") or _new_id()
-        now = _now()
         # 正史チェーン上か(status 用)。canon_path はシーンだけなので、
         # 「はじまり」の直後への挿入も拾えるようマーカー込みのチェーンで見る
         ending = self.active_ending()
@@ -791,24 +745,7 @@ class Store:
         neighbor_groups = {r["id"]: r["group_id"] for r in neighbors}
         parent_group = neighbor_groups.get(parent_id)
         group_id = parent_group if parent_group and parent_group == neighbor_groups.get(chain_edge["to_node"]) else None
-        self.conn.execute(
-            """INSERT INTO nodes(id, title, beat, emotional_core, cast, location,
-                                 elapsed_unit, elapsed_count, status, group_id, created_at, updated_at)
-               VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (
-                node_id,
-                data.get("title"),
-                data["beat"],
-                data.get("emotional_core"),
-                json.dumps(data.get("cast", []), ensure_ascii=False),
-                data.get("location"),
-                *story_clock.normalize(data.get("elapsed_unit"), data.get("elapsed_count")),
-                "canon" if on_canon_path else "draft",
-                group_id,
-                now,
-                now,
-            ),
-        )
+        node_id = self._insert_scene_row(data, on_canon_path, group_id)
         # 旧子への連鎖エッジを新ノード発に付け替え、parent → 新 を連鎖(canon)で張る
         self.conn.execute("UPDATE edges SET from_node = ? WHERE id = ?", (node_id, chain_edge["id"]))
         self.conn.execute(
@@ -1148,13 +1085,7 @@ class Store:
 
     def _insert_ending(self, parent_id: str, title: str) -> str:
         """parent_id の子として結末ノードを作る(アクティブ化は呼び出し側)。"""
-        now = _now()
-        ending_id = _new_id()
-        self.conn.execute(
-            "INSERT INTO nodes(id, title, beat, cast, status, kind, created_at, updated_at)"
-            " VALUES(?,?,?,?,?,?,?,?)",
-            (ending_id, title, "", "[]", "draft", "ending", now, now),
-        )
+        ending_id = self._new_marker("ending", title)
         self.conn.execute(
             "INSERT INTO edges(id, from_node, to_node, is_canon) VALUES(?,?,?,0)",
             (_new_id(), parent_id, ending_id),
@@ -1169,13 +1100,7 @@ class Store:
         ドラッグしてつなぐ)。浮いた結末は正史の導出に関わらないのでアクティブにしない。
         """
         if parent_id is None:
-            now = _now()
-            ending_id = _new_id()
-            self.conn.execute(
-                "INSERT INTO nodes(id, title, beat, cast, status, kind, created_at, updated_at)"
-                " VALUES(?,?,?,?,?,?,?,?)",
-                (ending_id, (title or "").strip() or "結末", "", "[]", "draft", "ending", now, now),
-            )
+            ending_id = self._new_marker("ending", (title or "").strip() or "結末")
             self.conn.commit()
             return self.get_node(ending_id)  # type: ignore[return-value]
         if self.get_node(parent_id) is None:
@@ -1523,46 +1448,37 @@ class Store:
         self.conn.commit()
         return cur.rowcount
 
-    def assets_dir(self) -> str | None:
-        """現在のライブラリの画像フォルダ(assets/images)。"""
+    def _assets_subdir(self, name: str) -> str | None:
+        """ライブラリの assets/<name>(無ければ作る)。ライブラリ未設定なら None。"""
         if not self.root:
             return None
-        from pathlib import Path
-
-        path = Path(self.root) / "assets" / "images"
+        path = Path(self.root) / "assets" / name
         path.mkdir(parents=True, exist_ok=True)
         return str(path)
+
+    def assets_dir(self) -> str | None:
+        """現在のライブラリの画像フォルダ(assets/images)。"""
+        return self._assets_subdir("images")
 
     def voices_dir(self) -> str | None:
         """参照音声の置き場(assets/voices)。声(voice_profiles.ref_paths)から参照する作者の素材なので、
         キャッシュ(assets/audio)と違って外部バックアップにも入る。"""
-        if not self.root:
-            return None
-        from pathlib import Path
+        return self._assets_subdir("voices")
 
-        path = Path(self.root) / "assets" / "voices"
-        path.mkdir(parents=True, exist_ok=True)
-        return str(path)
-
-    def gc_voices(self) -> int:
-        """assets/voices のうち、どの声(スナップショット含む)からも参照されないファイルを消す。
-        gc_assets と同じく、置いた直後の 1 時間は守る(取り込み直後に声へ登録する前の窓)。"""
-        import time
-        from pathlib import Path
-
-        voices = self.voices_dir()
-        if voices is None:
+    def _gc_unreferenced(self, directory: str | None, ref_sqls: tuple[str, ...]) -> int:
+        """directory 内で、ref_sqls(スナップショット含む)のどれからも参照されないファイルを消し、
+        削除数を返す。置いた直後の 1 時間は守る(アップロード・取り込みの直後、まだ参照される前の窓)。"""
+        if directory is None:
             return 0
         referenced: set[str] = set()
-        for sql in VOICE_REF_SQLS:
+        for sql in ref_sqls:
             referenced |= {Path(r[0]).name for r in self.conn.execute(sql).fetchall() if r[0]}
+        # スナップショットが参照するファイルも守る(復元後に挿絵や声が消えないように)
         if self.root:
-            import snapshots
-
-            referenced |= snapshots.collect_asset_references(self.root, VOICE_REF_SQLS)
+            referenced |= snapshots.collect_asset_references(self.root, ref_sqls)
         removed = 0
         grace_limit = time.time() - 3600
-        for f in Path(voices).iterdir():
+        for f in Path(directory).iterdir():
             if not f.is_file() or f.name in referenced:
                 continue
             try:
@@ -1571,8 +1487,12 @@ class Store:
                 f.unlink()
                 removed += 1
             except OSError:
-                pass
+                pass  # 使用中などで消せなくても致命的ではないので続行
         return removed
+
+    def gc_voices(self) -> int:
+        """assets/voices のうち、どの声(スナップショット含む)からも参照されないファイルを消す。"""
+        return self._gc_unreferenced(self.voices_dir(), VOICE_REF_SQLS)
 
     # ---- 読み上げの声(docs/design/voice.md §5) -------------------------
 
@@ -1644,13 +1564,7 @@ class Store:
     def audio_dir(self) -> str | None:
         """読み上げ音声のキャッシュ(assets/audio)。DB からは参照しないので gc_assets の対象外。
         消すのは設定画面の「キャッシュを消す」だけ(docs/design/voice.md §6)。"""
-        if not self.root:
-            return None
-        from pathlib import Path
-
-        path = Path(self.root) / "assets" / "audio"
-        path.mkdir(parents=True, exist_ok=True)
-        return str(path)
+        return self._assets_subdir("audio")
 
     def gc_assets(self) -> int:
         """assets/images 内の未参照ファイルを削除し、削除数を返す。
@@ -1661,36 +1575,7 @@ class Store:
         タイミングの GC でまとめて回収する。アップロード直後の未参照ウィンドウを
         守るため、直近1時間以内に作られたファイルは対象外にする。
         """
-        import time
-        from pathlib import Path
-
-        assets = self.assets_dir()
-        if assets is None:
-            return 0
-        referenced: set[str] = set()
-        for sql in ASSET_REF_SQLS:
-            for row in self.conn.execute(sql).fetchall():
-                value = row[0]
-                if value:
-                    referenced.add(Path(value).name)
-        # スナップショットが参照するファイルも守る(復元後に挿絵が消えないように)
-        if self.root:
-            import snapshots
-
-            referenced |= snapshots.collect_asset_references(self.root, ASSET_REF_SQLS)
-        removed = 0
-        grace_limit = time.time() - 3600
-        for f in Path(assets).iterdir():
-            if not f.is_file() or f.name in referenced:
-                continue
-            try:
-                if f.stat().st_mtime > grace_limit:
-                    continue
-                f.unlink()
-                removed += 1
-            except OSError:
-                pass  # 使用中などで消せなくても致命的ではないので続行
-        return removed
+        return self._gc_unreferenced(self.assets_dir(), ASSET_REF_SQLS)
 
     def set_node_position(self, node_id: str, x: float | None, y: float | None) -> None:
         """キャンバス上の手動配置を保存する(state には影響しないので dirty 化しない)。"""
@@ -2028,14 +1913,14 @@ class Store:
     # 影響しないので、章の操作では dirty / stale を立てない。章ビューは表示のための
     # 導出で、真実はシーンノード + エッジ + nodes.group_id のまま。
 
-    def _new_marker(self, kind: str, title: str, group_id: str) -> str:
-        """章の入口 / 出口マーカーのノード行を作る(シーンではないので events は持たない)。"""
+    def _new_marker(self, kind: str, title: str, group_id: str | None = None, status: str = "draft") -> str:
+        """マーカー(はじまり・結末・章の入口 / 出口)のノード行を作る(シーンではないので events は持たない)。"""
         marker_id = _new_id()
         now = _now()
         self.conn.execute(
             "INSERT INTO nodes(id, title, beat, cast, status, kind, group_id, created_at, updated_at)"
             " VALUES(?,?,?,?,?,?,?,?,?)",
-            (marker_id, title, "", "[]", "draft", kind, group_id, now, now),
+            (marker_id, title, "", "[]", status, kind, group_id, now, now),
         )
         return marker_id
 

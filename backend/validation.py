@@ -44,8 +44,6 @@ def validate_node(
             errors.append(f"イベント {etype} に必須フィールドがありません: {missing}")
         for key in ("char", "target"):
             value = payload.get(key)
-            if key == "target" and payload.get("target_type") == "faction":
-                continue
             if isinstance(value, str) and value and value not in known_char_ids:
                 errors.append(
                     f"イベント {etype} がスキーマ外の char_id を参照しています: {value}"

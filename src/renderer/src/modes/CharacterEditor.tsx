@@ -9,6 +9,7 @@ import SceneUsage, { type SceneUsageProps } from '../SceneUsage'
 import { EditActions, EditPencil, ReadText, editKeys as fieldEditKeys, focusEditGroup } from '../FieldEdit'
 import { Icon } from '../icons'
 import { askConfirm, showAlert } from '../ConfirmDialog'
+import { useFileDrop } from '../useFileDrop'
 
 /** キャラクターの編集(プロフィール・画像・声)。資料庫と、構造モードの詳細欄「資料」タブで共用する。
  *
@@ -73,10 +74,8 @@ export default function CharacterEditor({
     sourcePath?: string
   } | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
-  // プロフィール画像へのドラッグ&ドロップ。子要素をまたぐと dragleave が誤発火するので、
-  // 深さを数えて 0 になったときだけハイライトを消す(シーンの挿絵と同じ作り)
-  const [portraitDragOver, setPortraitDragOver] = useState(false)
-  const portraitDragDepth = useRef(0)
+  // プロフィール画像へのドラッグ&ドロップ
+  const { dragOver: portraitDragOver, bind: portraitDrop } = useFileDrop()
 
   useEffect(() => {
     if (startEditing) onStartedEditing?.()
@@ -260,25 +259,7 @@ export default function CharacterEditor({
             if (draft.portrait_source_path) openRecrop()
             else fileInputRef.current?.click()
           }}
-          onDragEnter={(e) => {
-            e.preventDefault()
-            portraitDragDepth.current += 1
-            setPortraitDragOver(true)
-          }}
-          onDragOver={(e) => e.preventDefault()}
-          onDragLeave={() => {
-            portraitDragDepth.current -= 1
-            if (portraitDragDepth.current <= 0) {
-              portraitDragDepth.current = 0
-              setPortraitDragOver(false)
-            }
-          }}
-          onDrop={(e) => {
-            e.preventDefault()
-            portraitDragDepth.current = 0
-            setPortraitDragOver(false)
-            acceptPortraitFile(e.dataTransfer.files?.[0])
-          }}
+          {...portraitDrop(acceptPortraitFile)}
           className="group relative h-36 w-36 shrink-0 overflow-hidden rounded-full border-2 transition-colors"
           style={{
             borderColor: shownColor ?? '#8a8fa8',

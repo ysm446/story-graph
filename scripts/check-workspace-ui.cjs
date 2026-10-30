@@ -489,16 +489,6 @@ store.save_chat_messages(chat['id'], [
     const example = JSON.parse(readFileSync(join(root, 'docs/reference/import-example.json'), 'utf8'))
     const applied = await fetch(base + '/import/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data: example }) })
     if (!applied.ok) throw new Error(await applied.text())
-    {
-      const faction = await (await fetch(base + '/factions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: '港の組合', description: '' }) })).json()
-      const graph = await (await fetch(base + '/graph')).json()
-      const nodeId = graph.nodes.find((n) => n.title === example.scenes[1].title).id
-      const node = await (await fetch(base + '/nodes/' + nodeId)).json()
-      const aya = (await (await fetch(base + '/characters')).json()).find((c) => c.name === 'アヤ').id
-      const events = [...node.events.map((e) => ({ id: e.id, type: e.type, payload: e.payload, source: e.source })), { type: 'relationship_update', payload: { char: aya, target_type: 'faction', target: faction.id, delta: -0.1, reason: '検証', label: '雇い主' }, source: 'user' }]
-      const put = await fetch(base + '/nodes/' + nodeId + '/events', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ events }) })
-      if (!put.ok) throw new Error(await put.text())
-    }
     await new Promise((done) => { win.webContents.once('did-finish-load', () => done()); win.webContents.reload() })
     for (let i = 0; i < 60; i++) { if (await js(`[...document.querySelectorAll('.react-flow__node')].some(e=>e.textContent.includes('第一幕'))`)) break; await pause(200) }
     await pause(400)
@@ -548,12 +538,6 @@ store.save_chat_messages(chat['id'], [
     await js(`document.querySelector('[data-event-type] select, [data-event-type] input, [data-event-type] textarea').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`)
     await pause(300)
     await assert(`!!document.querySelector('[data-event-type] button[aria-label="このイベントを編集"]') && ![...document.querySelector('[data-event-type]').querySelectorAll('button')].some(e=>e.textContent.trim()==='確定')`, 'イベントの編集は Esc で取り消して閉じる')
-    // 相手が勢力の関係: アイコンは出さず、名前で出す(ID のまま出さない)
-    await showScene(example.scenes[1].title)
-    await js(`[...document.querySelectorAll('.react-flow__node')].find(e=>e.textContent.includes(${JSON.stringify(example.scenes[1].title)})).dispatchEvent(new MouseEvent('click',{bubbles:true}))`)
-    // 章を移ると詳細欄が作り直され、勢力の名前はそのあと読み込まれるので、名前が出るまで待つ
-    for (let i = 0; i < 20; i++) { if (await js(`document.querySelectorAll('[data-event-group="relation"] [data-event-type]').length === 2 && document.querySelector('[data-event-group="relation"]').textContent.includes('港の組合')`)) break; await pause(150) }
-    await assert(`(() => { const cards = [...document.querySelectorAll('[data-event-group="relation"] [data-event-type]')]; const f = cards.find(c => c.textContent.includes('雇い主')); return !!f && f.textContent.replace(/\s/g, '').includes('アヤ→港の組合') && f.querySelectorAll('[aria-label], img[alt]').length - f.querySelectorAll('button[aria-label]').length === 1 })()`, '相手が勢力の関係は、アイコンを出さずに勢力の名前で出す')
     // 直前に関係があるシーン: 通行止め では 老技師 → アヤ が 反感(-0.30) から ふつう(0.00) へ
     await showScene(example.scenes[2].title)
     await js(`[...document.querySelectorAll('.react-flow__node')].find(e=>e.textContent.includes(${JSON.stringify(example.scenes[2].title)})).dispatchEvent(new MouseEvent('click',{bubbles:true}))`)

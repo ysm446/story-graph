@@ -7,7 +7,6 @@
 
 from __future__ import annotations
 
-import json
 from typing import Any, AsyncIterator
 
 import llm
@@ -309,9 +308,6 @@ async def render_stream(
     except Exception as e:  # noqa: BLE001
         # エラー時に半端な書き込みを次のリクエストへ持ち越さない(app.py の
         # ロールバックハンドラは SSE 生成器内の例外には届かない)
-        try:
-            store.conn.rollback()
-        except Exception:  # noqa: BLE001
-            pass
+        store.rollback_quietly()
         yield _sse({"error": f"{type(e).__name__}: {e}"})
 

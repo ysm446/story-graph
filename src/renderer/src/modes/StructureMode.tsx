@@ -91,6 +91,9 @@ import { CharTab, type MemorySource } from './structure/CharTab'
 import { ChapterTab } from './structure/ChapterTab'
 import { RenderTab } from './structure/RenderTab'
 import { askConfirm } from '../ConfirmDialog'
+import { Segment } from '../Segment'
+
+const CHAT_KIND_LOCKED_TIP = '制作が終わるか停止してから切り替えられます'
 
 // チャット部品は構造モードの再描画(ドラッグ・選択・進捗)に巻き込まない。
 // 渡す props は下で useMemo / useStableCallback により参照を保っている
@@ -3628,14 +3631,16 @@ function StructureModeInner({
         {workspace.toolbarHost && workspace.mode === 'structure' && createPortal(structureToolbar, workspace.toolbarHost)}
         {chatHost && createPortal(<div className="flex h-full min-h-0 flex-col" style={{ background: 'var(--bg-chat)' }}>
               <div className="flex shrink-0 items-center gap-2 border-b px-6 py-1" style={{ background: 'var(--bg-chat)', borderColor: 'var(--border)' }}>
-                <div className="flex overflow-hidden rounded-md border" style={{ borderColor: 'var(--border-strong)' }}>
-                  {([['consult', '相談'], ['production', '制作']] as const).map(([value, label]) => (
-                    <button key={value} disabled={productionLocked} onClick={() => setChatKind(value)}
-                      className="px-3 py-1 text-[13px] disabled:opacity-50"
-                      style={chatKind === value ? { background: 'var(--accent-soft)', color: 'var(--text)' } : { color: 'var(--text-faint)' }}
-                      data-tip={productionLocked ? '制作が終わるか停止してから切り替えられます' : value === 'consult' ? '作品を変更せずに相談します' : '会話からシーンを作成・編集する実験機能'}>{label}</button>
-                  ))}
-                </div>
+                <Segment
+                  options={[
+                    { value: 'consult', label: '相談', tip: productionLocked ? CHAT_KIND_LOCKED_TIP : '作品を変更せずに相談します' },
+                    { value: 'production', label: '制作', tip: productionLocked ? CHAT_KIND_LOCKED_TIP : '会話からシーンを作成・編集する実験機能' }
+                  ]}
+                  value={chatKind}
+                  onChange={setChatKind}
+                  disabled={productionLocked}
+                  buttonClassName="px-3 py-1 text-[13px] disabled:opacity-50"
+                />
                 {productionLocked && <span className="text-[11px]" style={{ color: 'var(--text-dim)' }}>{productionManual ? '一時停止中(手動編集)・保存後に制作を再開できます' : '手動編集は制作チャットで一時停止してから行えます'}</span>}
               </div>
               <div className="min-h-0 flex-1" hidden={chatKind !== 'consult'}>

@@ -6,6 +6,7 @@ import { MEDIA_OWNER_LABEL } from '../MediaPicker'
 import type { MediaEntry, MediaItem } from '../types'
 import { useWorkspace } from '../Workspace'
 import { askConfirm } from '../ConfirmDialog'
+import { Segment } from '../Segment'
 
 /** 同じファイルをまとめた 1 枚(使い回すと、同じファイルを指す行が持ち主ごとにできる) */
 type MediaFile = {
@@ -144,40 +145,25 @@ export default function MediaLibrary({
         別のシーンや人物で使うときは、使う側のストックの「作品全体から選ぶ」から選びます。
       </p>
       <div data-view-ok className="mb-3 flex flex-wrap items-center gap-2">
-        <div className="flex overflow-hidden rounded-md border" style={{ borderColor: 'var(--border-strong)' }}>
-          {(['all', 'node', 'character', 'place'] as const).map((k) => (
-            <button
-              key={k}
-              onClick={() => setKind(k)}
-              aria-pressed={kind === k}
-              className="px-2.5 py-0.5 text-[12px] tabular-nums"
-              style={kind === k ? { background: 'var(--accent-soft)', color: 'var(--text)' } : { color: 'var(--text-faint)' }}
-              data-tip={k === 'all' ? 'すべての種類を出す' : `${MEDIA_OWNER_LABEL[k]}のストックにあるものだけを出す`}
-            >
-              {k === 'all' ? 'すべて' : MEDIA_OWNER_LABEL[k]} {kindCount(k)}
-            </button>
-          ))}
-        </div>
-        <div className="flex overflow-hidden rounded-md border" style={{ borderColor: 'var(--border-strong)' }}>
-          {(
-            [
-              ['all', '画像と動画'],
-              ['image', '画像'],
-              ['video', '動画']
-            ] as const
-          ).map(([value, text]) => (
-            <button
-              key={value}
-              onClick={() => setFormat(value)}
-              aria-pressed={format === value}
-              className="px-2.5 py-0.5 text-[12px]"
-              style={format === value ? { background: 'var(--accent-soft)', color: 'var(--text)' } : { color: 'var(--text-faint)' }}
-              data-tip={value === 'all' ? '画像と動画の両方を出す' : `${text}だけを出す`}
-            >
-              {text}
-            </button>
-          ))}
-        </div>
+        <Segment
+          options={(['all', 'node', 'character', 'place'] as const).map((k) => ({
+            value: k,
+            label: `${k === 'all' ? 'すべて' : MEDIA_OWNER_LABEL[k]} ${kindCount(k)}`,
+            tip: k === 'all' ? 'すべての種類を出す' : `${MEDIA_OWNER_LABEL[k]}のストックにあるものだけを出す`
+          }))}
+          value={kind}
+          onChange={setKind}
+          buttonClassName="px-2.5 py-0.5 text-[12px] tabular-nums"
+        />
+        <Segment
+          options={[
+            { value: 'all', label: '画像と動画', tip: '画像と動画の両方を出す' },
+            { value: 'image', label: '画像', tip: '画像だけを出す' },
+            { value: 'video', label: '動画', tip: '動画だけを出す' }
+          ]}
+          value={format}
+          onChange={setFormat}
+        />
       </div>
       {error && (
         <p className="mb-2 text-[12px]" style={{ color: 'var(--danger-text)' }}>

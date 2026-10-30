@@ -12,28 +12,39 @@ from __future__ import annotations
 import asyncio
 import os
 import sqlite3
+import uuid
 import zipfile
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
+from contextlib import contextmanager
+from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field, FiniteFloat
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 import app_settings
+import auto_images
 import backup
 import chat_agent
 import chat_rules
+import comfy
+import comfy_installer
+import comfy_manager
 import db
 import embed
 import generation
+import gguf_info
+import image_gen
 import importer
+import llama_installer
+import llama_manager
 import llm
-import node_operations
 import node_clipboard
+import node_operations
 import production_agent
 import production_suggest
 import production_undo
@@ -41,9 +52,14 @@ import rendering
 import setting_documents
 import snapshots
 import story_clock
+import system_info
+import tts
+import tts_installer
+import tts_manager
 import validation
+import voice
 from comfy_manager import ComfyManager
-from llama_manager import LlamaManager
+from llama_manager import LlamaManager, resolve_model_path
 from store import Store
 from tts_manager import TtsManager
 
@@ -64,23 +80,12 @@ app.add_middleware(
 _library_root = os.environ.get("STORY_GRAPH_LIBRARY")
 _db_path = os.environ.get("STORY_GRAPH_DB")
 if _library_root:
-    from pathlib import Path as _Path
-
-    store = Store(db.connect(_Path(_library_root) / "story-graph.db"), root=_library_root)
+    store = Store(db.connect(Path(_library_root) / "story-graph.db"), root=_library_root)
 else:
     store = Store(db.connect(_db_path), root=str(db.DEFAULT_DB_PATH.parent))
 llama = LlamaManager()
 comfy_mgr = ComfyManager()
 tts_mgr = TtsManager()
-
-
-# 書き込みメソッドの途中で例外が出ると、共有コネクションに半端な変更が残り、
-# 次のリクエストの commit で意図せず確定してしまう。エラー応答時は必ず捨てる。
-def _rollback_pending() -> None:
-    try:
-        store.conn.rollback()
-    except Exception:  # noqa: BLE001
-        pass
 
 
 # create_task の戻りは握っておく(イベントループはタスクを弱参照しか持たず、
@@ -128,8 +133,6 @@ def _prune_renders() -> None:
 def _voice_housekeeping() -> None:
     """ライブラリを開いたときの声まわりの片付け。Step 1 の語り手の設定キーを声に移し、
     どの声からも参照されない参照音声(assets/voices)を消す。失敗しても開くのは止めない。"""
-    import voice
-
     try:
         if voice.migrate_legacy_narrator(store):
             print("[voice] 語り手の設定を「語り手」の声に移しました")
@@ -143,9 +146,6 @@ def _voice_housekeeping() -> None:
 async def _gc_audio_now() -> int:
     """いま読むと使う音声以外を assets/audio から消す。声の設定が壊れているときは何も消さない
     (「使う音声」が割り出せないのに消すと、全部消えてしまうため)。"""
-    import voice
-    from pathlib import Path as _Path
-
     audio = store.audio_dir()
     if audio is None:
         return 0
@@ -154,22 +154,48 @@ async def _gc_audio_now() -> int:
     except Exception as e:  # noqa: BLE001 — 掃除の失敗で本来の操作を止めない
         print(f"[audio] 掃除を見送りました: {e}")
         return 0
-    removed = await asyncio.to_thread(voice.sweep_audio, _Path(audio), keep)
+    removed = await asyncio.to_thread(voice.sweep_audio, Path(audio), keep)
     if removed:
         print(f"[audio] 使われなくなった読み上げ音声を {removed} 件削除しました")
     return removed
 
 
+# 書き込みメソッドの途中で例外が出ると、共有コネクションに半端な変更が残り、
+# 次のリクエストの commit で意図せず確定してしまう。エラー応答時は必ず捨てる。
 @app.exception_handler(StarletteHTTPException)
 async def _http_error_rollback(request: Request, exc: StarletteHTTPException):
-    _rollback_pending()
+    store.rollback_quietly()
     return await http_exception_handler(request, exc)
 
 
 @app.exception_handler(Exception)
 async def _unhandled_error_rollback(request: Request, exc: Exception):
-    _rollback_pending()
+    store.rollback_quietly()
     return JSONResponse(status_code=500, content={"detail": f"{type(exc).__name__}: {exc}"})
+
+
+# store の例外を API の応答に変える: KeyError → 404、ValueError → 400。
+# 404 の本文は message を渡せばそれ、無ければ例外の文言のまま
+@contextmanager
+def _not_found(message: str | None = None) -> Iterator[None]:
+    try:
+        yield
+    except KeyError as e:
+        raise HTTPException(404, message or str(e))
+
+
+@contextmanager
+def _bad_request() -> Iterator[None]:
+    try:
+        yield
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@contextmanager
+def _http_errors(not_found: str | None = None) -> Iterator[None]:
+    with _not_found(not_found), _bad_request():
+        yield
 
 
 @app.on_event("startup")
@@ -178,8 +204,6 @@ async def _startup() -> None:
     # 始める(起動は待たせない)。オフなら最初の記憶検索のときに embed.available() が読み込み、
     # それまでは FTS だけで検索する。アプリから起動したときだけ行う: テストや検証スクリプトが
     # バックエンドを単体で起こすたびに読み込まないよう、アプリの設定が有効なときに限る
-    import asyncio
-
     try:
         if app_settings.enabled() and store.get_settings().get("embedding_load_on_startup") != "0":
             embed.preload()
@@ -187,8 +211,6 @@ async def _startup() -> None:
         print(f"[embed] 起動時の読み込みを始められませんでした: {e}")
 
     try:
-        import llama_installer
-
         # 削除・インストール失敗の残骸(.removing-* / .installing-*)を回収する
         asyncio.get_event_loop().run_in_executor(None, llama_installer.cleanup_leftovers)
     except Exception as e:  # 回収の失敗で起動を止めない
@@ -255,17 +277,6 @@ class PlacePatch(BaseModel):
     color: str | None = None
     image_path: str | None = None
     reading: str | None = None  # 名前の読み(ひらがな。読み上げで名前を置き換える)
-
-
-class FactionIn(BaseModel):
-    name: str
-    description: str | None = None
-
-
-class FactionPatch(BaseModel):
-    name: str | None = None
-    description: str | None = None
-    members: list[str] | None = None
 
 
 class EventIn(BaseModel):
@@ -437,10 +448,8 @@ async def list_setting_documents() -> list[dict[str, Any]]:
 async def create_setting_document(body: setting_documents.DocumentInput) -> dict[str, Any]:
     if production_agent.gate.active:
         raise HTTPException(409, "制作を停止してから設定資料を編集してください")
-    try:
+    with _bad_request():
         return store.save_setting_document(body.model_dump())
-    except ValueError as error:
-        raise HTTPException(400, str(error)) from error
 
 
 @app.put("/setting-documents/{document_id}")
@@ -468,30 +477,6 @@ async def delete_setting_document(document_id: str, revision: int) -> dict[str, 
     except setting_documents.RevisionConflict as error:
         raise HTTPException(409, str(error)) from error
     return {"status": "deleted"}
-
-# ---- factions -------------------------------------------------------
-
-@app.get("/factions")
-async def list_factions() -> list[dict[str, Any]]:
-    return store.list_factions()
-
-
-@app.post("/factions")
-async def create_faction(body: FactionIn) -> dict[str, Any]:
-    return store.create_faction(body.model_dump())
-
-
-@app.patch("/factions/{faction_id}")
-async def update_faction(faction_id: str, body: FactionPatch) -> dict[str, str]:
-    store.update_faction(faction_id, body.model_dump(exclude_unset=True))
-    return {"status": "ok"}
-
-
-@app.delete("/factions/{faction_id}")
-async def delete_faction(faction_id: str) -> dict[str, str]:
-    store.delete_faction(faction_id)
-    return {"status": "deleted"}
-
 
 # ---- timeline / nodes ----------------------------------------------
 
@@ -552,12 +537,8 @@ async def insert_node_after(node_id: str, body: NodeIn) -> dict[str, Any]:
 async def make_canon(node_id: str) -> dict[str, Any]:
     """このノードを通る道を正史にする(先の結末をアクティブに。無ければ作る)。"""
     await snapshots.auto(store, "正史切替の前", 0)
-    try:
+    with _http_errors("node not found"):
         store.make_canon(node_id)
-    except KeyError:
-        raise HTTPException(404, "node not found")
-    except ValueError as e:
-        raise HTTPException(400, str(e))
     return {"canon_path": store.canon_path()}
 
 
@@ -569,12 +550,8 @@ class EndingIn(BaseModel):
 @app.post("/nodes/{node_id}/ending")
 async def create_ending(node_id: str, body: EndingIn) -> dict[str, Any]:
     """このシーンの先に新しい結末を作る(docs/design/endings.md)。"""
-    try:
+    with _http_errors("node not found"):
         return store.create_ending(node_id, body.title, body.activate)
-    except KeyError:
-        raise HTTPException(404, "node not found")
-    except ValueError as e:
-        raise HTTPException(400, str(e))
 
 
 @app.post("/endings")
@@ -595,34 +572,24 @@ class AttachIn(BaseModel):
 async def detach_node(node_id: str) -> dict[str, Any]:
     """親エッジを切って、このシーン以下を独立した島にする。"""
     await snapshots.auto(store, "つなぎ替えの前", 60)
-    try:
+    with _http_errors("node not found"):
         detached = store.detach_node(node_id)
-    except KeyError:
-        raise HTTPException(404, "node not found")
-    except ValueError as e:
-        raise HTTPException(400, str(e))
     return {"detached": detached, "canon_path": store.canon_path()}
 
 
 @app.post("/nodes/{node_id}/normalize_chain")
 async def normalize_chain(node_id: str) -> dict[str, Any]:
     """このシーン以下の char_introduce の重複を掃除し、検証結果を返す(LLM 不要)。"""
-    try:
+    with _not_found("node not found"):
         return store.normalize_chain(node_id)
-    except KeyError:
-        raise HTTPException(404, "node not found")
 
 
 @app.post("/edges")
 async def create_edge(body: AttachIn) -> dict[str, Any]:
     """シーンを他のシーンの子として繋ぐ(replace_parent=True で既存の親から繋ぎ替え)。"""
     await snapshots.auto(store, "つなぎ替えの前", 60)
-    try:
+    with _http_errors("node not found"):
         store.attach_node(body.parent_id, body.child_id, body.canon, body.replace_parent)
-    except KeyError:
-        raise HTTPException(404, "node not found")
-    except ValueError as e:
-        raise HTTPException(400, str(e))
     return {"canon_path": store.canon_path()}
 
 
@@ -649,18 +616,14 @@ async def list_groups() -> list[dict[str, Any]]:
 @app.post("/groups")
 async def create_group(body: GroupCreateIn) -> dict[str, Any]:
     """正史パス上の連続区間を章にする。"""
-    try:
+    with _bad_request():
         return store.create_group(body.title, body.node_ids)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
 
 
 @app.patch("/groups/{group_id}")
 async def update_group(group_id: str, body: GroupPatch) -> dict[str, Any]:
-    try:
+    with _bad_request():
         group = store.update_group(group_id, body.model_dump(exclude_unset=True))
-    except ValueError as e:
-        raise HTTPException(400, str(e))
     if group is None:
         raise HTTPException(404, "group not found")
     return group
@@ -677,12 +640,8 @@ class GroupDuplicateIn(BaseModel):
 async def duplicate_group(group_id: str, body: GroupDuplicateIn) -> dict[str, Any]:
     """章を複製する。元の章と同じ親から生える別の章になり、後ろの章にはつながない。"""
     await snapshots.auto(store, "章の複製の前", 30)
-    try:
+    with _http_errors("group not found"):
         return node_clipboard.duplicate_group(store, group_id, body.title, body.x, body.y)
-    except KeyError:
-        raise HTTPException(404, "group not found")
-    except ValueError as e:
-        raise HTTPException(400, str(e))
 
 
 @app.delete("/groups/{group_id}")
@@ -700,12 +659,8 @@ class GroupMoveIn(BaseModel):
 async def move_group(group_id: str, body: GroupMoveIn) -> list[dict[str, Any]]:
     """章を別の章の後ろへつなぎ替える(並べ替え)。"""
     await snapshots.auto(store, "章の並べ替えの前", 60)
-    try:
+    with _http_errors("group not found"):
         return store.move_group(group_id, body.after)
-    except KeyError:
-        raise HTTPException(404, "group not found")
-    except ValueError as e:
-        raise HTTPException(400, str(e))
 
 
 class DigestIn(BaseModel):
@@ -741,60 +696,42 @@ async def generate_group_digest(group_id: str) -> dict[str, Any]:
 async def put_group_digest(group_id: str, body: DigestIn) -> dict[str, Any]:
     """手直ししたまとめを保存する。内容が変わったときだけ下流(次章側)へ波及する。"""
     await snapshots.auto(store, "章のまとめ更新の前", 60)
-    try:
+    with _http_errors("group not found"):
         return store.save_group_digest(
             group_id, [e.model_dump(exclude={"source"}) for e in body.events]
         )
-    except KeyError:
-        raise HTTPException(404, "group not found")
-    except ValueError as e:
-        raise HTTPException(400, str(e))
 
 
 @app.delete("/groups/{group_id}/digest")
 async def delete_group_digest(group_id: str) -> dict[str, Any]:
     """まとめを削除する(章は残る。下流は生の状態に戻る)。"""
     await snapshots.auto(store, "章のまとめ更新の前", 60)
-    try:
+    with _not_found("group not found"):
         return store.delete_group_digest(group_id)
-    except KeyError:
-        raise HTTPException(404, "group not found")
 
 
 @app.post("/groups/{group_id}/route/{node_id}")
 async def set_group_route(group_id: str, node_id: str) -> dict[str, Any]:
     """章の読む道を、このシーンを通る道にする(出口をその枝の端へ繋ぎ替える)。"""
     await snapshots.auto(store, "章の道の差し替えの前", 60)
-    try:
+    with _http_errors():
         group = store.set_group_route(group_id, node_id)
-    except KeyError as e:
-        raise HTTPException(404, str(e))
-    except ValueError as e:
-        raise HTTPException(400, str(e))
     return {"group": group, "groups": store.list_groups()}
 
 
 @app.post("/groups/{group_id}/nodes/{node_id}")
 async def add_node_to_group(group_id: str, node_id: str) -> dict[str, Any]:
     """シーンを章に入れる(章の端に隣接しているときだけ。後続の一続きも一緒に)。"""
-    try:
+    with _http_errors():
         group = store.add_node_to_group(group_id, node_id)
-    except KeyError as e:
-        raise HTTPException(404, str(e))
-    except ValueError as e:
-        raise HTTPException(400, str(e))
     return {"group": group, "groups": store.list_groups()}
 
 
 @app.delete("/groups/{group_id}/nodes/{node_id}")
 async def remove_node_from_group(group_id: str, node_id: str) -> dict[str, Any]:
     """シーンを章から外す(端のシーンのみ)。"""
-    try:
+    with _http_errors("node not found"):
         store.remove_node_from_group(node_id)
-    except KeyError:
-        raise HTTPException(404, "node not found")
-    except ValueError as e:
-        raise HTTPException(400, str(e))
     return {"groups": store.list_groups()}
 
 
@@ -809,22 +746,16 @@ async def get_node(node_id: str) -> dict[str, Any]:
 @app.patch("/nodes/{node_id}")
 async def update_node(node_id: str, body: NodePatch) -> dict[str, Any]:
     await snapshots.auto(store, "シーン編集の前", 600)
-    try:
+    with _not_found("node not found"):
         node = node_operations.update(store, node_id, body.model_dump(exclude_unset=True))
-    except KeyError:
-        raise HTTPException(404, "node not found")
     return node
 
 
 @app.delete("/nodes/{node_id}")
 async def delete_node(node_id: str) -> dict[str, str]:
     await snapshots.auto(store, "シーン削除の前", 30)
-    try:
+    with _http_errors("node not found"):
         node_operations.delete(store, node_id)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    except KeyError:
-        raise HTTPException(404, "node not found")
     _schedule_audio_gc()
     return {"status": "deleted"}
 
@@ -837,23 +768,15 @@ class DeleteSelectionIn(BaseModel):
 @app.post("/nodes/paste")
 async def paste_nodes(body: node_clipboard.PasteIn) -> dict[str, Any]:
     await snapshots.auto(store, "シーン貼り付けの前", 30)
-    try:
+    with _http_errors():
         return node_clipboard.paste(store, body)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    except KeyError as e:
-        raise HTTPException(404, str(e))
 
 
 @app.post("/nodes/delete-selection")
 async def delete_selection(body: DeleteSelectionIn) -> dict[str, Any]:
     await snapshots.auto(store, "選択したシーン・章の削除の前", 30)
-    try:
+    with _http_errors():
         result = node_operations.delete_many(store, body.node_ids, body.group_ids)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    except KeyError as e:
-        raise HTTPException(404, str(e))
     _schedule_audio_gc()
     return result
 
@@ -896,32 +819,27 @@ MAX_VIDEO_BYTES = 100 * 1024 * 1024
 
 @app.post("/assets/upload")
 async def upload_asset(file: UploadFile) -> dict[str, str]:
-    import uuid
-    from pathlib import Path as _Path
-
     assets = store.assets_dir()
     if assets is None:
         raise HTTPException(500, "ライブラリが未設定です")
-    ext = _Path(file.filename or "").suffix.lower()
+    ext = Path(file.filename or "").suffix.lower()
     if ext not in ALLOWED_IMAGE_EXTS | ALLOWED_VIDEO_EXTS:
         raise HTTPException(400, f"対応していない形式です: {ext}(画像: png/jpg/gif/webp、動画: mp4/webm)")
     name = f"{uuid.uuid4().hex[:12]}{ext}"
     limit = MAX_VIDEO_BYTES if ext in ALLOWED_VIDEO_EXTS else MAX_IMAGE_BYTES
     data = await _read_upload(file, limit, "ファイルはアップロードできません")
     # 大きい動画の書き込みでイベントループを塞がないようスレッドに逃がす
-    await asyncio.to_thread((_Path(assets) / name).write_bytes, bytes(data))
+    await asyncio.to_thread((Path(assets) / name).write_bytes, bytes(data))
     return {"path": name}
 
 
 @app.get("/assets/{filename}")
 async def get_asset(filename: str) -> FileResponse:
-    from pathlib import Path as _Path
-
     assets = store.assets_dir()
     if assets is None:
         raise HTTPException(404, "not found")
-    safe_name = _Path(filename).name  # パストラバーサル防止
-    path = _Path(assets) / safe_name
+    safe_name = Path(filename).name  # パストラバーサル防止
+    path = Path(assets) / safe_name
     if not path.exists():
         raise HTTPException(404, "not found")
     # <img> の要求は Origin を送らないので CORS ミドルウェアがヘッダを付けず、その応答が
@@ -1001,13 +919,11 @@ async def list_all_media() -> dict[str, Any]:
 @app.post("/media/{media_id}/reuse")
 async def reuse_media(media_id: str, body: MediaReuseIn) -> dict[str, Any]:
     """ほかの持ち主のストックの 1 枚を、この持ち主のストックへ写す(ファイルは共有)。"""
-    from pathlib import Path as _Path
-
     _check_media_owner(body.owner_type, body.owner_id)
     src = store.get_media(media_id)
     if src is None:
         raise HTTPException(404, "media not found")
-    if _Path(src["path"]).suffix.lower() not in MEDIA_OWNER_EXTS[body.owner_type]:
+    if Path(src["path"]).suffix.lower() not in MEDIA_OWNER_EXTS[body.owner_type]:
         raise HTTPException(400, "この形式の画像はここでは使えません")
     m = store.reuse_media(media_id, body.owner_type, body.owner_id)
     if body.select:
@@ -1055,18 +971,14 @@ async def add_media(body: MediaIn) -> dict[str, Any]:
 
 @app.post("/media/{media_id}/select")
 async def select_media(media_id: str) -> dict[str, Any]:
-    try:
+    with _not_found("media not found"):
         return store.select_media(media_id)
-    except KeyError:
-        raise HTTPException(404, "media not found")
 
 
 @app.delete("/media/{media_id}")
 async def delete_media(media_id: str) -> dict[str, Any]:
-    try:
+    with _bad_request():
         ok = store.delete_media(media_id)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
     if not ok:
         raise HTTPException(404, "media not found")
     return {"ok": True}
@@ -1171,8 +1083,6 @@ async def node_validate(node_id: str) -> dict[str, Any]:
 
 @app.get("/system/resources")
 async def system_resources() -> dict[str, Any]:
-    import system_info
-
     return system_info.resources()
 
 
@@ -1205,9 +1115,6 @@ async def get_fixed_prompts() -> dict[str, str]:
 async def get_image_prompts() -> dict[str, Any]:
     """画像生成の英語プロンプトを LLM に書かせるときのシステムプロンプトの既定(設定画面の「画像生成プロンプト」)。
     `defaults` は設定 `image_prompt_*` が空のときに使う文面、`fixed` は機械的に後ろへ足す接尾辞など(編集不可)。"""
-    import auto_images
-    import image_gen
-
     return {
         "keys": image_gen.PROMPT_SETTING_KEYS,
         "defaults": image_gen.default_prompts(),
@@ -1222,9 +1129,6 @@ async def get_image_prompts() -> dict[str, Any]:
 
 @app.get("/models")
 async def list_models() -> dict[str, Any]:
-    import system_info
-    from llama_manager import resolve_model_path
-
     settings = store.get_settings()
     models_dir = system_info.resolve_models_dir(settings.get("models_dir"))
     return {
@@ -1268,12 +1172,6 @@ async def llm_vram_estimate(ctx: str, model: str | None = None) -> dict[str, Any
     """設定の Context Length の横に出す、VRAM の目安。ctx はカンマ区切りのコンテキスト長
     (スライダーの目盛りぶんを 1 回で返し、動かすたびに問い合わせない)。
     model を省くと、次に起動するときのモデル(設定の llm_model_path か既定)"""
-    from pathlib import Path
-
-    import gguf_info
-    import llama_manager
-    import system_info
-
     path = model or llama_manager.resolve_model_path(store.get_settings())
     try:
         sizes = [int(c) for c in ctx.split(",") if c.strip()]
@@ -1326,8 +1224,6 @@ async def llm_load() -> dict[str, Any]:
 
 @app.get("/llama/releases")
 async def llama_releases() -> dict[str, Any]:
-    import llama_installer
-
     try:
         releases = await llama_installer.fetch_releases()
     except RuntimeError as e:
@@ -1337,8 +1233,6 @@ async def llama_releases() -> dict[str, Any]:
 
 @app.get("/llama/server_status")
 async def llama_server_status() -> dict[str, Any]:
-    import llama_installer
-
     # フォルダサイズの集計(rglob)と PATH 走査を含むので、イベントループを塞がない
     return await asyncio.to_thread(llama_installer.status)
 
@@ -1354,14 +1248,8 @@ class LlamaInstallIn(BaseModel):
 
 @app.post("/llama/install")
 async def llama_install(body: LlamaInstallIn) -> StreamingResponse:
-    from pathlib import Path
-
-    import llama_installer
-
-    try:
+    with _bad_request():
         dest_dir = llama_installer.dest_dir_for(body.variant.get("asset_name") or "")
-    except ValueError as e:
-        raise HTTPException(400, str(e))
 
     # 起動中のサーバのフォルダへの展開は拒否する(exe / DLL がロックされていて
     # 途中で失敗するだけなので、始めさせない。uninstall と同じガード)
@@ -1404,10 +1292,6 @@ class LlamaUninstallIn(BaseModel):
 @app.post("/llama/uninstall")
 async def llama_uninstall(body: LlamaUninstallIn) -> dict[str, Any]:
     """インストール済みの llama-server を 1 つ削除する(runtime/ 配下のみ)。"""
-    from pathlib import Path
-
-    import llama_installer
-
     running = llama.status()
     if running.get("spawned") and running.get("server_path"):
         try:
@@ -1432,10 +1316,6 @@ async def llama_uninstall(body: LlamaUninstallIn) -> dict[str, Any]:
 
 @app.get("/comfy/status")
 async def comfy_status() -> dict[str, Any]:
-    import comfy
-    import comfy_installer
-    import comfy_manager
-
     settings = store.get_settings()
     base_url = comfy_manager.resolve_base_url(settings)
     healthy = await comfy.health(base_url)
@@ -1469,8 +1349,6 @@ async def comfy_stop() -> dict[str, Any]:
 
 @app.get("/comfy/releases")
 async def comfy_releases() -> dict[str, Any]:
-    import comfy_installer
-
     try:
         releases = await comfy_installer.fetch_releases()
     except RuntimeError as e:
@@ -1485,8 +1363,6 @@ class ComfyInstallIn(BaseModel):
 @app.post("/comfy/install")
 async def comfy_install(body: ComfyInstallIn) -> StreamingResponse:
 
-    import comfy_installer
-
     if comfy_mgr.status()["spawned"]:
         raise HTTPException(409, "ComfyUI が起動中です。停止してからインストールしてください。")
 
@@ -1495,8 +1371,6 @@ async def comfy_install(body: ComfyInstallIn) -> StreamingResponse:
 
 @app.post("/comfy/uninstall")
 async def comfy_uninstall() -> dict[str, Any]:
-    import comfy_installer
-
     if comfy_mgr.status()["spawned"]:
         raise HTTPException(409, "ComfyUI が起動中です。停止してから削除してください。")
     try:
@@ -1511,30 +1385,19 @@ async def comfy_uninstall() -> dict[str, Any]:
 # spawn」。エンジンの違いは tts_engines/<id>.json に閉じ込め、ここでは中身を解釈しない
 
 def _tts_engine() -> dict[str, Any]:
-    import tts
-
-    try:
+    with _bad_request():
         return tts.get_engine(tts.resolve_engine_id(store.get_settings()))
-    except ValueError as e:
-        raise HTTPException(400, str(e))
 
 
 def _audio_dir():
-    from pathlib import Path as _Path
-
     audio = store.audio_dir()
     if audio is None:
         raise HTTPException(500, "ライブラリが未設定です")
-    return _Path(audio)
+    return Path(audio)
 
 
 @app.get("/tts/status")
 async def tts_status() -> dict[str, Any]:
-    import tts
-    import tts_installer
-    import tts_manager
-    import voice
-
     settings = store.get_settings()
     engine = _tts_engine()
     base_url = tts.resolve_base_url(settings, engine)
@@ -1542,8 +1405,6 @@ async def tts_status() -> dict[str, Any]:
     info = tts_mgr.status()
     spawned = bool(info["spawned"]) and info["spawned_engine"] == engine["id"]
     audio = store.audio_dir()
-    from pathlib import Path as _Path
-
     return {
         **info,
         **(await asyncio.to_thread(tts_installer.status, engine["id"])),
@@ -1558,7 +1419,7 @@ async def tts_status() -> dict[str, Any]:
         "external": healthy and not spawned,
         "models_dir": tts_manager.resolve_models_dir(settings),
         "default_models_dir": tts_manager.DEFAULT_MODELS_DIR,
-        "cache": await asyncio.to_thread(voice.cache_status, _Path(audio) if audio else None),
+        "cache": await asyncio.to_thread(voice.cache_status, Path(audio) if audio else None),
     }
 
 
@@ -1580,8 +1441,6 @@ async def tts_stop() -> dict[str, Any]:
 @app.post("/tts/install")
 async def tts_install() -> StreamingResponse:
 
-    import tts_installer
-
     engine = _tts_engine()
     if tts_mgr.status()["spawned"]:
         raise HTTPException(409, "TTS サーバーが起動中です。停止してからインストールしてください。")
@@ -1591,8 +1450,6 @@ async def tts_install() -> StreamingResponse:
 
 @app.post("/tts/uninstall")
 async def tts_uninstall() -> dict[str, Any]:
-    import tts_installer
-
     engine = _tts_engine()
     if tts_mgr.status()["spawned"]:
         raise HTTPException(409, "TTS サーバーが起動中です。停止してから削除してください。")
@@ -1614,8 +1471,6 @@ def _render_or_404(render_id: str) -> dict[str, Any]:
 async def render_voice_script(render_id: str) -> dict[str, Any]:
     """読み上げに使う朗読台本。保存があればそれ、無ければ規則ベースで作り、同じシーンの前の清書の
     台本から同じ文の行を引き継ぐ(このときは保存しない)。"""
-    import voice
-
     render = _render_or_404(render_id)
     return {"render_id": render_id, **voice.resolve_script(store, render)}
 
@@ -1627,13 +1482,9 @@ class VoiceScriptIn(BaseModel):
 @app.put("/renders/{render_id}/voice_script")
 async def save_render_voice_script(render_id: str, body: VoiceScriptIn) -> dict[str, Any]:
     """作者が直した台本を保存する。source(LLM で付けたか)は保存済みのものを引き継ぐ。"""
-    import voice
-
     render = _render_or_404(render_id)
-    try:
+    with _bad_request():
         lines = voice.normalize_lines(body.lines)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
     if not lines:
         raise HTTPException(400, "読む行が 1 つもありません")
     current = store.get_voice_script(render_id)
@@ -1646,8 +1497,6 @@ async def save_render_voice_script(render_id: str, body: VoiceScriptIn) -> dict[
 async def reset_render_voice_script(render_id: str) -> dict[str, Any]:
     """清書から規則ベースで作り直して保存する(話者・感情・手直しを捨てる)。削除ではなく保存にするのは、
     保存が無いと前の清書の台本から引き継いでしまい、やり直しにならないため。"""
-    import voice
-
     render = _render_or_404(render_id)
     lines = voice.build_script(render.get("prose") or "")
     store.save_voice_script(render_id, render["node_id"], lines, "rule")
@@ -1663,13 +1512,9 @@ class VoiceAnnotateIn(BaseModel):
 @app.post("/renders/{render_id}/voice_script/annotate")
 async def annotate_render_voice_script(render_id: str, body: VoiceAnnotateIn | None = None) -> dict[str, Any]:
     """LLM で台詞の話者と各行の感情・強さを付けて保存する。作者が直した行(edited)には触らない。"""
-    import voice
-
     render = _render_or_404(render_id)
-    try:
+    with _bad_request():
         lines = voice.normalize_lines(body.lines) if body and body.lines else voice.resolve_script(store, render)["lines"]
-    except ValueError as e:
-        raise HTTPException(400, str(e))
     if not lines:
         raise HTTPException(400, "読む行が 1 つもありません")
     try:
@@ -1698,8 +1543,6 @@ class TtsLineIn(BaseModel):
 async def tts_speak(body: TtsLineIn) -> FileResponse:
     """台本の 1 行を合成して音声を返す。キャッシュ(assets/audio)にあれば合成しない。
     TTS サーバーが止まっていれば起動する(初回はモデルの取得で数分かかることがある)。"""
-    import voice
-
     if not body.text.strip():
         raise HTTPException(400, "読む文字がありません")
     settings = store.get_settings()
@@ -1715,8 +1558,6 @@ async def tts_speak(body: TtsLineIn) -> FileResponse:
         raise HTTPException(502, str(e))
     if path is None:
         # エンジンが鳴らせない効果音の行。フロントは鳴らさずに間だけ置く
-        from fastapi.responses import Response
-
         return Response(status_code=204)  # type: ignore[return-value]
     media = {"wav": "audio/wav", "mp3": "audio/mpeg", "flac": "audio/flac", "opus": "audio/ogg", "aac": "audio/aac"}
     return FileResponse(str(path), media_type=media.get(path.suffix.lstrip("."), "application/octet-stream"))
@@ -1732,8 +1573,6 @@ class ChatLinesIn(BaseModel):
 async def tts_chat_lines(body: ChatLinesIn) -> dict[str, Any]:
     """チャットの返答(の一部)を読み上げの行にする(docs/design/voice.md §6.1)。
     返答はストリーミングで届くので、フロントが文の切れ目ごとに呼ぶ。保存はしない。"""
-    import voice
-
     settings = store.get_settings()
     chat_profile = (settings.get("tts_chat_profile") or "").strip() or None
     # （）のト書きを読むか(既定: 読む。'0' で読まない)
@@ -1803,19 +1642,16 @@ async def delete_voice_profile(profile_id: str) -> dict[str, str]:
 @app.post("/voice_profiles/{profile_id}/refs")
 async def add_voice_ref(profile_id: str, file: UploadFile) -> dict[str, Any]:
     """参照音声を取り込み(ライブラリの assets/voices へ)、声の末尾に足す。"""
-    import uuid
-    from pathlib import Path as _Path
-
     profile = _voice_profile_or_404(profile_id)
     voices = store.voices_dir()
     if voices is None:
         raise HTTPException(500, "ライブラリが未設定です")
-    ext = _Path(file.filename or "").suffix.lower()
+    ext = Path(file.filename or "").suffix.lower()
     if ext not in ALLOWED_VOICE_EXTS:
         raise HTTPException(400, f"対応していない形式です: {ext or '(拡張子なし)'}(wav / mp3 / flac / ogg)")
     data = await _read_upload(file, MAX_VOICE_BYTES, "音声は取り込めません")
     name = f"{uuid.uuid4().hex[:12]}{ext}"
-    await asyncio.to_thread((_Path(voices) / name).write_bytes, bytes(data))
+    await asyncio.to_thread((Path(voices) / name).write_bytes, bytes(data))
     updated = store.update_voice_profile(profile_id, {"ref_paths": [*profile["ref_paths"], name]})
     _schedule_audio_gc()
     return updated  # type: ignore[return-value]
@@ -1832,12 +1668,6 @@ async def add_voice_ref_from_sample(profile_id: str, body: VoiceSampleIn) -> dic
 
     試し読みと同じリクエスト(同じ文・同じ seed)を、形式だけ wav にして合成し直して取り込む。
     キャッシュの opus をそのまま使わないのは、TTS サーバーが参照音声として opus を読めるとは限らないため。"""
-    import uuid
-    from pathlib import Path as _Path
-
-    import tts
-    import voice
-
     profile = _voice_profile_or_404(profile_id)
     voices = store.voices_dir()
     if voices is None:
@@ -1862,7 +1692,7 @@ async def add_voice_ref_from_sample(profile_id: str, body: VoiceSampleIn) -> dic
     except RuntimeError as e:
         raise HTTPException(502, str(e))
     name = f"{uuid.uuid4().hex[:12]}.wav"
-    await asyncio.to_thread((_Path(voices) / name).write_bytes, data)
+    await asyncio.to_thread((Path(voices) / name).write_bytes, data)
     updated = store.update_voice_profile(profile_id, {"ref_paths": [*profile["ref_paths"], name]})
     _schedule_audio_gc()  # 声が変わるので、前の声で作った音声は使われなくなる
     return updated  # type: ignore[return-value]
@@ -1871,10 +1701,8 @@ async def add_voice_ref_from_sample(profile_id: str, body: VoiceSampleIn) -> dic
 @app.get("/voices/{filename}")
 async def get_voice_file(filename: str) -> FileResponse:
     """参照音声の再生用。"""
-    from pathlib import Path as _Path
-
     voices = store.voices_dir()
-    path = _Path(voices) / _Path(filename).name if voices else None  # パストラバーサル防止
+    path = Path(voices) / Path(filename).name if voices else None  # パストラバーサル防止
     if path is None or not path.exists():
         raise HTTPException(404, "not found")
     return FileResponse(str(path), headers={"Access-Control-Allow-Origin": "*"})
@@ -1883,8 +1711,6 @@ async def get_voice_file(filename: str) -> FileResponse:
 @app.post("/characters/{char_id}/voice_caption")
 async def draft_character_voice_caption(char_id: str) -> dict[str, str]:
     """キャラの資料から声の説明の下書きを LLM で作る(保存はしない)。"""
-    import voice
-
     char = store.get_character(char_id)
     if char is None:
         raise HTTPException(404, "character not found")
@@ -1897,8 +1723,6 @@ async def draft_character_voice_caption(char_id: str) -> dict[str, str]:
 
 @app.post("/tts/cache/clear")
 async def tts_cache_clear() -> dict[str, Any]:
-    import voice
-
     audio = _audio_dir()
     removed = await asyncio.to_thread(voice.clear_cache, audio)
     return {"removed": removed, **(await asyncio.to_thread(voice.cache_status, audio))}
@@ -1912,23 +1736,25 @@ class RefImagePromptIn(BaseModel):
 async def character_ref_image_prompt(char_id: str, body: RefImagePromptIn | None = None) -> StreamingResponse:
     """外見・プロフィール(+ 追加指示)から、参照画像の英語プロンプト(人物描写)を LLM でストリーミング生成する。
     SSE: {meta:{suffix}} → {delta}… → {done, prompt} / {error}。保存はしない。"""
-    import image_gen
-
     char = store.get_character(char_id)
     if char is None:
         raise HTTPException(404, "character not found")
+    return _image_prompt_sse(image_gen.REF_IMAGE_SUFFIX, image_gen.stream_character_prompt, char, body)
+
+
+def _image_prompt_sse(suffix: str, stream_fn: Any, item: dict[str, Any],
+                      body: RefImagePromptIn | None) -> StreamingResponse:
+    """人物・場所の画像プロンプトの SSE(meta.suffix → LLM の起動 → stream_fn の出力)。"""
     instructions = body.instructions if body else None
 
     async def stream():
-        yield llm.sse({"meta": {"suffix": image_gen.REF_IMAGE_SUFFIX}})
+        yield llm.sse({"meta": {"suffix": suffix}})
         try:
             base_url = await llama.ensure_running(store.get_settings())
         except Exception as e:
             yield llm.sse({"error": str(e)})
             return
-        async for chunk in image_gen.stream_character_prompt(
-            char, base_url=base_url, instructions=instructions, settings=store.get_settings()
-        ):
+        async for chunk in stream_fn(item, base_url=base_url, instructions=instructions, settings=store.get_settings()):
             yield chunk
 
     return StreamingResponse(stream(), media_type="text/event-stream")
@@ -1947,10 +1773,6 @@ async def comfy_workflows(check: bool = False) -> dict[str, Any]:
 
     check=true なら組ごとに使うモデル(`models`)と、ComfyUI のモデルフォルダに見つからないもの
     (`missing`)を添える。ComfyUI が止まっていて確かめられなければ `missing` は null。"""
-    import comfy
-    import comfy_manager
-    import image_gen
-
     settings = store.get_settings()
     variants = comfy.list_variants()
     default_id = image_gen.resolve_variant(settings, None)["id"]
@@ -1992,12 +1814,6 @@ async def character_ref_image_generate(char_id: str, body: RefImageGenerateIn) -
     採用は UI の「決定」→ POST /media(生成に使ったセット付き、select)。不採用の候補は参照が
     無いので gc_assets が回収する。使ったプロンプト・追加指示・seed はキャラの生成ウインドウの
     保存状態に 1 セットで写し(再現用)、戻り値にも含める(「決定」がそのままストックへ渡す)。"""
-    import uuid
-    from pathlib import Path as _Path
-
-    import comfy
-    import image_gen
-
     char = store.get_character(char_id)
     if char is None:
         raise HTTPException(404, "character not found")
@@ -2034,26 +1850,10 @@ async def character_ref_image_generate(char_id: str, body: RefImageGenerateIn) -
 async def place_image_prompt(place_id: str, body: RefImagePromptIn | None = None) -> StreamingResponse:
     """説明・雰囲気(+ 追加指示)から、場所の画像の英語プロンプト(風景描写)を LLM でストリーミング生成する。
     SSE: {meta:{suffix}} → {delta}… → {done, prompt} / {error}。保存はしない。"""
-    import image_gen
-
     place = store.get_place(place_id)
     if place is None:
         raise HTTPException(404, "place not found")
-    instructions = body.instructions if body else None
-
-    async def stream():
-        yield llm.sse({"meta": {"suffix": image_gen.PLACE_IMAGE_SUFFIX}})
-        try:
-            base_url = await llama.ensure_running(store.get_settings())
-        except Exception as e:
-            yield llm.sse({"error": str(e)})
-            return
-        async for chunk in image_gen.stream_place_prompt(
-            place, base_url=base_url, instructions=instructions, settings=store.get_settings()
-        ):
-            yield chunk
-
-    return StreamingResponse(stream(), media_type="text/event-stream")
+    return _image_prompt_sse(image_gen.PLACE_IMAGE_SUFFIX, image_gen.stream_place_prompt, place, body)
 
 
 @app.post("/places/{place_id}/image/generate")
@@ -2062,12 +1862,6 @@ async def place_image_generate(place_id: str, body: RefImageGenerateIn) -> dict[
 
     採用は UI の「決定」→ POST /media(owner_type='place'、生成に使ったセット付き、select)。
     使ったプロンプト・追加指示・seed・組は場所の生成ウインドウの保存状態に 1 セットで写す。"""
-    import uuid
-    from pathlib import Path as _Path
-
-    import comfy
-    import image_gen
-
     if store.get_place(place_id) is None:
         raise HTTPException(404, "place not found")
     assets = store.assets_dir()
@@ -2122,8 +1916,6 @@ async def node_image_prompt(node_id: str, body: SceneImagePromptIn) -> Streaming
     """ビート・場所・cast から場面の英語プロンプトを LLM でストリーミング生成する(保存はしない)。
     SSE: {meta:{suffix, refs, cast}} → {delta}… → {done, prompt} / {error}。
     参照画像を渡すキャラは meta.refs に image1.. のラベルで入る。"""
-    import image_gen
-
     node, chars, place = _scene_context(node_id)
     settings = store.get_settings()
 
@@ -2170,12 +1962,6 @@ async def node_image_generate(node_id: str, body: SceneImageGenerateIn) -> dict[
     採用は UI の「決定」→ POST /media(生成に使ったセット付き、select)。不採用の候補は gc_assets が回収する。
     使ったプロンプト・追加指示・seed・参照キャラはシーンの生成ウインドウの保存状態に 1 セットで写し
     (再現用)、戻り値にも含める(「決定」がそのままストックへ渡す)。"""
-    import uuid
-    from pathlib import Path as _Path
-
-    import comfy
-    import image_gen
-
     _node, chars, _place = _scene_context(node_id)
     assets = store.assets_dir()
     if assets is None:
@@ -2186,7 +1972,7 @@ async def node_image_generate(node_id: str, body: SceneImageGenerateIn) -> dict[
     refs = [c for c in chars if c["id"] in wanted and c.get("ref_image_path")][: image_gen.MAX_SCENE_REFS]
     ref_files: list[tuple[str, bytes]] = []
     for c in refs:
-        p = _Path(assets) / _Path(c["ref_image_path"]).name
+        p = Path(assets) / Path(c["ref_image_path"]).name
         if not p.exists():
             raise HTTPException(400, f"{c['name']} の参照画像ファイルが見つかりません")
         ref_files.append((p.name, await asyncio.to_thread(p.read_bytes)))
@@ -2225,20 +2011,15 @@ async def image_effect(body: ImageEffectIn) -> dict[str, Any]:
 
     生成と同じく、採用は UI の「決定」→ POST /media(戻り値をそのまま渡す。source_path 付き)。
     生成ウインドウの保存状態(プロンプト・seed など)には書かない(加工の指示は生成のプロンプトではない)。"""
-    import uuid
-    from pathlib import Path as _Path
-
-    import image_gen
-
     _check_media_owner(body.owner_type, body.owner_id)
     assets = store.assets_dir()
     if assets is None:
         raise HTTPException(500, "ライブラリが未設定です")
     if not body.prompt.strip():
         raise HTTPException(400, "加工の指示が空です")
-    if _Path(body.source_path).suffix.lower() in ALLOWED_VIDEO_EXTS:
+    if Path(body.source_path).suffix.lower() in ALLOWED_VIDEO_EXTS:
         raise HTTPException(400, "動画は加工できません")
-    src = _Path(assets) / _Path(body.source_path).name
+    src = Path(assets) / Path(body.source_path).name
     if not src.exists():
         raise HTTPException(400, "元の画像ファイルが見つかりません")
     settings = store.get_settings()
@@ -2730,12 +2511,10 @@ async def production_token_usage(body: ProductionUsageIn) -> dict[str, Any]:
     chat = store.get_chat(body.chat_id) if body.chat_id else None
     if body.chat_id and (chat is None or chat.get("mode") != "production"):
         raise HTTPException(404, "制作の会話がありません")
-    try:
+    with _bad_request():
         policy = production_agent.ProductionPolicy(store, **body.policy.model_dump())
         selection = production_agent.selected_nodes(store, body.selected_node_ids)
         view = _production_view(body)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
     history = list(chat["messages"]) if chat else []
     if body.message.strip():
         history.append({"role": "user", "content": body.message.strip(), "selected_nodes": selection, **({"view": view} if view else {})})
@@ -2902,28 +2681,22 @@ async def production_send(body: ProductionIn) -> StreamingResponse:
         raise HTTPException(400, "依頼を入力してください")
     if body.chat_id and (store.get_chat(body.chat_id) or {}).get("mode") != "production":
         raise HTTPException(404, "制作チャットが見つかりません")
-    try:
+    with _bad_request():
         selection = production_agent.selected_nodes(store, body.selected_node_ids)
         view = _production_view(body)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
     # 依頼候補の生成が残っていると、開始待ち(gate.begin)とモデルの順番待ちが延びる。送信を優先して打ち切る
     _cancel_production_suggest()
     try:
         await production_agent.gate.begin()
     except (RuntimeError, TimeoutError) as e:
         raise HTTPException(409, str(e) or "ほかの処理の終了を待っています。少し待ってから実行してください")
-    try:
+    with _bad_request():
         policy = production_agent.ProductionPolicy(store, **body.policy.model_dump())
-    except ValueError as e:
-        raise HTTPException(400, str(e))
     try:
         base_url = await llama.ensure_running(store.get_settings())
     except Exception as e:
         production_agent.gate.active = False
         return _sse_error_response(str(e))
-    import auto_images
-
     def image_hook(requests: list[dict[str, Any]]):
         # 制作で作った人物・場所の画像と generate_images の予約(docs/design/image-gen.md §14)
         return auto_images.run(store, requests, llm_base_url=base_url, ensure_comfy=comfy_mgr.ensure_running)

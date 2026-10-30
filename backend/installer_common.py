@@ -1,4 +1,5 @@
-"""自動インストーラー(llama_installer / comfy_installer / tts_installer)が共有するフォルダ操作。
+"""自動インストーラー(llama_installer / comfy_installer / tts_installer)が共有するフォルダ操作と、
+GitHub のリリース一覧の取得。
 
 どれも runtime/ の下に置いたフォルダを、使用中なら壊さずに失敗させてから消す・置き換える。
 """
@@ -7,6 +8,9 @@ from __future__ import annotations
 import shutil
 import uuid
 from pathlib import Path
+from typing import Any, Callable
+
+import httpx
 
 
 def dir_size(path: Path) -> int:
@@ -48,3 +52,25 @@ def swap_into_place(staging: Path, dest_dir: Path, busy_hint: str) -> None:
             dest_dir, f"既存のインストール先を置き換えられませんでした({busy_hint}の可能性があります): {dest_dir}"
         )
     staging.rename(dest_dir)
+
+
+async def fetch_github_releases(api: str, build: Callable[[dict[str, Any]], dict[str, Any] | None], *,
+                                per_page: int, user_agent: str,
+                                follow_redirects: bool = False) -> list[dict[str, Any]]:
+    """GitHub のリリース一覧を取り、下書きを除いて build で変換する(None は使えるアセットが無いので外す)。"""
+    headers = {"User-Agent": user_agent, "Accept": "application/vnd.github+json"}
+    async with httpx.AsyncClient(timeout=30.0, follow_redirects=follow_redirects) as client:
+        res = await client.get(api, params={"per_page": per_page}, headers=headers)
+        if res.status_code == 403:
+            raise RuntimeError("GitHub API のレート制限に達した可能性があります。しばらく待って再試行してください。")
+        if res.status_code != 200:
+            raise RuntimeError(f"リリース取得に失敗しました (HTTP {res.status_code})")
+        data = res.json()
+    releases = []
+    for raw in data:
+        if raw.get("draft"):
+            continue
+        rel = build(raw)
+        if rel is not None:
+            releases.append(rel)
+    return releases

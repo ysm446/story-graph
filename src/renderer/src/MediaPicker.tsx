@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, assetUrl, isVideoAsset, uploadAsset } from './api'
 import type { MediaEntry, MediaItem } from './types'
+import { Segment } from './Segment'
 
 /** 持ち主の種類の呼び名(作品全体の一覧で「どこの画像か」を示す) */
 export const MEDIA_OWNER_LABEL: Record<MediaItem['owner_type'], string> = { node: '挿絵', character: '人物', place: '場所' }
@@ -215,40 +216,25 @@ export default function MediaPicker({
             : `ほかのシーン・人物・場所の画像を、クリックでこの${label}に使います(ストックにも入ります)。ファイルは共有するので、元の画像はそのまま残ります。生成ウインドウの設定は変わりません。`}
         </p>
         <div className="mb-3 flex flex-wrap items-center gap-2">
-          <div className="flex overflow-hidden rounded-md border" style={{ borderColor: 'var(--border-strong)' }}>
-            {(
-              [
-                ['stock', 'ストック'],
-                ['all', '作品全体から選ぶ']
-              ] as const
-            ).map(([value, text]) => (
-              <button
-                key={value}
-                onClick={() => setView(value)}
-                aria-pressed={view === value}
-                className="px-2.5 py-0.5 text-[12px]"
-                style={view === value ? { background: 'var(--accent-soft)', color: 'var(--text)' } : { color: 'var(--text-faint)' }}
-                data-tip={value === 'stock' ? `この${label}のストックを見る` : 'ほかのシーン・人物・場所の画像から選んで使い回す'}
-              >
-                {text}
-              </button>
-            ))}
-          </div>
+          <Segment
+            options={[
+              { value: 'stock', label: 'ストック', tip: `この${label}のストックを見る` },
+              { value: 'all', label: '作品全体から選ぶ', tip: 'ほかのシーン・人物・場所の画像から選んで使い回す' }
+            ]}
+            value={view}
+            onChange={setView}
+          />
           {view === 'all' && candidates.length > 0 && (
-            <div className="flex overflow-hidden rounded-md border" style={{ borderColor: 'var(--border-strong)' }}>
-              {(['all', 'node', 'character', 'place'] as const).map((kind) => (
-                <button
-                  key={kind}
-                  onClick={() => setAllKind(kind)}
-                  aria-pressed={allKind === kind}
-                  className="px-2.5 py-0.5 text-[12px] tabular-nums"
-                  style={allKind === kind ? { background: 'var(--accent-soft)', color: 'var(--text)' } : { color: 'var(--text-faint)' }}
-                  data-tip={kind === 'all' ? 'すべての種類を出す' : `${MEDIA_OWNER_LABEL[kind]}の画像だけを出す`}
-                >
-                  {kind === 'all' ? `すべて ${candidates.length}` : `${MEDIA_OWNER_LABEL[kind]} ${kindCounts[kind]}`}
-                </button>
-              ))}
-            </div>
+            <Segment
+              options={(['all', 'node', 'character', 'place'] as const).map((kind) => ({
+                value: kind,
+                label: kind === 'all' ? `すべて ${candidates.length}` : `${MEDIA_OWNER_LABEL[kind]} ${kindCounts[kind]}`,
+                tip: kind === 'all' ? 'すべての種類を出す' : `${MEDIA_OWNER_LABEL[kind]}の画像だけを出す`
+              }))}
+              value={allKind}
+              onChange={setAllKind}
+              buttonClassName="px-2.5 py-0.5 text-[12px] tabular-nums"
+            />
           )}
         </div>
         <input

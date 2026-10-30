@@ -11,7 +11,7 @@ StateSnapshot は plain dict:
       "retire_reason": str | None,
       "facts": {key: value},
       "relationships": {
-        target_id: { "score": float, "target_type": "char"|"faction", "reasons": [event_id] }
+        target_id: { "score": float, "target_type": "char", "reasons": [event_id] }
       },
       "memories": [event_id]
     }

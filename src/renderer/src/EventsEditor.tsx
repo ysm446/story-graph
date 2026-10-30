@@ -545,14 +545,6 @@ export default function EventsEditor({
 
   const nameOf = (id: string): string =>
     characters.find((c) => c.id === id)?.name ?? (id || '(未選択)')
-  // 関係の相手が勢力のときの名前(ID のまま出さない)。勢力は滅多に変わらないので開いたときに 1 回読む
-  const [factionNames, setFactionNames] = useState<Record<string, string>>({})
-  useEffect(() => {
-    void api
-      .listFactions()
-      .then((list) => setFactionNames(Object.fromEntries(list.map((f) => [f.id, f.name]))))
-      .catch(() => undefined)
-  }, [])
   // 既に使われている fact のキーを入力候補にする
   const factKeys = Array.from(
     new Set(
@@ -813,11 +805,10 @@ export default function EventsEditor({
               const isRelation = group.key === 'relation'
               // 1 行目の見出し。種類は見出しで分かるので、だれ(関係は だれ → だれ)を出す。
               // 混ざる「その他」と記憶の圧縮、編集中だけ種類の名前を出す
-              // 関係の相手。人物ならアイコンも出す(勢力はアイコンも色も無いので名前だけ)
+              // 関係の相手。アイコンも出す
               const targetId = str(payload.target)
-              const targetIsFaction = isRelation && str(payload.target_type) === 'faction'
-              const targetChar = isRelation && !targetIsFaction ? characters.find((c) => c.id === targetId) : undefined
-              const targetName = targetIsFaction ? (factionNames[targetId] ?? targetId) : nameOf(targetId)
+              const targetChar = isRelation ? characters.find((c) => c.id === targetId) : undefined
+              const targetName = nameOf(targetId)
               const heading = open
                 ? (TYPE_LABELS[e.type] ?? e.type)
                 : isRelation

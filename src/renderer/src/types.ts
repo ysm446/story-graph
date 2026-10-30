@@ -183,7 +183,7 @@ export interface Group {
 
 export interface Relationship {
   score: number
-  target_type: 'char' | 'faction'
+  target_type: 'char'
   reasons: string[]
   label?: string
 }

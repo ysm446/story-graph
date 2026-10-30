@@ -7,6 +7,7 @@ import Lightbox from './Lightbox'
 import MediaPicker from './MediaPicker'
 import type { Character } from './types'
 import { useElapsedSeconds } from './useElapsed'
+import { useFileDrop } from './useFileDrop'
 
 /** キャラクターの参照画像(全身の立ち絵)。
  *
@@ -40,12 +41,11 @@ export default function RefImagePanel({
   // 生成ウインドウの「生成 | 加工」
   const [mode, setMode] = useState<ImageWindowMode>('generate')
   const [effectBusy, setEffectBusy] = useState(false)
-  const [dragOver, setDragOver] = useState(false)
+  const { dragOver, bind: fileDrop } = useFileDrop()
   // 参照画像をクリックしたときの拡大表示
   const [lightboxOpen, setLightboxOpen] = useState(false)
   // ストック(候補の一覧)ウインドウ
   const [stockOpen, setStockOpen] = useState(false)
-  const dragDepth = useRef(0)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const elapsed = useElapsedSeconds(phase !== null)
@@ -231,25 +231,7 @@ export default function RefImagePanel({
             if (url) setLightboxOpen(true)
             else fileInputRef.current?.click()
           }}
-          onDragEnter={(e) => {
-            e.preventDefault()
-            dragDepth.current += 1
-            setDragOver(true)
-          }}
-          onDragOver={(e) => e.preventDefault()}
-          onDragLeave={() => {
-            dragDepth.current -= 1
-            if (dragDepth.current <= 0) {
-              dragDepth.current = 0
-              setDragOver(false)
-            }
-          }}
-          onDrop={(e) => {
-            e.preventDefault()
-            dragDepth.current = 0
-            setDragOver(false)
-            void acceptFile(e.dataTransfer.files?.[0])
-          }}
+          {...fileDrop((file) => void acceptFile(file))}
           className={`group relative h-48 w-32 shrink-0 overflow-hidden rounded-lg border ${url ? 'cursor-zoom-in' : ''}`}
           style={{
             borderColor: 'var(--border-strong)',

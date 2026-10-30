@@ -56,13 +56,6 @@ def test_append_after_ending_is_400(store, client):
     asyncio.run(check())
 
 
-def test_faction_patch_with_null_name_keeps_name(store):
-    faction = store.create_faction({"name": "騎士団", "description": "説明"})
-    store.update_faction(faction["id"], {"name": None, "description": "新しい説明"})
-    row = store.conn.execute("SELECT name, description FROM factions WHERE id = ?", (faction["id"],)).fetchone()
-    assert (row["name"], row["description"]) == ("騎士団", "新しい説明")
-
-
 def test_put_events_rejects_payload_fold_cannot_apply(store, client):
     store.create_character({"id": "aya", "name": "綾"})
 

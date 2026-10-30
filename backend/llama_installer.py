@@ -25,7 +25,7 @@ from typing import Any, AsyncIterator
 
 import httpx
 
-from installer_common import dir_size, remove_by_rename, swap_into_place
+from installer_common import dir_size, fetch_github_releases, remove_by_rename, swap_into_place
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 RUNTIME_DIR = REPO_ROOT / "runtime"
@@ -150,25 +150,8 @@ def _build_release(raw: dict[str, Any]) -> dict[str, Any] | None:
 
 
 async def fetch_releases(limit: int = 8) -> list[dict[str, Any]]:
-    per_page = max(1, min(limit, 30))
-    headers = {"User-Agent": USER_AGENT, "Accept": "application/vnd.github+json"}
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        res = await client.get(RELEASES_API, params={"per_page": per_page}, headers=headers)
-        if res.status_code == 403:
-            raise RuntimeError(
-                "GitHub API のレート制限に達した可能性があります。しばらく待って再試行してください。"
-            )
-        if res.status_code != 200:
-            raise RuntimeError(f"リリース取得に失敗しました (HTTP {res.status_code})")
-        data = res.json()
-    releases = []
-    for raw in data:
-        if raw.get("draft"):
-            continue
-        rel = _build_release(raw)
-        if rel is not None:
-            releases.append(rel)
-    return releases
+    return await fetch_github_releases(RELEASES_API, _build_release, per_page=max(1, min(limit, 30)),
+                                       user_agent=USER_AGENT)
 
 
 # ---- インストール済みサーバの検出 -----------------------------------

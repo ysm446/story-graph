@@ -307,10 +307,8 @@ def _tool_get_beats(store: Store, path: list[str], args: dict[str, Any], scope: 
 # と同じように、名前と本文に解決してから渡す。
 
 def _name_map(store: Store) -> dict[str, str]:
-    """char_id / faction_id → 名前。関係の相手を読める形に直すのに使う。"""
-    names = {c["id"]: c["name"] for c in store.list_characters()}
-    names.update({f["id"]: f["name"] for f in store.list_factions()})
-    return names
+    """char_id → 名前。関係の相手を読める形に直すのに使う。"""
+    return {c["id"]: c["name"] for c in store.list_characters()}
 
 
 def _memory_row(row: Any) -> dict[str, Any]:
@@ -353,8 +351,6 @@ def _relationships_view(names: dict[str, str], rels: dict[str, Any]) -> dict[str
         }
         if rel.get("label"):
             item["label"] = rel["label"]
-        if rel.get("target_type") and rel["target_type"] != "char":
-            item["target_type"] = rel["target_type"]
         out[target] = item
     return out
 
@@ -883,10 +879,7 @@ async def room_stream(
         ):
             yield chunk
     except Exception as e:  # noqa: BLE001
-        try:
-            store.conn.rollback()
-        except Exception:  # noqa: BLE001
-            pass
+        store.rollback_quietly()
         yield _sse({"error": f"{type(e).__name__}: {e}"})
 
 
@@ -1111,10 +1104,7 @@ async def chat_stream(
     except Exception as e:  # noqa: BLE001
         # エラー時に半端な書き込みを次のリクエストへ持ち越さない(app.py の
         # ロールバックハンドラは SSE 生成器内の例外には届かない)
-        try:
-            store.conn.rollback()
-        except Exception:  # noqa: BLE001
-            pass
+        store.rollback_quietly()
         yield _sse({"error": f"{type(e).__name__}: {e}"})
 
 

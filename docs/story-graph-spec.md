@@ -1,7 +1,7 @@
 # story-graph — spec.md
 
 作成日時: 2026-07-24 22:59
-更新日時: 2026-10-13 23:09
+更新日時: 2026-10-30 17:28
 
 ノードベース・ストーリー構築アプリ
 
@@ -41,14 +41,6 @@ characters(
   graph_x REAL, graph_y REAL,  -- 関係グラフのピン留め座標
   created_at TEXT
 )
-
-factions(
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  description TEXT
-)
-
-faction_members(char_id TEXT, faction_id TEXT, PRIMARY KEY(char_id, faction_id))
 
 -- シーンノード(ビート)
 nodes(
@@ -142,7 +134,7 @@ settings(key TEXT PRIMARY KEY, value TEXT)
 |---|---|---|
 | `memory_add` | `{char, content, emotion, importance, refs[]}` | エピソード記憶の追加。refs は関連キャラID |
 | `memory_compress` | `{char, replaces[], summary, importance}` | 古い記憶群を要約記憶1件に圧縮(replaces は memory event_id 群) |
-| `relationship_update` | `{char, target_type: "char"\|"faction", target, delta, reason, label?}` | 関係値への加算。reason 必須。label は関係の一言(相関図の矢印に表示、後勝ち。2026-07-25 追加) |
+| `relationship_update` | `{char, target_type: "char", target, delta, reason, label?}` | 関係値への加算。reason 必須。label は関係の一言(相関図の矢印に表示、後勝ち。2026-07-25 追加) |
 | `relationship_set` | `{char, target_type, target, value, reason, label?}` | 関係値の絶対値設定(主に手動修正用) |
 | `fact_set` | `{scope: "char"\|"world", char?, key, value}` | 事実の設定。key例: location, alive, goal, items, weather, day |
 | `char_introduce` | `{char}` | 物語への初登場(以降 cast に入れる資格を得る) |
@@ -154,7 +146,6 @@ settings(key TEXT PRIMARY KEY, value TEXT)
 - fold は 正史パス順 → ノード内 seq 順。**後勝ち**で解決する
 - relationship の score は `clamp(-1.0, 1.0)`。reasons はイベントIDのリストとして蓄積(エッジクリック時の履歴表示に使用)
 - 未定義の関係は「存在しない」。UI・コンテキストとも中立(エッジなし)として扱う
-- 関係解決のフォールバック: 個別エッジ → 所属 faction へのエッジ → 中立
 
 ## 5. 状態導出(fold)
 
@@ -252,7 +243,7 @@ llama.cpp の JSON schema 制約で、**ビートとイベントを同時に**�
      - 関係図: §9 のグラフ
    - 下: 相談チャットドロワー(開閉式)
 2. **鑑賞モード**: 縦読み + スタイルプリセット / pov 切替 + stale シーンの再レンダー UI
-3. **キャラクター庫**: characters / factions の CRUD
+3. **キャラクター庫**: characters の CRUD
 4. **設定**: LLM エンドポイント、コンテキスト予算、検証パスの ON/OFF
 
 ## 11. LLM 構成
@@ -287,7 +278,7 @@ DB スキーマとノードのデータ構造は**一切引き継がず**、本 
 - **Phase 3 — 関係グラフ**: 描画、時間スクラブ、履歴ドリルダウン、ピン留めレイアウト
 - **Phase 4 — 鑑賞モード**: シーケンシャルレンダリング、スタイルプリセット、pov、部分レンダー、ビート昇格(後日削除)
 - **Phase 5 — 相談チャット**: ツール3種、スコープ制御、文章での展開提案
-- **Phase 6 — スケール対応**: faction フォールバック、memory_compress(自動要約圧縮)、2ノード差分表示、LLM 検証パス、エクスポート
+- **Phase 6 — スケール対応**: memory_compress(自動要約圧縮)、2ノード差分表示、LLM 検証パス、エクスポート
 
 ## 14. 非目標
 

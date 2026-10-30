@@ -3,6 +3,7 @@ import { api } from '../../api'
 import type { BackupConfig } from '../../types'
 import { fmtSize } from './format'
 import { askConfirm } from '../../ConfirmDialog'
+import { ON_OFF, Segment } from '../../Segment'
 
 // 外部バックアップ(zip 書き出し。docs/design/backup.md)。
 // スナップショットがライブラリの中に置かれるのに対し、こちらは外へ持ち出して
@@ -186,30 +187,7 @@ export default function ExternalBackupSection(): React.JSX.Element {
           <div className="settings-field-header">
             <span className="settings-field-label">自動バックアップ(1 日 1 回)</span>
             <div className="settings-field-controls">
-              <div
-                className="flex overflow-hidden rounded-md border"
-                style={{ borderColor: 'var(--border-strong)' }}
-              >
-                {(
-                  [
-                    [true, 'オン'],
-                    [false, 'オフ']
-                  ] as const
-                ).map(([value, label]) => (
-                  <button
-                    key={label}
-                    onClick={() => void patchConfig({ enabled: value })}
-                    className="px-2.5 py-0.5 text-[12px]"
-                    style={
-                      config.enabled === value
-                        ? { background: 'var(--accent-soft)', color: 'var(--text)' }
-                        : { color: 'var(--text-faint)' }
-                    }
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
+              <Segment options={ON_OFF} value={config.enabled} onChange={(enabled) => void patchConfig({ enabled })} />
               <span className="text-[11px]" style={{ color: 'var(--text-faint)' }}>
                 残す数
               </span>
