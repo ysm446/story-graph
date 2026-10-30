@@ -27,6 +27,12 @@ def _now() -> str:
 
 
 MAX_TOOL_STEPS = 8
+# get_beats 1 回で返す本文の合計文字数の目安(少なくとも 1 シーンは返す)。超えた分は next_from_index で続きを取らせる。
+# 全件を一度に返すと ctx 8192 の 31B ではそれだけで溢れる(2026-10-30 レビュー)
+GET_BEATS_CHAR_BUDGET = 6000
+# 以前のターンのツール結果はこの文字数を超えたら 1 行の要約に畳んで送る(保存はそのまま)。
+# 毎ターン全履歴を送るので、畳まないと章を 1〜2 回読んだだけで ctx を使い切る
+PAST_TOOL_RESULT_KEEP = 600
 CHAT_TEMPERATURE = 0.7
 MEMORY_TOP_K = 8
 STATE_OVERVIEW_MEMORIES = 5  # 全体 state で 1 キャラあたりに載せる記憶数(char_id 指定なら絞らない)
@@ -35,13 +41,47 @@ STATE_OVERVIEW_MEMORIES = 5  # 全体 state で 1 キャラあたりに載せる
 _sse = llm.sse
 
 
+class _StatsTotal:
+    """ツールステップをまたいだ生成統計の合計。ツール呼び出しの分も含めて「この返事にかかった量」"""
+
+    def __init__(self) -> None:
+        self.tokens = 0
+        self.elapsed_sec = 0.0
+        self.steps = 0
+        self.finish_reason: str | None = None
+        self.model: str | None = None
+
+    def add(self, result: dict[str, Any]) -> None:
+        """llm.chat_stream_tools の done の値を 1 回分足す"""
+        s = result.get("stats") or {}
+        self.tokens += s.get("tokens") or 0
+        self.elapsed_sec += s.get("elapsed_sec") or 0.0
+        self.finish_reason = s.get("finish_reason") or self.finish_reason
+        self.model = s.get("model") or self.model
+        self.steps += 1
+
+    def summary(self) -> dict[str, Any] | None:
+        """発言に添える統計(何も生成していなければ None)"""
+        if not self.tokens:
+            return None
+        elapsed = self.elapsed_sec or None
+        return {
+            "tokens": self.tokens,
+            "elapsed_sec": round(elapsed, 2) if elapsed else None,
+            "tokens_per_sec": round(self.tokens / elapsed, 1) if elapsed else None,
+            "finish_reason": self.finish_reason,
+            "steps": self.steps,
+            "model": self.model,
+        }
+
+
 def build_tools() -> list[dict[str, Any]]:
     return setting_documents.tools() + [
         {
             "type": "function",
             "function": {
                 "name": "get_beats",
-                "description": "シーン本文を取得する。正史 → 枝(1本ずつ) → 未接続の順に並べる。前後は index や並びでなく各シーンの prev / next で判断する。node_ids で対象を絞れる(省略で全件)。",
+                "description": "シーン本文を取得する。正史 → 枝(1本ずつ) → 未接続の順に並べる。前後は index や並びでなく各シーンの prev / next で判断する。node_ids か from_index / to_index で必要な分に絞る。1回で返す本文は合計約6000文字までで、残りは truncated の next_from_index から続けて取る。",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -118,8 +158,7 @@ def _story_graph(store: Store) -> dict[str, Any]:
     canon = store.canon_path()
     ending = store.active_ending()
     parents = {e["to_node"]: e["from_node"] for e in edges}
-    route = set(store.path_to(ending, parents) if ending and store._ending_is_rooted(ending, parents)
-                else store._canon_chain_from_start())
+    route = set(store.canon_chain(parents))
     canon_groups = {n["group_id"] for n in nodes if n["id"] in route and n["group_id"]}
     groups = [dict(r) for r in store.conn.execute("SELECT id, title FROM groups ORDER BY created_at, rowid")]
     canon_set = set(canon)
@@ -152,9 +191,7 @@ def _scene_flow(store: Store) -> tuple[list[str], dict[str, dict[str, Any]]]:
     for e in store.conn.execute("SELECT from_node, to_node FROM edges ORDER BY rowid"):
         parents.setdefault(e["to_node"], e["from_node"])
         children.setdefault(e["from_node"], []).append(e["to_node"])
-    ending = store.active_ending()
-    route = set(store.path_to(ending, parents) if ending and store._ending_is_rooted(ending, parents)
-                else store._canon_chain_from_start())
+    route = set(store.canon_chain(parents))
     order: list[str] = []
     seen: set[str] = set()
     roots = sorted((nid for nid in nodes if nid not in parents), key=lambda nid: nodes[nid]["kind"] != "start")
@@ -230,12 +267,22 @@ def _tool_get_beats(store: Store, path: list[str], args: dict[str, Any], scope: 
     from_i = max(int(args.get("from_index") or 1), 1)
     to_i = min(int(args.get("to_index") or len(path)), len(path))
     beats = []
+    chars = 0
+    truncated: dict[str, Any] | None = None
     for i in range(from_i - 1, to_i):
         if requested is not None and path[i] not in requested:
             continue
+        if beats and chars >= GET_BEATS_CHAR_BUDGET:
+            remaining = sum(1 for nid in path[i:to_i] if requested is None or nid in requested)
+            truncated = {"next_from_index": i + 1, "remaining": remaining,
+                         "note": f"本文の量の上限で打ち切りました。続きは from_index={i + 1} で取得してください"
+                                 + ("(node_ids は同じ指定のまま)" if requested is not None else "")
+                                 + "。必要なシーンだけに絞ると早く済みます"}
+            break
         node = store.get_node(path[i])
         if node is None:
             continue
+        chars += len(node["beat"] or "")
         beats.append(
             {
                 "node_id": path[i],
@@ -249,7 +296,8 @@ def _tool_get_beats(store: Store, path: list[str], args: dict[str, Any], scope: 
                 **links.get(path[i], {}),
             }
         )
-    return {"total": len(path), "beats": beats, **({"skipped": skipped} if skipped else {})}
+    return {"total": len(path), "beats": beats, **({"skipped": skipped} if skipped else {}),
+            **({"truncated": truncated} if truncated else {})}
 
 
 # fold の state(fold.py の StateSnapshot)は memories / reasons を event_id、キャラや
@@ -405,6 +453,75 @@ def _tool_search_memories(store: Store, path: list[str], scope: str, args: dict[
     return {
         "memories": [item(h) for h in hits]
     }
+
+
+def parse_tool_args(tool_call: dict[str, Any], truncated: bool) -> tuple[dict[str, Any], str | None]:
+    """ツール引数の JSON を読む。壊れていれば ({}, エラー文)。
+
+    黙って空の引数で実行すると、get_beats が全件を返すなど頼んでいない結果になり、さらに溢れる。
+    エラーとしてモデルへ返し、呼び直させる(制作チャットと同じ扱い)。
+    """
+    try:
+        args = json.loads(tool_call.get("function", {}).get("arguments") or "{}")
+    except json.JSONDecodeError as e:
+        if truncated:
+            return {}, "ツール呼び出しの引数が応答の長さ上限で途切れました。引数を短くし、1回の応答で呼ぶツールは1つにしてください"
+        return {}, f"引数のJSONが不正です: {e}"
+    if not isinstance(args, dict):
+        return {}, "引数はオブジェクトで指定してください"
+    return args, None
+
+
+def summarize_tool_result(name: str, content: str) -> str:
+    """以前のツール結果を 1 行に畳む。何を読んだかだけ残し、本文は呼び直させる(制作の直近の取得結果でも使う)"""
+    try:
+        payload = json.loads(content)
+    except json.JSONDecodeError:
+        payload = None
+    if isinstance(payload, dict) and isinstance(payload.get("beats"), list):
+        titles = "、".join(f"{b.get('title') or '(無題)'}({b.get('node_id')})" for b in payload["beats"] if isinstance(b, dict))
+        what = f"シーン {len(payload['beats'])} 件: {titles}"
+    elif isinstance(payload, dict):
+        counts = [f"{k} {len(v)} 件" for k, v in payload.items() if isinstance(v, list)]
+        what = "、".join(counts) or f"{len(content)} 文字"
+    else:
+        what = f"{len(content)} 文字"
+    return json.dumps({"omitted": f"以前の {name or 'ツール'} の結果({what})。本文は省いたので、要るなら同じツールで読み直す"},
+                      ensure_ascii=False)
+
+
+def history_for_llm(history: list[dict[str, Any]], current_from: int) -> list[dict[str, Any]]:
+    """保存した履歴を LLM へ送る形にする。
+
+    meta(生成統計)・ts(発言時刻)・prompt_messages(生成時に送った内容の控え)は保存用の付加情報なので外す。
+    system_prompt は prompt_messages の旧形式(控えを system だけにしていた頃)の名残。
+    current_from より前(以前のターン)の長いツール結果は _past_tool_summary に畳む。
+    """
+    out: list[dict[str, Any]] = []
+    names: dict[str, str] = {}
+    pending: list[str] = []  # tool_call_id が空のサーバー向けに、呼び出しの順でも名前を引く
+    for i, m in enumerate(history):
+        item = {k: v for k, v in m.items() if k not in ("meta", "ts", "system_prompt", "prompt_messages")}
+        if m.get("tool_calls"):
+            pending = []
+            for tc in m["tool_calls"]:
+                name = tc.get("function", {}).get("name", "")
+                pending.append(name)
+                if tc.get("id"):
+                    names[tc["id"]] = name
+        elif m.get("role") == "tool":
+            name = names.get(m.get("tool_call_id") or "") or (pending[0] if pending else "")
+            if pending:
+                pending.pop(0)
+            content = m.get("content")
+            if i < current_from and isinstance(content, str) and len(content) > PAST_TOOL_RESULT_KEEP:
+                item["content"] = summarize_tool_result(name, content)
+        out.append(item)
+    return out
+
+
+def _current_turn_start(history: list[dict[str, Any]]) -> int:
+    return next((i for i in range(len(history) - 1, -1, -1) if _is_turn_start(history[i])), 0)
 
 
 def dispatch_tool(store: Store, name: str, args: dict[str, Any], path: list[str], scope: str) -> dict[str, Any]:
@@ -839,7 +956,7 @@ async def _room_impl(
                 return [{"role": "system", "content": system}, *transcript, *scratch]
 
             yield _sse({"speaker": current, "turn": turn})
-            stats_total: dict[str, Any] = {"tokens": 0, "elapsed_sec": 0.0, "steps": 0, "finish_reason": None}
+            stats_total = _StatsTotal()
             text = ""
             used_tools: list[str] = []
             for step in range(MAX_TOOL_STEPS):
@@ -857,26 +974,22 @@ async def _room_impl(
                         yield _sse({"delta": value, "speaker": current})
                     elif kind == "done":
                         result = value
-                st = result.get("stats") or {}
-                stats_total["tokens"] += st.get("tokens") or 0
-                stats_total["elapsed_sec"] += st.get("elapsed_sec") or 0.0
-                stats_total["finish_reason"] = st.get("finish_reason") or stats_total["finish_reason"]
-                stats_total["model"] = st.get("model") or stats_total.get("model")
-                stats_total["steps"] += 1
+                stats_total.add(result)
                 tool_calls = result.get("tool_calls")
                 if not tool_calls:
                     text = result.get("content") or ""
                     break
                 scratch.append(result["message"])
+                truncated = (result.get("stats") or {}).get("finish_reason") == "length"
                 for tc in tool_calls:
                     name = tc.get("function", {}).get("name", "")
-                    try:
-                        args = json.loads(tc.get("function", {}).get("arguments") or "{}")
-                    except json.JSONDecodeError:
-                        args = {}
+                    args, arg_error = parse_tool_args(tc, truncated)
                     yield _sse({"tool_call": {"name": name, "args": args}, "speaker": current})
-                    if name == "recall":
-                        payload: dict[str, Any] = _tool_search_memories(
+                    payload: dict[str, Any]
+                    if arg_error:
+                        payload = {"error": arg_error}
+                    elif name == "recall":
+                        payload = _tool_search_memories(
                             store, path, "upto", {"query": args.get("query") or "", "char_id": current}
                         )
                     else:
@@ -907,28 +1020,10 @@ async def _room_impl(
                         yield _sse({"delta": value, "speaker": current})
                     elif kind == "done":
                         result = value
-                # まとめの 1 回分も統計に足す(_chat_impl の上限時と同じ)
-                st = result.get("stats") or {}
-                stats_total["tokens"] += st.get("tokens") or 0
-                stats_total["elapsed_sec"] += st.get("elapsed_sec") or 0.0
-                stats_total["finish_reason"] = st.get("finish_reason") or stats_total["finish_reason"]
-                stats_total["model"] = st.get("model") or stats_total.get("model")
-                stats_total["steps"] += 1
+                stats_total.add(result)  # まとめの 1 回分も統計に足す(_chat_impl の上限時と同じ)
                 text = result.get("content") or ""
             text = _strip_speaker_prefix(text, names.get(current, current))
-            elapsed = stats_total["elapsed_sec"] or None
-            stats = (
-                {
-                    "tokens": stats_total["tokens"],
-                    "elapsed_sec": round(elapsed, 2) if elapsed else None,
-                    "tokens_per_sec": round(stats_total["tokens"] / elapsed, 1) if elapsed else None,
-                    "finish_reason": stats_total["finish_reason"],
-                    "steps": stats_total["steps"],
-                    "model": stats_total.get("model"),
-                }
-                if stats_total["tokens"]
-                else None
-            )
+            stats = stats_total.summary()
             history.append(
                 {
                     "role": "assistant",
@@ -1081,42 +1176,13 @@ async def _chat_impl(
         system = build_system(store, path, scope)
         tools = build_tools()
 
+    # このターンの始まり。ここより前のツール結果は畳んで送る(history_for_llm)
+    current_from = _current_turn_start(history)
+
     def messages() -> list[dict[str, Any]]:
-        # meta(生成統計)・ts(発言時刻)・prompt_messages(生成時に送った内容の
-        # 控え)は保存用の付加情報なので LLM には渡さない。system_prompt は
-        # prompt_messages の旧形式(控えを system だけにしていた頃)の名残
-        return [
-            {"role": "system", "content": system},
-            *({k: v for k, v in m.items() if k not in ("meta", "ts", "system_prompt", "prompt_messages")} for m in history),
-        ]
+        return [{"role": "system", "content": system}, *history_for_llm(history, current_from)]
 
-    # ツールステップをまたいだ合計。ツール呼び出しの分も含めて「この返事にかかった量」
-    stats_total: dict[str, Any] = {"tokens": 0, "elapsed_sec": 0.0, "steps": 0, "finish_reason": None}
-
-    def accumulate(result: dict[str, Any]) -> None:
-        s = result.get("stats") or {}
-        if s.get("tokens"):
-            stats_total["tokens"] += s["tokens"]
-        if s.get("elapsed_sec"):
-            stats_total["elapsed_sec"] += s["elapsed_sec"]
-        if s.get("finish_reason"):
-            stats_total["finish_reason"] = s["finish_reason"]
-        if s.get("model"):
-            stats_total["model"] = s["model"]
-        stats_total["steps"] += 1
-
-    def final_stats() -> dict[str, Any] | None:
-        if not stats_total["tokens"]:
-            return None
-        elapsed = stats_total["elapsed_sec"] or None
-        return {
-            "tokens": stats_total["tokens"],
-            "elapsed_sec": round(elapsed, 2) if elapsed else None,
-            "tokens_per_sec": round(stats_total["tokens"] / elapsed, 1) if elapsed else None,
-            "finish_reason": stats_total["finish_reason"],
-            "steps": stats_total["steps"],
-            "model": stats_total.get("model"),
-        }
+    stats_total = _StatsTotal()
 
     final_answer: str | None = None
     try:
@@ -1135,11 +1201,11 @@ async def _chat_impl(
                     yield _sse({"delta": value})
                 elif kind == "done":
                     result = value
-            accumulate(result)
+            stats_total.add(result)
             tool_calls = result.get("tool_calls")
             if not tool_calls:
                 final_answer = result["content"]
-                stats = final_stats()
+                stats = stats_total.summary()
                 # prompt_messages はこの返事を作った LLM 呼び出しに実際に送った内容の
                 # 控え(system + それまでの履歴 + ツール結果)。UI の閲覧用で、履歴が
                 # 長くなると返事ごとに全文が積まれて嵩むが、正確さを優先して許容する
@@ -1155,14 +1221,14 @@ async def _chat_impl(
                 break
             # ツール呼び出し途中の発言にも控えを付ける(content 付きなら吹き出しになる)
             history.append({**result["message"], "prompt_messages": messages()})
+            truncated = (result.get("stats") or {}).get("finish_reason") == "length"
             for tc in tool_calls:
                 name = tc.get("function", {}).get("name", "")
-                try:
-                    args = json.loads(tc.get("function", {}).get("arguments") or "{}")
-                except json.JSONDecodeError:
-                    args = {}
+                args, arg_error = parse_tool_args(tc, truncated)
                 yield _sse({"tool_call": {"name": name, "args": args}})
-                if char_id:
+                if arg_error:
+                    payload = {"error": arg_error}
+                elif char_id:
                     # キャラモードのツールは recall(自分の記憶の検索)だけ
                     if name == "recall":
                         payload: dict[str, Any] = _tool_search_memories(
@@ -1201,9 +1267,9 @@ async def _chat_impl(
                     yield _sse({"delta": value})
                 elif kind == "done":
                     result = value
-            accumulate(result)
+            stats_total.add(result)
             final_answer = result.get("content") or ""
-            stats = final_stats()
+            stats = stats_total.summary()
             history.append(
                 {
                     "role": "assistant",
@@ -1217,7 +1283,7 @@ async def _chat_impl(
         # 途中失敗・切断でも、ここまでの往復(ユーザー発言・ツール結果)は保存する
         store.save_chat_messages(chat_id, history + tail)
 
-    yield _sse({"answer": final_answer or "", "chat_id": chat_id, "stats": final_stats()})
+    yield _sse({"answer": final_answer or "", "chat_id": chat_id, "stats": stats_total.summary()})
 
 
 # ---- コンテキスト使用量 ----------------------------------------------
@@ -1254,7 +1320,9 @@ def _usage_text(
         system = build_system(store, path, scope)
         tools = build_tools()
     parts = [system, json.dumps(tools, ensure_ascii=False)]
-    for m in list(chat["messages"]) if chat else []:
+    saved = list(chat["messages"]) if chat else []
+    # 次のターンでは保存済みの分がすべて「以前のターン」になる
+    for m in history_for_llm(saved, len(saved)):
         role = str(m.get("role", ""))
         content = m.get("content")
         if isinstance(content, str) and content:

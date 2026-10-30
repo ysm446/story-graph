@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, isAbortError, ttsSpeak, voiceApi, type VoiceLine } from './api'
-import { applyVoiceRate, scaledPause } from './voiceRate'
+import { playBlob, sleep, type PlaybackSlot } from './audioPlayback'
+import { scaledPause } from './voiceRate'
 
 /** 再生中に数行先まで合成しておく(鑑賞モードの読み上げと同じ) */
 const PREFETCH_AHEAD = 2
@@ -46,17 +47,6 @@ export function safeBoundary(text: string): number {
   return fence ? Math.min(boundary, text.lastIndexOf('```')) : boundary
 }
 
-function sleep(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal.aborted) return reject(new DOMException('aborted', 'AbortError'))
-    const timer = setTimeout(resolve, ms)
-    signal.addEventListener('abort', () => {
-      clearTimeout(timer)
-      reject(new DOMException('aborted', 'AbortError'))
-    })
-  })
-}
-
 /** 返答の読み上げの列。文の塊を行に分けて(/tts/chat_lines)順に積み、先読みしながら 1 行ずつ鳴らす。
  *  stop で合成待ち・再生中・未処理の塊をまとめて捨てる(使い捨て。止めたら新しく作る) */
 class SpeechQueue {
@@ -66,7 +56,7 @@ class SpeechQueue {
   private running = false
   private chunks: Promise<void> = Promise.resolve()
   private pendingChunks = 0
-  private audio: HTMLAudioElement | null = null
+  private readonly slot: PlaybackSlot = { audio: null }
   private readonly controller = new AbortController()
 
   constructor(
@@ -102,8 +92,8 @@ class SpeechQueue {
 
   stop(): void {
     this.controller.abort()
-    this.audio?.pause()
-    this.audio = null
+    this.slot.audio?.pause()
+    this.slot.audio = null
     this.onActive(false)
   }
 
@@ -135,33 +125,13 @@ class SpeechQueue {
         const blob = await this.fetchLine(i)
         for (let a = 1; a <= PREFETCH_AHEAD && i + a < this.lines.length; a += 1) void this.fetchLine(i + a)
         this.synth.delete(i)
-        if (blob) await this.play(blob, signal) // null = エンジンが鳴らせない効果音(間だけ置く)
+        if (blob) await playBlob(blob, signal, this.slot) // null = エンジンが鳴らせない効果音(間だけ置く)
         await sleep(scaledPause(Math.min(this.lines[i].pause_after_ms, 600)), signal)
         this.next += 1
       }
     } catch (e) {
       if (!isAbortError(e) && !this.stopped) this.fail(e)
     }
-  }
-
-  private play(blob: Blob, signal: AbortSignal): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const url = URL.createObjectURL(blob)
-      const audio = new Audio(url)
-      const release = applyVoiceRate(audio)
-      this.audio = audio
-      const done = (err?: unknown): void => {
-        audio.pause()
-        release()
-        URL.revokeObjectURL(url)
-        if (err) reject(err)
-        else resolve()
-      }
-      audio.onended = () => done()
-      audio.onerror = () => done(new Error('音声を再生できませんでした'))
-      signal.addEventListener('abort', () => done(new DOMException('aborted', 'AbortError')))
-      audio.play().catch((e) => done(e))
-    })
   }
 
   private settle(): void {

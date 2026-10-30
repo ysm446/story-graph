@@ -495,11 +495,6 @@ async def delete_faction(faction_id: str) -> dict[str, str]:
 
 # ---- timeline / nodes ----------------------------------------------
 
-@app.get("/timeline")
-async def timeline() -> list[dict[str, Any]]:
-    return store.timeline()
-
-
 @app.get("/graph")
 async def graph() -> dict[str, Any]:
     return store.graph()
@@ -1162,7 +1157,7 @@ async def node_state_before(node_id: str) -> dict[str, Any]:
     if store.get_node(node_id) is None:
         raise HTTPException(404, "node not found")
     try:
-        return store.get_state_before(node_id)
+        return store.state_before(node_id)
     except (KeyError, TypeError, ValueError) as e:
         raise HTTPException(422, f"fold に失敗しました(不正なイベント): {type(e).__name__}: {e}")
 
@@ -1470,24 +1465,6 @@ async def comfy_start() -> dict[str, Any]:
 async def comfy_stop() -> dict[str, Any]:
     await comfy_mgr.stop_async()
     return {"stopped": True}
-
-
-@app.get("/comfy/models")
-async def comfy_models(folder: str = "checkpoints") -> dict[str, Any]:
-    """起動中の ComfyUI が見つけているモデル名(チェックポイント選択用)。停止中は空。"""
-    import comfy
-    import comfy_manager
-    import re as _re
-
-    if not _re.fullmatch(r"[a-z_]+", folder):
-        raise HTTPException(400, "不正なフォルダ名です")
-    base_url = comfy_manager.resolve_base_url(store.get_settings())
-    if not await comfy.health(base_url):
-        return {"models": [], "healthy": False}
-    try:
-        return {"models": await comfy.list_models(base_url, folder), "healthy": True}
-    except (RuntimeError, OSError) as e:
-        raise HTTPException(502, str(e))
 
 
 @app.get("/comfy/releases")
@@ -1943,11 +1920,11 @@ async def character_ref_image_prompt(char_id: str, body: RefImagePromptIn | None
     instructions = body.instructions if body else None
 
     async def stream():
-        yield image_gen._sse({"meta": {"suffix": image_gen.REF_IMAGE_SUFFIX}})
+        yield llm.sse({"meta": {"suffix": image_gen.REF_IMAGE_SUFFIX}})
         try:
             base_url = await llama.ensure_running(store.get_settings())
         except Exception as e:
-            yield image_gen._sse({"error": str(e)})
+            yield llm.sse({"error": str(e)})
             return
         async for chunk in image_gen.stream_character_prompt(
             char, base_url=base_url, instructions=instructions, settings=store.get_settings()
@@ -2037,8 +2014,7 @@ async def character_ref_image_generate(char_id: str, body: RefImageGenerateIn) -
         )
     except RuntimeError as e:
         raise HTTPException(500, str(e))
-    name = f"{uuid.uuid4().hex[:12]}.png"
-    await asyncio.to_thread((_Path(assets) / name).write_bytes, data)
+    name = await image_gen.save_png(assets, data)
     instructions = (body.instructions or "").strip() or None
     workflow = comfy.get_variant(body.workflow)["id"]
     store.update_character(
@@ -2066,11 +2042,11 @@ async def place_image_prompt(place_id: str, body: RefImagePromptIn | None = None
     instructions = body.instructions if body else None
 
     async def stream():
-        yield image_gen._sse({"meta": {"suffix": image_gen.PLACE_IMAGE_SUFFIX}})
+        yield llm.sse({"meta": {"suffix": image_gen.PLACE_IMAGE_SUFFIX}})
         try:
             base_url = await llama.ensure_running(store.get_settings())
         except Exception as e:
-            yield image_gen._sse({"error": str(e)})
+            yield llm.sse({"error": str(e)})
             return
         async for chunk in image_gen.stream_place_prompt(
             place, base_url=base_url, instructions=instructions, settings=store.get_settings()
@@ -2107,8 +2083,7 @@ async def place_image_generate(place_id: str, body: RefImageGenerateIn) -> dict[
         )
     except RuntimeError as e:
         raise HTTPException(500, str(e))
-    name = f"{uuid.uuid4().hex[:12]}.png"
-    await asyncio.to_thread((_Path(assets) / name).write_bytes, data)
+    name = await image_gen.save_png(assets, data)
     instructions = (body.instructions or "").strip() or None
     workflow = comfy.get_variant(body.workflow)["id"]
     store.update_place(
@@ -2156,7 +2131,7 @@ async def node_image_prompt(node_id: str, body: SceneImagePromptIn) -> Streaming
         try:
             base_url = await llama.ensure_running(settings)
         except Exception as e:
-            yield image_gen._sse({"error": str(e)})
+            yield llm.sse({"error": str(e)})
             return
         if body.char_ids is not None:
             # 作者が手本を選び直したとき: その人物を中心にし、選ばなかった人物は絵から外す
@@ -2168,7 +2143,7 @@ async def node_image_prompt(node_id: str, body: SceneImagePromptIn) -> Streaming
             focus = await image_gen.choose_scene_focus(node, chars, base_url=base_url, settings=settings)
             refs = image_gen.select_scene_refs(focus)
         others = [c for c in chars if c not in focus]
-        yield image_gen._sse({"meta": {
+        yield llm.sse({"meta": {
             "suffix": image_gen.SCENE_SUFFIX,
             "refs": [{"char_id": c["id"], "name": c["name"], "label": f"image{i + 1}"} for i, c in enumerate(refs)],
             "cast": [{"char_id": c["id"], "name": c["name"], "has_ref": bool(c.get("ref_image_path"))} for c in chars],
@@ -2179,24 +2154,6 @@ async def node_image_prompt(node_id: str, body: SceneImagePromptIn) -> Streaming
             yield chunk
 
     return StreamingResponse(stream(), media_type="text/event-stream")
-
-
-class SceneImageGenIn(BaseModel):
-    prompt: str | None = None
-    instructions: str | None = None
-    seed: int | None = None
-    ref_chars: list[str] | None = None
-
-
-@app.post("/nodes/{node_id}/image_gen")
-async def node_image_gen_save(node_id: str, body: SceneImageGenIn) -> dict[str, Any]:
-    """場面の挿絵の生成ウインドウの状態を保存する(次に開いたとき復元。挿絵そのものは変えない)。"""
-    if store.get_node(node_id) is None:
-        raise HTTPException(404, "node not found")
-    store.set_node_image_gen(
-        node_id, prompt=body.prompt, instructions=body.instructions, seed=body.seed, ref_chars=body.ref_chars
-    )
-    return {"ok": True}
 
 
 class SceneImageGenerateIn(BaseModel):
@@ -2241,8 +2198,7 @@ async def node_image_generate(node_id: str, body: SceneImageGenerateIn) -> dict[
         )
     except RuntimeError as e:
         raise HTTPException(500, str(e))
-    name = f"{uuid.uuid4().hex[:12]}.png"
-    await asyncio.to_thread((_Path(assets) / name).write_bytes, data)
+    name = await image_gen.save_png(assets, data)
     instructions = (body.instructions or "").strip() or None
     workflow = comfy.get_variant(body.workflow)["id"]
     store.set_node_image_gen(
@@ -2294,8 +2250,7 @@ async def image_effect(body: ImageEffectIn) -> dict[str, Any]:
         )
     except RuntimeError as e:
         raise HTTPException(500, str(e))
-    name = f"{uuid.uuid4().hex[:12]}.png"
-    await asyncio.to_thread((_Path(assets) / name).write_bytes, data)
+    name = await image_gen.save_png(assets, data)
     return {
         "image_path": name, "seed": seed, "prompt": body.prompt.strip(), "instructions": None,
         "ref_chars": None, "workflow": workflow, "source_path": src.name,
@@ -2311,7 +2266,7 @@ def _sse_error_response(message: str) -> StreamingResponse:
     """
 
     async def error_stream():
-        yield generation._sse({"error": message})
+        yield llm.sse({"error": message})
 
     return StreamingResponse(error_stream(), media_type="text/event-stream")
 
@@ -2345,22 +2300,6 @@ class ProofreadIn(BaseModel):
 @app.get("/proofread/presets")
 async def list_proofread_presets() -> list[dict[str, str]]:
     return generation.proofread_presets(store)
-
-
-@app.post("/proofread")
-async def proofread(body: ProofreadIn) -> dict[str, str]:
-    if not body.text.strip():
-        raise HTTPException(400, "文章が空です")
-    try:
-        base_url = await llama.ensure_running(store.get_settings())
-        value = await generation.proofread(
-            store, base_url, body.text, body.preset_id, body.context_before, body.context_after
-        )
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    except RuntimeError as e:
-        raise HTTPException(500, str(e))
-    return {"value": value}
 
 
 @app.post("/proofread/stream")
@@ -2484,23 +2423,6 @@ async def reextract_nodes(body: ReextractIn) -> StreamingResponse:
     )
 
 
-@app.post("/nodes/{node_id}/reextract_chain")
-async def reextract_chain(node_id: str, keep_user_events: bool = True) -> StreamingResponse:
-    """このシーン以下の部分木を、親から順にイベント抽出し直す(SSE)。
-    島を繋いだ直後など、上流の状態が変わったときに使う。"""
-    if store.get_node(node_id) is None:
-        raise HTTPException(404, "node not found")
-    await snapshots.auto(store, "イベント作り直しの前", 60)
-    try:
-        base_url = await llama.ensure_running(store.get_settings())
-    except RuntimeError as e:
-        raise HTTPException(500, str(e))
-    return StreamingResponse(
-        generation.reextract_chain(store, base_url, node_id, keep_user_events),
-        media_type="text/event-stream",
-    )
-
-
 # ---- レンダリング(鑑賞モード) --------------------------------------
 
 class PresetIn(BaseModel):
@@ -2581,7 +2503,7 @@ async def render(body: RenderIn) -> StreamingResponse:
             ]
         if not node_ids:
             async def empty_stream():
-                yield rendering._sse({"done": True, "skipped": True})
+                yield llm.sse({"done": True, "skipped": True})
             return StreamingResponse(empty_stream(), media_type="text/event-stream")
     else:
         if not canon:

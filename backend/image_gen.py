@@ -7,16 +7,17 @@
 
 from __future__ import annotations
 
-import json
+import asyncio
 import re
+import uuid
+from pathlib import Path
 from typing import Any, AsyncIterator
 
 import comfy
 import llm
 
 
-def _sse(data: dict[str, Any]) -> str:
-    return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+_sse = llm.sse
 
 # 参照画像の共通指示。LLM の出力(人物の描写)の後ろに機械的に足す
 REF_IMAGE_SUFFIX = (
@@ -184,6 +185,18 @@ def new_seed() -> int:
     return random.randint(0, 2**53 - 1)
 
 
+def resolve_seed(seed: int | None) -> int:
+    """None または負数(-1。ComfyUI などの慣例)はランダムな seed にする"""
+    return new_seed() if seed is None or seed < 0 else seed
+
+
+async def save_png(assets: str, data: bytes) -> str:
+    """生成した PNG を assets/ に乱数の名前で書き、そのファイル名を返す"""
+    name = f"{uuid.uuid4().hex[:12]}.png"
+    await asyncio.to_thread((Path(assets) / name).write_bytes, data)
+    return name
+
+
 async def generate_character_image(
     settings: dict[str, str],
     description: str,
@@ -194,8 +207,7 @@ async def generate_character_image(
 ) -> tuple[bytes, int]:
     """(PNG, 使った seed)。seed を返すのは、UI で同じ絵を再現・微調整できるようにするため。
     None または負数(-1。ComfyUI などの慣例)はランダム。"""
-    if seed is None or seed < 0:
-        seed = new_seed()
+    seed = resolve_seed(seed)
     return await comfy.run_workflow(comfy_base_url, character_workflow(settings, description, seed, variant)), seed
 
 
@@ -277,8 +289,7 @@ async def generate_place_image(
     variant: str | None = None,
 ) -> tuple[bytes, int]:
     """(PNG, 使った seed)。seed が None または負数ならランダム。"""
-    if seed is None or seed < 0:
-        seed = new_seed()
+    seed = resolve_seed(seed)
     return await comfy.run_workflow(comfy_base_url, place_workflow(settings, description, seed, variant)), seed
 
 
@@ -472,8 +483,7 @@ async def generate_scene_image(
 ) -> tuple[bytes, int]:
     """ref_files は (assets のファイル名, バイト列)。ComfyUI へ上げてから描く。(PNG, 使った seed)。
     seed が None または負数ならランダム。"""
-    if seed is None or seed < 0:
-        seed = new_seed()
+    seed = resolve_seed(seed)
     names = [await comfy.upload_image(comfy_base_url, data, name) for name, data in ref_files]
     wf = scene_workflow(settings, description, names, seed, variant)
     return await comfy.run_workflow(comfy_base_url, wf), seed
@@ -526,8 +536,7 @@ async def generate_effect_image(
     variant: str | None = None,
 ) -> tuple[bytes, int, str]:
     """source は (assets のファイル名, バイト列)。(PNG, 使った seed, 使った組の id)。"""
-    if seed is None or seed < 0:
-        seed = new_seed()
+    seed = resolve_seed(seed)
     v = resolve_effect_variant(settings, variant)
     name = await comfy.upload_image(comfy_base_url, source[1], source[0])
     wf = effect_workflow(settings, instruction, name, seed, v["id"])

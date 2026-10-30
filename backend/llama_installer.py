@@ -25,6 +25,8 @@ from typing import Any, AsyncIterator
 
 import httpx
 
+from installer_common import dir_size, remove_by_rename, swap_into_place
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 RUNTIME_DIR = REPO_ROOT / "runtime"
 # レガシー配置(lm-graph 由来のバイナリ流用)も検出対象にする
@@ -291,18 +293,6 @@ def resolve_server_path() -> str | None:
     return installs[0]["path"] if installs else None
 
 
-def _dir_size(path: Path) -> int:
-    """フォルダ配下のファイルサイズ合計(消したときに空く量の表示用)。"""
-    total = 0
-    for p in path.rglob("*"):
-        try:
-            if p.is_file():
-                total += p.stat().st_size
-        except OSError:
-            continue
-    return total
-
-
 def status() -> dict[str, Any]:
     """一覧 + 各インストールの占有サイズ。
 
@@ -311,7 +301,7 @@ def status() -> dict[str, Any]:
     """
     installs = find_server_installs()
     for c in installs:
-        c["size_bytes"] = _dir_size(Path(c["dir"]))
+        c["size_bytes"] = dir_size(Path(c["dir"]))
         c["cuda_version"] = _cuda_major(Path(c["dir"]).name)
         c["is_cuda"] = c["cuda_version"] is not None
         # CUDA ビルドなのに DLL が無い場合は、システム側の CUDA ランタイム頼りになる
@@ -345,19 +335,12 @@ def uninstall(install_dir: str) -> dict[str, Any]:
     if not (target / "llama-server.exe").exists():
         raise ValueError(f"llama-server.exe が無いフォルダは削除しません: {install_dir}")
 
-    freed = _dir_size(target)
-    trash = target.with_name(f".removing-{uuid.uuid4().hex}")
-    try:
-        target.rename(trash)
-    except OSError as e:
-        raise RuntimeError(
-            f"削除できませんでした(このサーバを使用中の可能性があります): {install_dir} — {e}"
-        )
-    shutil.rmtree(trash, ignore_errors=True)
+    freed = dir_size(target)
+    trash = remove_by_rename(target, f"削除できませんでした(このサーバを使用中の可能性があります): {install_dir}")
     if trash.exists():
         # AV やインデクサが掴んでいて消し切れなかったぶんは「空いた量」から引く
         # (残骸は次回起動時の cleanup_leftovers が回収する)
-        freed -= _dir_size(trash)
+        freed -= dir_size(trash)
     return {"removed_dir": str(target), "freed_bytes": max(freed, 0)}
 
 
@@ -429,7 +412,7 @@ def dest_dir_for(asset_name: str) -> Path:
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name) or ".." in name:
         raise ValueError(f"不正なファイル名です: {asset_name}")
     # llama.cpp のリリース資産の形に限定する。任意の名前を許すと runtime/comfyui など
-    # 他のインストール先を _swap_into_place で消せてしまう
+    # 他のインストール先を swap_into_place で消せてしまう
     if not LLAMA_ASSET_RE.match(asset_name):
         raise ValueError(f"llama.cpp のリリース資産ではありません: {asset_name}")
     return RUNTIME_DIR / name
@@ -469,25 +452,6 @@ async def _fetch_and_extract(
         yield p
     yield {"phase": "extract", "file_label": label}
     await asyncio.to_thread(_extract, tmp_zip, dest_dir)
-
-
-def _swap_into_place(staging: Path, dest_dir: Path) -> None:
-    """展開の済んだ staging を dest_dir へ置き換える。
-
-    既存の dest_dir は先に rename で退かす。使用中(exe をロック中)なら rename の
-    時点で失敗し、既存インストールは無傷のまま残る。
-    """
-    if dest_dir.exists():
-        trash = dest_dir.with_name(f".removing-{uuid.uuid4().hex}")
-        try:
-            dest_dir.rename(trash)
-        except OSError as e:
-            raise RuntimeError(
-                f"既存のインストール先を置き換えられませんでした"
-                f"(このサーバを使用中の可能性があります): {dest_dir} — {e}"
-            )
-        shutil.rmtree(trash, ignore_errors=True)
-    staging.rename(dest_dir)
 
 
 async def install_variant(
@@ -534,7 +498,7 @@ async def install_variant(
 
         if not (staging / "llama-server.exe").exists():
             raise RuntimeError("展開後に llama-server.exe が見つかりませんでした")
-        await asyncio.to_thread(_swap_into_place, staging, dest_dir)
+        await asyncio.to_thread(swap_into_place, staging, dest_dir, "このサーバを使用中")
         build = _extract_build(asset_name)
         yield {"phase": "done", "build": build, "path": str(dest_dir / "llama-server.exe")}
     except BaseException:

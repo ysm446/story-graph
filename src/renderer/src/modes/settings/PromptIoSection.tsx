@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react'
 import { Icon } from '../../icons'
 import { api } from '../../api'
+import { downloadBlob } from '../../downloadBlob'
 
 // プロンプトの書き出し / 読み込み。シーン生成・校正・スタイルプリセット
 // (散文用システムプロンプト)を 1 ファイルにまとめて扱う。
@@ -33,12 +34,7 @@ export default function PromptIoSection({
       const blob = new Blob([JSON.stringify(payload, null, 2)], {
         type: 'application/json;charset=utf-8'
       })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = 'story-graph-prompts.json'
-      a.click()
-      URL.revokeObjectURL(url)
+      downloadBlob('story-graph-prompts.json', blob)
       setStatus(`書き出しました(スタイルプリセット ${custom.length} 件 + シーン生成 / 校正)`)
     } catch (e) {
       setStatus(`書き出しに失敗しました: ${String(e)}`)

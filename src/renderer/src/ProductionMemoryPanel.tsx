@@ -1,5 +1,6 @@
 import { memo, useEffect, useRef, useState } from 'react'
 import { api, productionApi, type ProductionMemory } from './api'
+import { downloadBlob } from './downloadBlob'
 import { Markdown } from './Markdown'
 import ProductionPanelToggle, { panelBodyClass, panelBodyStyle } from './ProductionPanelToggle'
 
@@ -107,9 +108,7 @@ function ProductionMemoryPanel({ busy, open, onToggle, refresh, onDirty, onChang
           void productionApi.memoryHistory().then((value) => { if (epoch === historyEpoch.current) setVersions(value) }).catch((e) => { if (epoch === historyEpoch.current) setError(String(e)) })
         }} data-tip="直近20版のメモと更新理由を表示します">更新履歴</button>
         <button className={button} style={style} disabled={!memory?.content} onClick={() => {
-          const url = URL.createObjectURL(new Blob([memory?.content ?? ''], { type: 'text/markdown;charset=utf-8' }))
-          const a = document.createElement('a'); a.href = url; a.download = 'production-memory.md'; a.click()
-          setTimeout(() => URL.revokeObjectURL(url), 1000)
+          downloadBlob('production-memory.md', new Blob([memory?.content ?? ''], { type: 'text/markdown;charset=utf-8' }))
         }} data-tip="現在のメモをMarkdownとして書き出します">書き出す</button>
         <button className={`delete-action ${button}`} disabled={busy || saving || !memory} onClick={() => void reset()}
           data-tip={busy ? '制作が終わるか停止してからリセットできます' : 'メモ本文・更新履歴・作業記録・照合情報を消去し、版番号を初期化します'}>作業メモをリセット</button>

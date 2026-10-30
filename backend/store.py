@@ -431,21 +431,10 @@ class Store:
         ending = self.active_ending()
         if ending is None:
             return
-        parents = self._parents_map()
-        # 結末が浮いている間(付け替え中)は、はじまりから辿れる canon 連鎖を正史とする
-        chain = (
-            self.path_to(ending, parents)  # はじまり〜結末のマーカー込みチェーン
-            if self._ending_is_rooted(ending, parents)
-            else self._canon_chain_from_start()
-        )
+        chain = self.canon_chain(self._parents_map())
         # 正史が章の出口を飛ばして外へ出ていたら、先に境界へ挟み直す(読み順は不変)
         if self._realign_boundaries(chain):
-            parents = self._parents_map()  # エッジが変わったので取り直す
-            chain = (
-                self.path_to(ending, parents)
-                if self._ending_is_rooted(ending, parents)
-                else self._canon_chain_from_start()
-            )
+            chain = self.canon_chain(self._parents_map())  # エッジが変わったので取り直す
         chain_set = set(chain)
         pairs = set(zip(chain, chain[1:]))
         for e in self.conn.execute("SELECT id, from_node, to_node, is_canon FROM edges").fetchall():
@@ -554,18 +543,21 @@ class Store:
             chain.append(row["to_node"])
             seen.add(row["to_node"])
 
-    def canon_path(self, parents: dict[str, str] | None = None) -> list[str]:
-        """正史パスのシーン ID 列(アクティブな結末から根へさかのぼる。マーカーは除く)。
+    def canon_chain(self, parents: dict[str, str] | None = None) -> list[str]:
+        """正史の道(はじまり〜結末。マーカー込み)。アクティブな結末から根へさかのぼる。
 
-        結末を切り離して付け替えている最中(浮いている)は、直前の正史
-        (is_canon フラグ)をそのまま使う。付け直せば結末からの導出に戻る。
+        移行前(結末なし)と、結末を切り離して付け替えている最中(浮いている)は、
+        はじまりから canon エッジ(直前の正史)を辿れるところまで。付け直せば結末からの導出に戻る。
         """
         ending = self.active_ending()
-        kinds = {r["id"]: r["kind"] for r in self.conn.execute("SELECT id, kind FROM nodes")}
         if ending is None or not self._ending_is_rooted(ending, parents):
-            # 移行前(結末なし)/ 結末が浮いている間: はじまりからの canon 連鎖
-            return [nid for nid in self._canon_chain_from_start() if kinds.get(nid) is None]
-        return [nid for nid in self.path_to(ending, parents) if kinds.get(nid) is None]
+            return self._canon_chain_from_start()
+        return self.path_to(ending, parents)
+
+    def canon_path(self, parents: dict[str, str] | None = None) -> list[str]:
+        """正史パスのシーン ID 列(canon_chain からはじまり / 結末マーカーを除いたもの)。"""
+        kinds = {r["id"]: r["kind"] for r in self.conn.execute("SELECT id, kind FROM nodes")}
+        return [nid for nid in self.canon_chain(parents) if kinds.get(nid) is None]
 
     def _legacy_canon_path(self) -> list[str]:
         """旧方式の正史導出(canon エッジ辿り)。移行時と結末なしの互換にだけ使う。"""
@@ -596,9 +588,6 @@ class Store:
             path.append(nxt)
             seen.add(nxt)
         return path
-
-    def timeline(self) -> list[dict[str, Any]]:
-        return [self.get_node(nid) for nid in self.canon_path()]  # type: ignore[misc]
 
     def parent_of(self, node_id: str) -> str | None:
         row = self.conn.execute(
@@ -2829,14 +2818,6 @@ class Store:
         if commit:
             self.conn.commit()
 
-    def get_state_before(self, node_id: str) -> dict[str, Any]:
-        """node_id のイベントを当てる直前の状態(パス上の 1 つ前のノードの状態)。
-        先頭のノードなら空の状態。章のまとめは出口のノードで当たるので、親の状態がそのまま入口の状態になる"""
-        path = self.path_to(node_id)
-        if len(path) < 2:
-            return fold_mod.empty_state()
-        return self.get_state(path[-2])
-
     def get_state(self, node_id: str) -> dict[str, Any]:
         """ルートからのパス順に fold し、途中経過は state_cache に保存する(遅延再計算)。
 
@@ -2847,13 +2828,18 @@ class Store:
         state_hash を引き継ぎ、実体の JSON はミスした時点(fold の再開点)と
         最終ノードでだけパースする。パスが長くなっても全ヒットなら
         「イベントのハッシュ計算 × パス長 + パース 1 回」で済む。
+
+        パス・cast・イベント・キャッシュの妥当性キーはパス単位でまとめて引く(ノードごとに
+        SELECT するとパスの長さ × 3 回の問い合わせになる)。キャッシュの本体(state の JSON)は
+        パースするノードの分だけ後から引く。
         """
         if self.conn.execute("SELECT 1 FROM nodes WHERE id = ?", (node_id,)).fetchone() is None:
             raise KeyError(f"node not found: {node_id}")
-        path = self.path_to(node_id)
+        path = self.path_to(node_id, self._parents_map())
         digests = self._digest_by_tail()
-        # cast は列だけまとめて引く(get_node はイベントまで読み直すので重い)
         cast_by_id: dict[str, list[str]] = {}
+        events_by_id: dict[str, list[dict[str, Any]]] = {}
+        cache_by_id: dict[str, sqlite3.Row] = {}
         for i in range(0, len(path), 500):
             chunk = path[i : i + 500]
             marks = ",".join("?" * len(chunk))
@@ -2861,13 +2847,28 @@ class Store:
                 f'SELECT id, "cast" FROM nodes WHERE id IN ({marks})', chunk
             ):
                 cast_by_id[r["id"]] = json.loads(r["cast"])
+            for r in self.conn.execute(
+                f"SELECT * FROM events WHERE node_id IN ({marks}) ORDER BY node_id, seq", chunk
+            ):
+                e = dict(r)
+                e["payload"] = json.loads(e["payload"])
+                events_by_id.setdefault(e["node_id"], []).append(e)
+            for r in self.conn.execute(
+                f"SELECT node_id, input_hash, dirty, state_hash FROM state_cache WHERE node_id IN ({marks})",
+                chunk,
+            ):
+                cache_by_id[r["node_id"]] = r
+
+        def cached_state(nid: str) -> dict[str, Any]:
+            row = self.conn.execute("SELECT state FROM state_cache WHERE node_id = ?", (nid,)).fetchone()
+            return json.loads(row["state"])
 
         state: dict[str, Any] | None = fold_mod.empty_state()  # None = パースを遅延中
-        pending_text: str | None = None  # 遅延中の state の JSON(直前ノードのキャッシュ)
+        pending_node: str | None = None  # 遅延中の state を持つキャッシュのノード(直前のヒット)
         parent_hash = fold_mod.state_hash(state)
         prev: str | None = None
         for nid in path:
-            events = self.list_events(nid)
+            events = events_by_id.get(nid, [])
             # 章境界: 直前のノードが「まとめ済みの章」の末尾なら、その章のまとめ
             # (digest)をこのノードのイベントの前に合流させる。章の中は生のまま、
             # 境界の先から記憶が要約に置き換わる(docs/design/chapters.md §4)。
@@ -2877,20 +2878,17 @@ class Store:
                 events = [*digest, *events]
             cast = cast_by_id.get(nid, [])
             ihash = fold_mod.input_hash(parent_hash, fold_mod.events_hash(events), cast)
-            cached = self.conn.execute(
-                "SELECT state, input_hash, dirty, state_hash FROM state_cache WHERE node_id = ?",
-                (nid,),
-            ).fetchone()
+            cached = cache_by_id.get(nid)
             if cached and not cached["dirty"] and cached["input_hash"] == ihash:
                 if cached["state_hash"]:
-                    pending_text = cached["state"]
+                    pending_node = nid
                     state = None
                     parent_hash = cached["state_hash"]
                 else:
                     # 旧形式のキャッシュ(state_hash 列が無かった頃)。一度だけ
                     # パースしてハッシュを埋め、次回からは読み飛ばせるようにする
-                    state = json.loads(cached["state"])
-                    pending_text = None
+                    state = cached_state(nid)
+                    pending_node = None
                     parent_hash = fold_mod.state_hash(state)
                     self.conn.execute(
                         "UPDATE state_cache SET state_hash = ? WHERE node_id = ?",
@@ -2898,9 +2896,9 @@ class Store:
                     )
             else:
                 if state is None:
-                    state = json.loads(pending_text) if pending_text is not None else fold_mod.empty_state()
+                    state = cached_state(pending_node) if pending_node is not None else fold_mod.empty_state()
                 state = fold_mod.fold(state, events, cast)
-                pending_text = None
+                pending_node = None
                 parent_hash = fold_mod.state_hash(state)
                 self.conn.execute(
                     "INSERT OR REPLACE INTO state_cache(node_id, state, input_hash, dirty, state_hash)"
@@ -2912,11 +2910,13 @@ class Store:
                 break
         self.conn.commit()
         if state is None:
-            state = json.loads(pending_text) if pending_text is not None else fold_mod.empty_state()
+            state = cached_state(pending_node) if pending_node is not None else fold_mod.empty_state()
         return state
 
     def state_before(self, node_id: str) -> dict[str, Any]:
-        """ノード適用前(パス上の親まで)の状態。検証・生成コンテキストに使う。"""
+        """node_id のイベントを当てる直前の状態(パス上の親の状態)。先頭のノードなら空の状態。
+        検証・生成コンテキスト・インスペクタに使う。章のまとめは出口のノードで当たるので、
+        親の状態がそのまま入口の状態になる"""
         parent = self.parent_of(node_id)
         if parent is None:
             return fold_mod.empty_state()
@@ -3138,10 +3138,6 @@ class Store:
         )
         self.conn.commit()
         return self.get_voice_script(render_id)  # type: ignore[return-value]
-
-    def delete_voice_script(self, render_id: str) -> None:
-        self.conn.execute("DELETE FROM voice_scripts WHERE render_id = ?", (render_id,))
-        self.conn.commit()
 
     def list_renders(
         self, preset_id: str, pov_char: str | None, group_id: str | None = None

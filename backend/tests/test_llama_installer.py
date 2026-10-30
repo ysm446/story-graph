@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+import installer_common
 import llama_installer as inst
 
 
@@ -150,7 +151,7 @@ def test_swap_into_place_replaces_existing_install(tmp_path):
     staging.mkdir()
     (staging / "llama-server.exe").write_bytes(b"new")
 
-    inst._swap_into_place(staging, dest)
+    installer_common.swap_into_place(staging, dest, "使用中")
     assert (dest / "llama-server.exe").read_bytes() == b"new"
     assert not staging.exists()
     # 置き換えの残骸(.removing-*)も残らない

@@ -153,10 +153,10 @@ def _format_characters(store: Store) -> str:
     return "\n".join(lines)
 
 
-def _format_state(store: Store, node_id: str | None) -> str:
-    if node_id is None:
+def _format_state(state: dict[str, Any] | None) -> str:
+    """fold 済みの状態の一覧。None = 物語の始まりより前"""
+    if state is None:
         return "(物語はまだ始まっていない)"
-    state = store.get_state(node_id)
     lines = []
     for key, value in state["world"]["facts"].items():
         lines.append(f"世界: {key} = {value}")
@@ -212,15 +212,16 @@ def _format_current_place(store: Store, path: list[str]) -> str:
     return " ".join(parts)
 
 
-def _format_retrieved_memories(store: Store, path: list[str], instruction: str | None) -> str:
-    """直近ビートの cast 各キャラについて、fold 済み state の記憶参照から
+def _format_retrieved_memories(
+    store: Store, path: list[str], instruction: str | None, state: dict[str, Any] | None
+) -> str:
+    """直近ビートの cast 各キャラについて、fold 済み state(直近ビート適用後)の記憶参照から
     ハイブリッド検索で上位 5 件を想起する(spec §6.1-2)。"""
-    if not path:
+    if not path or state is None:
         return ""
     tail = store.get_node(path[-1])
     if tail is None or not tail["cast"]:
         return ""
-    state = store.get_state(path[-1])
     query = " ".join(filter(None, [tail["beat"], instruction])).strip()
     if not query:
         return ""
@@ -340,9 +341,10 @@ def _format_next_scene(store: Store, node: dict[str, Any]) -> str:
 
 
 def _build_messages(store: Store, instruction: str | None, path: list[str],
+                    state: dict[str, Any] | None,
                     branching: bool = False,
                     next_scene: dict[str, Any] | None = None) -> list[dict[str, str]]:
-    tail = path[-1] if path else None
+    """state は path の末尾を適用した後の状態(path が空なら None)"""
     if branching:
         default_instruction = "直前のビートの時点から分岐する、もう一つの展開(what-if)を 1 つ設計してください。"
     elif next_scene is not None:
@@ -360,7 +362,7 @@ def _build_messages(store: Store, instruction: str | None, path: list[str],
             "次のシーンの冒頭へ自然につながるようにしてください。"
         )
     )
-    memories_text = _format_retrieved_memories(store, path, instruction)
+    memories_text = _format_retrieved_memories(store, path, instruction, state)
     places_text = _format_places(store)
     current_place = _format_current_place(store, path)
     user_parts = [
@@ -370,7 +372,7 @@ def _build_messages(store: Store, instruction: str | None, path: list[str],
         *(["## 場所一覧(location にはこの ID を使う)", places_text, ""] if places_text else []),
         *(["## 現在の場所", current_place, ""] if current_place else []),
         "## 現在の状態(直近ビート適用後)",
-        _format_state(store, tail),
+        _format_state(state),
         "",
         *(["## 各キャラが想起している記憶", memories_text, ""] if memories_text else []),
         "## 直近のビート",
@@ -476,10 +478,11 @@ async def _generate_beat_impl(
     # 次のシーンをプロンプトに入れないと、後続と矛盾するシーンが平気で出る
     next_scene = next_scene_after(store, after_id) if after_id else None
     schema = beat_schema(char_ids, sorted(store.known_place_ids()))
-    messages = _build_messages(
-        store, instruction, path, branching=parent_id is not None, next_scene=next_scene
-    )
+    # 状態の導出は道の長さぶん DB を読むので 1 回だけ求め、プロンプトと検証で使い回す
     state_before = store.get_state(path[-1]) if path else None
+    messages = _build_messages(
+        store, instruction, path, state_before, branching=parent_id is not None, next_scene=next_scene
+    )
 
     result: dict[str, Any] | None = None
     errors: list[str] = []
@@ -813,21 +816,6 @@ def _proofread_messages(
     return messages, label
 
 
-async def proofread(
-    store: Store,
-    base_url: str,
-    text: str,
-    preset_id: str,
-    context_before: str = "",
-    context_after: str = "",
-) -> str:
-    messages, label = _proofread_messages(store, text, preset_id, context_before, context_after)
-    result = await llm.chat(
-        messages, base_url=base_url, temperature=0.3, max_tokens=2048, label=label
-    )
-    return result["content"].strip()
-
-
 async def proofread_stream(
     store: Store,
     base_url: str,
@@ -871,7 +859,8 @@ async def extract_events(
     if node is None:
         raise KeyError(f"node not found: {node_id}")
     char_ids = sorted(store.known_char_ids())
-    state_text = _format_state(store, store.parent_of(node_id))
+    parent_id = store.parent_of(node_id)
+    state_text = _format_state(store.get_state(parent_id) if parent_id else None)
 
     messages = [
         {"role": "system", "content": EXTRACTION_PROMPT},
@@ -935,14 +924,6 @@ async def extract_events(
         [{"type": e["type"], "payload": e["payload"], "source": "llm"} for e in extracted] + kept,
     )
     return store.list_events(node_id)
-
-
-async def reextract_chain(
-    store: Store, base_url: str, node_id: str, keep_user_events: bool = True
-) -> AsyncIterator[str]:
-    """node_id 以下の部分木を、親から順にイベント抽出し直す(SSE)。"""
-    async for chunk in _reextract(store, base_url, store.subtree_order(node_id), keep_user_events):
-        yield chunk
 
 
 async def reextract_nodes(

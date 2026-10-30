@@ -4,7 +4,7 @@ import { useWorkspace, type ProductionTarget } from './Workspace'
 import ChatRulesPanel from './ChatRulesPanel'
 import ProductionPreviewPanel from './ProductionPreviewPanel'
 import AutoTextarea from './AutoTextarea'
-import { useInputHistory } from './useInputHistory'
+import { sentHistory, submitOnEnter, useInputHistory } from './useInputHistory'
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { chatApi, isAbortError, productionApi, type ChatSummary, type ProductionInstruction, type ProductionPolicy, type ProductionOperation, type ProductionSelectedNode, type ProductionView, type ProductionViewRequest, type ProductionPlan, type ProductionStep, type ProductionUndo } from './api'
 import { Markdown } from './Markdown'
@@ -242,11 +242,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
   const [input, setInput] = useState('')
   // ↑ / ↓ で前に送った依頼文を呼び出す(この会話の自分の発言。候補ボタンから送ったものも含む)
   const inputHistory = useInputHistory(
-    useMemo(() => {
-      const sent: string[] = []
-      for (const m of messages) if (m.role === 'user' && m.content.trim() && sent[sent.length - 1] !== m.content) sent.push(m.content)
-      return sent
-    }, [messages]),
+    useMemo(() => sentHistory(messages.flatMap((m) => (m.role === 'user' ? [m.content] : []))), [messages]),
     input,
     setInput
   )
@@ -292,6 +288,8 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
   // 変更範囲は実行中は固定なので、制作が始まったら閉じる(以前の折りたたみと同じ)
   useEffect(() => { if (busy) setOpenPanel((p) => (p === 'policy' ? null : p)) }, [busy])
   const endRef = useRef<HTMLDivElement>(null)
+  // 自動スクロールは下端付近にいるときだけ追従する(過去の発言を読み返している最中に引き戻さない)
+  const stickToBottomRef = useRef(true)
   const taskRef = useRef<string | null>(null)
   const composerRef = useRef<HTMLDivElement>(null)
   // LLM が直前の応答から作る候補(「橋で再会する案で進めて」など、対象を指すもの)。
@@ -359,7 +357,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
       .then((result) => finish(result.generated ? 'done' : 'unavailable', result.suggestions))
       .catch(() => finish('unavailable', [])) // 候補は無くても困らない。固定の候補に戻す
   }, [busy, chatId, suggestTick])
-  useEffect(() => { endRef.current?.scrollIntoView({ block: 'nearest' }) }, [messages, live, status, busy, error, chips.length, suggesting])
+  useEffect(() => { if (stickToBottomRef.current) endRef.current?.scrollIntoView({ block: 'nearest' }) }, [messages, live, status, busy, error, chips.length, suggesting])
 
   const load = async (id: string): Promise<void> => {
     if (busy) return
@@ -638,6 +636,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
   }
 
   const submit = (): void => {
+    stickToBottomRef.current = true
     if (busy) {
       if (runId) void instruct()
     } else {
@@ -688,7 +687,8 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
       </button>}
       {/* スクロールバーは親の右の余白(24px)へ出し、発言との間を 14px 空ける。溝を常に確保するので、
           スクロールの有無にかかわらず発言の右端は上のパネルや入力欄と揃う(24 = バー10 + 余白14) */}
-      <div className="inspector-scrollbar -mr-6 min-h-0 flex-1 overflow-y-auto pr-3.5 [scrollbar-gutter:stable]" aria-live="polite">
+      <div className="inspector-scrollbar -mr-6 min-h-0 flex-1 overflow-y-auto pr-3.5 [scrollbar-gutter:stable]" aria-live="polite"
+        onScroll={(e) => { const el = e.currentTarget; stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60 }}>
         {/* 使い方の説明は、会話が空のときだけ出す(常に出すと、入力欄の上の1〜2行をずっと占める) */}
         {messages.length === 0 && !live && !busy && <p className="px-2 pb-2 pt-6 text-center text-[12px] leading-relaxed" style={{ color: 'var(--text-faint)' }}>
           全体の接続関係と資料庫のキャラクター・場所を参照できます。<br />相談するだけでは作品を変更しません。
@@ -739,9 +739,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
       <AutoTextarea ariaLabel="制作への依頼" value={input} onChange={setInput} disabled={sendingInstruction || (busy && !runId)}
         onKeyDown={(e) => {
           if (inputHistory.onKeyDown(e)) return
-          if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return
-          e.preventDefault()
-          if (!e.repeat) submit()
+          submitOnEnter(e, submit)
         }}
         minRows={2} placeholder={runId ? "途中指示を入力（未確定の変更を見直してから続けます）" : "方針の相談、または作業の依頼を入力"}
         className="block w-full resize-none px-3 pb-1 pt-2 text-[12px] outline-none disabled:opacity-50"

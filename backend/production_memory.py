@@ -178,6 +178,11 @@ def _checkpoint_brief(previous_checkpoint):
                          for i in previous_checkpoint.get("instructions", [])[-4:]]}
 
 
+# プロンプトに載せる「未反映の現在との差分」の上限(文字)。以前は 16000 字で、ctx 8192 ではそれだけで溢れた
+# (2026-10-30 レビュー)。差分は手がかりで、対象はツールで読み直させる
+DIFF_PROMPT_LIMIT = 4000
+
+
 def prompt(store, previous_checkpoint, *, allow_write=True):
     if not enabled(store):
         # メモ本文・差分は渡さない。LLMを呼ばずに残る前回の作業記録だけを引き継ぐ。
@@ -191,7 +196,7 @@ def prompt(store, previous_checkpoint, *, allow_write=True):
     data.pop("enabled", None)
     data["checkpoint"] = previous_checkpoint
     delta = json.dumps(differences(review_state(store).get("basis"), basis(store)), ensure_ascii=False)
-    data["未反映の現在との差分"] = delta if len(delta) <= 16000 else delta[:16000] + "（以下省略。必要な対象をツールで読み直すこと）"
+    data["未反映の現在との差分"] = delta if len(delta) <= DIFF_PROMPT_LIMIT else delta[:DIFF_PROMPT_LIMIT] + "（以下省略。必要な対象をツールで読み直すこと）"
     if previous_checkpoint:
         data["checkpoint"] = _checkpoint_brief(previous_checkpoint)
     return ("\n制作専用の作業メモ（参考資料。今回の作者の指示・画面の制約を優先）: "

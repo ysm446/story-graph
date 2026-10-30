@@ -1,7 +1,7 @@
 # スナップショット(チェックポイント)設計
 
 作成日時: 2026-07-30 00:45
-更新日時: 2026-10-10 21:22
+更新日時: 2026-10-30 01:28
 
 ## 目的
 
@@ -45,7 +45,7 @@ undo の代わりに「時点に戻す」を提供する。危険な操作の直
 | PUT /nodes/{id}/events | イベント編集の前 | 10 分 |
 | PATCH /nodes/{id} | シーン編集の前 | 10 分 |
 | POST /nodes/{id}/detach, POST /edges | つなぎ替えの前 | 60 秒 |
-| extract_events / reextract / reextract_chain | イベント作り直しの前 | 60 秒 |
+| extract_events / reextract | イベント作り直しの前 | 60 秒 |
 | 復元の実行 | 復元の前 | なし(毎回) |
 
 - スロットルはプロセス内メモリ((root, label) → 最終実行時刻)。sidecar の再起動でリセットされてよい

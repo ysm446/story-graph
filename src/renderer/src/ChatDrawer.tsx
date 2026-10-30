@@ -1,5 +1,5 @@
 import ChatHistoryPanel from './ChatHistoryPanel'
-import { useInputHistory } from './useInputHistory'
+import { sentHistory, submitOnEnter, useInputHistory } from './useInputHistory'
 import ContextUsageRing from './ContextUsageRing'
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -260,11 +260,7 @@ export default function ChatDrawer({
   const [input, setInput] = useState('')
   // ↑ / ↓ で前に送った文章を呼び出す(この会話の自分の発言)
   const inputHistory = useInputHistory(
-    useMemo(() => {
-      const sent: string[] = []
-      for (const it of items) if (it.kind === 'user' && it.text.trim() && sent[sent.length - 1] !== it.text) sent.push(it.text)
-      return sent
-    }, [items]),
+    useMemo(() => sentHistory(items.flatMap((it) => (it.kind === 'user' ? [it.text] : []))), [items]),
     input,
     setInput
   )
@@ -1401,10 +1397,7 @@ export default function ChatDrawer({
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => {
                 if (inputHistory.onKeyDown(e)) return
-                if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-                  e.preventDefault()
-                  void send()
-                }
+                submitOnEnter(e, () => void send())
               }}
               aria-label={room ? '演出の指示' : activeChar ? `${activeChar.name} への発言` : '相談の入力'}
               placeholder={

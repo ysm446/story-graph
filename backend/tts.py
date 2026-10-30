@@ -19,6 +19,8 @@ from typing import Any, Callable
 
 import httpx
 
+import managed_process
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ENGINES_DIR = REPO_ROOT / "tts_engines"
 DEFAULT_ENGINE = "irodori"
@@ -216,14 +218,7 @@ def build_request(
 
 
 async def health(base_url: str, path: str = "/health", timeout: float = 2.0) -> bool:
-    # 接続だけは短く待つ。Windows では閉じた localhost のポートへの接続が「拒否」になるまで約 2 秒
-    # かかり、右上のバーが数秒ごとに呼ぶ /tts/status がその分だけ遅くなるため(動いていれば数 ms で繋がる)
-    try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=0.5)) as client:
-            res = await client.get(f"{base_url}{path}")
-            return res.status_code == 200
-    except (httpx.HTTPError, OSError):
-        return False
+    return await managed_process.http_ok(f"{base_url}{path}", timeout)
 
 
 async def synthesize(base_url: str, body: dict[str, Any], timeout: float = 300.0) -> bytes:

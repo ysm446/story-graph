@@ -239,41 +239,28 @@ def test_suggest_field_falls_back_to_freetext(monkeypatch):
     assert value == "密室のからくり"  # 前置き除去 + 最初の行のみ
 
 
-def test_proofread_presets_and_custom(store, monkeypatch):
+def test_proofread_presets_and_custom(store):
     presets = generation.proofread_presets(store)
     assert [p["id"] for p in presets] == ["light", "standard", "aggressive"]
     store.set_settings({"proofread_custom_prompt": "乾いた文体に整えてください。"})
     presets = generation.proofread_presets(store)
     assert presets[-1]["id"] == "custom"
 
-    async def fake_chat(messages, **kwargs):
-        assert "乾いた文体" in messages[0]["content"]
-        return {"content": "校正済みの文章。", "tool_calls": None, "message": {}, "finish_reason": "stop", "usage": {}}
-
-    monkeypatch.setattr(llm_mod, "chat", fake_chat)
-    value = asyncio.run(generation.proofread(store, "http://fake", "もとの文章。", "custom"))
-    assert value == "校正済みの文章。"
+    messages, label = generation._proofread_messages(store, "もとの文章。", "custom", "", "")
+    assert "乾いた文体" in messages[0]["content"]
+    assert messages[1]["content"] == "もとの文章。"
+    assert label == "校正(カスタム)"
     with pytest.raises(ValueError):
-        asyncio.run(generation.proofread(store, "http://fake", "x", "nonsense"))
+        generation._proofread_messages(store, "x", "nonsense", "", "")
 
 
-def test_proofread_selection_with_context(store, monkeypatch):
-    captured = {}
-
-    async def fake_chat(messages, **kwargs):
-        captured["user"] = messages[1]["content"]
-        return {"content": "直した部分。", "tool_calls": None, "message": {}, "finish_reason": "stop", "usage": {}}
-
-    monkeypatch.setattr(llm_mod, "chat", fake_chat)
-    value = asyncio.run(generation.proofread(
-        store, "http://fake", "なおす部分。", "standard",
-        context_before="前の文。", context_after="後の文。",
-    ))
-    assert value == "直した部分。"
-    assert "## 前の文脈" in captured["user"]
-    assert "前の文。" in captured["user"]
-    assert "## 校正対象" in captured["user"]
-    assert "後の文。" in captured["user"]
+def test_proofread_selection_with_context(store):
+    messages, _ = generation._proofread_messages(store, "なおす部分。", "standard", "前の文。", "後の文。")
+    user = messages[1]["content"]
+    assert "## 前の文脈" in user
+    assert "前の文。" in user
+    assert "## 校正対象" in user
+    assert "後の文。" in user
 
 
 def test_extract_events_replaces(store, monkeypatch):

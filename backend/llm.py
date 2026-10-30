@@ -6,14 +6,17 @@ httpx の非同期クライアントで通信する(FastAPI のイベントル�
 
 from __future__ import annotations
 
+import contextlib
 import itertools
 import json
 import logging
 from collections import deque
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, AsyncIterator
 
 import httpx
+
+import managed_process
 
 log = logging.getLogger(__name__)
 
@@ -49,14 +52,7 @@ def _log_prompt(
 
 
 async def health(base_url: str, timeout: float = 2.0) -> bool:
-    # 接続だけは短く待つ。Windows では閉じた localhost のポートへの接続が「拒否」になるまで約 2 秒
-    # かかり、右上のバーが数秒ごとに呼ぶ /llm/status がその分だけ遅くなる(tts.health と同じ理由)
-    try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=0.5)) as client:
-            res = await client.get(f"{base_url}/health")
-            return res.status_code == 200
-    except (httpx.HTTPError, OSError):
-        return False
+    return await managed_process.http_ok(f"{base_url}/health", timeout)
 
 
 def sse(data: dict[str, Any]) -> str:
@@ -108,6 +104,22 @@ async def count_tokens(text: str, *, base_url: str, timeout: float = 10.0) -> in
             return len(res.json().get("tokens", []))
     except (httpx.HTTPError, OSError, ValueError):
         return None
+
+
+async def server_ctx(base_url: str, timeout: float = 2.0) -> int | None:
+    """llama-server が実際に確保しているコンテキスト長(/props)。取れなければ None(呼び出し側で設定値に落とす)。
+
+    設定の既定(16384)と起動中のサーバー(8192 など)がずれると、使用量の表示も溢れの判定も外れる。
+    """
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=0.5)) as client:
+            res = await client.get(f"{base_url}/props")
+            res.raise_for_status()
+            props = res.json()
+    except (httpx.HTTPError, OSError, ValueError):
+        return None
+    n_ctx = (props.get("default_generation_settings") or {}).get("n_ctx") or props.get("n_ctx")
+    return n_ctx if isinstance(n_ctx, int) and n_ctx > 0 else None
 
 
 async def chat(
@@ -189,6 +201,55 @@ async def chat(
     }
 
 
+async def _stream_chunks(
+    base_url: str, payload: dict[str, Any], timeout: float
+) -> AsyncIterator[tuple[dict[str, Any], dict[str, Any] | None]]:
+    """llama-server の SSE を 1 チャンクずつ (obj, choices[0] または None) で返す。[DONE] で終わる。
+
+    呼び出し側は contextlib.aclosing で包む(途中で止めたとき接続をすぐ閉じ、サーバーの生成も止めるため)。"""
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        async with client.stream("POST", f"{base_url}/v1/chat/completions", json=payload) as res:
+            if res.status_code != 200:
+                body = (await res.aread()).decode("utf-8", errors="replace")
+                raise RuntimeError(f"llama-server {res.status_code}: {body[:500]}")
+            buffer = ""
+            async for chunk in res.aiter_text():
+                buffer += chunk
+                while "\n\n" in buffer:
+                    part, buffer = buffer.split("\n\n", 1)
+                    line = part.strip()
+                    if not line.startswith("data: "):
+                        continue
+                    data = line[len("data: "):]
+                    if data == "[DONE]":
+                        return
+                    obj = json.loads(data)
+                    # ストリーム開始後のエラーは HTTP 200 のまま error オブジェクトで
+                    # 届く(ctx 溢れ等)。捨てると途切れた出力が成功扱いになる
+                    if obj.get("error"):
+                        raise RuntimeError(
+                            f"llama-server ストリームエラー: {json.dumps(obj['error'], ensure_ascii=False)[:300]}"
+                        )
+                    choices = obj.get("choices") or []
+                    yield obj, (choices[0] if choices else None)
+
+
+def _merge_stream_stats(stats: dict[str, Any], obj: dict[str, Any], choice: dict[str, Any] | None) -> None:
+    """ストリームの 1 チャンクから生成統計を stats へ取り込む。
+
+    統計は timings / usage を含むチャンクから取る(timings は llama.cpp の拡張。usage は OAI 互換)。
+    finish_reason は統計より前のチャンクに乗ることがあり、統計のチャンクは choices が空のことも
+    あるので、上書きで消さない"""
+    choice = choice or {}
+    if choice.get("finish_reason"):
+        stats["finish_reason"] = choice["finish_reason"]
+    if obj.get("timings") or obj.get("usage"):
+        finish = stats.get("finish_reason")
+        stats.update(_extract_stats(obj, choice))
+        if stats.get("finish_reason") is None:
+            stats["finish_reason"] = finish
+
+
 async def chat_stream(
     messages: list[dict[str, Any]],
     *,
@@ -212,50 +273,15 @@ async def chat_stream(
     }
     entry = _log_prompt(label, messages, temperature, max_tokens)
     collected: list[str] = []
+    stats = stats_out if stats_out is not None else {}
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            async with client.stream(
-                "POST", f"{base_url}/v1/chat/completions", json=payload
-            ) as res:
-                if res.status_code != 200:
-                    body = (await res.aread()).decode("utf-8", errors="replace")
-                    raise RuntimeError(f"llama-server {res.status_code}: {body[:500]}")
-                buffer = ""
-                async for chunk in res.aiter_text():
-                    buffer += chunk
-                    while "\n\n" in buffer:
-                        part, buffer = buffer.split("\n\n", 1)
-                        line = part.strip()
-                        if not line.startswith("data: "):
-                            continue
-                        data = line[len("data: "):]
-                        if data == "[DONE]":
-                            return
-                        obj = json.loads(data)
-                        # ストリーム開始後のエラーは HTTP 200 のまま error オブジェクトで
-                        # 届く(ctx 溢れ等)。捨てると途切れた出力が成功扱いになる
-                        if obj.get("error"):
-                            raise RuntimeError(
-                                f"llama-server ストリームエラー: {json.dumps(obj['error'], ensure_ascii=False)[:300]}"
-                            )
-                        choices = obj.get("choices") or []
-                        choice = choices[0] if choices else {}
-                        # 統計は timings / usage を含むチャンクから取る。finish_reason は
-                        # 統計より前のチャンクに乗ることがあるので、上書きで消さない
-                        if stats_out is not None:
-                            if choice.get("finish_reason"):
-                                stats_out["finish_reason"] = choice["finish_reason"]
-                            if obj.get("timings") or obj.get("usage"):
-                                finish = stats_out.get("finish_reason")
-                                stats_out.update(_extract_stats(obj, choice))
-                                if stats_out.get("finish_reason") is None:
-                                    stats_out["finish_reason"] = finish
-                        if not choices:
-                            continue
-                        delta = choice.get("delta", {}).get("content")
-                        if delta:
-                            collected.append(delta)
-                            yield delta
+        async with contextlib.aclosing(_stream_chunks(base_url, payload, timeout)) as chunks:
+            async for obj, choice in chunks:
+                _merge_stream_stats(stats, obj, choice)
+                delta = ((choice or {}).get("delta") or {}).get("content")
+                if delta:
+                    collected.append(delta)
+                    yield delta
     except Exception as e:
         entry["error"] = str(e)
         raise
@@ -297,64 +323,30 @@ async def chat_stream_tools(
     tool_calls: dict[int, dict[str, Any]] = {}
     stats: dict[str, Any] = {}
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            async with client.stream(
-                "POST", f"{base_url}/v1/chat/completions", json=payload
-            ) as res:
-                if res.status_code != 200:
-                    body = (await res.aread()).decode("utf-8", errors="replace")
-                    raise RuntimeError(f"llama-server {res.status_code}: {body[:500]}")
-                buffer = ""
-                async for chunk in res.aiter_text():
-                    buffer += chunk
-                    while "\n\n" in buffer:
-                        part, buffer = buffer.split("\n\n", 1)
-                        line = part.strip()
-                        if not line.startswith("data: "):
-                            continue
-                        data = line[len("data: "):]
-                        if data == "[DONE]":
-                            buffer = ""
-                            break
-                        obj = json.loads(data)
-                        if obj.get("error"):
-                            raise RuntimeError(
-                                f"llama-server ストリームエラー: {json.dumps(obj['error'], ensure_ascii=False)[:300]}"
-                            )
-                        choices = obj.get("choices") or []
-                        choice = choices[0] if choices else {}
-                        # 生成統計は timings / usage を含むチャンクから取る(timings は
-                        # llama.cpp の拡張。usage は OAI 互換)。finish_reason は統計より前の
-                        # チャンクに乗ることがあり、統計のチャンクは choices が空のこともある
-                        # (chat_stream と同じ扱い)
-                        if choice.get("finish_reason"):
-                            stats["finish_reason"] = choice["finish_reason"]
-                        if obj.get("timings") or obj.get("usage"):
-                            finish = stats.get("finish_reason")
-                            stats.update(_extract_stats(obj, choice))
-                            if stats.get("finish_reason") is None:
-                                stats["finish_reason"] = finish
-                        if not choices:
-                            continue
-                        delta = choices[0].get("delta") or {}
-                        if delta.get("content"):
-                            content_parts.append(delta["content"])
-                            yield ("content", delta["content"])
-                        for tc in delta.get("tool_calls") or []:
-                            index = tc.get("index", 0)
-                            slot = tool_calls.setdefault(
-                                index,
-                                {"id": None, "type": "function", "function": {"name": "", "arguments": ""}},
-                            )
-                            if tc.get("id"):
-                                slot["id"] = tc["id"]
-                            function = tc.get("function") or {}
-                            if function.get("name"):
-                                slot["function"]["name"] += function["name"]
-                            if function.get("arguments"):
-                                slot["function"]["arguments"] += function["arguments"]
-                            if emit_tool_progress:
-                                yield ("tool_progress", {"index": index, "function": dict(slot["function"])})
+        async with contextlib.aclosing(_stream_chunks(base_url, payload, timeout)) as chunks:
+            async for obj, choice in chunks:
+                _merge_stream_stats(stats, obj, choice)
+                if choice is None:
+                    continue
+                delta = choice.get("delta") or {}
+                if delta.get("content"):
+                    content_parts.append(delta["content"])
+                    yield ("content", delta["content"])
+                for tc in delta.get("tool_calls") or []:
+                    index = tc.get("index", 0)
+                    slot = tool_calls.setdefault(
+                        index,
+                        {"id": None, "type": "function", "function": {"name": "", "arguments": ""}},
+                    )
+                    if tc.get("id"):
+                        slot["id"] = tc["id"]
+                    function = tc.get("function") or {}
+                    if function.get("name"):
+                        slot["function"]["name"] += function["name"]
+                    if function.get("arguments"):
+                        slot["function"]["arguments"] += function["arguments"]
+                    if emit_tool_progress:
+                        yield ("tool_progress", {"index": index, "function": dict(slot["function"])})
     except Exception as e:
         entry["error"] = str(e)
         raise

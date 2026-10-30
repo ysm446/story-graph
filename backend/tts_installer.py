@@ -23,10 +23,10 @@ import subprocess
 import sys
 import threading
 import time
-import uuid
 from pathlib import Path
 from typing import Any, AsyncIterator
 
+from installer_common import dir_size, remove_by_rename
 from tts import REPO_ROOT, fill
 
 RUNTIME_DIR = REPO_ROOT / "runtime"
@@ -47,17 +47,6 @@ def _read_marker(path: Path) -> dict[str, Any] | None:
         return None
 
 
-def _dir_size(path: Path) -> int:
-    total = 0
-    for p in path.rglob("*"):
-        try:
-            if p.is_file() and not p.is_symlink():
-                total += p.stat().st_size
-        except OSError:
-            continue
-    return total
-
-
 # フォルダ容量の覚え。PyTorch 込みの .venv は数万ファイルあり、数えるのに数秒かかる。
 # 右上のバーが数秒ごとに status を呼ぶので、インストール 1 回(目印の更新時刻)につき 1 回だけ数える
 _size_cache: dict[tuple[str, str], int] = {}
@@ -70,7 +59,7 @@ def _install_size(path: Path, marker: dict[str, Any]) -> int:
         stamp = str(marker.get("installed_at"))
     key = (str(path), stamp)
     if key not in _size_cache:
-        _size_cache[key] = _dir_size(path)
+        _size_cache[key] = dir_size(path)
     return _size_cache[key]
 
 
@@ -93,12 +82,7 @@ def uninstall(engine_id: str) -> None:
     if not path.exists():
         return
     # runtime/ 直下へ退避してから消す(残っても llama_installer.cleanup_leftovers が回収する)
-    trash = RUNTIME_DIR / f".removing-{uuid.uuid4().hex}"
-    try:
-        path.rename(trash)
-    except OSError as e:
-        raise RuntimeError(f"削除できませんでした(TTS サーバーが起動中の可能性があります): {e}")
-    shutil.rmtree(trash, ignore_errors=True)
+    remove_by_rename(path, "削除できませんでした(TTS サーバーが起動中の可能性があります)", RUNTIME_DIR)
 
 
 # ---- uv -----------------------------------------------------------------

@@ -1,22 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Icon, type IconName } from './icons'
-
-function SpinnerIcon(): React.JSX.Element {
-  return (
-    <svg className="animate-spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-      <path d="M21 12a9 9 0 1 1-6.2-8.5" />
-    </svg>
-  )
-}
-
-function EjectIcon(): React.JSX.Element {
-  return (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M12 5l7 10H5z" />
-      <path d="M5 19h14" />
-    </svg>
-  )
-}
+import { EjectIcon, Icon, SpinnerIcon, type IconName } from './icons'
 
 /** ServiceBar が見る状態(/comfy/status・/tts/status の共通部分) */
 export interface ServiceStatus {

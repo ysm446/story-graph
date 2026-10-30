@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+import managed_process
 import tts
 import tts_installer
 
@@ -114,7 +115,7 @@ class TtsManager:
             stdout=self._log_file,
             stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
-            creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
+            creationflags=managed_process.NO_WINDOW,
         )
         self.engine_id = engine["id"]
         self.base_url = base_url
@@ -125,34 +126,15 @@ class TtsManager:
         return base_url
 
     async def _wait_healthy(self, base_url: str, path: str, timeout_sec: float) -> bool:
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + timeout_sec
-        while loop.time() < deadline:
-            proc = self.proc
-            if proc is None:
-                raise RuntimeError("TTS サーバーは停止されました")
-            if proc.poll() is not None:
-                log_path = tts_installer.install_dir(self.engine_id or "") / LOG_NAME
-                raise RuntimeError(f"TTS サーバーが終了しました (exit {proc.returncode})。ログ: {log_path}")
-            if await tts.health(base_url, path):
-                return True
-            await asyncio.sleep(1.0)
-        return False
+        log_path = tts_installer.install_dir(self.engine_id or "") / LOG_NAME
+        return await managed_process.wait_healthy(
+            lambda: self.proc, lambda: tts.health(base_url, path), timeout_sec, "TTS サーバー", f"。ログ: {log_path}"
+        )
 
     def stop(self) -> None:
-        if self.proc is None:
-            return
-        proc = self.proc
-        self.proc = None
-        if proc.poll() is None:
-            try:
-                subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True, check=False)
-            except OSError:
-                pass
-            try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                proc.kill()
+        proc, self.proc = self.proc, None
+        if proc is not None:
+            managed_process.kill_tree(proc)
         self._close_log()
 
     async def stop_async(self) -> None:

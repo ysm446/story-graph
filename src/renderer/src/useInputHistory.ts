@@ -53,3 +53,19 @@ export function useInputHistory(
   }
   return { onKeyDown }
 }
+
+/** 自分の発言から履歴(entries)を作る。空の発言は飛ばし、続けて同じ文を送ったものは 1 つにまとめる */
+export function sentHistory(texts: Iterable<string>): string[] {
+  const sent: string[] = []
+  for (const text of texts) if (text.trim() && sent[sent.length - 1] !== text) sent.push(text)
+  return sent
+}
+
+/** チャットの入力欄の Enter で送信する(Shift+Enter は改行。日本語変換の確定は素通しし、キーリピートでは送らない)。
+ *  送信の Enter として扱ったら true */
+export function submitOnEnter(event: React.KeyboardEvent<HTMLTextAreaElement>, submit: () => void): boolean {
+  if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return false
+  event.preventDefault()
+  if (!event.repeat) submit()
+  return true
+}

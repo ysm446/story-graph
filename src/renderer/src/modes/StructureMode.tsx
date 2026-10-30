@@ -120,6 +120,8 @@ function StructureModeInner({
   const [chatDynamicSuggestions, setChatDynamicSuggestions] = useState(true)
   const [graphNodes, setGraphNodes] = useState<StoryNode[]>([])
   const [graphEdges, setGraphEdges] = useState<GraphEdge[]>([])
+  // ID からノードを引く表。選択の移動・レイアウト・正史の導出などで何度も引くので 1 回だけ作る
+  const graphNodeById = useMemo(() => new Map(graphNodes.map((n) => [n.id, n])), [graphNodes])
   const [groups, setGroups] = useState<Group[]>([])
   // 章の表示状態: 'flat' = 全シーン、'chapters' = 章ビュー、それ以外 = 章 ID(章内ビュー)。
   // 章がひとつも無い間は常に flat(書き始めの体験を変えない)
@@ -342,7 +344,7 @@ function StructureModeInner({
   // 表示(ボタンの文言)用の判定で、実際の挿入位置と文脈はサーバー側が決める
   const nextSceneOf = useCallback(
     (nodeId: string): StoryNode | null => {
-      const byId = new Map(graphNodes.map((n) => [n.id, n]))
+      const byId = graphNodeById
       let cur = byId.get(nodeId)
       const seen = new Set([nodeId])
       while (cur) {
@@ -367,7 +369,7 @@ function StructureModeInner({
       }
       return null
     },
-    [graphNodes, graphEdges]
+    [graphNodeById, graphEdges]
   )
 
   // 選択シーンに後続があれば「▶ 間のシーンを生成」(補間)に切り替わる
@@ -406,7 +408,7 @@ function StructureModeInner({
     }
     // 章のまとめ(digest)の記憶。ノードの events には居ないので groups から拾う。
     // これを入れないと、まとめ済みの章より後ろのシーンでイベント ID が並んでしまう
-    const nodeById = new Map(graphNodes.map((n) => [n.id, n]))
+    const nodeById = graphNodeById
     for (const group of groups) {
       const cover = chapterCoverNode(group, nodeById)
       for (const e of group.digest_events ?? []) {
@@ -424,7 +426,7 @@ function StructureModeInner({
       }
     }
     return map
-  }, [graphNodes, groups])
+  }, [graphNodes, graphNodeById, groups])
 
   // グラフデータの変化時のみノード配列を再構築。ドラッグ・選択は
   // applyNodeChanges の差分適用に任せる(毎フレーム再構築するとチラつく)
@@ -509,7 +511,7 @@ function StructureModeInner({
       const computed = layoutDag(graphNodes, graphEdges, heights)
       let changed = false
       const next = prev.map((n) => {
-        const gn = graphNodes.find((g) => g.id === n.id)
+        const gn = graphNodeById.get(n.id)
         if (!gn || (gn.pos_x != null && gn.pos_y != null)) return n // 手動配置は触らない
         if (pinnedRef.current.has(n.id)) return n // 焼き付け済み(保存待ち)も触らない
         const p = computed[n.id]
@@ -1056,7 +1058,7 @@ function StructureModeInner({
   const pathToNode = useCallback((targetId: string | null) => {
     if (!targetId) return null
     const parentMap = new Map(graphEdges.map((e) => [e.to_node, e.from_node]))
-    const nodeById = new Map(graphNodes.map((n) => [n.id, n]))
+    const nodeById = graphNodeById
     if (!nodeById.has(targetId)) return null
     const ids: string[] = [targetId]
     const seen = new Set([targetId])
@@ -1074,14 +1076,14 @@ function StructureModeInner({
       .map((id) => nodeById.get(id)!)
       .filter(Boolean)
       .filter((n) => !n.kind)
-  }, [graphNodes, graphEdges])
+  }, [graphNodeById, graphEdges])
   const pathToSelected = useMemo(() => pathToNode(selectedId), [pathToNode, selectedId])
 
   // 正史パス(canon エッジを根から辿る)
   const canonPath = useMemo(() => {
     const canonChildren = new Map(graphEdges.filter((e) => e.is_canon).map((e) => [e.from_node, e.to_node]))
     const hasParent = new Set(graphEdges.map((e) => e.to_node))
-    const nodeById = new Map(graphNodes.map((n) => [n.id, n]))
+    const nodeById = graphNodeById
     const root = graphNodes.find((n) => !hasParent.has(n.id))
     if (!root) return [] as StoryNode[]
     const path: StoryNode[] = [root]
@@ -1098,7 +1100,7 @@ function StructureModeInner({
     }
     // はじまり / 結末マーカーはシーンではないので正史(シーン列)からは除く
     return path.filter((n) => !n.kind)
-  }, [graphNodes, graphEdges])
+  }, [graphNodes, graphNodeById, graphEdges])
 
   const flowEdges: Edge[] = useMemo(
     () =>
@@ -1137,7 +1139,7 @@ function StructureModeInner({
     )
     const children: Record<string, string[]> = {}
     for (const e of graphEdges) (children[e.from_node] ??= []).push(e.to_node)
-    const byId = new Map(graphNodes.map((n) => [n.id, n]))
+    const byId = graphNodeById
     const queue = [...focusedGroup.node_ids]
     while (queue.length > 0) {
       const current = queue.pop()!
@@ -1152,7 +1154,7 @@ function StructureModeInner({
       }
     }
     return set
-  }, [effectiveView, focusedGroup, graphNodes, graphEdges])
+  }, [effectiveView, focusedGroup, graphNodeById, graphEdges])
 
   // 章ビュー用: シーン ID → 章 ID(カードへの写像とエッジの畳み込みに使う)。
   // 章のメンバーに加えて、**章のシーンから生える分岐(draft・未分類)の部分木**も
@@ -1172,7 +1174,7 @@ function StructureModeInner({
     })
     const children: Record<string, string[]> = {}
     for (const e of graphEdges) (children[e.from_node] ??= []).push(e.to_node)
-    const byId = new Map(graphNodes.map((n) => [n.id, n]))
+    const byId = graphNodeById
     const queue = [...groupByNode.keys()]
     while (queue.length > 0) {
       const current = queue.pop()!
@@ -1191,7 +1193,7 @@ function StructureModeInner({
       }
     }
     return { groupByNode }
-  }, [groups, graphNodes, graphEdges])
+  }, [groups, graphNodeById, graphEdges])
 
   // 章カードは state で持つ。毎レンダー作り直すと React Flow の実測サイズ
   // (measured)が失われ、v12 は実測が確定するまでノードを描画しないため、
@@ -1211,7 +1213,7 @@ function StructureModeInner({
   useEffect(() => {
     setChapterNodes((prev) => {
       const prevById = new Map(prev.map((n) => [n.id, n]))
-      const nodeById = new Map(graphNodes.map((n) => [n.id, n]))
+      const nodeById = graphNodeById
       let islandIndex = 0
       return groups.map((g, gi) => {
         const id = `chapter:${g.id}`
@@ -1251,7 +1253,7 @@ function StructureModeInner({
     })
     // chapterAnchorSig は flowNodes の位置を畳んだ署名(毎フレーム作り直さないため)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [groups, chapterAnchorSig, graphNodes, charMap, openChapter, handleSelectCharacter])
+  }, [groups, chapterAnchorSig, graphNodeById, charMap, openChapter, handleSelectCharacter])
 
   // シーンを章カードの上へ運んでいるか(離すとその章に入る)
   const [dropTargetGroupId, setDropTargetGroupId] = useState<string | null>(null)
@@ -1834,7 +1836,7 @@ function StructureModeInner({
       // 多いので、ここからは生のエッジで辿る(出口は正史の子を優先)。
       // 先に何も無ければ、マーカーの手前(章の最後 / 最初のシーン)で止まる
       if (direction === 'left' || direction === 'right') {
-        const byId = new Map(graphNodes.map((n) => [n.id, n]))
+        const byId = graphNodeById
         const isMarker = (id: string): boolean => {
           const kind = byId.get(id)?.kind
           return kind === 'chapter_in' || kind === 'chapter_out'
@@ -1873,7 +1875,7 @@ function StructureModeInner({
       if (!targetId) return
       focus(targetId)
     },
-    [displayNodes, selectedId, navGraph, focusNodeOnCanvas, graphNodes, graphEdges, chapterSeq, chapterView, startNavTransition]
+    [displayNodes, selectedId, navGraph, focusNodeOnCanvas, graphNodeById, graphEdges, chapterSeq, chapterView, startNavTransition]
   )
 
   const copyNodes = useCallback(async (ids: string[]): Promise<void> => {

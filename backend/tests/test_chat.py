@@ -232,6 +232,63 @@ def test_tool_loop_and_persistence(store, monkeypatch):
     assert chat["scope"] == "upto"
 
 
+def test_broken_tool_args_return_an_error_instead_of_running_with_no_args(store, monkeypatch):
+    # 引数の JSON が壊れていたら、空の引数で get_beats(全件)を実行せず、エラーとしてモデルへ返す
+    broken = {"id": "tc1", "type": "function", "function": {"name": "get_beats", "arguments": '{"node_ids": ["a'}}
+    monkeypatch.setattr(llm_mod, "chat_stream_tools", _fake_stream([
+        {"content": "", "tool_calls": [broken], "stats": {"finish_reason": "length"},
+         "message": {"role": "assistant", "content": None, "tool_calls": [broken]}},
+        {"content": "読み直します", "tool_calls": None, "message": {"role": "assistant", "content": "読み直します"}},
+    ]))
+    events = collect_sse(chat_agent.chat_stream(store, "http://fake", None, None, "all", "全体を見て"))
+    assert [e["tool_result"]["is_error"] for e in events if "tool_result" in e] == [True]
+    tool = next(m for m in store.get_chat(events[-1]["chat_id"])["messages"] if m["role"] == "tool")
+    payload = json.loads(tool["content"])
+    assert "beats" not in payload and "長さ上限で途切れました" in payload["error"]
+
+
+def test_get_beats_stops_at_the_char_budget_and_points_to_the_rest(store, monkeypatch):
+    monkeypatch.setattr(chat_agent, "GET_BEATS_CHAR_BUDGET", 2)
+    path = store.canon_path()
+    result = chat_agent._tool_get_beats(store, path, {})
+    # 「出会い」(3 文字)で上限(2 文字)に届くので 1 件で止め、続きの位置を返す。少なくとも 1 件は返す
+    assert [b["title"] for b in result["beats"]] == ["第一話"]
+    assert result["truncated"]["next_from_index"] == 2 and result["truncated"]["remaining"] == 2
+    rest = chat_agent._tool_get_beats(store, path, {"from_index": 2})
+    assert [b["title"] for b in rest["beats"]] == ["第二話"] and rest["truncated"]["next_from_index"] == 3
+    # 上限に届かなければ truncated は付かない
+    monkeypatch.setattr(chat_agent, "GET_BEATS_CHAR_BUDGET", 6000)
+    assert "truncated" not in chat_agent._tool_get_beats(store, path, {})
+
+
+def test_past_turn_tool_results_are_folded_but_kept_in_storage(store, monkeypatch):
+    # 以前のターンの長いツール結果は 1 行に畳んで送る。このターンの結果と保存内容はそのまま
+    sent = []
+    long_beat = "長い本文。" * 200
+    store.update_node(store.canon_path()[0], {"beat": long_beat})
+    call = _tool_call("get_beats", {"from_index": 1, "to_index": 1}, call_id="")  # id の無いサーバーでも名前を引く
+    results = [
+        {"content": "", "tool_calls": [call], "message": {"role": "assistant", "content": None, "tool_calls": [call]}},
+        {"content": "読みました", "tool_calls": None, "message": {"role": "assistant", "content": "読みました"}},
+    ]
+    def capture(messages, **kwargs):
+        sent.append([dict(m) for m in messages])
+        return _fake_stream([results[(len(sent) - 1) % 2]])(messages)
+    monkeypatch.setattr(llm_mod, "chat_stream_tools", capture)
+    first = collect_sse(chat_agent.chat_stream(store, "http://fake", None, None, "all", "1話を読んで"))
+    chat_id = first[-1]["chat_id"]
+    # 同じターンの 2 回目の判断には全文が届く
+    assert long_beat in json.dumps(sent[1], ensure_ascii=False)
+    collect_sse(chat_agent.chat_stream(store, "http://fake", chat_id, None, "all", "続けて"))
+    folded = next(m for m in sent[2] if m["role"] == "tool")
+    assert long_beat not in folded["content"]
+    assert "get_beats" in folded["content"] and "第一話" in folded["content"]
+    saved = next(m for m in store.get_chat(chat_id)["messages"] if m["role"] == "tool")
+    assert long_beat in saved["content"]
+    # 使用量の表示も畳んだ後で数える
+    assert long_beat not in chat_agent._usage_text(store, store.get_chat(chat_id), store.canon_path(), "all")
+
+
 def test_prompt_messages_saved_but_not_sent(store, monkeypatch):
     # 返事には生成時に LLM へ送った内容(system + 履歴)の控えを保存する(UI の閲覧用)。
     # ただし次ターン以降の LLM 送信メッセージには混ぜない

@@ -6,11 +6,7 @@ import ReadingDictCard from './ReadingDictCard'
 import VoiceProfilesCard from './VoiceProfilesCard'
 import VoiceRateSelect from './VoiceRateSelect'
 import { useElapsedSeconds } from './useElapsed'
-
-function fmtBytes(bytes: number): string {
-  const gb = bytes / 1024 ** 3
-  return gb >= 1 ? `${gb.toFixed(2)} GB` : `${(bytes / 1024 ** 2).toFixed(0)} MB`
-}
+import { fmtBytes } from './modes/settings/format'
 
 // 設定 →「音声読み上げ」。TTS サーバーの稼働・接続先・モデルフォルダ・語り手の声・インストール・
 // 音声キャッシュ(docs/design/voice.md)。画像生成(ComfyUI)のセクションと同じ並びにしてある

@@ -305,16 +305,6 @@ export const api = {
       }`
     ),
   listProofreadPresets: () => request<Array<{ id: string; name: string; prompt: string }>>('/proofread/presets'),
-  proofread: (text: string, presetId: string, context?: { before: string; after: string }) =>
-    request<{ value: string }>('/proofread', {
-      method: 'POST',
-      body: JSON.stringify({
-        text,
-        preset_id: presetId,
-        context_before: context?.before ?? '',
-        context_after: context?.after ?? ''
-      })
-    }),
   suggestSceneMeta: (beat: string, field: 'title' | 'emotional_core') =>
     request<{ value: string }>('/suggest/scene_meta', {
       method: 'POST',
@@ -443,8 +433,6 @@ export const api = {
   comfyStatus: () => request<ComfyStatus>('/comfy/status'),
   comfyStart: () => request<{ base_url: string; healthy: boolean }>('/comfy/start', { method: 'POST' }),
   comfyStop: () => request<{ stopped: boolean }>('/comfy/stop', { method: 'POST' }),
-  comfyModels: (folder = 'checkpoints') =>
-    request<{ models: string[]; healthy: boolean }>(`/comfy/models?folder=${encodeURIComponent(folder)}`),
   comfyReleases: () => request<{ releases: ComfyRelease[] }>('/comfy/releases'),
   /** 生成ウインドウで選べるワークフローの組(workflows/variants.json)と、設定の既定の組の id。
    *  check = true なら組ごとに使うモデルと、ComfyUI に見つからないモデルを添える */
@@ -1010,21 +998,23 @@ export const voiceApi = {
     request<{ caption: string }>(`/characters/${encodeURIComponent(charId)}/voice_caption`, { method: 'POST', signal })
 }
 
+/** 失敗した応答の本文から FastAPI の detail を取り出す(JSON でなければ本文のまま) */
+async function errorDetail(res: Response): Promise<string> {
+  const body = await res.text()
+  try {
+    return (JSON.parse(body) as { detail?: string }).detail ?? body
+  } catch {
+    return body
+  }
+}
+
 /** 参照音声を取り込んで声の末尾に足す */
 export async function uploadVoiceRef(profileId: string, file: File): Promise<VoiceProfile> {
   if (!baseUrl) throw new Error('backend not ready')
   const form = new FormData()
   form.append('file', file)
   const res = await fetch(`${baseUrl}/voice_profiles/${encodeURIComponent(profileId)}/refs`, { method: 'POST', body: form })
-  if (!res.ok) {
-    let detail = await res.text()
-    try {
-      detail = (JSON.parse(detail) as { detail?: string }).detail ?? detail
-    } catch {
-      // JSON でなければ本文のまま
-    }
-    throw new Error(detail)
-  }
+  if (!res.ok) throw new Error(await errorDetail(res))
   return res.json() as Promise<VoiceProfile>
 }
 
@@ -1051,15 +1041,7 @@ export async function ttsSpeak(line: VoiceLine, signal?: AbortSignal, profileId?
     }),
     signal
   })
-  if (!res.ok) {
-    let detail = await res.text()
-    try {
-      detail = (JSON.parse(detail) as { detail?: string }).detail ?? detail
-    } catch {
-      // JSON でなければ本文のまま
-    }
-    throw new Error(detail)
-  }
+  if (!res.ok) throw new Error(await errorDetail(res))
   if (res.status === 204) return null
   return res.blob()
 }

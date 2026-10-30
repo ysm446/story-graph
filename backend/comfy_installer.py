@@ -23,6 +23,7 @@ from typing import Any, AsyncIterator
 
 import httpx
 
+from installer_common import dir_size, remove_by_rename, swap_into_place
 from llama_installer import _download, _http_client, _tmp_zip
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -176,17 +177,6 @@ def find_install() -> dict[str, Any] | None:
     }
 
 
-def _dir_size(path: Path) -> int:
-    total = 0
-    for p in path.rglob("*"):
-        try:
-            if p.is_file():
-                total += p.stat().st_size
-        except OSError:
-            continue
-    return total
-
-
 # インストール容量のキャッシュ。ComfyUI の portable は数万ファイルあり、数え直すと数秒かかる。
 # status() は右上のバーが数秒ごとに呼ぶので、目印ファイル(インストール時に書く)の更新時刻が
 # 同じ間は前回の値を返す(tts_installer と同じ方式)。カスタムノードの追加などで増えた分は
@@ -201,7 +191,7 @@ def _install_size(ins: dict[str, Any]) -> int:
         stamp = str(ins.get("version"))  # 手動配置(目印なし)は版で代用
     key = (str(INSTALL_DIR), stamp)
     if key not in _size_cache:
-        _size_cache[key] = _dir_size(INSTALL_DIR)
+        _size_cache[key] = dir_size(INSTALL_DIR)
     return _size_cache[key]
 
 
@@ -220,12 +210,7 @@ def uninstall() -> None:
     _size_cache.clear()
     if not INSTALL_DIR.exists():
         return
-    trash = INSTALL_DIR.with_name(f".removing-{uuid.uuid4().hex}")
-    try:
-        INSTALL_DIR.rename(trash)
-    except OSError as e:
-        raise RuntimeError(f"削除できませんでした(ComfyUI が起動中の可能性があります): {e}")
-    shutil.rmtree(trash, ignore_errors=True)
+    remove_by_rename(INSTALL_DIR, "削除できませんでした(ComfyUI が起動中の可能性があります)")
 
 
 # ---- extra_model_paths.yaml ----------------------------------------
@@ -292,7 +277,7 @@ async def install_from_archive(archive: Path, marker: dict[str, Any]) -> AsyncIt
         if root is None:
             raise RuntimeError("展開後に ComfyUI/main.py と python_embeded が見つかりませんでした")
         (root / MARKER_NAME).write_text(json.dumps(marker, ensure_ascii=False), encoding="utf-8")
-        await asyncio.to_thread(_swap_into_place, staging, INSTALL_DIR)
+        await asyncio.to_thread(swap_into_place, staging, INSTALL_DIR, "ComfyUI が起動中")
         yield {"phase": "done", "build": _comfy_version(_portable_root(INSTALL_DIR) or INSTALL_DIR), "path": str(INSTALL_DIR)}
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
@@ -323,14 +308,3 @@ async def install_variant(variant: dict[str, Any]) -> AsyncIterator[dict[str, An
             archive.unlink(missing_ok=True)
         except OSError:
             pass
-
-
-def _swap_into_place(staging: Path, dest_dir: Path) -> None:
-    if dest_dir.exists():
-        trash = dest_dir.with_name(f".removing-{uuid.uuid4().hex}")
-        try:
-            dest_dir.rename(trash)
-        except OSError as e:
-            raise RuntimeError(f"既存のインストール先を置き換えられませんでした(ComfyUI が起動中の可能性があります): {e}")
-        shutil.rmtree(trash, ignore_errors=True)
-    staging.rename(dest_dir)

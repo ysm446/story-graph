@@ -14,6 +14,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 import llm
+import managed_process
 
 log = logging.getLogger(__name__)
 
@@ -98,8 +99,9 @@ class LlamaManager:
                     "その llama-server を停止してから再試行してください。"
                 )
             # 旧プロセスのポート解放を待つ(健全応答が消えるまで)
-            deadline = asyncio.get_event_loop().time() + 10
-            while asyncio.get_event_loop().time() < deadline:
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + 10
+            while loop.time() < deadline:
                 if not await llm.health(base_url):
                     break
                 await asyncio.sleep(0.3)
@@ -144,7 +146,7 @@ class LlamaManager:
             cwd=str(Path(server_path).parent),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-            creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
+            creationflags=managed_process.NO_WINDOW,
         )
         self.model_path = model_path
         self.base_url = base_url
@@ -155,38 +157,15 @@ class LlamaManager:
         return base_url
 
     async def _wait_healthy(self, base_url: str, timeout_sec: float) -> bool:
-        deadline = asyncio.get_event_loop().time() + timeout_sec
-        while asyncio.get_event_loop().time() < deadline:
-            proc = self.proc
-            if proc is None:
-                # ロード待ちの最中に stop()(/llm/stop)が proc を手放した
-                raise RuntimeError("llama-server は停止されました")
-            if proc.poll() is not None:
-                raise RuntimeError(f"llama-server が終了しました (exit {proc.returncode})")
-            if await llm.health(base_url):
-                return True
-            await asyncio.sleep(1.0)
-        return False
+        # ロード待ちの最中に stop()(/llm/stop)が proc を手放したら「停止されました」で抜ける
+        return await managed_process.wait_healthy(
+            lambda: self.proc, lambda: llm.health(base_url), timeout_sec, "llama-server"
+        )
 
     def stop(self) -> None:
-        if self.proc is None:
-            return
-        proc = self.proc
-        self.proc = None
-        if proc.poll() is None:
-            try:
-                subprocess.run(
-                    ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
-                    capture_output=True,
-                    check=False,
-                )
-            except OSError:
-                pass
-            # taskkill が失敗してもプロセスを残さない(VRAM を掴んだ孤児を防ぐ)
-            try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                proc.kill()
+        proc, self.proc = self.proc, None
+        if proc is not None:
+            managed_process.kill_tree(proc)
 
     async def stop_async(self) -> None:
         """async ハンドラ用。taskkill の完走待ちでイベントループを塞がない。"""

@@ -15,6 +15,7 @@ from urllib.parse import urlsplit
 
 import comfy
 import comfy_installer
+import managed_process
 
 log = logging.getLogger(__name__)
 
@@ -92,7 +93,7 @@ class ComfyManager:
             cwd=str(root),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-            creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
+            creationflags=managed_process.NO_WINDOW,
         )
         self.base_url = base_url
         if not await self._wait_healthy(base_url, 180):
@@ -101,32 +102,14 @@ class ComfyManager:
         return base_url
 
     async def _wait_healthy(self, base_url: str, timeout_sec: float) -> bool:
-        deadline = asyncio.get_event_loop().time() + timeout_sec
-        while asyncio.get_event_loop().time() < deadline:
-            proc = self.proc
-            if proc is None:
-                raise RuntimeError("ComfyUI は停止されました")
-            if proc.poll() is not None:
-                raise RuntimeError(f"ComfyUI が終了しました (exit {proc.returncode})")
-            if await comfy.health(base_url):
-                return True
-            await asyncio.sleep(1.0)
-        return False
+        return await managed_process.wait_healthy(
+            lambda: self.proc, lambda: comfy.health(base_url), timeout_sec, "ComfyUI"
+        )
 
     def stop(self) -> None:
-        if self.proc is None:
-            return
-        proc = self.proc
-        self.proc = None
-        if proc.poll() is None:
-            try:
-                subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True, check=False)
-            except OSError:
-                pass
-            try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                proc.kill()
+        proc, self.proc = self.proc, None
+        if proc is not None:
+            managed_process.kill_tree(proc)
 
     async def stop_async(self) -> None:
         await asyncio.to_thread(self.stop)

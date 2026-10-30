@@ -47,6 +47,7 @@ TOOL_LABELS = {
     "patch_scene": "シーンの指定箇所を編集しています…",
     "read_library": "資料庫を読んでいます…",
     "read_chapters": "章の構成を読んでいます…",
+    "use_tools": "使う操作を広げています…",
     **{name: "章を編集しています…" for name in production_chapters.WRITE_TOOLS},
     **{name: "資料庫を更新しています…" for name in production_library.WRITE_TOOLS},
 }
@@ -330,7 +331,38 @@ class ProductionMiddleware:
                 gate.active = False
 
 
-def tools(allow_write: bool, memory: bool = True):
+# 依頼に関わるときだけ渡す編集ツールの組。既定はシーンの読み書きと読み取りだけ。
+# 全部を毎回渡すとツール定義だけで約 1.5 万字になり、ctx 8192 では作品の中身を読む前に半分近くを使っていた
+# (2026-10-30 レビュー)。依頼・選択・計画の言葉で最初に開き、足りなければモデルが use_tools で開く。
+TOOL_GROUPS = {
+    "library": ("キャラクター・場所の登録・編集・削除", {f"{a}_{k}" for k in ("character", "place") for a in ("create", "update", "delete")}),
+    "settings": ("設定資料の作成・編集", production_library.production_settings.WRITE_TOOLS),
+    "chapters": ("章の作成・改名・シーンの出し入れ・解除", production_chapters.WRITE_TOOLS),
+    "images": ("人物・場所の画像とシーンの挿絵の予約", {"generate_images"}),
+}
+GROUP_HINTS = {
+    "library": re.compile(r"キャラ|人物|登場|主人公|場所|舞台|資料|プロフィール|外見|口調|名前"),
+    "settings": re.compile(r"設定|世界観|用語|制度|文化|歴史"),
+    "chapters": re.compile(r"(?<!文)章"),
+    "images": re.compile(r"画像|絵|イラスト|アイコン|ビジュアル"),
+}
+
+
+def tool_group(name):
+    return next((group for group, (_, names) in TOOL_GROUPS.items() if name in names), None)
+
+
+def initial_groups(message, selection=None, view=None, plan=None):
+    """依頼の言葉・選択・見ていた階層・計画から、最初に開く編集ツールの組を決める"""
+    text = message + json.dumps(plan or {}, ensure_ascii=False)
+    groups = {group for group, pattern in GROUP_HINTS.items() if pattern.search(text)}
+    if any(item.get("kind") == "chapter" for item in selection or []) or (view or {}).get("level") == "chapter":
+        groups.add("chapters")
+    return groups
+
+
+def tools(allow_write: bool, memory: bool = True, groups=None):
+    """groups が None なら全部。集合なら、その組の編集ツールだけを渡し、残りは use_tools で開けるようにする"""
     result = chat_agent.build_tools() + production_library.tools(allow_write) + production_chapters.tools(allow_write)
     if not allow_write:
         return result
@@ -384,6 +416,19 @@ def tools(allow_write: bool, memory: bool = True):
             "parameters": {"type": "object", "properties": {
                 **properties, "reason": {"type": "string", "description": "依頼に対する変更理由"},
             }, "required": [*required, "reason"], "additionalProperties": False},
+        }})
+    if groups is None:
+        return result
+    closed = [group for group in TOOL_GROUPS if group not in groups]
+    result = [t for t in result if tool_group(t["function"]["name"]) in (None, *groups)]
+    if closed:
+        result.append({"type": "function", "function": {
+            "name": "use_tools",
+            "description": "今は渡されていない編集ツールの組を、次の判断から使えるようにする。"
+                           + " / ".join(f"{group}={TOOL_GROUPS[group][0]}" for group in closed),
+            "parameters": {"type": "object", "properties": {
+                "groups": {"type": "array", "items": {"type": "string", "enum": closed}},
+            }, "required": ["groups"], "additionalProperties": False},
         }})
     return result
 
@@ -447,8 +492,13 @@ def _validate_args(store, name, args):
     return node
 
 
-async def apply_edit(store: Store, base_url: str, name: str, args: dict, before_commit=None, policy=None, versions=None):
-    """コピーで生成・検証を済ませ、成功した本文とイベントだけを同期的に確定する。"""
+async def apply_edit(store: Store, base_url: str, name: str, args: dict, before_commit=None, policy=None, versions=None,
+                     infer=True):
+    """コピーで生成・検証を済ませ、成功した本文とイベントだけを同期的に確定する。
+
+    infer=False なら、新しいシーンの経過・場所の推測(infer_and_record)を呼び出し側に任せる。
+    制作の作業は確定を記録してから推測する(推測の LLM 待ちで止めても、確定した変更が記録から漏れないように)。
+    """
     if not isinstance(args, dict):
         raise ValueError("引数はオブジェクトで指定してください")
     versions = versions or NodeVersions(store)
@@ -542,15 +592,12 @@ async def apply_edit(store: Store, base_url: str, name: str, args: dict, before_
             policy.committed(name, node_id)
         result = {"action": name, "node_id": node_id,
                   "title": data.get("title", original.get("title")), "reason": args["reason"]}
-        if name in CREATE_SCENE_TOOLS:
-            inferred = await infer_scene_setting(store, base_url, node_id, args)
-            if inferred:
-                result["inferred"] = inferred
         if name == "reconnect_scene":
             result["connection"] = connection
         if name != "delete_scene":
-            node = store.get_node(node_id)
-            result["scene"] = {k: node[k] for k in ("id", "title", "beat", "cast", "location")}
+            result["scene"] = _scene_fields(store, node_id)
+        if infer and name in CREATE_SCENE_TOOLS:
+            await infer_and_record(store, base_url, result, args)
         if name == "update_scene":
             # 分割(前半に縮めてから残りを新しいシーンにする)で、縮めた本文を次の判断で
             # 使えるように返す。確定後は古い取得結果を捨てるため、ここでしか残らない。
@@ -558,6 +605,20 @@ async def apply_edit(store: Store, base_url: str, name: str, args: dict, before_
         return result
     finally:
         candidate_conn.close()
+
+
+def _scene_fields(store, node_id):
+    node = store.get_node(node_id)
+    return {k: node[k] for k in ("id", "title", "beat", "cast", "location")}
+
+
+async def infer_and_record(store, base_url, result, args):
+    """確定した新しいシーンの経過・場所を推測し、入れた分を result(と画面用の scene)へ書き足す"""
+    inferred = await infer_scene_setting(store, base_url, result["node_id"], args)
+    if inferred:
+        result["inferred"] = inferred
+        result["scene"] = _scene_fields(store, result["node_id"])
+    return inferred
 
 
 async def infer_scene_setting(store, base_url, node_id, args):
@@ -645,27 +706,48 @@ EXECUTE_RULES = (
     "変更は短い理由を添え、目的を達成したら通常の文章で報告して終了してください。"
     "通常の文章だけを返すと今回の制作は終了します。終了報告では実行記録にある確定済みの変更と未実施の作業を区別し、"
     "未実施の作業を『次は編集します』と進行中のように告げて終了しないでください。必要な作業が残るならツールで続け、進められない場合は残件と理由を報告してください。"
-    "資料庫のキャラクター・場所はread_libraryで一覧と詳細を確認し、新規登録・編集・削除できます。"
-    "作者が言う『キャラクターの設定』『人物の設定』『場所の設定』(プロフィール・外見・口調・説明・雰囲気)はupdate_character / update_placeで編集します。"
-    "設定資料は世界観・制度・文化・用語などの文書であり、人物や場所そのものの設定を書く場所ではありません。人物名・場所名の設定資料を新しく作らないでください。"
-    "設定資料はsearch_setting_documentsで探し、read_setting_documentで全文とrevisionを読んでから編集します。"
-    "新規資料は構想(draft)・必要に応じて検索(search)が既定です。作者の明示指示なしに確定設定へ変更せず、AI参照方法も維持してください。"
-    "既存設定は省略で維持し、作者が頼んでいない項目は変更しません。物語中の変化や記憶は固定プロフィールに混ぜません。"
-    "資料の登録・編集では、作者が明記した各項目を対応する引数へ漏れなく入れ、操作結果のafterと照合して抜けがあればupdateで補ってから完了を報告してください。"
-    "新しい人物・場所をシーンに使うときは先に資料庫へ登録し、返されたIDをcast/locationに指定してください。"
-    "章はread_chaptersで所属と入口・出口を確認し、create_chapterで作成、rename_chapterで改名、add_scenes_to_chapterで指定シーンを追加、"
-    "remove_scenes_from_chapterで章から外し、delete_chapterで章を解除(シーンは残る)できます。"
-    "章立ての依頼には実際に章を作ってください。新しい章を物語の途中に置くときはcreate_chapterのafter_idにその位置(章の外のシーン、または直前の章のout_id)を指定し、"
-    "返されたin_idをinsert_sceneのafter_idに使って中身を順に作ります。after_idを省いた空の章はどこにもつながりません。"
-    "このアプリは人物・場所の画像とシーンの挿絵をComfyUIで描けます(『画像を生成する機能は無い』と答えない)。"
-    "作者が画像を頼んだら、人物・場所はread_libraryで、シーンはそのIDで確かめてgenerate_imagesで予約してください(今回の作業の終わりに描かれます)。"
-    "対象が資料庫に無ければ、依頼や本文から外見・説明を書いて先に登録し、そのIDで予約します。頼まれていない画像は予約しません。"
-    "使用中の資料の削除が拒否されたら、参照や会話を勝手に消して回避せず作者へ報告してください。"
+    "{group_rules}"
     "派閥・画像・音声の編集には未対応です。マーカーは変更しません。"
     "作者の途中指示は当初の依頼より優先し、変更済みの内容も踏まえて計画を調整してください。"
     "同じ取得・同じエラー・適用済みの変更の繰り返しはアプリが止めます。保存済みの結果は実行記録とツール結果にあります。"
     "\n今回は編集が許可されています。"
 )
+# EXECUTE_RULES のうち、編集ツールの組(TOOL_GROUPS)を開いたときだけ載せる規則
+GROUP_RULES = {
+    "library": ("資料庫のキャラクター・場所はread_libraryで一覧と詳細を確認し、新規登録・編集・削除できます。"
+                "作者が言う『キャラクターの設定』『人物の設定』『場所の設定』(プロフィール・外見・口調・説明・雰囲気)はupdate_character / update_placeで編集します。"),
+    "settings": ("設定資料は世界観・制度・文化・用語などの文書であり、人物や場所そのものの設定を書く場所ではありません。人物名・場所名の設定資料を新しく作らないでください。"
+                 "設定資料はsearch_setting_documentsで探し、read_setting_documentで全文とrevisionを読んでから編集します。"
+                 "新規資料は構想(draft)・必要に応じて検索(search)が既定です。作者の明示指示なしに確定設定へ変更せず、AI参照方法も維持してください。"),
+    "material": ("既存設定は省略で維持し、作者が頼んでいない項目は変更しません。物語中の変化や記憶は固定プロフィールに混ぜません。"
+                 "資料の登録・編集では、作者が明記した各項目を対応する引数へ漏れなく入れ、操作結果のafterと照合して抜けがあればupdateで補ってから完了を報告してください。"
+                 "使用中の資料の削除が拒否されたら、参照や会話を勝手に消して回避せず作者へ報告してください。"),
+    "chapters": ("章はread_chaptersで所属と入口・出口を確認し、create_chapterで作成、rename_chapterで改名、add_scenes_to_chapterで指定シーンを追加、"
+                 "remove_scenes_from_chapterで章から外し、delete_chapterで章を解除(シーンは残る)できます。"
+                 "章立ての依頼には実際に章を作ってください。新しい章を物語の途中に置くときはcreate_chapterのafter_idにその位置(章の外のシーン、または直前の章のout_id)を指定し、"
+                 "返されたin_idをinsert_sceneのafter_idに使って中身を順に作ります。after_idを省いた空の章はどこにもつながりません。"),
+    "images": ("作者が画像を頼んだら、人物・場所はread_libraryで、シーンはそのIDで確かめてgenerate_imagesで予約してください(今回の作業の終わりに描かれます)。"
+               "対象が資料庫に無ければ、依頼や本文から外見・説明を書いて先に登録し、そのIDで予約します。頼まれていない画像は予約しません。"),
+}
+# 組に関わらず残す規則(組を閉じていても、要る場面で use_tools を思い出させる)
+ALWAYS_RULES = ("新しい人物・場所をシーンに使うときは先に資料庫へ登録し、返されたIDをcast/locationに指定してください。"
+                "このアプリは人物・場所の画像とシーンの挿絵をComfyUIで描けます(『画像を生成する機能は無い』と答えない)。")
+
+
+def execute_rules(groups=None):
+    """実行モードの規則。groups が None なら全部の組の規則を載せる"""
+    opened = list(TOOL_GROUPS) if groups is None else [g for g in TOOL_GROUPS if g in groups]
+    parts = [GROUP_RULES[g] for g in opened]
+    if "library" in opened or "settings" in opened:
+        parts.append(GROUP_RULES["material"])
+    parts.append(ALWAYS_RULES)
+    closed = [g for g in TOOL_GROUPS if g not in opened]
+    if closed:
+        parts.append("今は渡していない編集ツールがあります(" + "、".join(f"{g}={TOOL_GROUPS[g][0]}" for g in closed)
+                     + ")。必要になったらuse_toolsで開いてから使ってください。")
+    return EXECUTE_RULES.replace("{group_rules}", "".join(parts))
+
+
 CONSULT_RULES = (
     "\n今回は相談のみです。ノード・資料・作業メモは変更しませんが、変更案は具体的に提案してください。"
     "変更を依頼されたら、必要な本文・接続・資料を読み、変更対象と追加・修正・削除する内容を作者が確認できる文章で示してください。"
@@ -706,9 +788,33 @@ def recent_reads(results):
     return [item for item in results if item is chapters or any(item is k for k in kept)]
 
 
+# 過去の発言 1 件あたりに載せる文字数と、直近の取得結果の合計の上限。
+# どちらも上限なしで載せていて、長い報告や数章分の本文で ctx を使い切った(2026-10-30 レビュー)
+PAST_MESSAGE_LIMIT = 1500
+RECENT_RESULTS_CHAR_BUDGET = 9000
+
+
+def _clip(text, limit):
+    return text if len(text) <= limit else text[:limit] + "…(以下省略)"
+
+
+def fit_recent_results(results):
+    """直近の取得結果を合計の上限に収める。新しいものから全文で残し、収まらない古いものは何を読んだかだけにする"""
+    kept = []
+    used = 0
+    for item in reversed(results):
+        text = json.dumps(item.get("result"), ensure_ascii=False)
+        if kept and used + len(text) > RECENT_RESULTS_CHAR_BUDGET:
+            item = {"tool": item.get("tool"), "result": json.loads(chat_agent.summarize_tool_result(item.get("tool") or "", text))}
+        else:
+            used += len(text)
+        kept.append(item)
+    return kept[::-1]
+
+
 def build_messages(store, history, message, execute, policy, previous_checkpoint, changes, recent_results, run_id=None, selection=None,
-                   cancelled_text="", notes=(), plan=None, view=None):
-    system = (chat_agent.build_system(store, store.canon_path(), "all", production=True) + "\n" + EXECUTE_RULES
+                   cancelled_text="", notes=(), plan=None, view=None, groups=None):
+    system = (chat_agent.build_system(store, store.canon_path(), "all", production=True) + "\n" + execute_rules(groups)
               if execute else chat_agent.build_system(store, store.canon_path(), "all") + CONSULT_RULES)
     if any(m.get("instruction", {}).get("run_id") == run_id and m.get("instruction", {}).get("status") == "reflected" for m in history):
         system += ("実行記録にある変更はすでに確定しています。方針変更だけを理由に取り消してはいけません。"
@@ -729,7 +835,7 @@ def build_messages(store, history, message, execute, policy, previous_checkpoint
                "見ていた階層は作者がどこを見ているかの手がかりで、選択があれば選択が対象です。")
     # 各ステップで最新図を作り、本文を含むツール結果は直近だけ保持する。
     # step は読み取りの手順の記録(画面の時系列用)。LLM へ渡す会話には入れない。
-    conversation = [{"role": m["role"], "content": message_content(m)} for m in history
+    conversation = [{"role": m["role"], "content": _clip(message_content(m), PAST_MESSAGE_LIMIT)} for m in history
                     if m.get("role") in ("user", "assistant") and not m.get("operation") and not m.get("snapshot")
                     and not m.get("step") and not m.get("plan") and not m.get("undo") and not m.get("stale_notice")
                     and m.get("instruction", {}).get("status") != "unapplied"][-12:]
@@ -741,7 +847,7 @@ def build_messages(store, history, message, execute, policy, previous_checkpoint
                                    if m.get("instruction") and m["instruction"].get("run_id") == run_id
                                    and m["instruction"]["status"] == "reflected"], ensure_ascii=False)
                      + "\n直近の取得結果: "
-                     + json.dumps(recent_reads(recent_results), ensure_ascii=False)})
+                     + json.dumps(fit_recent_results(recent_reads(recent_results)), ensure_ascii=False)})
     if execute:
         messages[-1]["content"] += (
             "\n次の判断: 最新の本文・実行記録(保存済み)・途中指示を照合し、依頼された変更がすでに反映されていればツールを呼ばず完了を報告してください。"
@@ -752,12 +858,22 @@ def build_messages(store, history, message, execute, policy, previous_checkpoint
     return messages
 
 
-async def context_usage(store, base_url, messages, execute):
+# 応答のために空けておくトークン数。プロンプトがこれを食い込むと、判断の途中で ctx を超える
+RESPONSE_RESERVE = 1024
+
+
+async def context_usage(store, base_url, messages, execute, groups=None, ctx=None):
     # 実際に組み立てたプロンプトとツール定義を数える。会話テンプレート分は含まない目安。
-    text = json.dumps(messages, ensure_ascii=False) + "\n" + json.dumps(tools(execute, production_memory.enabled(store)), ensure_ascii=False)
+    # ctx はサーバーが実際に確保した長さ(取れなければ設定値)。作業中は始めに 1 回だけ問い合わせて渡す
+    text = json.dumps(messages, ensure_ascii=False) + "\n" + json.dumps(tools(execute, production_memory.enabled(store), groups), ensure_ascii=False)
     counted = await llm.count_tokens(text, base_url=base_url)
+    ctx = ctx or await llm.server_ctx(base_url) or int(store.get_settings().get("llm_ctx_size") or 16384)
     return {"token_count": counted if counted is not None else len(text) // chat_agent.CHAR_PER_TOKEN_FALLBACK,
-            "estimated": counted is None, "ctx_size": int(store.get_settings().get("llm_ctx_size") or 16384)}
+            "estimated": counted is None, "ctx_size": ctx}
+
+
+def overflows(usage):
+    return not usage["estimated"] and usage["token_count"] > usage["ctx_size"] - RESPONSE_RESERVE
 
 
 async def stream(store: Store, base_url: str, chat_id: str | None, message: str, execute: bool, on_delete, policy=None, selection=None,
@@ -790,6 +906,7 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
     # 作業メモを使うかは開始時に決める。オフでは更新ツールを渡さず、終了時の見直しもしない。
     memory_on = production_memory.enabled(store)
     checkpoint_started = False
+    undo_offered = False
     outcome = "interrupted"
 
     def tally_error(name, text):
@@ -798,6 +915,19 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
             return monitor.note_error(name, text), None
         except production_guard.StalledRun as stalled:
             return text, str(stalled)
+    def offer_undo():
+        """作業単位の取り消し(production_undo)を会話へ 1 回だけ残す。操作ごとの取り消しは持たない。
+
+        停止・エラーで抜けたときも finally から呼ぶ(戻したい場面はむしろそちらが多い)。
+        その場合は SSE を送れないが、画面は終了後に履歴を読み直すので案内が出る。
+        """
+        nonlocal undo_offered
+        if undo_offered or not (execute and snapshot is not None and changes):
+            return None
+        undo_offered = True
+        offer = production_undo.offer(snapshot, len(changes))
+        history.append(offer)
+        return offer
     def save_checkpoint(status, report=""):
         production_memory.checkpoint(store, run.id, chat_id, message_content(request_message), status, changes,
             [{"content": message_content(m), "status": m["instruction"]["status"]} for m in history
@@ -826,6 +956,8 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
                 store.save_chat_messages(chat_id, history)
                 yield _sse({"plan": plan, "notice": item["content"]})
         step_limit = production_plan.step_budget(plan)
+        groups = initial_groups(message, selection, view, plan) if execute else None
+        ctx_size = await llm.server_ctx(base_url)
         run.ready = True
         yield _sse({"manual_edit_ready": execute})
         previous_epoch = run.epoch
@@ -859,16 +991,29 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
                     yield _sse({"response_end": True})
                 if run.pending or run.paused or run.epoch != epoch:
                     continue
-            messages = build_messages(store, history, message, execute, policy, previous_checkpoint,
+            notes = monitor.take_notes()
+            def compose():
+                return build_messages(store, history, message, execute, policy, previous_checkpoint,
                                       changes, recent_results, run.id, selection=selection, view=view,
-                                      cancelled_text=monitor.cancelled_prompt(), notes=monitor.take_notes(), plan=plan)
+                                      cancelled_text=monitor.cancelled_prompt(), notes=notes, plan=plan, groups=groups)
+            messages = compose()
             steps_used = step + 1
-            yield _sse({"usage": await context_usage(store, base_url, messages, execute)})
+            usage = await context_usage(store, base_url, messages, execute, groups, ctx_size)
+            if overflows(usage) and len(recent_results) > 1:
+                # 溢れるなら、古い取得結果を捨てて最新の 1 件だけで判断させる
+                del recent_results[:-1]
+                messages = compose()
+                usage = await context_usage(store, base_url, messages, execute, groups, ctx_size)
+            yield _sse({"usage": usage})
+            if overflows(usage):
+                # llama-server の生のエラー(ctx 超過)で落ちる前に、分かる言葉で止める
+                raise RuntimeError(f"プロンプトが {usage['token_count']} トークンになり、llama-server のコンテキスト長 {usage['ctx_size']} に"
+                                   f"収まりません(応答用に {RESPONSE_RESERVE} を残します)。モデル設定でコンテキスト長を増やすか、依頼を小さく分けてください")
             yield _sse({"stage": f"確認しています… ({step + 1}/{step_limit})"})
             result: dict[str, Any] = {}
             last_preview_at = 0.0
             async for kind, value in llm.chat_stream_tools(
-                messages, base_url=base_url, tools=tools(execute, memory_on), temperature=0.5,
+                messages, base_url=base_url, tools=tools(execute, memory_on, groups), temperature=0.5,
                 max_tokens=3072, label=f"制作チャット({step + 1})", emit_tool_progress=execute,
             ):
                 if kind == "content":
@@ -1013,7 +1158,17 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
                         preview = scene_preview(store, call.get("function", {}), policy)
                         if preview is not None:
                             yield _sse({"preview": preview, "stage": "編集案を検証しています…"})
-                    if name == "update_work_memory":
+                    if execute and tool_group(name) and tool_group(name) not in groups:
+                        # 渡していない組のツールでも、名前が正しければそのまま実行し、以後はその組を渡す
+                        groups.add(tool_group(name))
+                    if name == "use_tools":
+                        requested = args.get("groups")
+                        if not execute or not isinstance(requested, list) or not requested or any(g not in TOOL_GROUPS for g in requested):
+                            raise ValueError("groups には " + " / ".join(TOOL_GROUPS) + " から選んで配列で指定してください")
+                        groups.update(requested)
+                        payload = {"opened": requested, "note": "次の判断からこの組のツールを使えます"}
+                        monitor.note_success()
+                    elif name == "update_work_memory":
                         if not execute:
                             raise ValueError("相談中は作業メモを変更できません")
                         if not memory_on:
@@ -1067,12 +1222,14 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
                                 history.append({"role": "assistant", "content": lifted, "instruction_review": True})
                                 store.save_chat_messages(chat_id, history)
                                 yield _sse({"stage": lifted})
-                            payload = await apply_edit(store, base_url, name, args, before_commit=lambda: run.check_epoch(epoch), policy=policy, versions=versions)
+                            payload = await apply_edit(store, base_url, name, args, before_commit=lambda: run.check_epoch(epoch), policy=policy, versions=versions,
+                                                       infer=False)
                             versions = NodeVersions(store)
                             # 縮める前の本文(previous_beat)は次の判断のツール結果にだけ渡し、履歴・画面・引継ぎには残さない。
                             operation = {k: v for k, v in payload.items() if k != "previous_beat"}
                             monitor.note_applied(name, args, operation)
-                            changes.append({k: v for k, v in operation.items() if k != "scene"})
+                            change = {k: v for k, v in operation.items() if k != "scene"}
+                            changes.append(change)
                             # 変更前の本文が次の判断を引き戻さないよう、古い取得結果を捨てる。
                             recent_results.clear()
                             history.append({"role": "assistant", "content": args["reason"], "operation": operation})
@@ -1080,6 +1237,14 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
                             if name == "delete_scene" or name in production_library.WRITE_TOOLS:
                                 on_delete()
                             save_checkpoint("running")
+                            if name in CREATE_SCENE_TOOLS:
+                                # 確定を記録した後に推測する。ここで止めても、追加したシーンは変更として残る
+                                yield _sse({"stage": "新しいシーンの経過・場所を本文から推測しています…"})
+                                if await infer_and_record(store, base_url, payload, args):
+                                    operation.update(inferred=payload["inferred"], scene=payload["scene"])
+                                    change["inferred"] = payload["inferred"]
+                                    store.save_chat_messages(chat_id, history)
+                                    save_checkpoint("running")
                             yield _sse({"changed": operation})
                     else:
                         # 読み取り。同じ取得は2回目に前回の結果を返し、3回目で止める(相談・実行とも)。
@@ -1141,7 +1306,7 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
             try:
                 closing_messages = build_messages(store, history, message, execute, policy, previous_checkpoint,
                                                   changes, recent_results, run.id, selection=selection, view=view,
-                                                  cancelled_text=monitor.cancelled_prompt(), notes=[closing_note], plan=plan)
+                                                  cancelled_text=monitor.cancelled_prompt(), notes=[closing_note], plan=plan, groups=groups)
                 closing_text = ""
                 # ツール呼び出しを文字列で書いてしまう応答を画面に流さないよう、まとめは溜めてから出す。
                 async for kind, value in llm.chat_stream_tools(
@@ -1209,10 +1374,8 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
                 store.save_chat_messages(chat_id, history)
                 yield _sse({"delta": stale})
                 yield _sse({"response_end": True})
-        if execute and snapshot is not None and changes:
-            # 作業単位の取り消し(production_undo)。操作ごとの取り消しは持たない
-            offer = production_undo.offer(snapshot, len(changes))
-            history.append(offer)
+        offer = offer_undo()
+        if offer is not None:
             store.save_chat_messages(chat_id, history)
             yield _sse({"undo": offer["undo"], "notice": offer["content"]})
         # doneを送った後に届く途中指示を受け付けないよう、通知の前に閉じる。
@@ -1233,6 +1396,7 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
         yield _sse({"error": str(e)})
     finally:
         run.close()  # 未反映の指示を「未反映のまま終了」にしてから記録する。
+        offer_undo()
         if checkpoint_started:
             report = next((m["content"] for m in reversed(history) if m.get("role") == "assistant" and not m.get("step") and not m.get("operation") and not m.get("snapshot") and not m.get("memory_revision") and not m.get("memory_review")
                            and not m.get("undo") and not m.get("stale_notice") and not m.get("plan")), "")

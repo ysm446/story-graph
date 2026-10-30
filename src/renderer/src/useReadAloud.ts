@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, isAbortError, ttsSpeak, type VoiceLine } from './api'
 import type { SceneEntry } from './types'
-import { applyVoiceRate, scaledPause } from './voiceRate'
+import { abortError, onAbort, playBlob, sleep, type PlaybackSlot } from './audioPlayback'
+import { scaledPause } from './voiceRate'
 
 /** 再生中に数行先まで合成しておく(サーバーは 1 件ずつ合成するので、積みすぎても速くならない) */
 const PREFETCH_AHEAD = 2
@@ -31,12 +32,8 @@ const IDLE: ReadAloudState = {
   error: null
 }
 
-function abortError(): DOMException {
-  return new DOMException('aborted', 'AbortError')
-}
-
 /** 一時停止の仕組み。再生中の音声を止め、行の合間では再開まで待つ */
-class PauseGate {
+class PauseGate implements PlaybackSlot {
   paused = false
   audio: HTMLAudioElement | null = null
   private waiters: Array<() => void> = []
@@ -55,43 +52,13 @@ class PauseGate {
   wait(signal: AbortSignal): Promise<void> {
     if (!this.paused) return Promise.resolve()
     return new Promise((resolve, reject) => {
-      this.waiters.push(resolve)
-      signal.addEventListener('abort', () => reject(abortError()))
+      const off = onAbort(signal, () => reject(abortError()))
+      this.waiters.push(() => {
+        off()
+        resolve()
+      })
     })
   }
-}
-
-function sleep(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal.aborted) return reject(abortError())
-    const timer = setTimeout(resolve, ms)
-    signal.addEventListener('abort', () => {
-      clearTimeout(timer)
-      reject(abortError())
-    })
-  })
-}
-
-function playBlob(blob: Blob, gate: PauseGate, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const url = URL.createObjectURL(blob)
-    const audio = new Audio(url)
-    const release = applyVoiceRate(audio)
-    gate.audio = audio
-    const done = (err?: unknown): void => {
-      audio.pause()
-      release()
-      gate.audio = null
-      URL.revokeObjectURL(url)
-      if (err) reject(err)
-      else resolve()
-    }
-    audio.onended = () => done()
-    audio.onerror = () => done(new Error('音声を再生できませんでした'))
-    signal.addEventListener('abort', () => done(abortError()))
-    // 合成を待っている間に一時停止されていたら、鳴らさずに再開を待つ(resume が play する)
-    if (!gate.paused) audio.play().catch((e) => done(e))
-  })
 }
 
 /** 飛び先。line = -1 は「そのシーンの最後の行」(前のシーンへ戻るとき)。
@@ -269,7 +236,7 @@ export function useReadAloud(onSceneStart?: (nodeId: string) => void): {
           ])
           for (let a = 1; a <= PREFETCH_AHEAD && li + a < lines.length; a += 1) void fetchLine(si, lines, li + a)
           setState((s) => ({ ...s, phase: 'play' }))
-          if (blob) await playBlob(blob, gate, lineAbort.signal) // null = エンジンが鳴らせない効果音(間だけ置く)
+          if (blob) await playBlob(blob, lineAbort.signal, gate) // null = エンジンが鳴らせない効果音(間だけ置く)
           await sleep(scaledPause(line.pause_after_ms), lineAbort.signal)
           await gate.wait(lineAbort.signal)
         } catch (e) {

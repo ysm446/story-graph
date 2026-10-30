@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { api, assetUrl, isAbortError, isVideoAsset, onRenderSaved, renderStream } from '../api'
 import { CrossfadeLoopVideo, DEFAULT_VIDEO_CROSSFADE_SECONDS } from '../CrossfadeLoopVideo'
+import { downloadBlob } from '../downloadBlob'
 import { Icon } from '../icons'
 import { FONT_OPTIONS, FONT_SIZES, RenderStyleControls, useRenderStyle } from '../RenderStyle'
 import { cancelTask, enqueueTask, useAnyTask, type Task } from '../tasks'
@@ -522,12 +523,7 @@ function ReaderMode({
       parts.push(`${head}## ${s.node.title || '(無題)'}\n\n${s.render.prose}`)
     }
     const blob = new Blob([parts.join('\n\n---\n\n')], { type: 'text/markdown;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = 'story.md'
-    a.click()
-    URL.revokeObjectURL(url)
+    downloadBlob('story.md', blob)
   }
 
   // 朗読台本のモーダルを開いているシーン

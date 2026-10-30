@@ -98,10 +98,6 @@ def read_header(path: str | Path) -> tuple[dict[str, Any], dict[str, int]]:
     return meta, sizes
 
 
-def read_metadata(path: str | Path) -> dict[str, Any]:
-    return read_header(path)[0]
-
-
 def _per_layer(value: Any, n_layer: int, default: int) -> list[int]:
     if isinstance(value, list) and value:
         return [int(v) for v in value[:n_layer]] + [int(value[-1])] * max(0, n_layer - len(value))

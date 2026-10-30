@@ -19,7 +19,6 @@ Pillow も顔検出も要らない)。場所は 説明 → 英語プロンプト
 from __future__ import annotations
 
 import asyncio
-import uuid
 from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable
 
@@ -87,17 +86,12 @@ async def generate_portrait(
     variant: str | None = None,
 ) -> tuple[bytes, int]:
     """(PNG, 使った seed)。ref_file は (assets のファイル名, バイト列)。"""
-    if seed is None or seed < 0:
-        seed = image_gen.new_seed()
+    seed = image_gen.resolve_seed(seed)
     ref_name = await comfy.upload_image(comfy_base_url, ref_file[1], ref_file[0]) if ref_file else None
     wf = portrait_workflow(settings, description, ref_name, seed, variant)
     return await comfy.run_workflow(comfy_base_url, wf), seed
 
 
-async def _write_asset(assets: str, data: bytes) -> str:
-    name = f"{uuid.uuid4().hex[:12]}.png"
-    await asyncio.to_thread((Path(assets) / name).write_bytes, data)
-    return name
 
 
 def _label(item: dict[str, Any]) -> str:
@@ -146,13 +140,13 @@ async def _draw_character(store: Any, settings: dict[str, str], char: dict[str, 
     prompt = await _prompt(image_gen.character_prompt_messages(char, settings=settings), llm_base_url, "auto_ref_image_prompt")
     yield {"stage": f"{label}の参照画像を描いています…", **target}
     ref_png, ref_seed = await image_gen.generate_character_image(settings, prompt, comfy_base_url=comfy_base_url, variant=variant)
-    ref_name = await _write_asset(assets, ref_png)
+    ref_name = await image_gen.save_png(assets, ref_png)
     # 手動の「生成 → 決定」と同じ形でストックに入れて選択する(プロンプト・seed・組を 1 セットで)
     media = store.add_media("character", char["id"], ref_name, prompt=prompt, seed=ref_seed, workflow=variant)
     store.select_media(media["id"])
     yield {"stage": f"{label}のプロフィール画像を描いています…", **target}
     portrait_png, _ = await generate_portrait(settings, prompt, (ref_name, ref_png), comfy_base_url=comfy_base_url, variant=variant)
-    portrait_name = await _write_asset(assets, portrait_png)
+    portrait_name = await image_gen.save_png(assets, portrait_png)
     store.update_character(char["id"], {"portrait_path": portrait_name, "portrait_source_path": None, "portrait_crop": None})
     yield {"notice": f"{label}の参照画像とプロフィール画像を作りました。", "kind": "character", "id": char["id"]}
 
@@ -165,7 +159,7 @@ async def _draw_place(store: Any, settings: dict[str, str], place: dict[str, Any
     prompt = await _prompt(image_gen.place_prompt_messages(place, settings=settings), llm_base_url, "auto_place_image_prompt")
     yield {"stage": f"{label}の画像を描いています…", **target}
     png, seed = await image_gen.generate_place_image(settings, prompt, comfy_base_url=comfy_base_url, variant=variant)
-    name = await _write_asset(assets, png)
+    name = await image_gen.save_png(assets, png)
     media = store.add_media("place", place["id"], name, prompt=prompt, seed=seed, workflow=variant)
     store.select_media(media["id"])
     yield {"notice": f"{label}の画像を作りました。", "kind": "place", "id": place["id"]}
@@ -197,7 +191,7 @@ async def _draw_scene(store: Any, settings: dict[str, str], node: dict[str, Any]
             ref_files.append((p.name, await asyncio.to_thread(p.read_bytes)))
     yield {"stage": f"{label}の挿絵を描いています…", **target}
     png, seed = await image_gen.generate_scene_image(settings, prompt, ref_files, comfy_base_url=comfy_base_url, variant=variant)
-    name = await _write_asset(assets, png)
+    name = await image_gen.save_png(assets, png)
     media = store.add_media("node", node["id"], name, prompt=prompt, seed=seed, ref_chars=[c["id"] for c in refs], workflow=variant)
     store.select_media(media["id"])
     yield {"notice": f"{label}の挿絵を作りました。", "kind": "scene", "id": node["id"]}

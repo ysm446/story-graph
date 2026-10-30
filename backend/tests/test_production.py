@@ -704,7 +704,9 @@ def test_stop_stream_persists_completed_changes_only(store, monkeypatch):
         messages = store.get_chat(chat_id)["messages"]
         assert len([m for m in messages if m.get("operation")]) == 1
         # yieldで止まった生成器の後始末(GeneratorExit)でも、停止の記録と終了処理を残す。
-        assert messages[-1]["content"].startswith("作業を停止しました")
+        # 確定済みの変更があるので、停止の記録の後に作業単位の取り消しの案内が付く
+        assert messages[-2]["content"].startswith("作業を停止しました")
+        assert messages[-1]["undo"]["changes"] == 1
         assert messages[0].get("policy_after") == {"allowed_ids": None, "group_id": None, "protected_ids": []}
         assert production.gate.run is None
     run(check())
@@ -1613,6 +1615,55 @@ def test_undo_offer_restores_the_run_and_keeps_the_chat_record(store, monkeypatc
         production_undo.undo(store, chat_id, offer["undo"]["snapshot_id"])
 
 
+def test_undo_offer_is_kept_when_the_run_is_stopped(store, monkeypatch):
+    # 停止で抜けても、確定済みの変更があれば取り消しの案内を会話に残す(画面は終了後に読み直す)
+    import production_undo
+    fake_extraction(monkeypatch)
+    args = {"after_id": "first", "title": "葛藤", "beat": "約束を思い出す", "cast": ["aya"], "reason": "補強"}
+    def stop():
+        raise asyncio.CancelledError()
+    responses = iter([call("insert_scene", args)])
+    async def stream(messages, **kwargs):
+        item = next(responses, None)
+        if item is None:
+            stop()
+        yield "done", item
+    monkeypatch.setattr(llm, "chat_stream_tools", stream)
+    events = []
+    async def consume():
+        async for s in production.stream(store, "fake", None, "動機を補強して", True, lambda: None):
+            events.append(json.loads(s.removeprefix("data: ")))
+    with pytest.raises(asyncio.CancelledError):
+        run(consume())
+    messages = store.get_chat(events[0]["chat_id"])["messages"]
+    offers = [m for m in messages if m.get("undo")]
+    assert len(offers) == 1 and offers[0]["undo"]["changes"] == 1
+    assert production_memory.read(store)["checkpoint"]["status"] == "interrupted"
+    production_undo.undo(store, events[0]["chat_id"], offers[0]["undo"]["snapshot_id"])
+    assert store.canon_path() == ["first", "last"]
+
+
+def test_stop_while_inferring_the_new_scene_keeps_the_change(store, monkeypatch):
+    # 追加の確定の後、経過・場所の推測(LLM)を待つ間に止めても、追加したシーンは変更として記録に残る
+    fake_extraction(monkeypatch)
+    args = {"after_id": "first", "title": "葛藤", "beat": "三日後に約束を思い出す", "cast": ["aya"], "reason": "補強"}
+    fake_llm(monkeypatch, [call("insert_scene", args)])
+    async def suggest(*args):
+        raise asyncio.CancelledError()
+    monkeypatch.setattr(generation, "suggest_scene_setting", suggest)
+    events = []
+    async def consume():
+        async for s in production.stream(store, "fake", None, "動機を補強して", True, lambda: None):
+            events.append(json.loads(s.removeprefix("data: ")))
+    with pytest.raises(asyncio.CancelledError):
+        run(consume())
+    assert len(store.canon_path()) == 3
+    messages = store.get_chat(events[0]["chat_id"])["messages"]
+    assert [m["operation"]["action"] for m in messages if m.get("operation")] == ["insert_scene"]
+    assert any(m.get("undo") for m in messages)
+    assert [c["action"] for c in production_memory.read(store)["checkpoint"]["changes"]] == ["insert_scene"]
+
+
 def test_undo_only_the_latest_production_run(store, monkeypatch):
     import production_undo
     fake_extraction(monkeypatch)
@@ -1778,3 +1829,58 @@ def test_scene_args_accept_place_and_character_names_and_null_string(store, monk
         run(production.apply_edit(store, "fake", "insert_scene", {
             "after_id": "first", "title": "y", "beat": "誰かが立つ", "cast": ["ケン"], "reason": "補強",
         }))
+
+
+def test_tool_groups_open_from_the_request_and_on_demand(store, monkeypatch):
+    # 既定はシーンの読み書きだけ。依頼・選択の言葉で組を開き、残りは use_tools で開ける
+    assert production.initial_groups("この文章を直して") == set()
+    assert production.initial_groups("第二章を作って") == {"chapters"}
+    assert production.initial_groups("アヤの外見を変えて") == {"library"}
+    assert production.initial_groups("直して", selection=[{"id": "g", "kind": "chapter"}]) == {"chapters"}
+    names = lambda groups: {t["function"]["name"] for t in production.tools(True, True, groups)}
+    closed = names(set())
+    assert {"insert_scene", "patch_scene", "read_library", "read_chapters", "use_tools"} <= closed
+    assert not closed & {"create_character", "create_chapter", "generate_images", "create_setting_document"}
+    assert "use_tools" not in names(set(production.TOOL_GROUPS)) and "use_tools" not in names(None)
+    assert len(json.dumps(production.tools(True, True, set()), ensure_ascii=False)) < len(json.dumps(production.tools(True), ensure_ascii=False)) * 0.6
+    # 規則も開いた組の分だけ載せ、閉じた組は use_tools の案内にする
+    assert "create_chapterで作成" not in production.execute_rules(set()) and "use_tools" in production.execute_rules(set())
+    assert "create_chapterで作成" in production.execute_rules(None) and "use_tools" not in production.execute_rules(None)
+    sent = []
+    responses = iter([call("use_tools", {"groups": ["chapters"]}), {"content": "確認しました"}])
+    async def stream(messages, **kwargs):
+        sent.append({t["function"]["name"] for t in kwargs["tools"]})
+        item = next(responses)
+        if item.get("content"):
+            yield "content", item["content"]
+        yield "done", item
+    monkeypatch.setattr(llm, "chat_stream_tools", stream)
+    async def no_plan(*args, **kwargs):
+        return None
+    monkeypatch.setattr(production.production_plan, "make", no_plan)
+    run(collect(store, True))
+    assert "create_chapter" not in sent[0] and "create_chapter" in sent[1]
+
+
+def test_recent_results_and_past_messages_fit_their_budgets(store, monkeypatch):
+    monkeypatch.setattr(production, "RECENT_RESULTS_CHAR_BUDGET", 100)
+    big = {"beats": [{"node_id": "first", "title": "出発", "beat": "本文" * 100}]}
+    fitted = production.fit_recent_results([{"tool": "get_beats", "result": big}, {"tool": "get_beats", "result": big}])
+    # 新しい方は全文、古い方は何を読んだかだけ
+    assert fitted[1]["result"] == big and "出発(first)" in fitted[0]["result"]["omitted"]
+    history = [{"role": "assistant", "content": "長い報告" * 1000}]
+    messages = production.build_messages(store, history, "次", False, production.ProductionPolicy(store), None, [], [])
+    assert len(messages[1]["content"]) < production.PAST_MESSAGE_LIMIT + 20 and messages[1]["content"].endswith("(以下省略)")
+
+
+def test_prompt_over_the_server_ctx_stops_with_a_clear_message(store, monkeypatch):
+    async def count(text, **kwargs):
+        return 9000
+    async def ctx(base_url, **kwargs):
+        return 8192
+    monkeypatch.setattr(llm, "count_tokens", count)
+    monkeypatch.setattr(llm, "server_ctx", ctx)
+    fake_llm(monkeypatch, [{"content": "届かない"}])
+    events = run(collect(store, False))
+    assert next(e for e in events if "usage" in e)["usage"]["ctx_size"] == 8192
+    assert "コンテキスト長 8192" in next(e for e in events if "error" in e)["error"]

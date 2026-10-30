@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from './api'
+import { EjectIcon, SpinnerIcon } from './icons'
 
 interface ModelEntry {
   name: string
@@ -74,23 +75,6 @@ function ChevronDownIcon(): React.JSX.Element {
   return (
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M6 9l6 6 6-6" />
-    </svg>
-  )
-}
-
-function SpinnerIcon(): React.JSX.Element {
-  return (
-    <svg className="animate-spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-      <path d="M21 12a9 9 0 1 1-6.2-8.5" />
-    </svg>
-  )
-}
-
-function EjectIcon(): React.JSX.Element {
-  return (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M12 5l7 10H5z" />
-      <path d="M5 19h14" />
     </svg>
   )
 }
