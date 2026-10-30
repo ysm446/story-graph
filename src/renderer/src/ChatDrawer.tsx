@@ -21,6 +21,7 @@ import type { Character, StoryNode } from './types'
 import { ElapsedSeconds } from './ElapsedLabel'
 import { frameSetter } from './frameSetter'
 import { useWorkspace } from './Workspace'
+import { askConfirm } from './ConfirmDialog'
 
 // 旧形式の会話履歴に保存された提案を文章として復元するための型。
 interface LegacyProposal {
@@ -783,7 +784,7 @@ export default function ChatDrawer({
   const deleteTurn = async (turn: number, keepUser: boolean): Promise<void> => {
     if (!chatId || busy) return
     const label = keepUser ? 'この返事を削除しますか?' : 'このやり取りを削除しますか?'
-    if (!window.confirm(label)) return
+    if (!(await askConfirm(label, '削除'))) return
     try {
       setItems(buildDisplay((await chatApi.deleteTurn(chatId, turn, keepUser)).messages))
     } catch {
@@ -845,7 +846,7 @@ export default function ChatDrawer({
   // 会話室: 履歴の 1 件(発言 / 演出指示)だけを消す
   const deleteRoomMessage = async (index: number, label: string): Promise<void> => {
     if (!chatId || busy) return
-    if (!window.confirm(label)) return
+    if (!(await askConfirm(label, '削除'))) return
     try {
       setItems(buildDisplay((await chatApi.deleteMessage(chatId, index)).messages))
     } catch {
@@ -872,7 +873,7 @@ export default function ChatDrawer({
   const deleteChat = async (id: string): Promise<void> => {
     if (busy) return
     const target = history.find((h) => h.id === id)
-    if (!window.confirm(`「${chatLabel(target)}」を削除しますか?`)) return
+    if (!(await askConfirm(`「${chatLabel(target)}」を削除しますか?`, '削除'))) return
     try {
       await chatApi.delete(id)
     } catch {

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
 import { EditActions, EditPencil, ReadText, editKeys, focusEditGroup } from '../FieldEdit'
 import type { SettingDocument } from '../types'
+import { askConfirm } from '../ConfirmDialog'
 
 const fields = ['title', 'category', 'body', 'status', 'scope', 'ai_mode'] as const
 type Field = (typeof fields)[number]
@@ -120,7 +121,7 @@ export default function SettingDocumentEditor({ documents, selectedId, onChanged
     finally { setBusy(false) }
   }
   const remove = async (): Promise<void> => {
-    if (busy || !window.confirm(`「${document.title}」を削除しますか？未保存の変更も削除されます。`)) return
+    if (busy || !(await askConfirm(`「${document.title}」を削除しますか？未保存の変更も削除されます。`, '削除'))) return
     setBusy(true); setError(null)
     try {
       await api.deleteSettingDocument(document.id, document.revision)

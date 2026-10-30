@@ -3,6 +3,7 @@ import { api, productionApi, type ProductionMemory } from './api'
 import { downloadBlob } from './downloadBlob'
 import { Markdown } from './Markdown'
 import ProductionPanelToggle, { panelBodyClass, panelBodyStyle } from './ProductionPanelToggle'
+import { askConfirm } from './ConfirmDialog'
 
 const memoryDate = (value: string): string => new Date(value).toLocaleString('ja-JP', { hour12: false })
 
@@ -45,7 +46,7 @@ function ProductionMemoryPanel({ busy, open, onToggle, refresh, onDirty, onChang
   }
   const reset = async (): Promise<void> => {
     if (busy || saving || !memory) return
-    if (!window.confirm('作業メモをリセットしますか？\nメモ本文・更新履歴・前回の作業記録・照合情報と、編集中のメモを消去し、版番号を初期化します。\nシーン・資料庫・会話履歴・AIへのルール・スナップショットは残ります。')) return
+    if (!(await askConfirm('作業メモをリセットしますか？\nメモ本文・更新履歴・前回の作業記録・照合情報と、編集中のメモを消去し、版番号を初期化します。\nシーン・資料庫・会話履歴・AIへのルール・スナップショットは残ります。', 'リセット'))) return
     setSaving(true); setError(''); setNotice('')
     historyEpoch.current += 1
     try {

@@ -8,6 +8,7 @@ import type { Character } from '../types'
 import SceneUsage, { type SceneUsageProps } from '../SceneUsage'
 import { EditActions, EditPencil, ReadText, editKeys as fieldEditKeys, focusEditGroup } from '../FieldEdit'
 import { Icon } from '../icons'
+import { askConfirm, showAlert } from '../ConfirmDialog'
 
 /** キャラクターの編集(プロフィール・画像・声)。資料庫と、構造モードの詳細欄「資料」タブで共用する。
  *
@@ -136,7 +137,7 @@ export default function CharacterEditor({
       setDraft((d) => ({ ...d, ...patch }))
       await onChanged()
     } catch (e) {
-      window.alert(`画像の保存に失敗しました: ${String(e)}`)
+      void showAlert(`画像の保存に失敗しました: ${String(e)}`)
     }
   }
 
@@ -225,13 +226,13 @@ export default function CharacterEditor({
   const shownColor = editing.has('identity') ? draft.color : character.color
 
   const handleDelete = async (): Promise<void> => {
-    if (!window.confirm(`「${character.name}」を削除しますか?`)) return
+    if (!(await askConfirm(`「${character.name}」を削除しますか?`, '削除'))) return
     try {
       await api.deleteCharacter(character.id)
       onDeleted?.()
       await onChanged()
     } catch (e) {
-      window.alert(`削除に失敗しました: ${String(e)}`)
+      void showAlert(`削除に失敗しました: ${String(e)}`)
     }
   }
 
@@ -347,7 +348,7 @@ export default function CharacterEditor({
                       setDraft((d) => ({ ...d, ...patch }))
                       await onChanged()
                     })
-                    .catch((e) => window.alert(`画像を外せませんでした: ${String(e)}`))
+                    .catch((e) => void showAlert(`画像を外せませんでした: ${String(e)}`))
                 }}
                 className="rounded-md border px-2 py-0.5 text-[11px]"
                 style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}

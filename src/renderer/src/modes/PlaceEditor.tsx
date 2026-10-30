@@ -7,6 +7,7 @@ import PlaceImageModal from '../PlaceImageModal'
 import ProofreadTextarea from '../ProofreadTextarea'
 import type { Place } from '../types'
 import SceneUsage, { type SceneUsageProps } from '../SceneUsage'
+import { askConfirm, showAlert } from '../ConfirmDialog'
 
 /** 新しい場所の色。色の欄の「既定の色に戻す」もこの色にする */
 export const DEFAULT_PLACE_COLOR = '#5a8fa7'
@@ -170,7 +171,7 @@ export default function PlaceEditor({
       setDraft((d) => ({ ...d, image_path: path }))
       await onChanged()
     } catch (e) {
-      window.alert(`画像の保存に失敗しました: ${String(e)}`)
+      void showAlert(`画像の保存に失敗しました: ${String(e)}`)
     } finally {
       setUploading(false)
     }
@@ -192,7 +193,7 @@ export default function PlaceEditor({
   )
 
   const handleDelete = async (): Promise<void> => {
-    if (!window.confirm(`「${place.name}」を削除しますか?\nこの場所を使っているシーンは「引き継ぐ」に戻ります。`))
+    if (!(await askConfirm(`「${place.name}」を削除しますか?\nこの場所を使っているシーンは「引き継ぐ」に戻ります。`, '削除')))
       return
     await api.deletePlace(place.id)
     onDeleted()

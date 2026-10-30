@@ -3,6 +3,7 @@ import { api } from '../../api'
 import { showStatusNotice } from '../../statusNotice'
 import type { Snapshot } from '../../types'
 import { fmtSize } from './format'
+import { askConfirm } from '../../ConfirmDialog'
 
 // スナップショット(バックアップ)。危険な操作の前の自動保存 + 手動保存と復元
 // (docs/design/snapshots.md)
@@ -43,10 +44,10 @@ export default function SnapshotsSection(): React.JSX.Element {
     if (busy) return
     const when = new Date(snap.created_at).toLocaleString('ja-JP')
     if (
-      !window.confirm(
+      !(await askConfirm(
         `「${snap.label}」(${when})の時点に戻しますか?\n` +
           '現在の状態は「復元の前」として自動保存されます。'
-      )
+      , '戻す'))
     ) {
       return
     }
@@ -63,11 +64,11 @@ export default function SnapshotsSection(): React.JSX.Element {
   const handleClear = async (): Promise<void> => {
     if (busy || items.length === 0) return
     const targets = [...items]
-    if (!window.confirm(
+    if (!(await askConfirm(
       `一覧のスナップショット ${targets.length} 件をすべて削除しますか?\n` +
       '自動・手動・制作チャットの作業前保存が対象です。削除すると、これらの時点には戻せません。\n' +
       '現在の作品・資料庫・会話は削除されません。'
-    )) return
+    , '削除'))) return
     setBusy(true)
     setError(null)
     let deleted = 0
@@ -93,7 +94,7 @@ export default function SnapshotsSection(): React.JSX.Element {
 
   const handleDelete = async (snap: Snapshot): Promise<void> => {
     if (busy) return
-    if (!window.confirm(`スナップショット「${snap.label}」を削除しますか?`)) return
+    if (!(await askConfirm(`スナップショット「${snap.label}」を削除しますか?`, '削除'))) return
     setBusy(true) // 連打すると 2 発目の DELETE が 404 でエラー表示になる
     try {
       await api.deleteSnapshot(snap.id)

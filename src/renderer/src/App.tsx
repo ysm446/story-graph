@@ -6,6 +6,7 @@ import TtsBar from './TtsBar'
 import ModelBar from './ModelBar'
 import StatusBar from './StatusBar'
 import TooltipHost from './Tooltip'
+import ConfirmDialogHost from './ConfirmDialog'
 import { useProductionLocked } from './tasks'
 import { showStatusNotice } from './statusNotice'
 
@@ -439,6 +440,8 @@ export default function App(): React.JSX.Element {
       <StatusBar backendReady={backendReady === true} selectedCount={mode === 'structure' ? selectedCount : 0} />
       {/* ツールチップの共有ホスト。アプリ全体で 1 つだけ置く(Tooltip.tsx) */}
       <TooltipHost />
+      {/* window.confirm / alert の代わり。アプリ全体で 1 つだけ置く(ConfirmDialog.tsx) */}
+      <ConfirmDialogHost />
       {/* 設定ポップアップ */}
       {settingsOpen && (
         <div

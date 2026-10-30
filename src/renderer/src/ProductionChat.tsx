@@ -17,6 +17,7 @@ import { Icon } from './icons'
 import ProductionMemoryPanel from './ProductionMemoryPanel'
 import ProductionPolicyPanel, { defaultProductionPolicy, policySummary } from './ProductionPolicyPanel'
 import ContextUsageRing, { type ContextUsage } from './ContextUsageRing'
+import { askConfirm } from './ConfirmDialog'
 
 interface Message {
   selected_nodes?: ProductionSelectedNode[]
@@ -383,7 +384,7 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
   const deleteConversation = async (targetId: string): Promise<void> => {
     if (busy) return
     const title = history.find((item) => item.id === targetId)?.title || '現在の制作の会話'
-    if (!window.confirm(`「${title}」の会話履歴を削除しますか?\n会話履歴は元に戻せません。作品・資料庫・作業メモ・スナップショットは残ります。`)) return
+    if (!(await askConfirm(`「${title}」の会話履歴を削除しますか?\n会話履歴は元に戻せません。作品・資料庫・作業メモ・スナップショットは残ります。`, '削除'))) return
     setHistoryBusy(true)
     setError('')
     try {
@@ -458,13 +459,13 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
   }
 
   /** 作業単位の取り消し。作業前のスナップショットへ戻し、ライブラリ切替と同じ作法で全体を読み直す */
-  const undoRun = useCallback((undo: ProductionUndo): void => {
+  const undoRun = useCallback(async (undo: ProductionUndo): Promise<void> => {
     if (!chatId || busy) return
-    if (!window.confirm(
+    if (!(await askConfirm(
       `この作業の変更 ${undo.changes} 件を取り消し、作業前の状態に戻しますか?
 ` +
       '作業の後に手で直した分も戻ります。戻す前の状態は「復元の前」として自動保存されます。'
-    )) return
+    , '戻す'))) return
     setError('')
     productionApi.undo(chatId, undo.snapshot_id)
       .then(() => window.location.reload())

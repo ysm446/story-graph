@@ -7,6 +7,7 @@ import VoiceProfilesCard from './VoiceProfilesCard'
 import VoiceRateSelect from './VoiceRateSelect'
 import { useElapsedSeconds } from './useElapsed'
 import { fmtBytes } from './modes/settings/format'
+import { askConfirm } from './ConfirmDialog'
 
 // 設定 →「音声読み上げ」。TTS サーバーの稼働・接続先・モデルフォルダ・語り手の声・インストール・
 // 音声キャッシュ(docs/design/voice.md)。画像生成(ComfyUI)のセクションと同じ並びにしてある
@@ -104,7 +105,7 @@ export default function VoiceSettingsSection({
   const handleUninstall = async (): Promise<void> => {
     if (!status) return
     const size = status.installed ? `(${fmtBytes(status.size_bytes)})` : ''
-    if (!window.confirm(`${status.install_dir}${size} を削除しますか?\nモデルフォルダは消しません。`)) return
+    if (!(await askConfirm(`${status.install_dir}${size} を削除しますか?\nモデルフォルダは消しません。`, '削除'))) return
     setRemoving(true)
     setError(null)
     try {

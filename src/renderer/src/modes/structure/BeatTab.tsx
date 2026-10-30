@@ -13,6 +13,7 @@ import { useElapsedSeconds } from '../../useElapsed'
 import type { Character, ElapsedUnit, Place, StoryNode } from '../../types'
 import { beatDraftCache, deleteBeatDraft, savedBeatDraft, setBeatDraft } from './beatDrafts'
 import { latestEventInputs } from './events'
+import { askConfirm } from '../../ConfirmDialog'
 
 // ---- ビートタブ ------------------------------------------------------
 
@@ -255,7 +256,7 @@ export function BeatTab({
   }
 
   const handleDelete = async (): Promise<void> => {
-    if (!window.confirm('このシーンを削除しますか?(後続シーンは前のシーンに繋がります)')) return
+    if (!(await askConfirm('このシーンを削除しますか?(後続シーンは前のシーンに繋がります)', '削除'))) return
     try {
       await api.deleteNode(node.id)
       deleteBeatDraft(node.id)

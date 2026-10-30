@@ -11,6 +11,7 @@ import {
   type LlamaServerStatus
 } from '../../api'
 import { describeProgress, fmtBytes } from './format'
+import { askConfirm } from '../../ConfirmDialog'
 
 // llama.cpp(llama-server)を GitHub リリースから自動ダウンロード/インストールする
 export default function LlamaInstaller(): React.JSX.Element {
@@ -116,7 +117,7 @@ export default function LlamaInstaller(): React.JSX.Element {
   const handleUninstall = async (install: LlamaServerInstall): Promise<void> => {
     const name = install.dir.split(/[\\/]/).pop() || install.dir
     const freed = install.size_bytes != null ? `${fmtBytes(install.size_bytes)} を空けます。` : ''
-    if (!window.confirm(`「${name}」を削除しますか?\n${freed}\n必要になったら同じビルドを入れ直せます。`)) return
+    if (!(await askConfirm(`「${name}」を削除しますか?\n${freed}\n必要になったら同じビルドを入れ直せます。`, '削除'))) return
     setRemovingDir(install.dir)
     setError(null)
     try {

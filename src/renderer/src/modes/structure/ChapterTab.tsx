@@ -10,6 +10,7 @@ import type { RenderStyleState } from '../../RenderStyle'
 import { enqueueTask, notifyGraphChanged, useTasks } from '../../tasks'
 import type { Character, EventInput, Group, RenderResult, StoryNode } from '../../types'
 import { chapterCast, chapterCoverNode, NodeThumb } from './StructureNodes'
+import { askConfirm } from '../../ConfirmDialog'
 
 // ---- 章タブ(章ノードを選択したときのインスペクタ。docs/design/chapters.md §6) ----
 
@@ -162,10 +163,10 @@ export function ChapterTab({
       : !(editing.importance >= 0 && editing.importance <= 1)
         ? '重要度は 0〜1 で入れてください'
         : undefined
-  const startEdit = (e: EventInput, i: number): void => {
+  const startEdit = async (e: EventInput, i: number): Promise<void> => {
     const key = entryKey(e, i)
     if (editing?.key === key) return
-    if (editDirty && !window.confirm('編集中のまとめの変更を捨てて、別のカードを編集しますか?')) return
+    if (editDirty && !(await askConfirm('編集中のまとめの変更を捨てて、別のカードを編集しますか?', '捨てる'))) return
     setEditing({ key, summary: String(e.payload.summary ?? ''), importance: Number(e.payload.importance ?? 0.6) })
     setEditError(null)
     focusEditGroup(`digest-${key}`)
@@ -220,7 +221,7 @@ export function ChapterTab({
   }, [digest, characters, group, nodeById])
 
   const removeDigest = async (): Promise<void> => {
-    if (!window.confirm('まとめを削除しますか?(次の章からは生の記憶に戻ります)')) return
+    if (!(await askConfirm('まとめを削除しますか?(次の章からは生の記憶に戻ります)', '削除'))) return
     setBusy(true)
     setError(null)
     try {
@@ -457,7 +458,7 @@ export function ChapterTab({
                                   重要度 {Number(e.payload.importance ?? 0.6).toFixed(2)}
                                 </span>
                               </div>
-                              <EditPencil label="このまとめ" onClick={() => startEdit(e, i)} />
+                              <EditPencil label="このまとめ" onClick={() => void startEdit(e, i)} />
                             </div>
                           )}
                         </div>

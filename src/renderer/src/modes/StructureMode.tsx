@@ -90,6 +90,7 @@ import { BeatTab } from './structure/BeatTab'
 import { CharTab, type MemorySource } from './structure/CharTab'
 import { ChapterTab } from './structure/ChapterTab'
 import { RenderTab } from './structure/RenderTab'
+import { askConfirm } from '../ConfirmDialog'
 
 // チャット部品は構造モードの再描画(ドラッグ・選択・進捗)に巻き込まない。
 // 渡す props は下で useMemo / useStableCallback により参照を保っている
@@ -573,7 +574,7 @@ function StructureModeInner({
       if (deletingNodes.current) return
       const node = graphNodes.find((n) => n.id === nodeId)
       const label = node?.title || '(無題)'
-      if (!window.confirm(`シーン「${label}」を削除しますか?(後続シーンは前のシーンに繋がります)`)) return
+      if (!(await askConfirm(`シーン「${label}」を削除しますか?(後続シーンは前のシーンに繋がります)`, '削除'))) return
       deletingNodes.current = true
       try {
         await api.deleteNode(nodeId)
@@ -628,7 +629,7 @@ function StructureModeInner({
           : chapterTitle !== null
             ? `章「${chapterTitle}」を前から切り離しますか?(章ごと独立した島になります)`
             : `「${label}」から先を切り離しますか?(シーンは残り、独立した島になります)`
-      if (!window.confirm(message)) return
+      if (!(await askConfirm(message, '切り離す'))) return
       try {
         await api.detachNode(childId)
         setSelectedEdgeId(null)
@@ -935,7 +936,7 @@ function StructureModeInner({
         setGenStatus('切り離せるシーンがありません(すでに島の根です)')
         return
       }
-      if (!window.confirm(`${targets.length} シーンを親から切り離しますか?(シーンは残ります)`)) return
+      if (!(await askConfirm(`${targets.length} シーンを親から切り離しますか?(シーンは残ります)`, '切り離す'))) return
       let failed = 0
       for (const id of targets) {
         await api.detachNode(id).catch(() => {
@@ -959,7 +960,7 @@ function StructureModeInner({
       const message = chapters.length
         ? `${chapters.length} 章と、章内を含む ${sceneCount} シーンを削除しますか?(章内の枝・未接続シーンも削除されます。後続シーンは前のシーンに繋がります)`
         : `${sceneCount} シーンを削除しますか?(後続シーンは前のシーンに繋がります)`
-      if (!window.confirm(message)) return
+      if (!(await askConfirm(message, '削除'))) return
       deletingNodes.current = true
       try {
         const result = await api.deleteSelection(targets, chapters)
@@ -2171,7 +2172,7 @@ function StructureModeInner({
   }
 
   const deleteEnding = async (endingId: string): Promise<void> => {
-    if (!window.confirm('この結末を削除しますか?')) return
+    if (!(await askConfirm('この結末を削除しますか?', '削除'))) return
     try {
       await api.deleteNode(endingId)
       await reload()
@@ -2346,7 +2347,7 @@ function StructureModeInner({
   }
 
   const dissolveChapter = async (group: Group): Promise<void> => {
-    if (!window.confirm(`「${group.title}」の章を解除しますか?(シーンはそのまま残ります)`)) return
+    if (!(await askConfirm(`「${group.title}」の章を解除しますか?(シーンはそのまま残ります)`, '解除'))) return
     try {
       await api.deleteGroup(group.id)
       setChapterView('chapters')

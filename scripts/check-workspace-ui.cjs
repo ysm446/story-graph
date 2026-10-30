@@ -153,6 +153,15 @@ store.save_chat_messages(chat['id'], [
     }
     throw new Error('シーンのカードが見つかりません: ' + title + ' / 見えているカード: ' + await js(`[...document.querySelectorAll('.react-flow__node')].map(e=>e.className.split(' ').find(c=>c.startsWith('react-flow__node-'))+':'+e.textContent.slice(0,12)).join(', ')`))
   }
+  // アプリ内の確認ダイアログ(ConfirmDialog.tsx。window.confirm の代わり)に答え、文面を返す
+  const answerConfirm = async (ok) => {
+    for (let i = 0; i < 30; i++) {
+      const text = await js(`(() => { const d = document.querySelector('[role="alertdialog"]'); if (!d) return null; const t = d.querySelector('p').textContent; const buttons = [...d.querySelectorAll('button')]; (${ok} ? buttons[buttons.length - 1] : buttons.find(b => b.textContent.trim() === '取り消し')).click(); return t })()`)
+      if (text !== null) { await pause(150); return text }
+      await pause(100)
+    }
+    throw new Error('確認ダイアログが出ません')
+  }
   const assert = async (condition, message) => {
     if (!await js(condition)) {
       try { writeFileSync(join(target, 'fail.png'), (await win.webContents.capturePage()).toPNG()) } catch {}
@@ -796,14 +805,15 @@ store.select_media(p['id'])
     await pause(600)
     await assert(`${cards}.length===3 && ${cards}.filter(e=>{ const t=e.parentElement.textContent; return t.includes('挿絵 · 検証シーン') && t.includes('人物 · 検証キャラ') }).length===1`, 'メディアページで、使い回したファイルは 1 枚にまとまり、使っている所が 2 つ並ぶ')
     writeFileSync(join(target, 'media-page-after.png'), (await win.webContents.capturePage()).toPNG())
-    // 削除: 確認の文を控えて「はい」で進める
-    await js(`window.__confirms = []; window.confirm = (m) => { window.__confirms.push(m); return true }; true`)
+    // 削除: 確認の文を控えて確定で進める
     await click('使われていない画像を削除(1)')
+    const confirms = [await answerConfirm(true)]
     await pause(800)
-    await assert(`${cards}.length===2 && !${cards}.some(e=>e.textContent.includes('動画')) && window.__confirms[0].includes('使われていない画像 1 件')`, '「使われていない画像を削除」で、どこでも選ばれていない動画だけが消える')
+    await assert(`${cards}.length===2 && !${cards}.some(e=>e.textContent.includes('動画')) && ${JSON.stringify(confirms[0])}.includes('使われていない画像 1 件')`, '「使われていない画像を削除」で、どこでも選ばれていない動画だけが消える')
     await js(`${cards}.find(e=>e.parentElement.textContent.includes('人物 · 検証キャラ')).parentElement.querySelector('button.delete-action').click()`)
+    confirms.push(await answerConfirm(true))
     await pause(800)
-    await assert(`(() => { const m=window.__confirms[1]; return m.includes('使用中') && m.includes('挿絵 · 検証シーン の挿絵が空になります') && m.includes('人物 · 検証キャラ の参照画像が空になります') })()`, '使用中の画像の削除は、空になる所を並べて確認する')
+    await assert(`(() => { const m=${JSON.stringify(confirms[1])}; return m.includes('使用中') && m.includes('挿絵 · 検証シーン の挿絵が空になります') && m.includes('人物 · 検証キャラ の参照画像が空になります') })()`, '使用中の画像の削除は、空になる所を並べて確認する')
     await assert(`${cards}.length===1 && ${cards}[0].getAttribute('aria-label').startsWith('場所 · 港')`, '確認すると、使い回した行も含めて一覧から消える')
     const nodeAfter = (await (await fetch(base + '/graph')).json()).nodes.find(n => n.id === node.id)
     const charaAfter = (await (await fetch(base + '/characters')).json()).find(c => c.id === chara.id)
@@ -1185,11 +1195,13 @@ store.select_media(m['id'])
     await pause(200)
     await assert(`!document.querySelector('[aria-label="設定資料の本文"]') && document.querySelector('[data-edit-group="doc-body"]').textContent.includes('夜間の通行') && !document.querySelector('#library-settings').textContent.includes('未保存')`, '取り消しで保存済み本文へ戻り、読む表示になる')
     writeFileSync(join(target, 'settings.png'), (await win.webContents.capturePage()).toPNG())
-    await js(`window.confirm=()=>false; void 0`)
     await click('この設定資料を削除')
+    await pause(150)
+    writeFileSync(join(target, 'confirm-dialog.png'), (await win.webContents.capturePage()).toPNG())
+    await answerConfirm(false)
     await assert(`!!document.querySelector('[data-setting-title]')`, '削除のキャンセルで資料を維持')
-    await js(`window.confirm=()=>true; void 0`)
     await click('この設定資料を削除')
+    await answerConfirm(true)
     await pause(250)
     if ((await (await fetch(base+'/setting-documents')).json()).length) throw new Error('削除が反映されていません')
     console.log('PASS 確認後に資料を削除')
@@ -1234,9 +1246,18 @@ store.select_media(m['id'])
         await pause(100)
       }
       await assert(`document.body.textContent.includes('renamed-history')`, mode + 'の会話名を変更')
-      await js(`(() => {window.confirm=()=>true;const row=[...document.querySelectorAll('aside .group')].find(e=>e.textContent.includes('renamed-history') && e.getClientRects().length);row.querySelector('[aria-label="この会話の操作"]').click()})()`)
+      await js(`(() => {const row=[...document.querySelectorAll('aside .group')].find(e=>e.textContent.includes('renamed-history') && e.getClientRects().length);row.querySelector('[aria-label="この会話の操作"]').click()})()`)
       await click('削除')
+      await answerConfirm(true)
       await assert(`document.body.textContent.includes('history-one-message') && ![...document.querySelectorAll('aside .group')].some(e=>e.getClientRects().length && e.textContent.includes('renamed-history'))`, mode + 'の別会話を削除しても現在の会話を保持')
+      // 確認のあと、入力欄に実際のキー入力が届く(ネイティブの confirm では、閉じたあと文字が入らないことがあった)
+      await js(`(() => {const el=[...document.querySelectorAll('textarea')].filter(e=>e.getClientRects().length && !e.disabled).pop(); el.focus(); return true})()`)
+      win.webContents.sendInputEvent({ type: 'char', keyCode: 'x' })
+      await pause(150)
+      await assert(`document.activeElement.tagName==='TEXTAREA' && document.activeElement.value.endsWith('x')`, mode + 'の会話を削除したあと、入力欄に文字を打てる')
+      win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Backspace' })
+      win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Backspace' })
+      await pause(150)
       await click('新しい会話')
       await assert(`!document.querySelector('aside[aria-label="会話一覧"]')`, mode + 'で新しい会話を始めると一覧を閉じる')
       await click('会話一覧')

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { api } from './api'
 import { showStatusNotice } from './statusNotice'
 import type { Character, StylePreset } from './types'
+import { askConfirm } from './ConfirmDialog'
 
 /** 清書の条件(スタイルプリセット / POV / 本文フォント)を、鑑賞モードと
  *  構造モードの清書タブで共有するための部品。
@@ -302,7 +303,7 @@ export function PresetEditorModal({
 
   const handleDelete = async (): Promise<void> => {
     if (!form.id) return
-    if (!window.confirm(`プリセット「${form.name}」を削除しますか?`)) return
+    if (!(await askConfirm(`プリセット「${form.name}」を削除しますか?`, '削除'))) return
     setBusy(true)
     try {
       await api.deletePreset(form.id)

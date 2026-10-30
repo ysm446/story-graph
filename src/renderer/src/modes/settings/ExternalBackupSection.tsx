@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { api } from '../../api'
 import type { BackupConfig } from '../../types'
 import { fmtSize } from './format'
+import { askConfirm } from '../../ConfirmDialog'
 
 // 外部バックアップ(zip 書き出し。docs/design/backup.md)。
 // スナップショットがライブラリの中に置かれるのに対し、こちらは外へ持ち出して
@@ -108,12 +109,12 @@ export default function ExternalBackupSection(): React.JSX.Element {
       }
       const when = info.created_at ? new Date(info.created_at).toLocaleString('ja-JP') : '不明'
       if (
-        !window.confirm(
+        !(await askConfirm(
           `「${info.library_name ?? '(名前不明)'}」(${when} / 画像 ${info.assets} 件)を` +
             '新しいライブラリとして展開します。\n' +
             '次に展開先の空フォルダを選んでください。展開後はそのライブラリに切り替わります' +
             '(今のライブラリは変更されません)。'
-        )
+        , '展開先を選ぶ'))
       ) {
         return
       }

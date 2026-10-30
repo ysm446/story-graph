@@ -5,6 +5,7 @@ import Lightbox from '../Lightbox'
 import { MEDIA_OWNER_LABEL } from '../MediaPicker'
 import type { MediaEntry, MediaItem } from '../types'
 import { useWorkspace } from '../Workspace'
+import { askConfirm } from '../ConfirmDialog'
 
 /** 同じファイルをまとめた 1 枚(使い回すと、同じファイルを指す行が持ち主ごとにできる) */
 type MediaFile = {
@@ -95,7 +96,7 @@ export default function MediaLibrary({
     }
   }
   const GC_NOTE = 'ファイルは次にライブラリを開いたときに片付けます(時点に戻す用のスナップショットや人物のアイコンの元画像が使っているものは残ります)。'
-  const removeFile = (f: MediaFile): void => {
+  const removeFile = async (f: MediaFile): Promise<void> => {
     const using = f.owners.filter((o) => o.selected)
     const lines = [
       f.inUse ? 'この画像は使用中です。使っている所から外して削除しますか?' : 'この画像をストックから削除しますか?',
@@ -104,11 +105,11 @@ export default function MediaLibrary({
       '',
       GC_NOTE
     ]
-    if (!window.confirm(lines.join('\n'))) return
+    if (!(await askConfirm(lines.join('\n'), '削除'))) return
     void run(() => api.deleteMediaFile(f.path))
   }
-  const removeUnused = (): void => {
-    if (!window.confirm(`どこでも使われていない画像 ${unusedCount} 件を、すべてのストックから削除しますか?\n\n${GC_NOTE}`)) return
+  const removeUnused = async (): Promise<void> => {
+    if (!(await askConfirm(`どこでも使われていない画像 ${unusedCount} 件を、すべてのストックから削除しますか?\n\n${GC_NOTE}`, '削除'))) return
     void run(() => api.deleteUnusedMedia())
   }
 
@@ -126,7 +127,7 @@ export default function MediaLibrary({
         )}
         <button
           data-write-action
-          onClick={removeUnused}
+          onClick={() => void removeUnused()}
           disabled={busy || unusedCount === 0}
           className="delete-action ml-auto rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-40"
           data-tip={
@@ -259,7 +260,7 @@ export default function MediaLibrary({
                   </div>
                   <button
                     data-write-action
-                    onClick={() => removeFile(f)}
+                    onClick={() => void removeFile(f)}
                     disabled={busy}
                     aria-label="この画像を削除"
                     className="delete-action inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md border disabled:opacity-40"

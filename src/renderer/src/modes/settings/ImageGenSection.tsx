@@ -13,6 +13,7 @@ import {
 import AutoTextarea from '../../AutoTextarea'
 import { useElapsedSeconds } from '../../useElapsed'
 import { describeProgress, fmtBytes } from './format'
+import { askConfirm } from '../../ConfirmDialog'
 
 const COMFY_DEFAULT_NEGATIVE = 'text, watermark, signature, blurry, low quality, extra limbs, deformed hands'
 
@@ -142,7 +143,7 @@ export default function ImageGenSection({
 
   const handleUninstall = async (): Promise<void> => {
     if (!status?.installed) return
-    if (!window.confirm(`runtime/comfyui(${fmtBytes(status.size_bytes)})を削除しますか?\nモデルフォルダは消しません。`)) return
+    if (!(await askConfirm(`runtime/comfyui(${fmtBytes(status.size_bytes)})を削除しますか?\nモデルフォルダは消しません。`, '削除'))) return
     setRemoving(true)
     setError(null)
     try {

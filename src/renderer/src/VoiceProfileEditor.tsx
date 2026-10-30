@@ -4,6 +4,7 @@ import AutoTextarea from './AutoTextarea'
 import { Icon } from './icons'
 import { enqueueTask, useTasks } from './tasks'
 import { useElapsedSeconds } from './useElapsed'
+import { askConfirm } from './ConfirmDialog'
 
 const inputStyle = { background: 'var(--bg-input)', borderColor: 'var(--border)' }
 const secondaryStyle = { borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }
@@ -240,7 +241,7 @@ export default function VoiceProfileEditor({
 
   const handleDelete = async (): Promise<void> => {
     const users = usedBy?.length ? `\n使っているもの(${usedBy.join('、')})は語り手の声で読むようになります。` : ''
-    if (!window.confirm(`声「${profile.name}」を削除しますか?${users}`)) return
+    if (!(await askConfirm(`声「${profile.name}」を削除しますか?${users}`, '削除'))) return
     try {
       await voiceApi.remove(profile.id)
       onDeleted?.()

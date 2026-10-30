@@ -5,6 +5,7 @@ import { enqueueTask, useTasks } from './tasks'
 import type { Character, SceneEntry } from './types'
 import { useElapsedSeconds } from './useElapsed'
 import { applyVoiceRate } from './voiceRate'
+import { askConfirm } from './ConfirmDialog'
 
 const inputStyle = { background: 'var(--bg-input)', borderColor: 'var(--border)' }
 const secondaryStyle = { borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }
@@ -83,7 +84,7 @@ export default function VoiceScriptModal({
   }
 
   const handleReset = async (): Promise<void> => {
-    if (!window.confirm('清書から台本を作り直しますか?\n話者・感情・読みの手直しはすべて消えます。')) return
+    if (!(await askConfirm('清書から台本を作り直しますか?\n話者・感情・読みの手直しはすべて消えます。', '作り直す'))) return
     setBusy(true)
     setError(null)
     try {
@@ -147,8 +148,8 @@ export default function VoiceScriptModal({
     }
   }
 
-  const handleClose = (): void => {
-    if (dirty && !window.confirm('保存していない直しがあります。閉じますか?')) return
+  const handleClose = async (): Promise<void> => {
+    if (dirty && !(await askConfirm('保存していない直しがあります。閉じますか?', '閉じる'))) return
     onClose()
   }
 
