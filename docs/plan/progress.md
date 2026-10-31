@@ -1,10 +1,11 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-07-24 22:38
-更新日時: 2026-10-30 18:24
+更新日時: 2026-10-31 22:34
 
 ## 現在の状態
 
+- 2026-10-31 22:34 **`changelog.md` を `CHANGELOG.md` に改名**(ユーザー依頼)。README・AGENTS・CLAUDE・設計資料の参照を合わせた。`docs/plan/progress.md` と `docs/design/node-inheritance.md` のリンク先が `../changelog.md`(存在しない `docs/changelog.md`)になっていたのも `../../CHANGELOG.md` に直した
 - 2026-10-30 18:20 **ライブラリの新規作成**(ユーザー要望)。メニューを「+ 新しいライブラリ…」と「フォルダを開く…」に分けた。`NewLibraryDialog.tsx` で名前と場所を入れ、`src/main/library.ts` の `createLibraryFolder` がフォルダを作り、既存の切り替えで開く(DB は切り替え時にバックエンドが作る)。名前の判定は `src/shared/libraryName.ts` をレンダラとメインで共有。「開く」と履歴からの切り替えは `story-graph.db` が無ければ確認する(ユーザー依頼「直してください」)。`rememberLibraryRoot` は離れるライブラリも履歴に載せる。検証: typecheck・build、新設の `--library` 23 項目、`--settings` / `--details` 成功。**未確認**: ネイティブのフォルダ選択から戻ったあとのキー入力(`--library` はダイアログを差し替えるため)と `rememberLibraryRoot` の履歴(メインプロセスの処理)は実機で触っていない。**未対応**: 起動時に前回のライブラリが無いときは確認せず空のライブラリを作る
 - 2026-10-30 17:28 **勢力(factions)を廃止**(ユーザー判断「残さなくていい」)。名前・説明・所属キャラを持つ勢力と、関係の相手を勢力にする仕組みは、作る画面が無く、生成も相手をキャラに固定していて使われていなかった(手元のライブラリも 0 件)。`factions` / `faction_members` テーブル(起動時に `DROP TABLE IF EXISTS`)、`/factions` API、Store のメソッド、検証・チャット・削除前の参照確認の分岐、Events の勢力名の表示、`--events` の勢力の 2 項目、テスト 1 件を削除。仕様書・設計メモの記述も合わせた。検証: pytest 739 件、typecheck・build、`--events` / `--cast` 成功
 - 2026-10-30 15:41 **重複のまとめ(2 回目)**(ユーザー依頼「無駄なところをまとめて」。a215631 の続き。挙動は変えない)。バックエンド: app.py の関数内 import を先頭へ、KeyError→404 / ValueError→400 の try を `_not_found` / `_bad_request` / `_http_errors` の with に(28 か所)、人物・場所の画像プロンプト SSE を `_image_prompt_sse` に、store の assets 配下のフォルダと未参照ファイルの GC を `_assets_subdir` / `_gc_unreferenced` に、シーン行の INSERT を `_insert_scene_row` に、はじまり・結末の INSERT を `_new_marker` に、エラー時の rollback を `Store.rollback_quietly` に、GitHub のリリース取得を `installer_common.fetch_github_releases` に。未使用 import を削除。フロント: セグメント 13 か所を `Segment.tsx`、画像のドロップ枠 4 か所を `useFileDrop.ts`、BeatTab の自動生成 / 推測ボタン 4 個を `suggestButton`、感情の核の手書きの自動伸縮を `AutoTextarea` に。検証: pytest 740 件、typecheck、`check-workspace-ui.cjs` の --media / --settings / --details / --effect / --chapter / --tabs / --cast / --imageprompts / --history が通過。**`--imagegen` は変更前の状態でも「既定のワークフローの選択…」で止まる**(今回とは無関係。未調査)。残りの候補(未着手): CharacterEditor / PlaceEditor の編集の仕組み、画像生成ウインドウ 3 つ、モーダルの地と面
@@ -112,7 +113,7 @@
 - 2026-10-14 20:50 **詳細欄「資料」タブ**(ユーザー依頼: 鎖でキャラクターをクリックしたら資料庫のキャラクターページを詳細欄に)。資料庫のキャラクター編集(`CharactersMode.tsx` に直書き、774 行)を `modes/CharacterEditor.tsx` に切り出し(`PlaceEditor` と同じ作法。親が `key` で作り直す。`onDeleted` を渡さなければ削除ボタンを出さない)、`CharactersMode.tsx` は 362 行に。構造モードの詳細欄に `library` タブ(左: 人物一覧、右: `CharacterEditor`)。保存後は `reload()` と `workspace.changed()`(資料庫は次に開いたとき読み直す)。鎖のキャラクターのクリックは `handleSelectChainChar` → `library` タブ。検証: `--cast`(資料タブの表示・確定で保存・一覧の切替)と既定の検証(58 項目 + 既知の 1 項目)。**未コミット**。
 - 2026-10-14 23:10 **詳細欄の人物専用の表示**(ユーザー依頼: キャラクターを選んだら詳細欄を人物専用の UI に)。`inspectorFocus`(scene / character)と `charTab`(profile / state / graph / facts)を `StructureMode` に追加。人物の「時点」は `charPointNode`(選択中のシーンに居ればそれ、居なければ正史で最後の出番)。`CharTab` に `lockChar`、`FactTimeline` に `fixedTarget` を足して人物を固定。旧「資料」タブは廃止。以降の鎖の追加分(順番の点線・ダブルクリックでフローチャートへ・登場人物の行のクリック・ミニマップ既定オフ)はコミット済み(c8d2e44 まで)と未コミット分が混在。
 
-- 2026-10-14 14:40 **コード全体のレビューに基づく不具合修正とリファクタリング**(ユーザー依頼「リファクタリングとバグ修正」)。バックエンド・フロントの主要ファイルを読み直し、裏取りできた不具合だけを直した(詳細は `changelog.md` の 14:21 の項)。主なもの: シーン保存中に打った本文が再読込で消える(`BeatTab.handleSave` が退避を消す条件を「送った内容と同じとき」に限定)、章のまとめ生成の失敗が `tasks.ts` の `pump` に握りつぶされて無通知(通知に出す)、キャラ・場所の追加の連打と失敗の無表示、設定の `save()` の失敗の無表示(`saveError` を「保存しました」の場所に出す)、`PUT /nodes/{id}/events` で必須フィールド欠けのイベントが保存されると下流の fold が全部 500 になる(`validation.payload_errors` で保存前に 400。`fact_set` の char 必須条件も fold と揃えた)、結末の先への追加が 500、`llm.chat_stream_tools` が choices 空の usage チャンクを捨てて統計が無くなる、会話室の上限時のまとめの統計漏れ、`backup.rotate` のグロブ記号、`prepare_db` の一時フォルダ漏れ、「推測」の elapsed_count の指示に hour が無い、補間生成の次のシーンに経過が無い。**リファクタリング**(いずれも挙動は変えていない): `StructureMode.tsx` を 5845 行 → 3474 行に分割(`modes/structure/` に `BeatTab` / `CharTab` / `ChapterTab` / `RenderTab` / `StructureNodes` / `layout` / `beatDrafts` / `events` / `useSaveShortcut`)、`SettingsMode.tsx` を 2963 行 → 989 行に分割(`modes/settings/` に各セクション + `format.ts`)、`api.ts` の SSE 読み取りループ 7 本を `postSse` 1 本に(body 省略・非同期 onEvent・イベントごとの後処理に対応)、バックエンドの `_sse` ×3 を `llm.sse` に、`app.py` のインストール進捗 SSE ×3・anchor の既定 ×4・アップロード上限 ×2 を共通化。未使用の `api.timeline` / `reextractChainStream` を削除。**検証**: typecheck・build 成功、pytest 675 件成功(`test_review_fixes.py` 5 件を追加)、隔離 Electron の既定の検証は従来どおり 58 項目成功で既知の未修正 1 項目(制作後の候補)で停止。`--tabs` 18 項目・`--details` 23 項目・`--settings` 9 項目も成功(分割した構造モードのタブと設定のセクションが従来どおり動く)。**未確認**: 実アプリ(開発モード)での手触り。レビューで直した不具合の実機再現(保存中の入力、まとめ生成の失敗通知など)は隔離 Electron には項目が無い。**メモ**: 隔離 Electron の検証は Claude Code の端末から動かすときは `env -u ELECTRON_RUN_AS_NODE npx electron scripts/check-workspace-ui.cjs` のように `ELECTRON_RUN_AS_NODE` を外す(付いたままだと `require('electron')` がパス文字列になり `app.setPath` で落ちる)。**見送った指摘**(レビューで挙がったが今回は触っていない): `reload` の順序保証が無く、ドラッグ直後に古い `/graph` の応答が位置を戻すことがある、`EventsEditor` / `RenderTab` の失敗表示が積んだ時点のコンポーネントに閉じる、`ChapterTab` のまとめの編集中に `digest_stale` が変わると編集が消える、`NodePatch.status` が導出キャッシュなのに書き込める、`active_ending()` の途中 commit、`snapshots.create_async` / `restore` が `STORY_GRAPH_DB` 設定時に別ファイルを見る、`DELETE /groups/{g}/nodes/{n}` が g を無視する、`ChatDrawer` の index キー、`useChatVoice` / `useReadAloud` の abort リスナーの積み増し。
+- 2026-10-14 14:40 **コード全体のレビューに基づく不具合修正とリファクタリング**(ユーザー依頼「リファクタリングとバグ修正」)。バックエンド・フロントの主要ファイルを読み直し、裏取りできた不具合だけを直した(詳細は `CHANGELOG.md` の 14:21 の項)。主なもの: シーン保存中に打った本文が再読込で消える(`BeatTab.handleSave` が退避を消す条件を「送った内容と同じとき」に限定)、章のまとめ生成の失敗が `tasks.ts` の `pump` に握りつぶされて無通知(通知に出す)、キャラ・場所の追加の連打と失敗の無表示、設定の `save()` の失敗の無表示(`saveError` を「保存しました」の場所に出す)、`PUT /nodes/{id}/events` で必須フィールド欠けのイベントが保存されると下流の fold が全部 500 になる(`validation.payload_errors` で保存前に 400。`fact_set` の char 必須条件も fold と揃えた)、結末の先への追加が 500、`llm.chat_stream_tools` が choices 空の usage チャンクを捨てて統計が無くなる、会話室の上限時のまとめの統計漏れ、`backup.rotate` のグロブ記号、`prepare_db` の一時フォルダ漏れ、「推測」の elapsed_count の指示に hour が無い、補間生成の次のシーンに経過が無い。**リファクタリング**(いずれも挙動は変えていない): `StructureMode.tsx` を 5845 行 → 3474 行に分割(`modes/structure/` に `BeatTab` / `CharTab` / `ChapterTab` / `RenderTab` / `StructureNodes` / `layout` / `beatDrafts` / `events` / `useSaveShortcut`)、`SettingsMode.tsx` を 2963 行 → 989 行に分割(`modes/settings/` に各セクション + `format.ts`)、`api.ts` の SSE 読み取りループ 7 本を `postSse` 1 本に(body 省略・非同期 onEvent・イベントごとの後処理に対応)、バックエンドの `_sse` ×3 を `llm.sse` に、`app.py` のインストール進捗 SSE ×3・anchor の既定 ×4・アップロード上限 ×2 を共通化。未使用の `api.timeline` / `reextractChainStream` を削除。**検証**: typecheck・build 成功、pytest 675 件成功(`test_review_fixes.py` 5 件を追加)、隔離 Electron の既定の検証は従来どおり 58 項目成功で既知の未修正 1 項目(制作後の候補)で停止。`--tabs` 18 項目・`--details` 23 項目・`--settings` 9 項目も成功(分割した構造モードのタブと設定のセクションが従来どおり動く)。**未確認**: 実アプリ(開発モード)での手触り。レビューで直した不具合の実機再現(保存中の入力、まとめ生成の失敗通知など)は隔離 Electron には項目が無い。**メモ**: 隔離 Electron の検証は Claude Code の端末から動かすときは `env -u ELECTRON_RUN_AS_NODE npx electron scripts/check-workspace-ui.cjs` のように `ELECTRON_RUN_AS_NODE` を外す(付いたままだと `require('electron')` がパス文字列になり `app.setPath` で落ちる)。**見送った指摘**(レビューで挙がったが今回は触っていない): `reload` の順序保証が無く、ドラッグ直後に古い `/graph` の応答が位置を戻すことがある、`EventsEditor` / `RenderTab` の失敗表示が積んだ時点のコンポーネントに閉じる、`ChapterTab` のまとめの編集中に `digest_stale` が変わると編集が消える、`NodePatch.status` が導出キャッシュなのに書き込める、`active_ending()` の途中 commit、`snapshots.create_async` / `restore` が `STORY_GRAPH_DB` 設定時に別ファイルを見る、`DELETE /groups/{g}/nodes/{n}` が g を無視する、`ChatDrawer` の index キー、`useChatVoice` / `useReadAloud` の abort リスナーの積み増し。
 
 - 2026-10-14 02:55 **経過の単位に「時間後」(`hour`)を追加**(ユーザー依頼)。最初の設計では、日をまたぐかどうかが決まらず Day を数えられなくなるという理由で外していたが、Day の表示は作っておらず距離にしか使っていないので入れた。`story_clock` の単位に `hour` を足し、距離の積み上げを日数から時間数に変えた(日 = 24、週 = 168、月 = 720、年 = 8760)。`ago` は 24 時間未満を「N時間前」、それ以上を日に丸めて従来どおりに出す。単位の一覧を参照している場所(API の型、シーンタブのプルダウン、シーン生成のスキーマ、制作のツール、「推測」の指示、取り込みの検査)は `story_clock.UNITS` から引いているか、合わせて直した。取り込みの仕様書と設計メモの「数時間後は無い」という記述を直した。「同じ日」は残した。pytest 670件成功(時間の積み上げと「N時間前」の確認を追加。不正な単位の例を hour から minute に変更)、build成功、隔離Electronの `--details` 23項目(選択肢の並び、5時間後の保存を追加)成功。**未確認**: 実モデルが「時間後」を正しく使うか(清書の書き出し、「推測」、シーン生成)。記憶に「N時間前」が付いた会話の見え方。
 
@@ -610,7 +611,7 @@
   インタビュー / 劇中会話。ツールは recall のみ。詳細は [docs/design/chat.md](../design/chat.md))、
   会話サイドバー(会話名の編集 / 削除)、メッセージのホバー操作(編集 / 再生成 / 削除)、生成統計の表示
 
-- [x] **2026-07-26〜27 の作業**(上記以外。詳細は [changelog](../changelog.md)):
+- [x] **2026-07-26〜27 の作業**(上記以外。詳細は [CHANGELOG](../../CHANGELOG.md)):
   - **登場は cast から導出、退場は作者が UI で設定**(LLM のイベントは 3 種のみに)。
     設計の背景は [node-inheritance.md](../design/node-inheritance.md)
   - **記憶に目撃と伝聞を含めるルール**(EVENT_RULES に 3 行 + importance の目安)
@@ -663,7 +664,7 @@
   読み込み中だけ 1.5 秒間隔に詰める
 
 - [x] **全体コードレビューと不具合修正**(2026-07-29): バックエンド 22 件 + フロント 31 件を修正
-  (詳細は [changelog](../changelog.md))。主なもの: 分岐の根の削除で正史エッジが二重になる /
+  (詳細は [CHANGELOG](../../CHANGELOG.md))。主なもの: 分岐の根の削除で正史エッジが二重になる /
   エラー応答時に半端な書き込みが残る(app.py にロールバックハンドラ追加)/ 場所編集で清書が
   stale にならない / チャット履歴の途中保存 / putEvents 全件置換のレース / タスク完了通知の
   stale closure(tasks.ts の `notifyGraphChanged` / `setNodeBusy` に集約)/ llama-server の
@@ -724,7 +725,7 @@
 - [x] **全体コードレビューと不具合修正(第 3 回)+ 処理の軽量化**(2026-08-17 ユーザー依頼):
   前回(2026-08-10)以降の変更(llama インストーラー / ツールチップ / 校正のやり直し /
   シーンの置き場所・間のシーン生成 / メニュー整理)を対象に、バックエンド 5 件 +
-  フロントエンド 9 件を修正(詳細は [changelog](../changelog.md))。主なもの:
+  フロントエンド 9 件を修正(詳細は [CHANGELOG](../../CHANGELOG.md))。主なもの:
   同一バリアントの入れ直し失敗で既存インストールごと消える / asset 名のパス検証なし /
   校正の置換が編集を巻き戻す / インストーラー UI が中止後に行き止まり /
   Tooltip が最後の pointermove を捨てる。あわせて挙動を変えない軽量化 8 件:
@@ -740,7 +741,7 @@
   pytest 215 件。**UI 側の修正は実機での確認がまだ**
 - [x] **全体コードレビューと不具合修正(第 2 回)**(2026-08-10 ユーザー依頼):
   前回(2026-07-29)以降の変更(章 / 結末 / バックアップ / 清書タブ等)を対象に、
-  バックエンド 11 件 + フロントエンド 15 件を修正(詳細は [changelog](../changelog.md))。
+  バックエンド 11 件 + フロントエンド 15 件を修正(詳細は [CHANGELOG](../../CHANGELOG.md))。
   主なもの: スナップショット復元が復元対象を prune で消す / 章の末尾メンバーを外すと
   次の resync でシーンが正史から抜け落ちる / SSE 生成器内の例外でロールバックされない /
   結末を切り離したまま + シーンで canon エッジが二重になる / 章の解除でまとめの記憶が
@@ -896,7 +897,7 @@
     ③ の「勝手に直さず警告」方針はこの 1 件だけ取り下げた(別の章に ⚠ が出るうえ
     直す手立てが無いため)。pytest 171 件。**実機での確認はまだ**(サーバー再起動が要る)
 - [x] **接続まわりのレビューと修正 3 件**(2026-08-03 ユーザー依頼「接続の挙動が不安定」→ 同日修正。
-  詳細: [changelog](../changelog.md)): ① 正史の章で道の途中のシーンを出口に繋いで道を短くすると
+  詳細: [CHANGELOG](../../CHANGELOG.md)): ① 正史の章で道の途中のシーンを出口に繋いで道を短くすると
   黙って元に戻っていた(`attach_node` の出口処理が `make_canon` → `_realign_group_out` 経由で
   繋ぎ替え前の is_canon を辿り、出口を旧末尾へ配線し直していた。`_resync_canon` の導出に一本化)。
   ② 章ビューのエッジ(合成 ID)が選択もダブルクリック切断も黙って空振りしていた

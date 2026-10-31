@@ -88,7 +88,7 @@ Electron (main)
 | [docs/plan/plan.md](docs/plan/plan.md) | 実装方針・移植元マップ |
 | [docs/plan/progress.md](docs/plan/progress.md) | 進捗・注意点・実装知見 |
 | [docs/design/system-prompts.md](docs/design/system-prompts.md) | LLM プロンプトの構成と編集可能範囲 |
-| [changelog.md](changelog.md) | 変更履歴 |
+| [CHANGELOG.md](CHANGELOG.md) | 変更履歴 |
 
 ## ライセンス
 
