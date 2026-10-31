@@ -118,7 +118,8 @@ store.save_chat_messages(chat['id'], [
     const digest = await fetch(base + `/groups/${chapter.id}/digest`, {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({events:[compress(character.id,'検証のまとめ。'),compress(second.id,'二人目のまとめ。'),compress(character.id,'検証のまとめ・二件目。')]})})
     if (!digest.ok) throw new Error(await digest.text())
   }
-  ipcMain.handle('library:info', () => ({ current: target, recents: [] }))
+  const libraryInfo = { current: target, recents: [], defaultParent: join(target, 'libs') }
+  ipcMain.handle('library:info', () => libraryInfo)
   const win = new BrowserWindow({ show: false, width: 1440, height: 1000, webPreferences: { offscreen: true, backgroundThrottling: false, preload: join(root, 'out/preload/index.js') } })
   const errors = []
   win.webContents.on('console-message', (event) => {
@@ -180,6 +181,141 @@ store.save_chat_messages(chat['id'], [
   }
   await click('チャット')
   await click('制作')
+  if (process.argv.includes('--library')) {
+    // ライブラリの新規作成と「開く」。フォルダを作る処理は本物(src/main/library.ts)を使い、ネイティブのダイアログだけ差し替える
+    const { buildSync } = require('esbuild')
+    const { existsSync } = require('node:fs')
+    const { basename } = require('node:path')
+    const bundle = join(target, 'library-main.cjs')
+    buildSync({ entryPoints: [join(root, 'src/main/library.ts')], bundle: true, platform: 'node', format: 'cjs', outfile: bundle })
+    const { createLibraryFolder, isLibraryFolder } = require(bundle)
+    const parent = libraryInfo.defaultParent
+    const browsed = join(target, 'browsed')
+    const stray = join(target, 'stray')
+    for (const dir of [parent, browsed, stray, join(parent, '既存')]) mkdirSync(dir, { recursive: true })
+    let nextChosen = null
+    let switches = 0
+    ipcMain.handle('library:chooseParent', () => browsed)
+    ipcMain.handle('library:isLibrary', (_event, dir) => isLibraryFolder(dir))
+    ipcMain.handle('library:choose', () => ({ root: nextChosen, isLibrary: isLibraryFolder(nextChosen) }))
+    ipcMain.handle('library:create', (_event, dir, name) => createLibraryFolder(dir, name))
+    ipcMain.handle('library:switch', (_event, dir) => { switches += 1; libraryInfo.current = dir; return dir })
+    const input = async (selector, value) => {
+      await js(`(() => { const el = document.querySelector(${JSON.stringify(selector)}); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, ${JSON.stringify(value)}); el.dispatchEvent(new Event('input', { bubbles: true })) })()`)
+      await pause(100)
+    }
+    const menuButton = (name) => `[...document.querySelectorAll('button')].find(e=>e.textContent.includes(${JSON.stringify(name)}) && e.textContent.includes('▾'))`
+    const menuItem = (label) => `[...document.querySelectorAll('button')].find(e=>e.textContent.trim()===${JSON.stringify(label)})`
+    const openMenu = async () => { await js(`${menuButton(basename(libraryInfo.current))}.click()`); await pause(150) }
+    const waitForLibrary = async (dir) => {
+      for (let i = 0; i < 60; i++) { if (await js(`!!${menuButton(basename(dir))}`)) break; await pause(200) }
+      await pause(500)
+    }
+    const dialog = `document.querySelector('form[role="dialog"]')`
+    const submitButton = `${dialog}.querySelector('button[type="submit"]')`
+    const openDialog = async () => { await openMenu(); await js(`${menuItem('+ 新しいライブラリ…')}.click()`); await pause(200) }
+
+    await openMenu()
+    await assert(`!!${menuItem('+ 新しいライブラリ…')} && !!${menuItem('フォルダを開く…')} && !${menuItem('+ フォルダを選択…')}`, 'メニューは「新しいライブラリ」と「フォルダを開く」に分かれる')
+    await js(`${menuItem('+ 新しいライブラリ…')}.click()`)
+    await pause(200)
+    await assert(`document.activeElement?.id==='new-library-name' && document.querySelector('#new-library-parent').value===${JSON.stringify(parent)} && ${submitButton}.disabled && !document.querySelector('[data-new-library-name-error]')`, '開くと名前の欄にフォーカスがあり、場所は初期値、空のうちはエラーを出さず作成できない')
+    await input('#new-library-name', 'a:b')
+    await assert(`document.querySelector('[data-new-library-name-error]').textContent.includes('使えない文字') && ${submitButton}.disabled`, 'フォルダ名に使えない文字は押す前に知らせる')
+    await input('#new-library-name', 'CON')
+    await assert(`document.querySelector('[data-new-library-name-error]').textContent.includes('予約') && ${submitButton}.disabled`, 'Windows の予約名は押す前に知らせる')
+    await input('#new-library-name', '末尾.')
+    await assert(`document.querySelector('[data-new-library-name-error]').textContent.includes('ピリオド') && ${submitButton}.disabled`, '末尾のピリオドは押す前に知らせる')
+    await input('#new-library-name', '  港町の物語  ')
+    await assert(`!document.querySelector('[data-new-library-name-error]') && !${submitButton}.disabled && document.querySelector('[data-new-library-destination]').textContent===${JSON.stringify('作成先: ' + join(parent, '港町の物語'))}`, '前後の空白を落とし、作成先を出す')
+    writeFileSync(join(target, 'library-new.png'), (await win.webContents.capturePage()).toPNG())
+    await input('#new-library-name', '既存')
+    await js(`${submitButton}.click()`)
+    await pause(300)
+    await assert(`document.querySelector('[role="alert"]')?.textContent.includes('同じ名前のフォルダが既にあります') && !!${dialog}`, '同じ名前のフォルダがあれば作らず、ダイアログに理由を出す')
+    if (switches !== 0) throw new Error('既存のフォルダで切り替わっています')
+    await input('#new-library-name', '新しい物語')
+    await assert(`!document.querySelector('[role="alert"]')`, '入力を直すとエラーが消える')
+    await input('#new-library-parent', join(target, 'missing'))
+    await js(`${submitButton}.click()`)
+    await pause(300)
+    await assert(`document.querySelector('[role="alert"]')?.textContent.includes('場所のフォルダが見つかりません')`, '場所のフォルダが無ければ理由を出す')
+    await input('#new-library-parent', 'relative')
+    await js(`${submitButton}.click()`)
+    await pause(300)
+    await assert(`document.querySelector('[role="alert"]')?.textContent.includes('ドライブから')`, '場所がフルパスでなければ理由を出す')
+    await js(`[...${dialog}.querySelectorAll('button')].find(e=>e.textContent.trim()==='参照…').click()`)
+    await pause(300)
+    await assert(`document.querySelector('#new-library-parent').value===${JSON.stringify(browsed)} && document.activeElement?.id==='new-library-name' && !document.querySelector('[role="alert"]')`, '参照で場所が変わり、名前の欄へフォーカスが戻る')
+    await js(`window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`)
+    await pause(200)
+    await assert(`!${dialog}`, 'Esc で閉じる')
+    if (existsSync(join(browsed, '新しい物語')) || switches !== 0) throw new Error('取り消したのにフォルダが作られました')
+    console.log('PASS 取り消すと何も作られない')
+
+    await openDialog()
+    await input('#new-library-name', '港町の物語')
+    await js(`${submitButton}.click()`)
+    const created = join(parent, '港町の物語')
+    await waitForLibrary(created)
+    await assert(`!!${menuButton('港町の物語')}`, '作成すると新しいライブラリに切り替わる')
+    if (!existsSync(join(created, 'story-graph.db'))) throw new Error('DB が作られていません: ' + created)
+    console.log('PASS 新しいフォルダに story-graph.db ができる')
+
+    // 「開く」: ライブラリでないフォルダは確認し、取り消せば何も作らない
+    const beforeOpen = switches
+    nextChosen = stray
+    await openMenu()
+    await js(`${menuItem('フォルダを開く…')}.click()`)
+    const asked = await answerConfirm(false)
+    if (!asked.includes('ライブラリではありません') || !asked.includes(stray)) throw new Error('確認の文面が違います: ' + asked)
+    await pause(300)
+    if (switches !== beforeOpen || existsSync(join(stray, 'story-graph.db'))) throw new Error('取り消したのに開きました')
+    console.log('PASS ライブラリでないフォルダは確認し、取り消せば何も作らない')
+    await openMenu()
+    await js(`${menuItem('フォルダを開く…')}.click()`)
+    await answerConfirm(true)
+    await waitForLibrary(stray)
+    if (!existsSync(join(stray, 'story-graph.db'))) throw new Error('確定したのに DB がありません')
+    console.log('PASS 確定すればそのフォルダをライブラリにする')
+    // 既にライブラリのフォルダは確認なしで開く
+    nextChosen = created
+    await openMenu()
+    await js(`${menuItem('フォルダを開く…')}.click()`)
+    await pause(300)
+    await assert(`!document.querySelector('[role="alertdialog"]')`, '既にライブラリのフォルダは確認を出さない')
+    await waitForLibrary(created)
+    await assert(`!!${menuButton('港町の物語')}`, '既にライブラリのフォルダはそのまま開く')
+    // 履歴のフォルダ: 移動・削除されていれば確認し、ライブラリがあればそのまま開く
+    const gone = join(target, 'gone')
+    libraryInfo.recents = [created, gone, stray]
+    await new Promise((done) => { win.webContents.once('did-finish-load', () => done()); win.webContents.reload() })
+    await waitForLibrary(created)
+    const recentRow = (dir) => `[...document.querySelectorAll('button[data-tip]')].find(e=>e.getAttribute('data-tip')===${JSON.stringify(dir)} && !e.textContent.includes('▾'))`
+    const beforeRecent = switches
+    await openMenu()
+    await js(`${recentRow(gone)}.click()`)
+    const askedRecent = await answerConfirm(false)
+    if (!askedRecent.includes('見つかりません') || !askedRecent.includes(gone)) throw new Error('確認の文面が違います: ' + askedRecent)
+    await pause(300)
+    if (switches !== beforeRecent || existsSync(gone)) throw new Error('取り消したのに履歴のフォルダを作りました')
+    console.log('PASS 履歴のフォルダが無ければ確認し、取り消せば何も作らない')
+    await openMenu()
+    await js(`${recentRow(gone)}.click()`)
+    await answerConfirm(true)
+    await waitForLibrary(gone)
+    if (!existsSync(join(gone, 'story-graph.db'))) throw new Error('確定したのに DB がありません')
+    console.log('PASS 確定すれば元の場所に作り直す')
+    await openMenu()
+    await js(`${recentRow(stray)}.click()`)
+    await pause(300)
+    await assert(`!document.querySelector('[role="alertdialog"]')`, '履歴のライブラリは確認を出さない')
+    await waitForLibrary(stray)
+    await assert(`!!${menuButton(basename(stray))}`, '履歴のライブラリはそのまま開く')
+    console.log('Screenshots: ' + target)
+    win.destroy()
+    return
+  }
   if (process.argv.includes('--import')) {
     // 設定の「取り込み」: 完成例(docs/reference/import-example.json)を、空のライブラリへ取り込む
     const { readFileSync } = require('node:fs')

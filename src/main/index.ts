@@ -1,8 +1,9 @@
 import { app, BrowserWindow, dialog, ipcMain, screen, shell } from 'electron'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { execSync } from 'node:child_process'
-import { join, normalize } from 'node:path'
+import { dirname, join, normalize } from 'node:path'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { createLibraryFolder, isLibraryFolder } from './library'
 import { findAvailablePort, isPortInUse, isStoryGraphHealthy } from './sidecarNetwork'
 
 const DEFAULT_API_PORT = 8765
@@ -13,6 +14,8 @@ const DEFAULT_API_PORT = 8765
 interface AppConfig {
   libraryRoot: string | null
   recentRoots: string[]
+  /** 前回ライブラリを新規作成した場所 */
+  createParent: string | null
 }
 
 function configFilePath(): string {
@@ -25,10 +28,11 @@ function loadConfig(): AppConfig {
     const parsed = JSON.parse(raw) as Partial<AppConfig>
     return {
       libraryRoot: typeof parsed.libraryRoot === 'string' ? parsed.libraryRoot : null,
-      recentRoots: Array.isArray(parsed.recentRoots) ? parsed.recentRoots.filter((r) => typeof r === 'string') : []
+      recentRoots: Array.isArray(parsed.recentRoots) ? parsed.recentRoots.filter((r) => typeof r === 'string') : [],
+      createParent: typeof parsed.createParent === 'string' ? parsed.createParent : null
     }
   } catch {
-    return { libraryRoot: null, recentRoots: [] }
+    return { libraryRoot: null, recentRoots: [], createParent: null }
   }
 }
 
@@ -46,10 +50,19 @@ function currentLibraryRoot(): string {
   return config.libraryRoot ?? join(repoRoot(), 'data')
 }
 
+/** 新規作成で最初に出す場所。前回の場所、無ければ今のライブラリの隣。
+ *  既定のライブラリ(リポジトリ内の data/)の隣はリポジトリの直下になるので、ドキュメントにする */
+function defaultCreateParent(config: AppConfig): string {
+  if (config.createParent) return config.createParent
+  return config.libraryRoot ? dirname(config.libraryRoot) : app.getPath('documents')
+}
+
 function rememberLibraryRoot(root: string): void {
   const config = loadConfig()
+  // 既定のライブラリ(data/)は開いただけでは履歴に載らないので、離れるときに載せる(戻れなくなるため)
+  const previous = config.libraryRoot ?? join(repoRoot(), 'data')
   config.libraryRoot = root
-  config.recentRoots = [root, ...config.recentRoots.filter((r) => r !== root)].slice(0, 10)
+  config.recentRoots = [...new Set([root, previous, ...config.recentRoots])].slice(0, 10)
   saveConfig(config)
 }
 
@@ -308,17 +321,37 @@ app.whenReady().then(async () => {
   })
   ipcMain.handle('library:info', () => {
     const config = loadConfig()
-    return { current: currentLibraryRoot(), recents: config.recentRoots }
+    return { current: currentLibraryRoot(), recents: config.recentRoots, defaultParent: defaultCreateParent(config) }
   })
   ipcMain.handle('library:choose', async () => {
     const result = await dialog.showOpenDialog({
-      title: 'ライブラリフォルダを選択',
-      properties: ['openDirectory', 'createDirectory']
+      title: 'ライブラリを開く',
+      properties: ['openDirectory']
     })
     if (result.canceled || result.filePaths.length === 0) return null
     const root = result.filePaths[0]
-    rememberLibraryRoot(root)
-    return root
+    return { root, isLibrary: isLibraryFolder(root) }
+  })
+  ipcMain.handle('library:isLibrary', (_event, root: string) => isLibraryFolder(root))
+  ipcMain.handle('library:chooseParent', async (_event, defaultPath: string) => {
+    const options: Electron.OpenDialogOptions = {
+      title: 'ライブラリを作る場所を選択',
+      defaultPath: defaultPath || undefined,
+      properties: ['openDirectory', 'createDirectory']
+    }
+    const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options)
+    // 名前の入力欄へ戻るので、キー入力が画面へ戻らないことがないようにする(ConfirmDialog.tsx の注意と同じ症状)
+    mainWindow?.webContents.focus()
+    return result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0]
+  })
+  ipcMain.handle('library:create', (_event, parent: string, name: string) => {
+    const result = createLibraryFolder(parent, name)
+    if ('root' in result) {
+      const config = loadConfig()
+      config.createParent = parent
+      saveConfig(config)
+    }
+    return result
   })
   ipcMain.handle('library:switch', (_event, root: string) => {
     rememberLibraryRoot(root)

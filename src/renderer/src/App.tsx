@@ -6,7 +6,8 @@ import TtsBar from './TtsBar'
 import ModelBar from './ModelBar'
 import StatusBar from './StatusBar'
 import TooltipHost from './Tooltip'
-import ConfirmDialogHost from './ConfirmDialog'
+import ConfirmDialogHost, { askConfirm } from './ConfirmDialog'
+import NewLibraryDialog from './NewLibraryDialog'
 import { useProductionLocked } from './tasks'
 import { showStatusNotice } from './statusNotice'
 
@@ -72,13 +73,16 @@ function baseName(path: string): string {
 function LibraryMenu(): React.JSX.Element {
   const [current, setCurrent] = useState<string | null>(null)
   const [recents, setRecents] = useState<string[]>([])
+  const [defaultParent, setDefaultParent] = useState('')
   const [open, setOpen] = useState(false)
+  const [creating, setCreating] = useState(false)
   const menuRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     void window.storyGraph.getLibraryInfo().then((info) => {
       setCurrent(info.current)
       setRecents(info.recents)
+      setDefaultParent(info.defaultParent)
     })
   }, [])
 
@@ -103,9 +107,21 @@ function LibraryMenu(): React.JSX.Element {
     window.location.reload()
   }
 
-  const handleChoose = async (): Promise<void> => {
-    const root = await window.storyGraph.chooseLibrary()
-    if (root) await applyRoot(root)
+  // ライブラリの無いフォルダへ黙って切り替えると空のライブラリができ、物語が消えたように見えるので確認する
+  const confirmCreateHere = (root: string, reason: string): Promise<boolean> =>
+    askConfirm(`${reason}\nここに新しいライブラリを作りますか?\n${root}`, '作成')
+
+  const handleOpen = async (): Promise<void> => {
+    const picked = await window.storyGraph.chooseLibrary()
+    if (!picked) return
+    if (!picked.isLibrary && !(await confirmCreateHere(picked.root, `「${baseName(picked.root)}」はライブラリではありません。`))) return
+    await applyRoot(picked.root)
+  }
+
+  const handleRecent = async (root: string): Promise<void> => {
+    const exists = await window.storyGraph.isLibrary(root)
+    if (!exists && !(await confirmCreateHere(root, `「${baseName(root)}」にライブラリが見つかりません。移動か削除をした可能性があります。`))) return
+    await applyRoot(root)
   }
 
   return (
@@ -139,7 +155,7 @@ function LibraryMenu(): React.JSX.Element {
                 key={root}
                 onClick={() => {
                   setOpen(false)
-                  if (!isCurrent) void applyRoot(root)
+                  if (!isCurrent) void handleRecent(root)
                 }}
                 className="block w-full truncate rounded-lg px-2 py-1.5 text-left text-[12px]"
                 style={isCurrent ? { background: 'var(--accent-soft)', color: 'var(--text)' } : { color: 'var(--text-dim)' }}
@@ -155,14 +171,34 @@ function LibraryMenu(): React.JSX.Element {
           <button
             onClick={() => {
               setOpen(false)
-              void handleChoose()
+              setCreating(true)
             }}
             className="mt-1 block w-full rounded-lg border border-dashed px-2 py-1.5 text-left text-[12px]"
             style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
           >
-            + フォルダを選択…
+            + 新しいライブラリ…
+          </button>
+          <button
+            onClick={() => {
+              setOpen(false)
+              void handleOpen()
+            }}
+            className="block w-full rounded-lg px-2 py-1.5 text-left text-[12px]"
+            style={{ color: 'var(--text-dim)' }}
+          >
+            フォルダを開く…
           </button>
         </div>
+      )}
+      {creating && (
+        <NewLibraryDialog
+          defaultParent={defaultParent}
+          onCancel={() => setCreating(false)}
+          onCreated={(root) => {
+            setCreating(false)
+            void applyRoot(root)
+          }}
+        />
       )}
     </div>
   )
