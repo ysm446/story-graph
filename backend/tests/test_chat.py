@@ -419,6 +419,25 @@ def test_character_system_prompt_contents(store):
     assert "get_beats" not in text  # シーン一覧は渡さない
 
 
+def test_character_system_prompt_shows_others_appearance_not_profile(store):
+    """関係の相手が何者か(犬など)を本人が分かるよう外見を添える。内面(profile)は渡さない。"""
+    store.create_character({"id": "pochi", "name": "ポチ", "profile": "実は元軍用犬という秘密",
+                            "appearance": "柴犬。茶色の毛に赤い首輪"})
+    path = store.canon_path()
+    store.replace_events(path[0], store.list_events(path[0]) + [
+        {"type": "relationship_update", "payload": {"char": "aya", "target": "pochi", "delta": 0.7, "reason": "散歩", "label": "相棒"}},
+    ])
+    text = chat_agent.build_character_system(store, path, "aya", "interview")
+    assert "ポチ(見た目: 柴犬。茶色の毛に赤い首輪)" in text
+    assert "元軍用犬" not in text
+
+
+def test_appearance_hint_is_short():
+    hint = chat_agent._appearance_hint({"appearance": "あ" * 200})
+    assert hint == "あ" * chat_agent.APPEARANCE_HINT_CHARS + "…"
+    assert chat_agent._appearance_hint(None) == ""
+
+
 def test_character_system_prompt_roleplay_frame(store):
     path = store.canon_path()
     text = chat_agent.build_character_system(store, path, "aya", "roleplay")
@@ -714,6 +733,13 @@ def test_room_system_prompt_replaces_frame_and_keeps_knowledge(store):
     assert "見知らぬ相手" not in system
     assert system.count("## この会話について") == 1
     assert system.count("## 厳守すること") == 1
+
+
+def test_room_system_prompt_shows_participants_appearance(store):
+    """同じ場にいる相手は、関係が無くても見た目が分かる。"""
+    store.create_character({"id": "pochi", "name": "ポチ", "appearance": "柴犬"})
+    system = chat_agent.build_room_system(store, store.canon_path(), "aya", ["aya", "pochi"])
+    assert "- ポチの見た目: 柴犬" in system
 
 
 def test_room_transcript_is_from_speakers_point_of_view(store):

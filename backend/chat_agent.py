@@ -564,6 +564,20 @@ def build_character_tools() -> list[dict[str, Any]]:
     ]
 
 
+APPEARANCE_HINT_CHARS = 60
+
+
+def _appearance_hint(char: dict[str, Any] | None) -> str:
+    """他のキャラの外見を短く。キャラ会話で、相手が何者か(人か動物か)を本人に分からせるため。
+
+    渡すのは外見だけ。外見は見れば分かるので本人が知っていてよいが、profile(性格・内面)には
+    秘密や本心が書かれうるので渡さない(知識の境界)。"""
+    text = " ".join(((char or {}).get("appearance") or "").split())
+    if len(text) > APPEARANCE_HINT_CHARS:
+        text = text[:APPEARANCE_HINT_CHARS] + "…"
+    return text
+
+
 def _describe_score(score: float) -> str:
     if score >= 0.6:
         return "深い信頼・愛情"
@@ -691,6 +705,8 @@ def build_character_system(store: Store, path: list[str], char_id: str, mode: st
         for target, rel in rels.items():
             t = store.get_character(target)
             t_name = t["name"] if t else target
+            seen = _appearance_hint(t)
+            t_name += f"(見た目: {seen})" if seen else ""
             label = f"「{rel['label']}」" if rel.get("label") else ""
             lines.append(f"- {t_name}: {_describe_score(float(rel['score']))}{label}(強さ {rel['score']:+.2f})")
 
@@ -784,11 +800,17 @@ def build_room_system(store: Store, path: list[str], speaker_id: str, participan
     # 「## この会話について」以降を会話室の枠組みに置き換える(知識の節はそのまま)
     head = base.split("\n## この会話について", 1)[0].rstrip()
     others = []
+    seen_lines = []
     for cid in participants:
         if cid == speaker_id:
             continue
         c = store.get_character(cid)
-        others.append(c["name"] if c else cid)
+        name = c["name"] if c else cid
+        others.append(name)
+        # 同じ場にいるので、関係の無い相手でも見た目は分かる
+        seen = _appearance_hint(c)
+        if seen:
+            seen_lines.append(f"- {name}の見た目: {seen}")
     me = store.get_character(speaker_id)
     my_name = me["name"] if me else speaker_id
     lines = [
@@ -796,6 +818,7 @@ def build_room_system(store: Store, path: list[str], speaker_id: str, participan
         "",
         "## この会話について",
         f"あなた({my_name})は今、{'、'.join(others) or '誰か'}と同じ場所で言葉を交わしています。",
+        *seen_lines,
         "これは作者が人物どうしの関係と記憶を確かめるための試しの会話で、物語の本編には含まれません。",
         "相手の発言は「名前「…」」の形で届きます。作者(演出家)からの指示は（演出: …）の形で届きます。",
         "演出の指示には従ってください。ただし指示そのものを台詞にしたり、演出家に向けて話したりしないでください。",

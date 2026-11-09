@@ -1,10 +1,11 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-07-24 22:38
-更新日時: 2026-10-31 22:34
+更新日時: 2026-11-09 16:41
 
 ## 現在の状態
 
+- 2026-11-09 16:41 **キャラ会話で関係の相手の外見を渡す**(ユーザー報告「人間のキャラに犬のキャラのことを聞くと人として語る」)。`build_character_system` の関係の欄で、相手名に `_appearance_hint`(`appearance` の先頭 60 字)を「見た目: …」として添える。`profile` は秘密を含みうるので渡さない。`build_room_system` は参加者全員の見た目を枠組みの節に並べる。あわせて CLAUDE.md / AGENTS.md に「検証でユーザーのライブラリを読み書きしない」を追記。検証: `test_chat.py` 61 件(新規 3 件)。**未確認**: 実モデルでの会話。**未対応**: 関係の無い相手の情報(必要なら外見を引くツール)
 - 2026-10-31 22:34 **`changelog.md` を `CHANGELOG.md` に改名**(ユーザー依頼)。README・AGENTS・CLAUDE・設計資料の参照を合わせた。`docs/plan/progress.md` と `docs/design/node-inheritance.md` のリンク先が `../changelog.md`(存在しない `docs/changelog.md`)になっていたのも `../../CHANGELOG.md` に直した
 - 2026-10-30 18:20 **ライブラリの新規作成**(ユーザー要望)。メニューを「+ 新しいライブラリ…」と「フォルダを開く…」に分けた。`NewLibraryDialog.tsx` で名前と場所を入れ、`src/main/library.ts` の `createLibraryFolder` がフォルダを作り、既存の切り替えで開く(DB は切り替え時にバックエンドが作る)。名前の判定は `src/shared/libraryName.ts` をレンダラとメインで共有。「開く」と履歴からの切り替えは `story-graph.db` が無ければ確認する(ユーザー依頼「直してください」)。`rememberLibraryRoot` は離れるライブラリも履歴に載せる。検証: typecheck・build、新設の `--library` 23 項目、`--settings` / `--details` 成功。**未確認**: ネイティブのフォルダ選択から戻ったあとのキー入力(`--library` はダイアログを差し替えるため)と `rememberLibraryRoot` の履歴(メインプロセスの処理)は実機で触っていない。**未対応**: 起動時に前回のライブラリが無いときは確認せず空のライブラリを作る
 - 2026-10-30 17:28 **勢力(factions)を廃止**(ユーザー判断「残さなくていい」)。名前・説明・所属キャラを持つ勢力と、関係の相手を勢力にする仕組みは、作る画面が無く、生成も相手をキャラに固定していて使われていなかった(手元のライブラリも 0 件)。`factions` / `faction_members` テーブル(起動時に `DROP TABLE IF EXISTS`)、`/factions` API、Store のメソッド、検証・チャット・削除前の参照確認の分岐、Events の勢力名の表示、`--events` の勢力の 2 項目、テスト 1 件を削除。仕様書・設計メモの記述も合わせた。検証: pytest 739 件、typecheck・build、`--events` / `--cast` 成功

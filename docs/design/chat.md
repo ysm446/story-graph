@@ -1,7 +1,7 @@
 # 相談チャット設計
 
 作成日時: 2026-07-25 22:52
-更新日時: 2026-10-30 17:28
+更新日時: 2026-11-09 16:41
 
 物語について作者が相談する「相談チャット」の設計まとめ。仕様の出発点は
 [docs/story-graph-spec.md](../story-graph-spec.md) §8、実装は `backend/chat_agent.py` と
@@ -267,6 +267,10 @@ fold 済みの facts / 関係 / 記憶をそのまま人格の材料に使う。
 - `build_character_system`: キャラ行(name / profile / appearance / voice)+ state の facts +
   relationships(相手名を解決し、score を「好意的/敵対的」などに言語化 + label)+
   記憶(合計 15 件を本文へ、残りは recall ツールで。選び方は §6.4)。
+  関係の相手には外見(`appearance`)を先頭 60 字まで「見た目: …」として添える(2026-11-09)。
+  相手の名前と好意だけだと、犬の相手を人として語っていた(ユーザー報告)。外見は見れば分かるので
+  本人が知っていてよいが、`profile`(性格・内面)は秘密や本心を含みうるので渡さない。
+  会話室(§8)は同じ場にいる参加者全員の見た目も枠組みの節に並べる(関係が無くても見えるため)。
 - `recall` ツール: `_tool_search_memories` を char_id 固定で呼ぶだけ。
 - アイコン: `CharAvatar`(`characters.portrait_path` を `assetUrl` で表示、無い場合は
   キャラ色 + 頭文字の丸で代替)。ヘッダーの相手セレクタ横(20px)、回答バブルの左
