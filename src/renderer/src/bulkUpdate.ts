@@ -4,7 +4,7 @@ import { enqueueTask, notifyGraphChanged, setNodeBusy, type Task } from './tasks
 
 /** まとめて更新の実行の本体(docs/design/bulk-update.md)。
  *
- *  古くなった章のまとめ → 清書の順に、1 件ずつ作り直す。人が席にいない間に走るので、
+ *  古くなった章のまとめ → 清書 → 台本(話者と感情)の順に、1 件ずつ作り直す。人が席にいない間に走るので、
  *  - 始める前に状態を保存する(保存できなければ始めない)
  *  - 1 件失敗しても次へ進む(続けて失敗したら、サーバーが落ちていると見て止める)
  *  - 終わったら結果を残す(戻ってきたときに読めるように、閉じるまで出したままにする)
@@ -17,12 +17,14 @@ export interface BulkUpdateOptions {
   digests: boolean
   rendersStale: boolean
   rendersMissing: boolean
+  scriptsStale: boolean
+  scriptsMissing: boolean
   includeBranches: boolean
   releaseModel: boolean
 }
 
 export interface BulkUpdateFailure {
-  kind: 'digest' | 'render'
+  kind: 'digest' | 'render' | 'script'
   title: string
   error: string
 }
@@ -33,6 +35,8 @@ export interface BulkUpdateResult {
   /** 選ばなかった項目は null(結果に行を出さない) */
   digests: { done: number; failed: number } | null
   renders: { done: number; failed: number } | null
+  /** 台本を足す前の版が残した結果には無い */
+  scripts?: { done: number; failed: number } | null
   failures: BulkUpdateFailure[]
   /** 最後まで行かなかった理由。null = 最後まで終わった */
   stopped: 'cancelled' | 'failures' | 'error' | null
@@ -54,6 +58,10 @@ const DEFAULT_OPTIONS: BulkUpdateOptions = {
   digests: true,
   rendersStale: true,
   rendersMissing: true,
+  // 清書を作り直したシーンの台本に付け直すのは既定でオン。まだ付けていないシーンは、読み上げを使うかどうかで
+  // 要るかが分かれる(件数も多くなりがち)ので既定でオフ
+  scriptsStale: true,
+  scriptsMissing: false,
   includeBranches: false,
   releaseModel: true
 }
@@ -138,9 +146,10 @@ function finish(result: BulkUpdateResult): void {
 const errorText = (error: unknown): string => String(error).replace(/^Error:\s*/, '')
 
 /** まとめて更新をキューに積む。対象は、各段の直前に数え直して決める
- *  (まとめを作り直すと、その先の清書が要更新になるため) */
+ *  (まとめを作り直すと、その先の清書が要更新になり、清書を作り直すと台本が付け直しになるため) */
 export function startBulkUpdate(options: BulkUpdateOptions): void {
   const wantsRenders = options.rendersStale || options.rendersMissing
+  const wantsScripts = options.scriptsStale || options.scriptsMissing
   enqueueTask({
     label: 'まとめて更新',
     detail: '準備中',
@@ -151,6 +160,7 @@ export function startBulkUpdate(options: BulkUpdateOptions): void {
         finishedAt: 0,
         digests: options.digests ? { done: 0, failed: 0 } : null,
         renders: wantsRenders ? { done: 0, failed: 0 } : null,
+        scripts: wantsScripts ? { done: 0, failed: 0 } : null,
         failures: [],
         stopped: null,
         stopReason: null,
@@ -159,7 +169,8 @@ export function startBulkUpdate(options: BulkUpdateOptions): void {
       let consecutive = 0
       // 1 件の結果を記録する。false を返したら、これ以上続けない
       const record = (kind: BulkUpdateFailure['kind'], title: string, error: string | null): boolean => {
-        const counter = kind === 'digest' ? result.digests! : result.renders!
+        const counter =
+          kind === 'digest' ? result.digests! : kind === 'render' ? result.renders! : result.scripts!
         if (error === null) {
           counter.done += 1
           consecutive = 0
@@ -242,6 +253,33 @@ export function startBulkUpdate(options: BulkUpdateOptions): void {
             }
             if (!saved && error === null) error = '清書が保存されませんでした'
             if (!record('render', scene.title, saved ? null : error)) break
+          }
+        }
+
+        if (wantsScripts && result.stopped === null && !cancelled()) {
+          // 清書の作り直しで付け直しになった台本も拾うため、ここで数え直す
+          const plan = await api.bulkUpdatePlan(options.includeBranches)
+          const scenes = plan.scripts.filter((s) =>
+            s.status === 'stale' ? options.scriptsStale : options.scriptsMissing
+          )
+          for (const [index, scene] of scenes.entries()) {
+            if (cancelled()) break
+            update({ done: index + 1, total: scenes.length, detail: `台本: ${scene.title}` })
+            setNodeBusy(scene.id, true)
+            let error: string | null = null
+            try {
+              // 作者が台本で手直しした行(edited)には触らない(annotate の決まり)
+              await api.annotateVoiceScript(scene.render_id, null, signal)
+            } catch (e) {
+              if (isAbortError(e)) {
+                result.stopped = 'cancelled'
+                break
+              }
+              error = errorText(e)
+            } finally {
+              setNodeBusy(scene.id, false)
+            }
+            if (!record('script', scene.title, error)) break
           }
         }
       } catch (e) {

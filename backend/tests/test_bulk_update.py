@@ -125,3 +125,43 @@ def test_off_canon_chapter_digest_needs_branches(store):
     store.update_node("x", {"beat": "分岐を書き替えた"})
     assert bulk_update.plan(store)["digests"] == []
     assert ids(bulk_update.plan(store, include_branches=True)["digests"]) == [side]
+
+
+def scripts(plan, status):
+    return [s["id"] for s in plan["scripts"] if s["status"] == status]
+
+
+def test_scripts_missing_then_stale_after_rerender(store):
+    pid = preset_id(store)
+    assert bulk_update.plan(store)["scripts"] == []  # 清書が無ければ台本も拾わない
+
+    ra = store.save_render("a", pid, None, "「行こう」とアヤは言った。")
+    store.save_render("b", pid, None, "")  # 本文が空の清書は拾わない
+    rc = store.save_render("c", pid, None, "港で船を待った。")
+    plan = bulk_update.plan(store)
+    assert scripts(plan, "missing") == ["a", "c"] and scripts(plan, "stale") == []
+    assert plan["scripts"][0] == {"id": "a", "title": "第一話", "render_id": ra["id"], "status": "missing"}
+
+    # LLM で付けたものは拾わない。規則ベースで保存しただけ(手直し)なら拾う
+    store.save_voice_script(ra["id"], "a", [], "llm")
+    store.save_voice_script(rc["id"], "c", [], "rule")
+    plan = bulk_update.plan(store)
+    assert scripts(plan, "missing") == ["c"] and scripts(plan, "stale") == []
+
+    # 清書を作り直すと、新しい清書の台本は「要更新」になる(古い清書の台本は相手にしない)
+    ra2 = store.save_render("a", pid, None, "「行こう」とアヤは言った。港へ。")
+    plan = bulk_update.plan(store)
+    assert scripts(plan, "stale") == ["a"]
+    assert next(s for s in plan["scripts"] if s["id"] == "a")["render_id"] == ra2["id"]
+
+
+def test_scripts_count_only_the_selected_style(store):
+    pid = preset_id(store)
+    ra = store.save_render("a", pid, None, "清書一")
+    store.save_voice_script(ra["id"], "a", [], "llm")
+    # 別の視点の清書に付けた台本は、いまの組(視点なし)の数え方に関わらない
+    rb = store.save_render("b", pid, "aya", "清書二")
+    store.save_voice_script(rb["id"], "b", [], "llm")
+    store.save_render("b", pid, None, "清書二")
+    plan = bulk_update.plan(store)
+    assert scripts(plan, "missing") == ["b"] and scripts(plan, "stale") == []

@@ -120,7 +120,7 @@ store.save_chat_messages(chat['id'], [
   }
   // まとめて更新(docs/design/bulk-update.md)。LLM は偽のサーバーに向ける(ユーザーの llama-server には触れない)。
   // 偽のサーバーは、清書(ストリーム)の 4 回目だけ失敗させる = 画面から走らせたときの 3 シーン目
-  const bulk = { streams: 0, sleep: [] }
+  const bulk = { streams: 0, annotates: 0, sleep: [] }
   if (process.argv.includes('--bulk')) {
     const fake = require('node:http').createServer((req, res) => {
       if (req.method === 'GET') { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end('{"status":"ok"}'); return }
@@ -128,6 +128,13 @@ store.save_chat_messages(chat['id'], [
       req.on('data', (chunk) => { body += chunk })
       req.on('end', () => {
         const payload = JSON.parse(body || '{}')
+        if (!payload.stream && payload.response_format?.json_schema?.schema?.properties?.lines) {
+          // 台本の話者と感情。行は何も変えずに返す(保存の source が llm になればよい)
+          bulk.annotates += 1
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ choices: [{ message: { content: '{"lines":[]}' }, finish_reason: 'stop' }], usage: {} }))
+          return
+        }
         if (!payload.stream) {
           const chars = payload.response_format?.json_schema?.schema?.properties?.summaries?.items?.properties?.char?.enum ?? []
           const content = JSON.stringify({ summaries: chars.map((char) => ({ char, summary: '偽のサーバーが作ったまとめ。', importance: 0.6 })) })
@@ -163,6 +170,9 @@ store.save_chat_messages(chat['id'], [
     // 先頭のシーンを 1 回清書してから本文を書き替える = 「要更新の清書」
     const preset = (await (await fetch(base + '/presets')).json())[0]
     await (await send('POST', '/render', { preset_id: preset.id, pov_char: null, node_ids: [first.id] })).text()
+    // その清書の台本に話者と感情を付けておく = 清書を作り直すと「清書を作り直したシーン」の台本になる
+    const firstRender = (await (await fetch(`${base}/renders/${first.id}?preset_id=${preset.id}`)).json()).render
+    await send('POST', `/renders/${firstRender.id}/voice_script/annotate`, {})
     await send('PATCH', '/nodes/' + first.id, { beat: '書き替えた本文。' })
     ipcMain.handle('power:blockSleep', (_event, blocked) => { bulk.sleep.push(blocked); return blocked })
     bulk.base = base
@@ -1344,10 +1354,10 @@ store.select_media(m['id'])
       console.log('PASS ' + message)
     }
     const opener = `[...document.querySelectorAll('nav button')].find(e=>e.textContent.trim()==='まとめて更新')`
-    await assert(`(() => {const b=${opener};return !!b && !b.disabled && b.dataset.tip.includes('章のまとめと清書')})()`, 'モード切替の行に「まとめて更新」がある')
+    await assert(`(() => {const b=${opener};return !!b && !b.disabled && b.dataset.tip.includes('章のまとめ・清書・台本')})()`, 'モード切替の行に「まとめて更新」がある')
     await click('まとめて更新')
     for (let i = 0; i < 30 && !await js(`!!${dialog}?.querySelector('[data-bulk-update-plan]')`); i++) await pause(100)
-    await expectRows({ digests: 'true|false|1 件', rendersStale: 'true|false|1 件', rendersMissing: 'true|false|3 件' }, '要更新のまとめ 1 件・要更新の清書 1 件・未清書 3 件(本文の無いシーンは数えない)がチェック済みで出る')
+    await expectRows({ digests: 'true|false|1 件', rendersStale: 'true|false|1 件', rendersMissing: 'true|false|3 件', scriptsStale: 'true|false|0 件', scriptsMissing: 'false|false|0 件' }, '要更新のまとめ 1 件・要更新の清書 1 件・未清書 3 件(本文の無いシーンは数えない)がチェック済みで出る。台本は 0 件でも、清書を選んでいる間は選べる(作り直したシーンだけ既定でオン)')
     await assert(`(() => {const d=${dialog};const r=${row('releaseModel')};return d.textContent.includes('視点なし') && r.disabled && r.getAttribute('aria-checked')==='false' && r.dataset.tip.includes('外部で起動') && ${row('includeBranches')}.getAttribute('aria-checked')==='false' && d.parentElement.parentElement===document.body})()`, '清書の見出しに文体と視点が出て、外部で起動したサーバーではモデルの解放を選べない。分岐・島は既定で含めない')
     await assert(`(() => {const buttons=[...${dialog}.querySelectorAll('button:not([role="checkbox"])')].map(e=>e.textContent.trim());return buttons.join('|')==='取り消し|始める'})()`, '下端は 取り消し … 始める の順(前回の結果は、まだ無いので出ない)')
     writeFileSync(join(target, 'bulk-dialog.png'), (await win.webContents.capturePage()).toPNG())
@@ -1363,13 +1373,15 @@ store.select_media(m['id'])
     await assert(`!${dialog}`, 'Escape で閉じる')
     await click('まとめて更新')
     for (let i = 0; i < 30 && !await js(`!!${dialog}?.querySelector('[data-bulk-update-plan]')`); i++) await pause(100)
-    await expectRows({ digests: 'false|false|1 件', rendersStale: 'false|false|1 件', rendersMissing: 'false|false|3 件' }, '開き直しても、外したチェックを覚えている')
+    await expectRows({ digests: 'false|false|1 件', rendersStale: 'false|false|1 件', rendersMissing: 'false|false|3 件', scriptsStale: 'false|true|0 件', scriptsMissing: 'false|true|0 件' }, '開き直しても、外したチェックを覚えている。清書を選んでいないと 0 件の台本は押せない')
     for (const name of ['digests', 'rendersStale', 'rendersMissing']) { await js(`${row(name)}.click()`); await pause(120) }
     await js(`[...${dialog}.querySelectorAll('button')].find(e=>e.textContent.trim()==='始める').click()`)
     await pause(200)
     await assert(`!${dialog}`, '始めるとダイアログを閉じる')
     for (let i = 0; i < 300 && !await js(`!!${resultDialog}`); i++) await pause(100)
-    await assert(`(() => {const d=${resultDialog};const text=d.querySelector('[data-bulk-update-result]').textContent;const failures=d.querySelector('[data-bulk-update-failures]').textContent;return d.querySelector('h3').textContent==='まとめて更新が終わりました' && text.includes('章のまとめ1 件更新') && text.includes('清書3 件更新 / 失敗 1 件') && !text.includes('モデルを解放') && failures.includes('清書「三話」') && failures.includes('fake failure') && [...d.querySelectorAll('button')].map(e=>e.textContent.trim()).join('|')==='閉じる'})()`, '終わると結果が出る: まとめ 1 件、清書 3 件、失敗 1 件(三話)。失敗したあとのシーンも清書されている')
+    await assert(`(() => {const d=${resultDialog};const text=d.querySelector('[data-bulk-update-result]').textContent;const failures=d.querySelector('[data-bulk-update-failures]').textContent;return d.querySelector('h3').textContent==='まとめて更新が終わりました' && text.includes('章のまとめ1 件更新') && text.includes('清書3 件更新 / 失敗 1 件') && text.includes('台本1 件更新') && !text.includes('モデルを解放') && failures.includes('清書「三話」') && failures.includes('fake failure') && [...d.querySelectorAll('button')].map(e=>e.textContent.trim()).join('|')==='閉じる'})()`, '終わると結果が出る: まとめ 1 件、清書 3 件、失敗 1 件(三話)、台本 1 件。失敗したあとのシーンも清書されている')
+    if (bulk.annotates !== 2) throw new Error('台本の話者と感情を付けた回数が違います(準備の 1 回 + 作り直した清書の 1 回): ' + bulk.annotates)
+    console.log('PASS 清書を作り直したシーンの台本に、話者と感情を付け直した(まだ付けていないシーンは既定で付けない)')
     writeFileSync(join(target, 'bulk-result.png'), (await win.webContents.capturePage()).toPNG())
     if (JSON.stringify(bulk.sleep) !== '[true,false]') throw new Error('スリープ止めの呼び出しが違います: ' + JSON.stringify(bulk.sleep))
     console.log('PASS 実行中だけスリープを止め、終わったら外す')
@@ -1385,7 +1397,7 @@ store.select_media(m['id'])
     await assert(`!${resultDialog}`, '結果は「閉じる」を押すまで残り、押すと閉じる')
     await click('まとめて更新')
     for (let i = 0; i < 30 && !await js(`!!${dialog}?.querySelector('[data-bulk-update-plan]')`); i++) await pause(100)
-    await expectRows({ digests: 'false|true|0 件', rendersStale: 'false|true|0 件', rendersMissing: 'true|false|1 件' }, 'もう一度開くと、失敗した 1 件だけが残っている。0 件の項目は押せない')
+    await expectRows({ digests: 'false|true|0 件', rendersStale: 'false|true|0 件', rendersMissing: 'true|false|1 件', scriptsStale: 'true|false|0 件', scriptsMissing: 'false|false|2 件' }, 'もう一度開くと、失敗した 1 件だけが残っている。0 件の項目は押せない。台本をまだ付けていない 2 シーン(二話・四話)が数えられる')
     await assert(`[...${dialog}.querySelectorAll('button:not([role="checkbox"])')].map(e=>e.textContent.trim()).join('|')==='前回の結果|取り消し|始める'`, '「前回の結果」が出る')
     await js(`[...${dialog}.querySelectorAll('button')].find(e=>e.textContent.trim()==='前回の結果').click()`)
     await pause(200)

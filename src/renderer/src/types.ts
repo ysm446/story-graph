@@ -292,6 +292,9 @@ export interface BulkUpdatePlan {
   digests: Array<{ id: string; title: string }>
   /** 清書し直すシーン。stale = 要更新、missing = まだ清書していない */
   renders: Array<{ id: string; title: string; status: 'stale' | 'missing' }>
+  /** 朗読台本に LLM で話者と感情を付けるシーン(相手はいまの組の最新の清書)。
+   *  stale = 前の清書には付けてあった(清書を作り直した)、missing = まだ付けていない */
+  scripts: Array<{ id: string; title: string; render_id: string; status: 'stale' | 'missing' }>
 }
 
 /** キャラクターカードに入るものの内訳(docs/design/character-card.md)。確認ダイアログと書き出しの結果で使う */

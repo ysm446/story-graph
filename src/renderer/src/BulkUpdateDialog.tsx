@@ -171,8 +171,23 @@ function ChooseDialog(): React.JSX.Element {
     noPreset ?? (count === 0 && !digestsOn ? '対象がありません' : null)
   const staleOn = options.rendersStale && !renderReason(staleCount)
   const missingOn = options.rendersMissing && !renderReason(missingCount)
-  const nothing = !!plan && digestCount + staleCount + missingCount === 0
-  const canStart = !!plan && (digestsOn || (staleOn && staleCount > 0) || (missingOn && missingCount > 0))
+  // 清書を作り直すと、その清書の台本が付け直しになる。いま 0 件でも、清書を選んでいる間は台本を選べる
+  const scriptStaleCount = plan?.scripts.filter((s) => s.status === 'stale').length ?? 0
+  const scriptMissingCount = plan?.scripts.filter((s) => s.status === 'missing').length ?? 0
+  const rendersOn = (staleOn && (digestsOn || staleCount > 0)) || (missingOn && (digestsOn || missingCount > 0))
+  const scriptReason = (count: number): string | null =>
+    noPreset ?? (count === 0 && !rendersOn ? '対象がありません' : null)
+  const scriptStaleOn = options.scriptsStale && !scriptReason(scriptStaleCount)
+  const scriptMissingOn = options.scriptsMissing && !scriptReason(scriptMissingCount)
+  const nothing =
+    !!plan && digestCount + staleCount + missingCount + scriptStaleCount + scriptMissingCount === 0
+  const canStart =
+    !!plan &&
+    (digestsOn ||
+      (staleOn && staleCount > 0) ||
+      (missingOn && missingCount > 0) ||
+      (scriptStaleOn && scriptStaleCount > 0) ||
+      (scriptMissingOn && scriptMissingCount > 0))
 
   const submit = (): void => {
     if (!canStart) return
@@ -181,6 +196,8 @@ function ChooseDialog(): React.JSX.Element {
       digests: digestsOn,
       rendersStale: staleOn,
       rendersMissing: missingOn,
+      scriptsStale: scriptStaleOn,
+      scriptsMissing: scriptMissingOn,
       releaseModel: options.releaseModel && !external
     })
     closeBulkUpdate()
@@ -190,7 +207,7 @@ function ChooseDialog(): React.JSX.Element {
     <Frame
       titleId="bulk-update-title"
       title="まとめて更新"
-      description="古くなった章のまとめと清書を、選んだものだけ順に作り直します。席を離れている間に回せます。"
+      description="古くなった章のまとめ・清書・台本を、選んだものだけ順に作り直します。席を離れている間に回せます。"
       onClose={closeBulkUpdate}
     >
       {!plan && !error && (
@@ -235,6 +252,30 @@ function ChooseDialog(): React.JSX.Element {
               まとめを作り直すと、その先の清書が要更新になり、清書の件数が増えることがあります。
             </p>
           )}
+          <Heading>台本(話者と感情)</Heading>
+          <CheckRow
+            name="scriptsStale"
+            label="清書を作り直したシーン"
+            checked={options.scriptsStale}
+            count={scriptStaleCount}
+            disabledReason={scriptReason(scriptStaleCount)}
+            tip="前の清書の台本には話者と感情を付けてあったシーンです。台本で手直しした行はそのまま残ります"
+            onToggle={() => toggle('scriptsStale')}
+          />
+          <CheckRow
+            name="scriptsMissing"
+            label="まだ付けていないシーン"
+            checked={options.scriptsMissing}
+            count={scriptMissingCount}
+            disabledReason={scriptReason(scriptMissingCount)}
+            tip="清書のあるシーンのうち、話者と感情をまだ LLM で付けていないものです"
+            onToggle={() => toggle('scriptsMissing')}
+          />
+          {rendersOn && (
+            <p className="mt-1 px-2 text-[11px]" style={{ color: 'var(--text-faint)' }}>
+              清書を作り直すと台本も付け直しになり、台本の件数が増えることがあります。
+            </p>
+          )}
           <div className="mt-2 border-t pt-2" style={{ borderColor: 'var(--border)' }}>
             <CheckRow
               name="includeBranches"
@@ -255,7 +296,7 @@ function ChooseDialog(): React.JSX.Element {
           <p className="mt-2 text-[11px] leading-relaxed" style={{ color: 'var(--text-faint)' }}>
             {nothing
               ? '更新するものはありません。'
-              : '章のまとめ → 清書の順に実行します。始める前に、いまの状態を保存します(設定の「スナップショット」から戻せます)。実行中はステータスバーから中止できます。'}
+              : '章のまとめ → 清書 → 台本の順に実行します。始める前に、いまの状態を保存します(設定の「スナップショット」から戻せます)。実行中はステータスバーから中止できます。'}
           </p>
         </div>
       )}
@@ -315,12 +356,13 @@ const RESULT_TITLE: Record<NonNullable<BulkUpdateResult['stopped']> | 'done', st
   error: 'まとめて更新を途中で止めました'
 }
 
-const KIND_LABEL = { digest: '章のまとめ', render: '清書' } as const
+const KIND_LABEL = { digest: '章のまとめ', render: '清書', script: '台本' } as const
 
 function ResultDialog({ result }: { result: BulkUpdateResult }): React.JSX.Element {
   const rows: Array<[string, { done: number; failed: number } | null]> = [
     ['章のまとめ', result.digests],
-    ['清書', result.renders]
+    ['清書', result.renders],
+    ['台本', result.scripts ?? null]
   ]
   return (
     <Frame

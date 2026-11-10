@@ -1,10 +1,10 @@
 """まとめて更新(docs/design/bulk-update.md)。
 
-古くなった章のまとめ・清書を拾って数える。実行そのものは既存の口
-(`/groups/{id}/digest/generate`・`/render`)を画面のキューが順に呼ぶので、ここは**何を対象にするか**だけを決める
+古くなった章のまとめ・清書・朗読台本(話者と感情)を拾って数える。実行そのものは既存の口
+(`/groups/{id}/digest/generate`・`/render`・`/renders/{id}/voice_script/annotate`)を画面のキューが順に呼ぶので、ここは**何を対象にするか**だけを決める
 (数え方を 1 か所にして、ダイアログの件数と実際に走る対象を食い違わせない)。
 
-段階 1 は章のまとめと清書だけ。イベント(正史を変える)は段階 2 で足す。
+段階 1 は章のまとめ・清書・台本。イベント(正史を変える)は段階 2 で足す。
 """
 from __future__ import annotations
 
@@ -69,6 +69,35 @@ def _latest_stale(store: Store, preset_id: str, pov_char: str | None) -> dict[st
     return latest
 
 
+def _latest_renders(store: Store, preset_id: str, pov_char: str | None) -> dict[str, dict[str, Any]]:
+    """この組の最新の清書(シーン ID → {id, prose})。`_latest_stale` と同じ並びで選ぶ(画面の getRender と同じ)。"""
+    latest: dict[str, dict[str, Any]] = {}
+    for r in store.conn.execute(
+        """SELECT id, node_id, prose FROM renders
+           WHERE preset_id = ? AND pov_char IS ?
+           ORDER BY created_at DESC, rowid DESC""",
+        (preset_id, pov_char),
+    ):
+        latest.setdefault(r["node_id"], {"id": r["id"], "prose": r["prose"] or ""})
+    return latest
+
+
+def _script_sources(store: Store, preset_id: str, pov_char: str | None) -> tuple[set[str], set[str]]:
+    """この組の清書に付いた台本のうち、LLM で話者と感情を付けたもの。
+    (LLM で付けた清書 ID の集合, その清書のシーン ID の集合)を返す。"""
+    render_ids: set[str] = set()
+    node_ids: set[str] = set()
+    for r in store.conn.execute(
+        """SELECT v.render_id, v.node_id FROM voice_scripts v
+           JOIN renders r ON r.id = v.render_id
+           WHERE v.source = 'llm' AND r.preset_id = ? AND r.pov_char IS ?""",
+        (preset_id, pov_char),
+    ):
+        render_ids.add(r["render_id"])
+        node_ids.add(r["node_id"])
+    return render_ids, node_ids
+
+
 def _item(node: dict[str, Any]) -> dict[str, str]:
     return {"id": node["id"], "title": node["title"] or "(無題)"}
 
@@ -80,6 +109,10 @@ def plan(store: Store, include_branches: bool = False) -> dict[str, Any]:
     - renders: 清書し直すシーン(物語の順)。status は次のどちらか
       - "stale": いまの組の最新の清書が「要更新」
       - "missing": いまの組の清書がまだ無く、本文が空でない
+    - scripts: 朗読台本に LLM で話者と感情を付けるシーン(物語の順)。相手はいまの組の最新の清書
+      (古い清書でも、読み上げに使うのはそれなので拾う)。清書の本文が空なら拾わない。status は次のどちらか
+      - "stale": 最新の清書の台本は付けていないが、この組の前の清書には付けてあった(清書を作り直した)
+      - "missing": この組の清書のどれにも付けていない
     """
     style = render_style(store)
     digests = [
@@ -88,12 +121,30 @@ def plan(store: Store, include_branches: bool = False) -> dict[str, Any]:
         if g["has_digest"] and g["digest_stale"] and (include_branches or g["on_canon"])
     ]
     renders: list[dict[str, str]] = []
+    scripts: list[dict[str, str]] = []
     if style["preset"]:
-        latest = _latest_stale(store, style["preset"]["id"], style["pov"]["id"] if style["pov"] else None)
-        for node in _scenes(store, include_branches):
+        preset_id = style["preset"]["id"]
+        pov_char = style["pov"]["id"] if style["pov"] else None
+        latest = _latest_stale(store, preset_id, pov_char)
+        latest_renders = _latest_renders(store, preset_id, pov_char)
+        llm_renders, llm_nodes = _script_sources(store, preset_id, pov_char)
+        scenes = _scenes(store, include_branches)
+        for node in scenes:
             if node["id"] not in latest:
                 if (node["beat"] or "").strip():
                     renders.append({**_item(node), "status": "missing"})
             elif latest[node["id"]]:
                 renders.append({**_item(node), "status": "stale"})
-    return {**style, "include_branches": include_branches, "digests": digests, "renders": renders}
+        for node in scenes:
+            render = latest_renders.get(node["id"])
+            if not render or not render["prose"].strip() or render["id"] in llm_renders:
+                continue
+            status = "stale" if node["id"] in llm_nodes else "missing"
+            scripts.append({**_item(node), "render_id": render["id"], "status": status})
+    return {
+        **style,
+        "include_branches": include_branches,
+        "digests": digests,
+        "renders": renders,
+        "scripts": scripts,
+    }
