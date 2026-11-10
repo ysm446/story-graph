@@ -326,7 +326,8 @@ export function BeatTab({
               style={inputStyle}
             />
           </label>
-          <label className="block">
+          {/* label で囲まない: 中のクリックが先頭の「校正」ボタンへ転送され、中止しても校正が始まり直す */}
+          <div className="block">
             {/* 高さの自動調整と校正ボタンは共通コンポーネント側で行う(ボタンは見出しの右端に常に出る)。
                 長いシーン本文の一部を直すことがあるので、前後を文脈として渡す */}
             <ProofreadTextarea
@@ -342,7 +343,7 @@ export function BeatTab({
               style={inputStyle}
               withContext
             />
-          </label>
+          </div>
           <label className="block">
             <span className="mb-1 flex items-center justify-between">
               <span className={labelClass.replace('mb-1 block ', '')} style={{ color: 'var(--text-faint)' }}>
