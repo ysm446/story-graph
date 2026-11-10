@@ -567,7 +567,7 @@ def build_character_tools() -> list[dict[str, Any]]:
 APPEARANCE_HINT_CHARS = 60
 
 
-def _appearance_hint(char: dict[str, Any] | None) -> str:
+def appearance_hint(char: dict[str, Any] | None) -> str:
     """他のキャラの外見を短く。キャラ会話で、相手が何者か(人か動物か)を本人に分からせるため。
 
     渡すのは外見だけ。外見は見れば分かるので本人が知っていてよいが、profile(性格・内面)には
@@ -578,7 +578,7 @@ def _appearance_hint(char: dict[str, Any] | None) -> str:
     return text
 
 
-def _describe_score(score: float) -> str:
+def describe_score(score: float) -> str:
     if score >= 0.6:
         return "深い信頼・愛情"
     if score >= 0.3:
@@ -607,23 +607,38 @@ def _select_memories(
 
     全部載るときは (空, 全件を古い順, 総数) を返し、呼び出し側が 1 節にまとめる。
     """
+    rows = _memories_newest_first(store, memory_ids)
+    if len(rows) <= CHARACTER_MEMORY_LIMIT:
+        return [], list(reversed(rows)), len(rows)
+    recent = rows[:CHARACTER_RECENT_SLOTS]
+    important = _by_importance(rows[CHARACTER_RECENT_SLOTS:])[: CHARACTER_MEMORY_LIMIT - len(recent)]
+    return important, list(reversed(recent)), len(rows)
+
+
+def _memories_newest_first(store: Store, memory_ids: list[str]) -> list[Any]:
+    if not memory_ids:
+        return []
     placeholders = ",".join("?" for _ in memory_ids)
     # 新しい順。分岐ノード上の記憶(story_order < 0)は retrieval と同じく「いま」扱い
-    rows = store.conn.execute(
+    return store.conn.execute(
         f"SELECT id, content, importance, event_id FROM memories WHERE id IN ({placeholders})"
         " ORDER BY (story_order IS NULL OR story_order < 0) DESC, story_order DESC",
         memory_ids,
     ).fetchall()
-    if len(rows) <= CHARACTER_MEMORY_LIMIT:
-        return [], list(reversed(rows)), len(rows)
-    recent = rows[:CHARACTER_RECENT_SLOTS]
-    taken = {r["id"] for r in recent}
-    important = sorted(
-        (r for r in rows if r["id"] not in taken),
-        key=lambda r: r["importance"] if r["importance"] is not None else 0.0,
-        reverse=True,
-    )[: CHARACTER_MEMORY_LIMIT - len(recent)]
-    return important, list(reversed(recent)), len(rows)
+
+
+def _by_importance(rows: list[Any]) -> list[Any]:
+    return sorted(rows, key=lambda r: r["importance"] if r["importance"] is not None else 0.0, reverse=True)
+
+
+def memories_by_priority(store: Store, memory_ids: list[str]) -> list[Any]:
+    """記憶を全件、大事な順に並べる(キャラクターカード用。docs/design/character-card.md §3)。
+
+    _select_memories の選び方を上限なしに延ばしたもの: 直近 CHARACTER_RECENT_SLOTS 件を新しい順、
+    残りを重要度の高い順。前から N 件を取ると、キャラ会話が N 件に絞ったときとほぼ同じ顔ぶれになる。
+    """
+    rows = _memories_newest_first(store, memory_ids)
+    return rows[:CHARACTER_RECENT_SLOTS] + _by_importance(rows[CHARACTER_RECENT_SLOTS:])
 
 
 def _memory_scenes(store: Store, event_ids: list[str]) -> dict[str, str]:
@@ -660,7 +675,7 @@ def _ages_by_node(store: Store, path: list[str]) -> dict[str, str]:
     return {nid: age for nid, age in ages.items() if age is not None}
 
 
-def _memory_ages(store: Store, path: list[str], rows: list[Any]) -> dict[str, str]:
+def memory_ages(store: Store, path: list[str], rows: list[Any]) -> dict[str, str]:
     """記憶 ID → いまから見ていつのことか(「3日前」など。story_clock.py)。
 
     記憶が生まれたシーンと会話の時点(道の末尾)の間で、経過が全部設定されているものだけ返す。
@@ -705,15 +720,15 @@ def build_character_system(store: Store, path: list[str], char_id: str, mode: st
         for target, rel in rels.items():
             t = store.get_character(target)
             t_name = t["name"] if t else target
-            seen = _appearance_hint(t)
+            seen = appearance_hint(t)
             t_name += f"(見た目: {seen})" if seen else ""
             label = f"「{rel['label']}」" if rel.get("label") else ""
-            lines.append(f"- {t_name}: {_describe_score(float(rel['score']))}{label}(強さ {rel['score']:+.2f})")
+            lines.append(f"- {t_name}: {describe_score(float(rel['score']))}{label}(強さ {rel['score']:+.2f})")
 
     memory_ids = list(cs.get("memories") or [])
     if memory_ids:
         important, recent, total = _select_memories(store, memory_ids)
-        when = _memory_ages(store, path, [*important, *recent])
+        when = memory_ages(store, path, [*important, *recent])
         dated = bool(when)
 
         def line(r: Any) -> str:
@@ -808,7 +823,7 @@ def build_room_system(store: Store, path: list[str], speaker_id: str, participan
         name = c["name"] if c else cid
         others.append(name)
         # 同じ場にいるので、関係の無い相手でも見た目は分かる
-        seen = _appearance_hint(c)
+        seen = appearance_hint(c)
         if seen:
             seen_lines.append(f"- {name}の見た目: {seen}")
     me = store.get_character(speaker_id)

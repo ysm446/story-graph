@@ -275,6 +275,25 @@ export interface BackupConfig {
   entries: BackupEntry[]
 }
 
+/** キャラクターカードに入るものの内訳(docs/design/character-card.md)。確認ダイアログと書き出しの結果で使う */
+export interface CharacterCardSummary {
+  name: string
+  /** 時点の呼び名(既定は「シーンのタイトル」の直後) */
+  label: string
+  suggested_name: string
+  counts: {
+    situation: number
+    world: number
+    relationships: number
+    memories: number
+    images: number
+    voice_refs: number
+  }
+  has_voice: boolean
+  /** 作者に知らせること(声が無い、ファイルが見つからないなど) */
+  notes: string[]
+}
+
 export interface BackupResult {
   path: string
   size: number

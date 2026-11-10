@@ -29,6 +29,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 import app_settings
 import auto_images
 import backup
+import character_card
 import chat_agent
 import chat_rules
 import comfy
@@ -395,6 +396,42 @@ async def update_character(char_id: str, body: CharacterPatch) -> dict[str, Any]
 async def delete_character(char_id: str) -> dict[str, str]:
     store.delete_character(char_id)
     return {"status": "deleted"}
+
+
+# ---- キャラクターカードの書き出し(docs/design/character-card.md) ----
+
+class CardExportIn(BaseModel):
+    anchor: str | None = None  # None = 正史の末尾(キャラ会話の既定と同じ)
+    path: str
+    label: str | None = None
+
+
+def _build_card(char_id: str, anchor: str | None, label: str | None) -> character_card.CardBuild:
+    if not store.root:
+        raise HTTPException(400, "ライブラリが未設定のため書き出せません")
+    try:
+        return character_card.build_card(store, char_id, anchor, label)
+    except KeyError as e:
+        raise HTTPException(404, str(e.args[0]))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/characters/{char_id}/card/preview")
+async def character_card_preview(char_id: str, anchor: str | None = None) -> dict[str, Any]:
+    """確認ダイアログ用。既定のラベルとファイル名、入るものの件数、注意書きを返す(何も書かない)。"""
+    return _build_card(char_id, anchor, None).summary()
+
+
+@app.post("/characters/{char_id}/card/export")
+async def character_card_export(char_id: str, body: CardExportIn) -> dict[str, Any]:
+    """カードを zip に書き出す。中身はループ上で作り、zip はスレッドで書く。"""
+    build = _build_card(char_id, body.anchor, body.label)
+    try:
+        written = await asyncio.to_thread(character_card.write_zip, body.path, build.card, build.files)
+    except OSError as e:
+        raise HTTPException(400, f"書き出せません: {e}")
+    return {**written, **build.summary()}
 
 
 # ---- places ---------------------------------------------------------

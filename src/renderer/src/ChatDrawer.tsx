@@ -12,6 +12,7 @@ import {
   type ChatSummary
 } from './api'
 import CharAvatar from './CharAvatar'
+import CharacterCardDialog from './CharacterCardDialog'
 import { MsgActionButton, StatsLine, SystemPromptModal } from './GenMeta'
 import ChatTargetPicker, { IconPicker } from './ChatTargetPicker'
 import { Icon } from './icons'
@@ -252,6 +253,7 @@ export default function ChatDrawer({
   // 会話室モード: キャラ同士に会話させ、作者は演出の指示だけ出す(docs/design/chat.md §8)。
   // 参加者は会話が始まったら固定(chats.participants)
   const [room, setRoom] = useState(false)
+  const [cardOpen, setCardOpen] = useState(false) // キャラクターカードの書き出しダイアログ
   const [participants, setParticipants] = useState<string[]>([])
   const [nextSpeaker, setNextSpeaker] = useState<string | null>(null) // null = 前の話者の次
   const [turns, setTurns] = useState(2) // 1 回「進める」で続けて話させる発言数
@@ -1013,6 +1015,23 @@ export default function ChatDrawer({
                 buttonClassName="px-2 py-0.5 disabled:cursor-not-allowed"
               />
             )}
+            {activeChar && !room && (
+              // この時点の本人を、ほかのアプリで使えるカード(zip)に書き出す(docs/design/character-card.md)
+              <button
+                onClick={() => setCardOpen(true)}
+                disabled={!liveAnchor}
+                className="inline-flex items-center gap-1 rounded-md border px-2 py-0.5 disabled:cursor-not-allowed disabled:opacity-50"
+                style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+                data-tip={
+                  liveAnchor
+                    ? `「${anchorTitle(liveAnchor)}」までの${activeChar.name}をカードに書き出します(ほかのアプリで使う zip)`
+                    : 'シーンが無いので書き出せません'
+                }
+              >
+                <Icon name="download" size={12} />
+                カード
+              </button>
+            )}
             <button
               onClick={() => voice.setEnabled(!voice.enabled)}
               className="ml-auto inline-flex items-center gap-1 rounded-md border px-2 py-0.5"
@@ -1462,6 +1481,9 @@ export default function ChatDrawer({
         </div>
       </div>
       {promptView !== null && <SystemPromptModal messages={promptView} onClose={() => setPromptView(null)} />}
+      {cardOpen && activeChar && (
+        <CharacterCardDialog char={activeChar} anchor={liveAnchor} onClose={() => setCardOpen(false)} />
+      )}
     </div>
   )
 }

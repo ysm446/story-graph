@@ -13,6 +13,8 @@ const api: StoryGraphApi = {
   openFolder: (path) => ipcRenderer.invoke('shell:openFolder', path),
   chooseBackupSaveFile: (defaultName, defaultDir) =>
     ipcRenderer.invoke('backup:chooseSaveFile', defaultName, defaultDir),
+  chooseCardSaveFile: (defaultName, defaultDir) =>
+    ipcRenderer.invoke('card:chooseSaveFile', defaultName, defaultDir),
   chooseBackupZip: () => ipcRenderer.invoke('backup:chooseZip'),
   chooseFolder: (title) => ipcRenderer.invoke('backup:chooseDir', title),
   onScreenshotSaved: (callback) => {

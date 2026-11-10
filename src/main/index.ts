@@ -149,7 +149,13 @@ async function startSidecar(): Promise<string> {
       cwd: join(root, 'backend'),
       windowsHide: true,
       // STORY_GRAPH_APP_DATA: この PC のアプリ単位の設定(モデルの場所・接続先など)の置き場(backend/app_settings.py)
-      env: { ...process.env, STORY_GRAPH_LIBRARY: libraryRoot, STORY_GRAPH_APP_DATA: app.getPath('userData') }
+      // STORY_GRAPH_APP_VERSION: キャラクターカードに書く、書き出したアプリのバージョン(backend/character_card.py)
+      env: {
+        ...process.env,
+        STORY_GRAPH_LIBRARY: libraryRoot,
+        STORY_GRAPH_APP_DATA: app.getPath('userData'),
+        STORY_GRAPH_APP_VERSION: app.getVersion()
+      }
     }
   )
   proc.stdout?.on('data', (chunk: Buffer) => console.log(`[sidecar] ${chunk.toString().trimEnd()}`))
@@ -367,6 +373,17 @@ app.whenReady().then(async () => {
       defaultPath: join(dir, name),
       filters: [{ name: 'zip アーカイブ', extensions: ['zip'] }]
     })
+    return result.canceled || !result.filePath ? null : result.filePath
+  })
+  // キャラクターカード(docs/design/character-card.md)。保存先を選ぶだけで、zip はバックエンドが書く
+  ipcMain.handle('card:chooseSaveFile', async (_event, defaultName: string, defaultDir: string) => {
+    const dir = defaultDir && existsSync(defaultDir) ? defaultDir : app.getPath('documents')
+    const options = {
+      title: 'キャラクターカードの保存先',
+      defaultPath: join(dir, defaultName || 'character-card.zip'),
+      filters: [{ name: 'zip アーカイブ', extensions: ['zip'] }]
+    }
+    const result = mainWindow ? await dialog.showSaveDialog(mainWindow, options) : await dialog.showSaveDialog(options)
     return result.canceled || !result.filePath ? null : result.filePath
   })
   ipcMain.handle('backup:chooseZip', async () => {

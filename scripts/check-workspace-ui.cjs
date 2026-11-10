@@ -1237,6 +1237,80 @@ store.select_media(m['id'])
     win.destroy()
     return
   }
+  if (process.argv.includes('--card')) {
+    // キャラクターカードの書き出し(docs/design/character-card.md)。保存先を選ぶ窓と「フォルダで表示」は差し替える
+    const chars = await (await fetch(base + '/characters')).json()
+    const graph = await (await fetch(base + '/graph')).json()
+    const node = graph.nodes.find((n) => !n.kind)
+    const char = chars[0]
+    const seeded = await fetch(`${base}/nodes/${node.id}/events`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ events: [
+      { type: 'char_introduce', payload: { char: char.id } },
+      { type: 'fact_set', payload: { scope: 'char', char: char.id, key: '居場所', value: '港' } },
+      { type: 'memory_add', payload: { char: char.id, content: '港で船を見た', emotion: 0, importance: 0.5, refs: [] } },
+      { type: 'memory_add', payload: { char: char.id, content: '手紙を受け取った', emotion: 0, importance: 0.8, refs: [] } }
+    ] }) })
+    if (!seeded.ok) throw new Error(await seeded.text())
+    const out = join(target, 'card-out', 'card.zip')
+    let chosen = null
+    let suggested = null
+    let revealed = null
+    ipcMain.handle('card:chooseSaveFile', (_event, name) => { suggested = name; return chosen })
+    ipcMain.handle('shell:reveal', (_event, path) => { revealed = path; return true })
+    const cardButton = `[...document.querySelectorAll('button')].filter(e=>e.getClientRects().length).find(e=>e.textContent.trim()==='カード')`
+    const dialog = `document.querySelector('[role="dialog"][aria-labelledby="character-card-title"]')`
+    await click('相談')
+    await pause(300)
+    await assert(`!${cardButton}`, '相談(編集者)のときはカードのボタンを出さない')
+    const picker = `document.querySelector('button[aria-haspopup="listbox"]')`
+    await js(`${picker}.click()`)
+    await pause(250)
+    await js(`[...document.querySelectorAll('[role="listbox"][aria-label="話す相手"] [role="option"]')].find(e=>e.lastElementChild.textContent.trim()==='検証キャラ').click()`)
+    await pause(300)
+    await assert(`(() => {const b=${cardButton};return !!b && !b.disabled && b.dataset.tip.includes('検証シーン') && b.dataset.tip.includes('検証キャラ') && !!b.querySelector('svg')})()`, 'キャラクターと話すときだけカードのボタンが出て、どの時点の誰を書き出すかを説明する')
+    writeFileSync(join(target, 'card-button.png'), (await win.webContents.capturePage()).toPNG())
+    await click('カード')
+    for (let i = 0; i < 30 && !await js(`!!${dialog}?.querySelector('[data-character-card-counts]')`); i++) await pause(100)
+    await assert(`(() => {const d=${dialog};const text=d.querySelector('[data-character-card-counts]').textContent;return d.querySelector('h3').textContent==='カードに書き出す' && d.querySelector('#character-card-label').value==='「検証シーン」の直後' && text.includes('状況 1 件') && text.includes('記憶 2 件') && text.includes('声 なし') && d.querySelector('[data-character-card-notes]').textContent.includes('声が割り当てられていません') && d.parentElement.parentElement===document.body})()`, 'ダイアログに時点の呼び名の既定値、入るものの件数、声が無い旨の注意が出る')
+    await assert(`(() => {const buttons=[...${dialog}.querySelectorAll('button')].map(e=>e.textContent.trim());return buttons.join('|')==='取り消し|書き出す'})()`, '下端は 取り消し … 書き出す の順')
+    writeFileSync(join(target, 'card-dialog.png'), (await win.webContents.capturePage()).toPNG())
+    await click('書き出す')
+    await pause(300)
+    await assert(`!!${dialog} && !${dialog}.querySelector('[data-character-card-done]')`, '保存先を選ばなければ、何も書かずにダイアログへ戻る')
+    if (suggested !== '検証キャラ@検証シーン.zip') throw new Error('既定のファイル名が違います: ' + suggested)
+    console.log('PASS 既定のファイル名は <名前>@<シーンのタイトル>.zip')
+    await js(`(() => { const el = ${dialog}.querySelector('#character-card-label'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, '検証の時点'); el.dispatchEvent(new Event('input', { bubbles: true })) })()`)
+    chosen = out
+    await click('書き出す')
+    for (let i = 0; i < 50 && !await js(`!!${dialog}?.querySelector('[data-character-card-done]')`); i++) await pause(100)
+    await assert(`(() => {const d=${dialog};const buttons=[...d.querySelectorAll('button')].map(e=>e.textContent.trim());return d.querySelector('[data-character-card-done]').textContent.includes('card.zip') && buttons.join('|')==='フォルダで表示|閉じる' && d.querySelector('#character-card-label').disabled && !d.querySelector('[role="alert"]')})()`, '書き出すと保存先を示し、下端が フォルダで表示 / 閉じる に変わる')
+    writeFileSync(join(target, 'card-done.png'), (await win.webContents.capturePage()).toPNG())
+    const read = spawnSync(join(root, '.venv/Scripts/python.exe'), ['-c', `import json, sys, zipfile
+sys.stdout.reconfigure(encoding='utf-8')
+with zipfile.ZipFile(sys.argv[1]) as zf:
+    print(json.dumps({'names': zf.namelist(), 'card': json.loads(zf.read('card.json').decode('utf-8'))}))
+`, out], { windowsHide: true, encoding: 'utf8' })
+    if (read.status !== 0) throw new Error(read.stderr)
+    const { names, card } = JSON.parse(read.stdout)
+    const expected = card.format === 'story-graph-character-card' && card.version === 1 && card.name === '検証キャラ' && card.source.label === '検証の時点' && card.source.node_id === node.id && card.source.character_id === char.id && card.profile === '保存済みプロフィール' && card.situation.join() === '居場所: 港' && card.memories.length === 2 && names.join() === 'card.json'
+    if (!expected) throw new Error('zip の中身が違います: ' + JSON.stringify({ names, card }))
+    console.log('PASS zip には card.json が入り、直した呼び名・時点・状況・記憶が書かれている')
+    await click('フォルダで表示')
+    if (revealed !== out) throw new Error('フォルダで表示が渡したパスが違います: ' + revealed)
+    console.log('PASS フォルダで表示は書き出した zip を指す')
+    // 画面にはほかにも「閉じる」があるので、ダイアログの中のボタンを押す
+    await js(`[...${dialog}.querySelectorAll('button')].find(e=>e.textContent.trim()==='閉じる').click()`)
+    await pause(180)
+    await assert(`!${dialog}`, '閉じるでダイアログを閉じる')
+    await click('カード')
+    await pause(300)
+    await js(`window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}))`)
+    await pause(150)
+    await assert(`!${dialog}`, 'Escape でも閉じる')
+    if (errors.length) throw new Error(errors.join('\n'))
+    console.log('Screenshots: ' + target)
+    win.destroy()
+    return
+  }
   if (process.argv.includes('--target')) {
     // 相談チャットの「話す相手」: アイコンと名前のメニューで選ぶ(標準の select は使わない)
     await click('相談')

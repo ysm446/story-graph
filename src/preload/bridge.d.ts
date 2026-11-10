@@ -28,6 +28,8 @@ export interface StoryGraphApi {
   openFolder: (path: string) => Promise<boolean>
   /** バックアップ zip の保存先を選ぶ(キャンセルで null)。defaultDir は開く場所 */
   chooseBackupSaveFile: (defaultName: string, defaultDir: string) => Promise<string | null>
+  /** キャラクターカードの zip の保存先を選ぶ(キャンセルで null)。defaultDir は開く場所 */
+  chooseCardSaveFile: (defaultName: string, defaultDir: string) => Promise<string | null>
   /** 復元するバックアップ zip を選ぶ(キャンセルで null) */
   chooseBackupZip: () => Promise<string | null>
   /** フォルダを選ぶ(バックアップの保存先・復元先。キャンセルで null) */

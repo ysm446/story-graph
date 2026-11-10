@@ -3,6 +3,7 @@ import type {
   BackupInfo,
   BackupResult,
   Character,
+  CharacterCardSummary,
   ElapsedUnit,
   EventInput,
   GraphEdge,
@@ -85,6 +86,16 @@ export const api = {
   updateCharacter: (id: string, data: Partial<Character>) =>
     request<Character>(`/characters/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteCharacter: (id: string) => request<unknown>(`/characters/${id}`, { method: 'DELETE' }),
+  // キャラクターカードの書き出し(docs/design/character-card.md)。anchor が null なら正史の末尾
+  previewCharacterCard: (id: string, anchor: string | null) =>
+    request<CharacterCardSummary>(
+      `/characters/${id}/card/preview${anchor ? `?anchor=${encodeURIComponent(anchor)}` : ''}`
+    ),
+  exportCharacterCard: (id: string, anchor: string | null, path: string, label: string) =>
+    request<CharacterCardSummary & { path: string; size: number }>(`/characters/${id}/card/export`, {
+      method: 'POST',
+      body: JSON.stringify({ anchor, path, label })
+    }),
 
   listPlaces: () => request<Place[]>('/places'),
   createPlace: (data: Partial<Place> & { name: string }) =>

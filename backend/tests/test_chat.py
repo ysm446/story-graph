@@ -433,9 +433,9 @@ def test_character_system_prompt_shows_others_appearance_not_profile(store):
 
 
 def test_appearance_hint_is_short():
-    hint = chat_agent._appearance_hint({"appearance": "あ" * 200})
+    hint = chat_agent.appearance_hint({"appearance": "あ" * 200})
     assert hint == "あ" * chat_agent.APPEARANCE_HINT_CHARS + "…"
-    assert chat_agent._appearance_hint(None) == ""
+    assert chat_agent.appearance_hint(None) == ""
 
 
 def test_character_system_prompt_roleplay_frame(store):

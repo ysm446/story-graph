@@ -1,9 +1,15 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-07-24 22:38
-更新日時: 2026-11-09 16:41
+更新日時: 2026-11-10 19:33
 
 ## 現在の状態
+
+- 2026-11-10 19:33 **キャラクターカードの書き出し(段階 1)を実装**。`backend/character_card.py`(`build_card` / `write_zip`)、`GET /characters/{id}/card/preview`・`POST /characters/{id}/card/export`、相談チャットのヘッダーの「カード」ボタンと `CharacterCardDialog.tsx`、保存先を選ぶ IPC `card:chooseSaveFile`、バージョンを渡す環境変数 `STORY_GRAPH_APP_VERSION`。`chat_agent` の `describe_score` / `appearance_hint` / `memory_ages` を公開の名前にし、記憶の並びを `memories_by_priority` として取り出した(キャラ会話の出力は変えていない)。検証: pytest 754 件(新規 `test_character_card.py` 12 件)、typecheck・build、隔離 Electron の `--card`(新設)と `--target`。**未確認**: 実際のライブラリ(画像・参照音声つきのキャラクター)での書き出し、既存の sidecar を再利用したとき(`app_version` は省かれる)。**設計から変えた点**: 完了の通知は別に出さず、ダイアログの中に保存先と「フォルダで表示」を出す。資料庫に未保存の編集があるときの注意書きは入れていない。**次**: story-graph-voice-chat 側の読み込み(向こうのリポジトリ)、そのあと段階 2
+
+- 2026-11-10 18:26 **キャラクターカードの書き出し(段階 1)を設計した**(文書のみ。未実装)。[character-card.md](../design/character-card.md)。LLM を使わず、キャラ会話と同じ材料(`build_character_system`)から設定・状況・関係・記憶・画像・声を写す。記憶は全件を「直近 5 件 → 重要度順」で入れ、関係は数値を入れず言葉にする。入口は相談チャットのヘッダー(話す相手がキャラクターのときだけ)。あわせて形式を特定のアプリに寄せない書き方に直し(ユーザー方針「将来ほかのアプリにも渡せるように」)、`language` と `source.app` / `app_version` を足した。plan.md に予定の節を追加。**次**: 段階 1 の実装
+
+- 2026-11-10 18:10 **キャラクターカードの形式を決めた**(ユーザー依頼。文書のみ)。ある時点のキャラクターを zip 1 つに書き出し、別アプリの音声会話(story-graph-voice-chat。`D:\GitHub\story-graph-voice-chat`)で話せるようにするための受け渡し形式。正本は [character-card-format.md](../reference/character-card-format.md)。決めたこと: 一方向(読む側は書き戻さない)、同一性は `character_id` + `node_id` の組(時点が違えば別キャラ扱い)、中身は文章で持ち配列は重要な順、画像と参照音声を同梱。**未実装**: story-graph 側の書き出し(相談チャットのヘッダーから。`summary` / `examples` は LLM で作る)、読む側の読み込み、読む側リポジトリへの文書のコピー
 
 - 2026-11-09 16:41 **キャラ会話で関係の相手の外見を渡す**(ユーザー報告「人間のキャラに犬のキャラのことを聞くと人として語る」)。`build_character_system` の関係の欄で、相手名に `_appearance_hint`(`appearance` の先頭 60 字)を「見た目: …」として添える。`profile` は秘密を含みうるので渡さない。`build_room_system` は参加者全員の見た目を枠組みの節に並べる。あわせて CLAUDE.md / AGENTS.md に「検証でユーザーのライブラリを読み書きしない」を追記。検証: `test_chat.py` 61 件(新規 3 件)。**未確認**: 実モデルでの会話。**未対応**: 関係の無い相手の情報(必要なら外見を引くツール)
 - 2026-10-31 22:34 **`changelog.md` を `CHANGELOG.md` に改名**(ユーザー依頼)。README・AGENTS・CLAUDE・設計資料の参照を合わせた。`docs/plan/progress.md` と `docs/design/node-inheritance.md` のリンク先が `../changelog.md`(存在しない `docs/changelog.md`)になっていたのも `../../CHANGELOG.md` に直した
