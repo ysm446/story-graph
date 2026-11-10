@@ -1237,6 +1237,51 @@ store.select_media(m['id'])
     win.destroy()
     return
   }
+  if (process.argv.includes('--eventstale')) {
+    // イベントの古さの印(docs/design/event-staleness.md)。検証シーンは本文だけでイベントが無いので「未作成」から始まる
+    const graph = await (await fetch(base + '/graph')).json()
+    const node = graph.nodes.find((n) => !n.kind)
+    const send = async (method, path, value) => {
+      const r = await fetch(base + path, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(value) })
+      if (!r.ok) throw new Error(await r.text())
+    }
+    const card = `[...document.querySelectorAll('.react-flow__node')].find(e=>!e.classList.contains('react-flow__node-chapterNode') && e.textContent.includes('検証シーン'))`
+    const badge = `${card}.querySelector('[data-events-status]')`
+    const row = `document.querySelector('[data-events-status-row]')`
+    const open = async () => {
+      await new Promise((done) => { win.webContents.once('did-finish-load', () => done()); win.webContents.reload() })
+      for (let i = 0; i < 60 && !await js(`!!document.querySelector('.react-flow')`); i++) await pause(200)
+      await pause(400)
+      await showScene('検証シーン')
+      await js(`${card}.dispatchEvent(new MouseEvent('click',{bubbles:true}))`)
+      await pause(600)
+    }
+    const gone = async () => { for (let i = 0; i < 30 && await js(`!!${row} || !!${badge}`); i++) await pause(100) }
+    await open()
+    await assert(`(() => {const b=${badge};return b.dataset.eventsStatus==='missing' && b.textContent.trim()==='イベント未作成' && b.dataset.tip.includes('まだ作っていません')})()`, '本文だけのシーンのカードに「イベント未作成」が出る')
+    await assert(`(() => {const r=${row};return r.querySelector('span').textContent.trim()==='イベント未作成' && r.querySelector('button').textContent.trim()==='イベントなしでよい'})()`, '詳細欄の Events に同じ印と「イベントなしでよい」が出る')
+    writeFileSync(join(target, 'eventstale-missing.png'), (await win.webContents.capturePage()).toPNG())
+    await click('イベントなしでよい')
+    await gone()
+    await assert(`!${row} && !${badge}`, '「イベントなしでよい」でカードと詳細欄の印が消える')
+    await send('PATCH', '/nodes/' + node.id, { beat: '書き替えた本文。' })
+    await open()
+    await assert(`(() => {const b=${badge};const r=${row};return b.dataset.eventsStatus==='stale' && b.textContent.trim()==='イベント要更新' && r.querySelector('span').textContent.trim()==='イベント要更新' && r.querySelector('button').textContent.trim()==='このままでよい'})()`, '本文を書き替えると「イベント要更新」と「このままでよい」が出る')
+    writeFileSync(join(target, 'eventstale-stale.png'), (await win.webContents.capturePage()).toPNG())
+    await click('このままでよい')
+    await gone()
+    await assert(`!${row} && !${badge}`, '「このままでよい」で印が消える')
+    await send('PATCH', '/nodes/' + node.id, { beat: 'もう一度書き替えた本文。' })
+    await open()
+    await assert(`!!${row}`, 'もう一度書き替えると、また印が付く')
+    await send('PUT', '/nodes/' + node.id + '/events', { events: [{ type: 'fact_set', payload: { scope: 'world', key: '天気', value: '雨' } }] })
+    await open()
+    await assert(`!${row} && !${badge}`, 'イベントを保存すると印が消える')
+    if (errors.length) throw new Error(errors.join('\n'))
+    console.log('Screenshots: ' + target)
+    win.destroy()
+    return
+  }
   if (process.argv.includes('--card')) {
     // キャラクターカードの書き出し(docs/design/character-card.md)。保存先を選ぶ窓と「フォルダで表示」は差し替える
     const chars = await (await fetch(base + '/characters')).json()

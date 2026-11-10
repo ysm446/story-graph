@@ -33,6 +33,24 @@ def _new_id() -> str:
     return uuid.uuid4().hex[:12]
 
 
+def _with_events_status(node: dict[str, Any]) -> dict[str, Any]:
+    """シーンに events_status を添え、指紋そのもの(events_basis)は外へ出さない。
+
+    "stale" = 本文・登場人物・場所を変えたあとイベントを書いていない、"missing" = 本文はあるがイベントを
+    一度も書いていない、None = 最新(または印の対象外)。docs/design/event-staleness.md §3。
+    cast は JSON を解いたあとの配列でも、列のままの文字列でもよい。
+    """
+    basis = node.pop("events_basis", None)
+    status = None
+    if not node.get("kind"):
+        if basis is None:
+            status = "missing" if (node.get("beat") or "").strip() else None
+        elif basis != db_mod.events_fingerprint(node.get("beat"), node.get("cast"), node.get("location")):
+            status = "stale"
+    node["events_status"] = status
+    return node
+
+
 # チャット履歴で「1 往復の始まり」と見なすメッセージ。ツール上限に達したときの
 # 内部指示も user ロールで積まれるので、それは区切りに数えない
 TOOL_LIMIT_MARKER = "(これ以上ツールは使えません"
@@ -315,7 +333,7 @@ class Store:
         node["cast"] = json.loads(node["cast"])
         node["image_ref_chars"] = json.loads(node["image_ref_chars"]) if node.get("image_ref_chars") else None
         node["events"] = self.list_events(node_id)
-        return node
+        return _with_events_status(node)
 
     # ---- はじまり / 結末マーカー(docs/design/endings.md) ------------
     #
@@ -586,6 +604,7 @@ class Store:
             node["cast"] = json.loads(node["cast"])
             node["image_ref_chars"] = json.loads(node["image_ref_chars"]) if node.get("image_ref_chars") else None
             node["events"] = events_by_node.get(node["id"], [])
+            _with_events_status(node)
         edges = [dict(r) for r in self.conn.execute("SELECT * FROM edges")]
         return {"nodes": nodes, "edges": edges}
 
@@ -807,6 +826,7 @@ class Store:
                     nid,
                     # id を引き継ぐ(掃除で残るイベントの参照を壊さない)
                     [{"id": e["id"], "type": e["type"], "payload": e["payload"], "source": e["source"]} for e in kept],
+                    record_basis=False,  # 掃除は本文と突き合わせていないので、古さの印を消さない
                 )
             errors = self.validate(nid)
             if errors:
@@ -1696,9 +1716,13 @@ class Store:
         return events
 
     def replace_events(self, node_id: str, events: list[dict[str, Any]],
-                       source: str = "user", commit: bool = True) -> list[dict[str, Any]]:
+                       source: str = "user", commit: bool = True,
+                       record_basis: bool = True) -> list[dict[str, Any]]:
         """ノードのイベント列を置換する。events の要素は {id?, type, payload, source?}。
-        id を渡すと引き継ぐ(memory_compress.replaces / reasons の参照を壊さない)。"""
+        id を渡すと引き継ぐ(memory_compress.replaces / reasons の参照を壊さない)。
+
+        record_basis: いまの本文に合わせて書いたものとして、古さの印を消す(既定)。本文と突き合わせない
+        保守の書き替え(登場イベントの掃除など)は False にする。docs/design/event-staleness.md §4。"""
         # 章境界の cutoff 用に、編集前の章末尾の状態ハッシュを控える
         boundary = self._digest_boundary_for(node_id)
         old_memory_ids = [
@@ -1729,6 +1753,8 @@ class Store:
                     now,
                 ),
             )
+        if record_basis:
+            self._record_events_basis(node_id)
         self._sync_memories(node_id, commit=False)
         self._mark_digest_stale(node_id)
         # 章境界の early cutoff: まとめ済みの章の中の編集で、章末尾の状態が
@@ -1749,6 +1775,24 @@ class Store:
         if commit:
             self.conn.commit()
         return self.list_events(node_id)
+
+    def _record_events_basis(self, node_id: str) -> None:
+        """いまの本文・登場人物・場所の指紋を「イベントを書いたときの値」として覚える。"""
+        row = self.conn.execute(
+            'SELECT beat, "cast", location FROM nodes WHERE id = ? AND kind IS NULL', (node_id,)
+        ).fetchone()
+        if row is not None:
+            self.conn.execute(
+                "UPDATE nodes SET events_basis = ? WHERE id = ?",
+                (db_mod.events_fingerprint(row["beat"], row["cast"], row["location"]), node_id),
+            )
+
+    def confirm_events(self, node_id: str) -> dict[str, Any] | None:
+        """「このままでよい」: イベントは書き替えず、いまの本文に合っているものとして印を消す。
+        物語の状態は変わらないので、清書の要更新も dirty 伝播も起こさない。"""
+        self._record_events_basis(node_id)
+        self.conn.commit()
+        return self.get_node(node_id)
 
     def _sync_memories(self, node_id: str, commit: bool = True) -> None:
         """memory_add / memory_compress イベントから memories 行を再構築する(導出物)。
@@ -3072,6 +3116,7 @@ class Store:
             if node is not None:
                 node["cast"] = json.loads(node["cast"])
                 node["events"] = events_by_node.get(nid, [])
+                _with_events_status(node)
             result.append({"node": node, "render": renders_by_node.get(nid)})
         return result
 

@@ -1,6 +1,7 @@
 import { createContext, memo, useContext, useSyncExternalStore } from 'react'
 import { Handle, Position, useStore, type Node, type NodeProps, type ReactFlowState } from '@xyflow/react'
 import { assetUrl, isVideoAsset } from '../../api'
+import { EVENTS_STATUS_LABEL, EVENTS_STATUS_TIP } from '../../eventsStatus'
 import { useProductionPreview } from '../../productionPreview'
 import type { Character, Group, StoryNode } from '../../types'
 import { beatDraftCache, subscribeBeatDrafts } from './beatDrafts'
@@ -189,6 +190,17 @@ export function BeatNodeCard({ data, selected }: NodeProps<BeatFlowNode>): React
             data-tip="このシーンには未保存の変更があります"
           >
             未保存
+          </span>
+        )}
+        {storyNode.events_status && (
+          // 本文とイベントが食い違っている印(docs/design/event-staleness.md)。章カードの「まとめ要更新」と同じ形
+          <span
+            data-events-status={storyNode.events_status}
+            className="shrink-0 rounded px-1.5 py-px text-[10px]"
+            style={{ background: 'rgba(239,68,68,0.12)', color: 'var(--danger-text)' }}
+            data-tip={EVENTS_STATUS_TIP[storyNode.events_status]}
+          >
+            {EVENTS_STATUS_LABEL[storyNode.events_status]}
           </span>
         )}
         {isDraft && (

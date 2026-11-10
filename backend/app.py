@@ -1088,6 +1088,15 @@ async def put_events(node_id: str, body: EventsPut) -> dict[str, Any]:
     return {"events": events, "validation": store.validate(node_id)}
 
 
+@app.post("/nodes/{node_id}/events/confirm")
+async def confirm_events(node_id: str) -> dict[str, Any]:
+    """「このままでよい」: イベントを変えずに、古さの印だけ消す(docs/design/event-staleness.md §5)。"""
+    node = store.confirm_events(node_id)
+    if node is None:
+        raise HTTPException(404, "node not found")
+    return node
+
+
 @app.get("/nodes/{node_id}/state")
 async def node_state(node_id: str) -> dict[str, Any]:
     if store.get_node(node_id) is None:

@@ -1,9 +1,13 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-07-24 22:38
-更新日時: 2026-11-10 19:33
+更新日時: 2026-11-10 20:29
 
 ## 現在の状態
+
+- 2026-11-10 20:29 **イベントの古さの印を実装**。`nodes.events_basis`(`SCHEMA_VERSION` 5。移行でイベントのあるシーンを最新にする)、`db.events_fingerprint`、`Store.replace_events` で指紋を覚える(`record_basis=False` は登場イベントの掃除だけ)、シーンに `events_status`(`stale` / `missing` / null)を添える、`Store.confirm_events` と `POST /nodes/{id}/events/confirm`。画面はシーンのカードのバッジと、詳細欄の Events の印の行(`eventsStatus.ts` に文言)。検証: pytest 763 件(新規 `test_event_staleness.py` 9 件)、typecheck・build、隔離 Electron の `--eventstale`(新設)・`--events`・`--tabs`・`--card`。**未確認**: 実際のライブラリでの移行(開くと版が 5 に上がる。イベントが 1 件も無いシーンは「イベント未作成」と出る)。**設計から変えた点**: 詳細欄に「作り直す」は足さず、元からある「イベント抽出(LLM)」を使う。**あわせて直したこと**: 同じシーンの中の記憶の新しさの順が、ランダムな記憶 ID で決まっていた(`chat_agent._memories_newest_first` の並びに `rowid DESC` を足し、イベントの並びで後のものを先にした)。カードのテスト `test_memories_all_recent_first_then_importance` がおよそ 10 回に 1 回落ちて気づいた。キャラ会話で「最近の出来事」の 5 件に入る記憶も、同じシーンの中ではこの順で決まるようになる。**次**: 「まとめて更新」の設計
+
+- 2026-11-10 20:20 **イベントの古さの印を設計した**(文書のみ。未実装)。[event-staleness.md](../design/event-staleness.md)。ユーザーの要望「時間が余ったときにイベントや清書の更新を順に続けてほしい」の土台。フラグを立てるのではなく、イベントを書いたときの本文・登場人物・場所の指紋を `nodes.events_basis` に覚え、いまの指紋と比べる(立て忘れが無く、元に戻せば印も消える)。印はそのシーンだけに付け、下流へは広げない。「このままでよい」で消せる。plan.md に予定の節を追加。**次**: 実装、そのあと「まとめて更新」の設計
 
 - 2026-11-10 19:33 **キャラクターカードの書き出し(段階 1)を実装**。`backend/character_card.py`(`build_card` / `write_zip`)、`GET /characters/{id}/card/preview`・`POST /characters/{id}/card/export`、相談チャットのヘッダーの「カード」ボタンと `CharacterCardDialog.tsx`、保存先を選ぶ IPC `card:chooseSaveFile`、バージョンを渡す環境変数 `STORY_GRAPH_APP_VERSION`。`chat_agent` の `describe_score` / `appearance_hint` / `memory_ages` を公開の名前にし、記憶の並びを `memories_by_priority` として取り出した(キャラ会話の出力は変えていない)。検証: pytest 754 件(新規 `test_character_card.py` 12 件)、typecheck・build、隔離 Electron の `--card`(新設)と `--target`。**未確認**: 実際のライブラリ(画像・参照音声つきのキャラクター)での書き出し、既存の sidecar を再利用したとき(`app_version` は省かれる)。**設計から変えた点**: 完了の通知は別に出さず、ダイアログの中に保存先と「フォルダで表示」を出す。資料庫に未保存の編集があるときの注意書きは入れていない。**次**: story-graph-voice-chat 側の読み込み(向こうのリポジトリ)、そのあと段階 2
 

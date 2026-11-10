@@ -231,6 +231,8 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify({ events })
     }),
+  /** 「このままでよい」: イベントを変えずに、本文との食い違いの印だけ消す(docs/design/event-staleness.md) */
+  confirmEvents: (nodeId: string) => request<StoryNode>(`/nodes/${nodeId}/events/confirm`, { method: 'POST' }),
   getState: (nodeId: string) => request<StateSnapshot>(`/nodes/${nodeId}/state`),
   /** そのシーンに入る直前の状態(関係が「どこからどこへ」動いたかを出すため) */
   getStateBefore: (nodeId: string) => request<StateSnapshot>(`/nodes/${nodeId}/state_before`),

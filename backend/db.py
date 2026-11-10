@@ -7,6 +7,8 @@ FTS5 / sqlite-vec の索引テーブル(memories_fts / memories_vec)は
 
 from __future__ import annotations
 
+import hashlib
+import json
 import sqlite3
 import uuid
 from datetime import datetime, timezone
@@ -18,7 +20,8 @@ DEFAULT_DB_PATH = REPO_ROOT / "data" / "story-graph.db"
 # 2: nodes.location を自由テキストから places.id 参照に変える(docs/design/places.md)
 # 3: 挿絵・参照画像のストック(media)を作り、設定済みの 1 枚を初期の候補として登録する(docs/design/image-gen.md §7)
 # 4: 場所の画像もストックに載せる(設定済みの 1 枚を初期の候補として登録する)
-SCHEMA_VERSION = 4
+# 5: イベントの古さの印(nodes.events_basis)。イベントのあるシーンを「最新」として始める(docs/design/event-staleness.md §6)
+SCHEMA_VERSION = 5
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS production_memory(
@@ -338,6 +341,9 @@ def init_schema(conn: sqlite3.Connection) -> None:
         # ほかの持ち主のストックから使い回したときの元の media.id(docs/design/image-gen.md §7)。NULL = 自分の生成物か手持ち。
         # セットは表示用に写すが、写し先の生成ウインドウの保存状態には戻さない(その持ち主のプロンプトではない)
         "ALTER TABLE media ADD COLUMN reused_from TEXT",
+        # イベントを書いたときの本文・登場人物・場所の指紋(events_fingerprint)。いまの指紋と違えば
+        # 「イベントが古い」。NULL = まだ一度も書いていない(docs/design/event-staleness.md)
+        "ALTER TABLE nodes ADD COLUMN events_basis TEXT",
     ):
         try:
             conn.execute(ddl)
@@ -359,8 +365,38 @@ def init_schema(conn: sqlite3.Connection) -> None:
             _migrate_images_to_media(conn)
         if version < 4:
             _migrate_place_images_to_media(conn)
+        if version < 5:
+            _migrate_events_basis(conn)
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
     conn.commit()
+
+
+def events_fingerprint(beat: str | None, cast: list[str] | str | None, location: str | None) -> str:
+    """イベント抽出がそのシーンから受け取る入力(本文・登場人物・場所)の指紋。
+
+    イベントを書いたときに nodes.events_basis へ覚え、いまの値と比べて「イベントが古い」を判定する
+    (docs/design/event-staleness.md §2)。空白や改行コード、登場人物の並びだけの違いでは変わらない。
+    cast は配列でも、nodes.cast の JSON 文字列でもよい。
+    """
+    if isinstance(cast, str):
+        cast = json.loads(cast or "[]")
+    text = (beat or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    basis = json.dumps([text, sorted(cast or []), location or ""], ensure_ascii=False)
+    return hashlib.sha1(basis.encode("utf-8")).hexdigest()
+
+
+def _migrate_events_basis(conn: sqlite3.Connection) -> None:
+    """過去にさかのぼって古さを判定する材料は無いので、イベントのあるシーンは「最新」として始める。
+    イベントが 1 件も無いシーンは NULL のまま(本文があれば「未作成」と表示される)。"""
+    rows = conn.execute(
+        'SELECT id, beat, "cast", location FROM nodes WHERE kind IS NULL AND events_basis IS NULL'
+        " AND id IN (SELECT node_id FROM events)"
+    ).fetchall()
+    for r in rows:
+        conn.execute(
+            "UPDATE nodes SET events_basis = ? WHERE id = ?",
+            (events_fingerprint(r["beat"], r["cast"], r["location"]), r["id"]),
+        )
 
 
 def _migrate_images_to_media(conn: sqlite3.Connection) -> None:

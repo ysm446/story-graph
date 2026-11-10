@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { api, isAbortError } from './api'
 import CharAvatar from './CharAvatar'
+import { EVENTS_CONFIRM_LABEL, EVENTS_CONFIRM_TIP, EVENTS_STATUS_LABEL, EVENTS_STATUS_TIP } from './eventsStatus'
 import { EditActions, editKeys, EditPencil } from './FieldEdit'
 import { Icon, type IconName } from './icons'
 import RelationBar from './RelationBar'
@@ -620,6 +621,17 @@ export default function EventsEditor({
     })
   }
 
+  // 印だけ消す。イベントも状態も変わらないので、抽出と違ってキューには積まない
+  const confirmEvents = (): void => {
+    setError(null)
+    setSaving(true)
+    api
+      .confirmEvents(node.id)
+      .then(() => onChanged())
+      .catch((e) => setError(String(e)))
+      .finally(() => setSaving(false))
+  }
+
   const runExtract = (): void => {
     setError(null)
     const targetId = node.id // 実行までにインスペクタが別のシーンを映していても対象は変えない
@@ -741,6 +753,28 @@ export default function EventsEditor({
           </button>
         </div>
       </div>
+
+      {node.events_status && (
+        // 本文とイベントが食い違っている印(docs/design/event-staleness.md)。直すなら上の抽出、内容が変わっていなければ印だけ消す
+        <div data-events-status-row className="mb-1.5 flex items-center justify-between gap-2">
+          <span
+            className="rounded px-1.5 py-px text-[10px]"
+            style={{ background: 'rgba(239,68,68,0.12)', color: 'var(--danger-text)' }}
+            data-tip={EVENTS_STATUS_TIP[node.events_status]}
+          >
+            {EVENTS_STATUS_LABEL[node.events_status]}
+          </span>
+          <button
+            onClick={confirmEvents}
+            disabled={saving || extractTask !== null}
+            className="rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-50"
+            style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+            data-tip={EVENTS_CONFIRM_TIP[node.events_status]}
+          >
+            {EVENTS_CONFIRM_LABEL[node.events_status]}
+          </button>
+        </div>
+      )}
 
       {adding?.at === 'top' && addingForm}
 

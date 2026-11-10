@@ -619,10 +619,12 @@ def _memories_newest_first(store: Store, memory_ids: list[str]) -> list[Any]:
     if not memory_ids:
         return []
     placeholders = ",".join("?" for _ in memory_ids)
-    # 新しい順。分岐ノード上の記憶(story_order < 0)は retrieval と同じく「いま」扱い
+    # 新しい順。分岐ノード上の記憶(story_order < 0)は retrieval と同じく「いま」扱い。
+    # 同じシーンの記憶は story_order が同じなので、イベントの並びで後のものを先にする(rowid は
+    # _sync_memories がイベントの順に振る)。これが無いと同じシーンの中の順がランダムな ID で決まる
     return store.conn.execute(
         f"SELECT id, content, importance, event_id FROM memories WHERE id IN ({placeholders})"
-        " ORDER BY (story_order IS NULL OR story_order < 0) DESC, story_order DESC",
+        " ORDER BY (story_order IS NULL OR story_order < 0) DESC, story_order DESC, rowid DESC",
         memory_ids,
     ).fetchall()
 

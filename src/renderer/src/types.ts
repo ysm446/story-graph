@@ -110,6 +110,9 @@ export interface EventInput {
 
 export type ElapsedUnit = 'immediate' | 'same_day' | 'hour' | 'day' | 'week' | 'month' | 'year'
 
+/** stale = 本文・登場人物・場所を変えたあとイベントを書いていない、missing = 本文はあるがイベントを一度も書いていない */
+export type EventsStatus = 'stale' | 'missing'
+
 export interface StoryNode {
   id: string
   title: string | null
@@ -145,6 +148,8 @@ export interface StoryNode {
   created_at: string
   updated_at: string
   events: StoryEvent[]
+  /** 本文とイベントの食い違い(docs/design/event-staleness.md)。null = 最新、または印の対象外 */
+  events_status?: EventsStatus | null
   validation?: string[]
 }
 
