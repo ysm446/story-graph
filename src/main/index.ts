@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, screen, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, powerSaveBlocker, screen, shell } from 'electron'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { execSync } from 'node:child_process'
 import { dirname, join, normalize } from 'node:path'
@@ -400,6 +400,17 @@ app.whenReady().then(async () => {
       properties: ['openDirectory', 'createDirectory']
     })
     return result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0]
+  })
+  // まとめて更新(docs/design/bulk-update.md)の実行中だけ、PC のスリープを止める。
+  // 画面が消えるのは止めない(prevent-app-suspension)。戻り値は、いま止めているか
+  let sleepBlocker: number | null = null
+  ipcMain.handle('power:blockSleep', (_event, blocked: boolean) => {
+    if (blocked && sleepBlocker === null) sleepBlocker = powerSaveBlocker.start('prevent-app-suspension')
+    if (!blocked && sleepBlocker !== null) {
+      powerSaveBlocker.stop(sleepBlocker)
+      sleepBlocker = null
+    }
+    return sleepBlocker !== null
   })
   // スクリーンショット通知のクリックから、保存先をエクスプローラーで開く
   ipcMain.handle('shell:reveal', (_event, filePath: string) => {

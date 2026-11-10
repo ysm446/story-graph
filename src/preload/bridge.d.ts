@@ -34,6 +34,8 @@ export interface StoryGraphApi {
   chooseBackupZip: () => Promise<string | null>
   /** フォルダを選ぶ(バックアップの保存先・復元先。キャンセルで null) */
   chooseFolder: (title: string) => Promise<string | null>
+  /** PC のスリープを止める / 止めるのをやめる(まとめて更新の実行中。画面が消えるのは止めない) */
+  setSleepBlocked: (blocked: boolean) => Promise<boolean>
   onScreenshotSaved: (callback: (path: string) => void) => () => void
 }
 

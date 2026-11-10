@@ -29,6 +29,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 import app_settings
 import auto_images
 import backup
+import bulk_update
 import character_card
 import chat_agent
 import chat_rules
@@ -714,9 +715,14 @@ async def get_group_digest(group_id: str) -> dict[str, Any]:
 
 
 @app.post("/groups/{group_id}/digest/generate")
-async def generate_group_digest(group_id: str) -> dict[str, Any]:
-    """LLM で章のまとめを生成してそのまま保存する(内容は後から編集できる)。"""
-    await snapshots.auto(store, "章のまとめ更新の前", 60)
+async def generate_group_digest(group_id: str, snapshot: bool = True) -> dict[str, Any]:
+    """LLM で章のまとめを生成してそのまま保存する(内容は後から編集できる)。
+
+    snapshot=false は「まとめて更新」用(始めるときに 1 回保存済み。章ごとに自動保存を積むと、
+    件数の上限で古い自動保存が押し出される)。
+    """
+    if snapshot:
+        await snapshots.auto(store, "章のまとめ更新の前", 60)
     try:
         base_url = await llama.ensure_running(store.get_settings())
         events = await generation.generate_group_digest(store, base_url, group_id)
@@ -2354,6 +2360,24 @@ async def render(body: RenderIn) -> StreamingResponse:
             _schedule_audio_gc()
 
     return StreamingResponse(stream(), media_type="text/event-stream")
+
+
+# ---- まとめて更新(docs/design/bulk-update.md) -----------------------
+
+@app.get("/bulk-update/plan")
+async def bulk_update_plan(include_branches: bool = False) -> dict[str, Any]:
+    """古くなった章のまとめ・清書を、実行する順に並べて返す(書き込まない)。"""
+    return bulk_update.plan(store, include_branches)
+
+
+@app.post("/bulk-update/start")
+async def bulk_update_start() -> dict[str, Any]:
+    """始める前の状態を保存する。保存できなければ始めさせない(無人で走るので、戻せることを先に確かめる)。"""
+    try:
+        snapshot = await snapshots.create_async(store, "まとめて更新の前", kind="auto")
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(500, f"始める前の状態を保存できませんでした: {e}")
+    return {"snapshot": snapshot}
 
 
 # ---- 相談チャット ---------------------------------------------------

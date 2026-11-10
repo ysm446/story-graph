@@ -17,6 +17,7 @@ const api: StoryGraphApi = {
     ipcRenderer.invoke('card:chooseSaveFile', defaultName, defaultDir),
   chooseBackupZip: () => ipcRenderer.invoke('backup:chooseZip'),
   chooseFolder: (title) => ipcRenderer.invoke('backup:chooseDir', title),
+  setSleepBlocked: (blocked) => ipcRenderer.invoke('power:blockSleep', blocked),
   onScreenshotSaved: (callback) => {
     const listener = (_event: IpcRendererEvent, path: string): void => callback(path)
     ipcRenderer.on('screenshot:saved', listener)

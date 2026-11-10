@@ -118,6 +118,55 @@ store.save_chat_messages(chat['id'], [
     const digest = await fetch(base + `/groups/${chapter.id}/digest`, {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({events:[compress(character.id,'検証のまとめ。'),compress(second.id,'二人目のまとめ。'),compress(character.id,'検証のまとめ・二件目。')]})})
     if (!digest.ok) throw new Error(await digest.text())
   }
+  // まとめて更新(docs/design/bulk-update.md)。LLM は偽のサーバーに向ける(ユーザーの llama-server には触れない)。
+  // 偽のサーバーは、清書(ストリーム)の 4 回目だけ失敗させる = 画面から走らせたときの 3 シーン目
+  const bulk = { streams: 0, sleep: [] }
+  if (process.argv.includes('--bulk')) {
+    const fake = require('node:http').createServer((req, res) => {
+      if (req.method === 'GET') { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end('{"status":"ok"}'); return }
+      let body = ''
+      req.on('data', (chunk) => { body += chunk })
+      req.on('end', () => {
+        const payload = JSON.parse(body || '{}')
+        if (!payload.stream) {
+          const chars = payload.response_format?.json_schema?.schema?.properties?.summaries?.items?.properties?.char?.enum ?? []
+          const content = JSON.stringify({ summaries: chars.map((char) => ({ char, summary: '偽のサーバーが作ったまとめ。', importance: 0.6 })) })
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ choices: [{ message: { content }, finish_reason: 'stop' }], usage: {} }))
+          return
+        }
+        bulk.streams += 1
+        if (bulk.streams === 4) { res.writeHead(500, { 'Content-Type': 'text/plain' }); res.end('fake failure'); return }
+        res.writeHead(200, { 'Content-Type': 'text/event-stream' })
+        res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: `偽の清書 ${bulk.streams}。` } }] })}\n\n`)
+        res.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' }] })}\n\n`)
+        res.end('data: [DONE]\n\n')
+      })
+    })
+    await new Promise((done) => fake.listen(0, '127.0.0.1', done))
+    const send = async (method, path, value) => {
+      const r = await fetch(base + path, { method, headers: { 'Content-Type': 'application/json' }, body: value === undefined ? undefined : JSON.stringify(value) })
+      if (!r.ok) throw new Error(`${method} ${path}: ${await r.text()}`)
+      return r
+    }
+    await send('PUT', '/settings', { values: { llm_base_url: `http://127.0.0.1:${fake.address().port}` } })
+    const char = (await (await fetch(base + '/characters')).json())[0]
+    const first = (await (await fetch(base + '/graph')).json()).nodes.find((n) => !n.kind)
+    await send('PATCH', '/nodes/' + first.id, { cast: [char.id] })
+    const second = await (await send('POST', '/nodes', { title: '二話', beat: '二話の本文。', cast: [char.id] })).json()
+    await send('POST', '/nodes', { title: '三話', beat: '三話の本文。' })
+    await send('POST', '/nodes', { title: '四話', beat: '四話の本文。' })
+    await send('POST', '/nodes', { title: '本文なし', beat: '' })
+    // 章を作ってまとめを入れ、あとで本文を書き替えて「まとめ要更新」にする
+    const chapter = await (await send('POST', '/groups', { title: '検証章', node_ids: [first.id, second.id] })).json()
+    await send('PUT', `/groups/${chapter.id}/digest`, { events: [{ type: 'memory_compress', payload: { char: char.id, replaces: [], summary: '元のまとめ。', importance: 0.6 } }] })
+    // 先頭のシーンを 1 回清書してから本文を書き替える = 「要更新の清書」
+    const preset = (await (await fetch(base + '/presets')).json())[0]
+    await (await send('POST', '/render', { preset_id: preset.id, pov_char: null, node_ids: [first.id] })).text()
+    await send('PATCH', '/nodes/' + first.id, { beat: '書き替えた本文。' })
+    ipcMain.handle('power:blockSleep', (_event, blocked) => { bulk.sleep.push(blocked); return blocked })
+    bulk.base = base
+  }
   const libraryInfo = { current: target, recents: [], defaultParent: join(target, 'libs') }
   ipcMain.handle('library:info', () => libraryInfo)
   const win = new BrowserWindow({ show: false, width: 1440, height: 1000, webPreferences: { offscreen: true, backgroundThrottling: false, preload: join(root, 'out/preload/index.js') } })
@@ -1277,6 +1326,71 @@ store.select_media(m['id'])
     await send('PUT', '/nodes/' + node.id + '/events', { events: [{ type: 'fact_set', payload: { scope: 'world', key: '天気', value: '雨' } }] })
     await open()
     await assert(`!${row} && !${badge}`, 'イベントを保存すると印が消える')
+    if (errors.length) throw new Error(errors.join('\n'))
+    console.log('Screenshots: ' + target)
+    win.destroy()
+    return
+  }
+  if (process.argv.includes('--bulk')) {
+    // まとめて更新: 件数 → チェック → 実行(1 件失敗しても続く)→ 結果 → 開き直すと残りだけ
+    const dialog = `document.querySelector('[role="dialog"][aria-labelledby="bulk-update-title"]')`
+    const resultDialog = `document.querySelector('[role="dialog"][aria-labelledby="bulk-update-result-title"]')`
+    const row = (name) => `${dialog}.querySelector('[data-bulk-row="${name}"]')`
+    const rowState = (name) => `(() => {const r=${row(name)};return [r.getAttribute('aria-checked'), r.disabled, r.lastElementChild.textContent.trim()].join('|')})()`
+    const expectRows = async (expected, message) => {
+      const got = {}
+      for (const name of Object.keys(expected)) got[name] = await js(rowState(name))
+      if (JSON.stringify(got) !== JSON.stringify(expected)) throw new Error(message + ': ' + JSON.stringify(got))
+      console.log('PASS ' + message)
+    }
+    const opener = `[...document.querySelectorAll('nav button')].find(e=>e.textContent.trim()==='まとめて更新')`
+    await assert(`(() => {const b=${opener};return !!b && !b.disabled && b.dataset.tip.includes('章のまとめと清書')})()`, 'モード切替の行に「まとめて更新」がある')
+    await click('まとめて更新')
+    for (let i = 0; i < 30 && !await js(`!!${dialog}?.querySelector('[data-bulk-update-plan]')`); i++) await pause(100)
+    await expectRows({ digests: 'true|false|1 件', rendersStale: 'true|false|1 件', rendersMissing: 'true|false|3 件' }, '要更新のまとめ 1 件・要更新の清書 1 件・未清書 3 件(本文の無いシーンは数えない)がチェック済みで出る')
+    await assert(`(() => {const d=${dialog};const r=${row('releaseModel')};return d.textContent.includes('視点なし') && r.disabled && r.getAttribute('aria-checked')==='false' && r.dataset.tip.includes('外部で起動') && ${row('includeBranches')}.getAttribute('aria-checked')==='false' && d.parentElement.parentElement===document.body})()`, '清書の見出しに文体と視点が出て、外部で起動したサーバーではモデルの解放を選べない。分岐・島は既定で含めない')
+    await assert(`(() => {const buttons=[...${dialog}.querySelectorAll('button:not([role="checkbox"])')].map(e=>e.textContent.trim());return buttons.join('|')==='取り消し|始める'})()`, '下端は 取り消し … 始める の順(前回の結果は、まだ無いので出ない)')
+    writeFileSync(join(target, 'bulk-dialog.png'), (await win.webContents.capturePage()).toPNG())
+    await js(`${row('rendersMissing')}.click()`)
+    await pause(150)
+    await js(`${row('digests')}.click()`)
+    await pause(150)
+    await js(`${row('rendersStale')}.click()`)
+    await pause(150)
+    await assert(`[...${dialog}.querySelectorAll('button')].find(e=>e.textContent.trim()==='始める').disabled`, 'すべて外すと「始める」は押せない')
+    await js(`window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}))`)
+    await pause(150)
+    await assert(`!${dialog}`, 'Escape で閉じる')
+    await click('まとめて更新')
+    for (let i = 0; i < 30 && !await js(`!!${dialog}?.querySelector('[data-bulk-update-plan]')`); i++) await pause(100)
+    await expectRows({ digests: 'false|false|1 件', rendersStale: 'false|false|1 件', rendersMissing: 'false|false|3 件' }, '開き直しても、外したチェックを覚えている')
+    for (const name of ['digests', 'rendersStale', 'rendersMissing']) { await js(`${row(name)}.click()`); await pause(120) }
+    await js(`[...${dialog}.querySelectorAll('button')].find(e=>e.textContent.trim()==='始める').click()`)
+    await pause(200)
+    await assert(`!${dialog}`, '始めるとダイアログを閉じる')
+    for (let i = 0; i < 300 && !await js(`!!${resultDialog}`); i++) await pause(100)
+    await assert(`(() => {const d=${resultDialog};const text=d.querySelector('[data-bulk-update-result]').textContent;const failures=d.querySelector('[data-bulk-update-failures]').textContent;return d.querySelector('h3').textContent==='まとめて更新が終わりました' && text.includes('章のまとめ1 件更新') && text.includes('清書3 件更新 / 失敗 1 件') && !text.includes('モデルを解放') && failures.includes('清書「三話」') && failures.includes('fake failure') && [...d.querySelectorAll('button')].map(e=>e.textContent.trim()).join('|')==='閉じる'})()`, '終わると結果が出る: まとめ 1 件、清書 3 件、失敗 1 件(三話)。失敗したあとのシーンも清書されている')
+    writeFileSync(join(target, 'bulk-result.png'), (await win.webContents.capturePage()).toPNG())
+    if (JSON.stringify(bulk.sleep) !== '[true,false]') throw new Error('スリープ止めの呼び出しが違います: ' + JSON.stringify(bulk.sleep))
+    console.log('PASS 実行中だけスリープを止め、終わったら外す')
+    const snaps = (await (await fetch(bulk.base + '/snapshots')).json()).snapshots.filter((s) => s.label === 'まとめて更新の前')
+    const autos = (await (await fetch(bulk.base + '/snapshots')).json()).snapshots.filter((s) => s.label === '章のまとめ更新の前')
+    if (snaps.length !== 1 || snaps[0].kind !== 'auto') throw new Error('始める前のスナップショットが違います: ' + JSON.stringify(snaps))
+    console.log('PASS 始める前の状態が 1 回だけ保存されている' + (autos.length ? '(章のまとめの自動保存は手での編集のぶん ' + autos.length + ' 件)' : ''))
+    const groups = await (await fetch(bulk.base + '/groups')).json()
+    if (groups[0].digest_stale || !JSON.stringify(groups[0].digest_events).includes('偽のサーバーが作ったまとめ')) throw new Error('章のまとめが作り直されていません: ' + JSON.stringify(groups[0]))
+    console.log('PASS 章のまとめが作り直され、要更新が消えている')
+    await js(`[...${resultDialog}.querySelectorAll('button')].find(e=>e.textContent.trim()==='閉じる').click()`)
+    await pause(180)
+    await assert(`!${resultDialog}`, '結果は「閉じる」を押すまで残り、押すと閉じる')
+    await click('まとめて更新')
+    for (let i = 0; i < 30 && !await js(`!!${dialog}?.querySelector('[data-bulk-update-plan]')`); i++) await pause(100)
+    await expectRows({ digests: 'false|true|0 件', rendersStale: 'false|true|0 件', rendersMissing: 'true|false|1 件' }, 'もう一度開くと、失敗した 1 件だけが残っている。0 件の項目は押せない')
+    await assert(`[...${dialog}.querySelectorAll('button:not([role="checkbox"])')].map(e=>e.textContent.trim()).join('|')==='前回の結果|取り消し|始める'`, '「前回の結果」が出る')
+    await js(`[...${dialog}.querySelectorAll('button')].find(e=>e.textContent.trim()==='前回の結果').click()`)
+    await pause(200)
+    await assert(`!${dialog} && ${resultDialog}.querySelector('[data-bulk-update-failures]').textContent.includes('三話')`, '「前回の結果」で同じ結果を見直せる')
+    await js(`[...${resultDialog}.querySelectorAll('button')].find(e=>e.textContent.trim()==='閉じる').click()`)
     if (errors.length) throw new Error(errors.join('\n'))
     console.log('Screenshots: ' + target)
     win.destroy()

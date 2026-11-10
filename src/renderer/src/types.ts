@@ -280,6 +280,20 @@ export interface BackupConfig {
   entries: BackupEntry[]
 }
 
+/** まとめて更新の対象(docs/design/bulk-update.md)。どれも実行する順に並んでいる */
+export interface BulkUpdatePlan {
+  /** 清書の対象にする文体プリセット(鑑賞モードでいま選んでいるもの)。1 つも無ければ null */
+  preset: { id: string; name: string } | null
+  /** 視点のキャラクター。null = 視点なし */
+  pov: { id: string; name: string } | null
+  target_chars: number
+  include_branches: boolean
+  /** まとめが要更新の章 */
+  digests: Array<{ id: string; title: string }>
+  /** 清書し直すシーン。stale = 要更新、missing = まだ清書していない */
+  renders: Array<{ id: string; title: string; status: 'stale' | 'missing' }>
+}
+
 /** キャラクターカードに入るものの内訳(docs/design/character-card.md)。確認ダイアログと書き出しの結果で使う */
 export interface CharacterCardSummary {
   name: string

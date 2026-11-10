@@ -8,7 +8,9 @@ import StatusBar from './StatusBar'
 import TooltipHost from './Tooltip'
 import ConfirmDialogHost, { askConfirm } from './ConfirmDialog'
 import NewLibraryDialog from './NewLibraryDialog'
-import { useProductionLocked } from './tasks'
+import { useAnyTask, useProductionLocked } from './tasks'
+import BulkUpdateHost from './BulkUpdateDialog'
+import { isBulkUpdateTask, openBulkUpdate } from './bulkUpdate'
 import { showStatusNotice } from './statusNotice'
 
 // 画面を読み直す前に預けておく、読み直した後に出す通知(取り込みの結果)
@@ -206,6 +208,7 @@ function LibraryMenu(): React.JSX.Element {
 
 export default function App(): React.JSX.Element {
   const productionLocked = useProductionLocked()
+  const bulkRunning = useAnyTask(isBulkUpdateTask)
   // 制作中は「書き換えだけ」を止める(見るための操作は通す)。仕組みは writeLock.ts
   useEffect(() => installWriteLockGuard(), [])
   const [mode, setMode] = useState<Mode>('structure')
@@ -413,6 +416,22 @@ export default function App(): React.JSX.Element {
         ))}
         {/* そのモードの操作を置く場所(構造モードはツールバーをここへ portal で出す) */}
         <div ref={setToolbarHost} className="flex h-full min-w-0 flex-1 items-center" />
+        {/* まとめて更新(docs/design/bulk-update.md)。作品全体が相手なので、どのモードからも押せる */}
+        <button
+          onClick={openBulkUpdate}
+          disabled={backendReady !== true || bulkRunning || productionLocked}
+          className="mr-1 rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-50"
+          style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+          data-tip={
+            bulkRunning
+              ? 'まとめて更新を実行中です(ステータスバーから中止できます)'
+              : productionLocked
+                ? '制作が終わるか停止してから実行できます'
+                : '古くなった章のまとめと清書を、選んで順に作り直します'
+          }
+        >
+          まとめて更新
+        </button>
         {mode !== 'reader' && <button onClick={toggleChat}
           className="ml-auto rounded-md border px-2 py-0.5 text-[11px]"
           style={{ borderColor: 'var(--border-strong)', color: chatOpen ? 'var(--text)' : 'var(--text-dim)', background: chatOpen ? 'var(--accent-soft)' : undefined }}
@@ -478,6 +497,8 @@ export default function App(): React.JSX.Element {
       <TooltipHost />
       {/* window.confirm / alert の代わり。アプリ全体で 1 つだけ置く(ConfirmDialog.tsx) */}
       <ConfirmDialogHost />
+      {/* まとめて更新の選ぶ画面と結果。走らせた画面を離れていても結果を出すので、ここに 1 つ置く */}
+      <BulkUpdateHost />
       {/* 設定ポップアップ */}
       {settingsOpen && (
         <div

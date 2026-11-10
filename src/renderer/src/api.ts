@@ -2,6 +2,7 @@ import type {
   BackupConfig,
   BackupInfo,
   BackupResult,
+  BulkUpdatePlan,
   Character,
   CharacterCardSummary,
   ElapsedUnit,
@@ -280,6 +281,13 @@ export const api = {
   // LLM でまとめを生成してそのまま保存する(あとから編集できる)
   generateGroupDigest: (groupId: string) =>
     request<Group>(`/groups/${groupId}/digest/generate`, { method: 'POST' }),
+  // まとめて更新(docs/design/bulk-update.md)。対象を数える / 始める前の状態を保存する /
+  // 章のまとめを 1 件作り直す(保存は始めるときに済んでいるので、章ごとの自動保存はしない)
+  bulkUpdatePlan: (includeBranches: boolean) =>
+    request<BulkUpdatePlan>(`/bulk-update/plan?include_branches=${includeBranches ? 'true' : 'false'}`),
+  bulkUpdateStart: () => request<{ snapshot: Snapshot }>('/bulk-update/start', { method: 'POST' }),
+  bulkUpdateDigest: (groupId: string, signal?: AbortSignal) =>
+    request<Group>(`/groups/${groupId}/digest/generate?snapshot=false`, { method: 'POST', signal }),
   putGroupDigest: (groupId: string, events: EventInput[]) =>
     request<Group>(`/groups/${groupId}/digest`, { method: 'PUT', body: JSON.stringify({ events }) }),
   deleteGroupDigest: (groupId: string) =>

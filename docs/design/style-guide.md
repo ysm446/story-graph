@@ -1,7 +1,7 @@
 # UI スタイルガイド(色・タイポ・余白・部品)
 
 作成日時: 2026-08-09 16:00
-更新日時: 2026-11-10 20:29
+更新日時: 2026-11-10 22:46
 
 新しい画面や部品を足すときに **見た目を揃えるための具体値** をまとめる。
 [overview.md](overview.md) がアーキテクチャの入口なら、本書は UI の入口。
@@ -1016,6 +1016,22 @@ AIの返答・変更報告は左側の全幅、背景 `--bg-elevated` を維持�
 - 詳細欄の Events では、見出しの行のすぐ下に印のあるときだけ 1 行(`mb-1.5 flex items-center justify-between gap-2`)。
   左に同じバッジ、右に印を消す二次ボタン(「このままでよい」「イベントなしでよい」)
 - 文言とツールチップは `eventsStatus.ts` に置き、カードと詳細欄で同じ言葉を使う
+
+### まとめて更新(`BulkUpdateDialog.tsx`)
+
+古くなった章のまとめと清書を選んで作り直すダイアログ(2026-11-10。[bulk-update.md](bulk-update.md))。
+モーダルの型のまま、幅 `w-[520px] max-w-[92vw]`。入口はモード切替の行の右端、「チャット」の左の二次ボタン(`mr-1`)。
+
+- **チェックで選ぶ行**(新しい型。`CheckRow`): 件数を右に添えて縦に並べるので、トグルのボタンではなく行にする。
+  `flex w-full items-center gap-2 rounded-lg px-2 py-1 text-left text-[12px]`、`role="checkbox"` + `aria-checked`。
+  左に `w-4` の `☑ / ☐`、名前(`min-w-0 flex-1 truncate`)、右に件数(`tabular-nums`)。
+  オンは `--text`、オフは `--text-faint`。押せない行は `disabled:opacity-50` にして、理由を `data-tip` に出す
+- 行のまとまりの見出しは `text-[12px]`・`--text-dim`(カードの書き出しの「入るもの」と同じ)。清書の見出しには文体と視点の名前を添える
+- 対象を選ぶ行と、実行の仕方を選ぶ行(分岐・島、モデルの解放)の間は `border-t`(`--border`)で分ける
+- 補足と下端の説明は `text-[11px]`・`--text-faint`。下端は「[前回の結果(二次)] …… [取り消し(二次)] [始める(主ボタン)]」
+- **結果**は同じ枠の別のダイアログ。タイトルは結末で変える(終わりました / 中止しました / 途中で止めました)。
+  件数は `text-[12px] leading-relaxed tabular-nums`、項目名は `w-20`・`--text-dim`。止めた理由は `--danger-text`。
+  失敗の一覧は `text-[11px]`・`--text-dim`・`break-all`(長いときは `max-h-48 overflow-y-auto`)。下端は「閉じる」だけ
 
 ### 関係のバー(`RelationBar.tsx`)
 
