@@ -1427,13 +1427,126 @@ def _recent_exchanges(messages: list[dict[str, Any]], turns: int) -> list[str]:
     return lines[-(turns * 2) :]
 
 
+# ---- キャラとの会話・会話室の候補(docs/design/chat.md §6.5) -----------
+#
+# 相談の質問候補と違い、材料は**直近の会話だけ**(シーン一覧も state も渡さない)。
+# キャラは居合わせていない場面を知らないので、物語の内容から作ると本人が知らない
+# 出来事を前提にした候補になる。会話に出た言葉だけを拾わせれば、その心配が無い。
+# 会話がまだ無いうちは作らない(画面は固定の候補のまま)。
+
+SUGGEST_CHAR_MESSAGES = 6  # キャラとの会話で渡す発言数(3 往復)
+SUGGEST_ROOM_MESSAGES = 8  # 会話室で渡す件数(発言と演出指示)
+SUGGEST_LINE_CHARS = 400  # 1 発言の上限。長い返事は頭だけ渡す
+
+
+def _clip_line(text: str) -> str:
+    flat = " ".join(text.split())
+    return flat if len(flat) <= SUGGEST_LINE_CHARS else flat[:SUGGEST_LINE_CHARS] + "…"
+
+
+def _character_suggest_prompt(store: Store, chat: dict[str, Any]) -> tuple[str, str] | None:
+    """キャラとの会話の候補のプロンプトと、ログ用のラベル。会話に返事がまだ無ければ None。"""
+    char = store.get_character(chat["char_id"])
+    if char is None:
+        return None
+    name = char["name"]
+    roleplay = chat.get("mode") == "roleplay"
+    me = "あなた" if roleplay else "作者"
+    lines: list[str] = []
+    answered = False
+    for m in chat["messages"]:
+        content = m.get("content")
+        if not isinstance(content, str) or not content.strip():
+            continue
+        if m.get("role") == "user" and not content.startswith("(これ以上ツールは使えません"):
+            lines.append(f"{me}: {_clip_line(content)}")
+        elif m.get("role") == "assistant":
+            lines.append(f"{name}: {_clip_line(content)}")
+            answered = True
+    if not answered:
+        return None
+    recent = lines[-SUGGEST_CHAR_MESSAGES:]
+    if roleplay:
+        parts = [
+            f"以下は、物語の登場人物「{name}」と、初対面の相手(あなた)が劇中で交わしている会話の直近です。",
+            "あなたが次に言う台詞、または取る行動の候補を3つ作ってください。",
+            "",
+            "条件:",
+            "- そのまま発言として送れる文にする。40字以内、日本語",
+            "- 台詞はそのまま書く(かぎ括弧は付けない)。行動や仕草は全角の（）で囲む。"
+            "例: （黙って隣に腰を下ろす） / （水筒を差し出して）喉、渇いてない?",
+            f"- {name}の直前の言葉や様子を受けたものにする",
+            f"- あなたは{name}と会ったばかりの相手。会話に出ていない{name}の過去や秘密を知っている前提にしない。"
+            "あなた自身の身の上や目的も決めつけない",
+            "- 3つは互いに違う向きにする(踏み込んで尋ねる / 距離を保つ・話題を変える / 行動で示す など)",
+        ]
+        label = "発言候補"
+    else:
+        parts = [
+            f"以下は、作者が物語の登場人物「{name}」本人にインタビューしている会話の直近です。",
+            "作者が次に聞く質問を3つ作ってください。",
+            "",
+            "条件:",
+            f"- 作者が{name}に直接問いかける文として書く。40字以内、日本語、疑問文",
+            f"- {name}の直前の答えに出てきた言葉・人・出来事を拾って掘り下げる"
+            "(理由、きっかけ、そのときの気持ち、言わなかったこと、これからどうするか など)",
+            "- 会話に出ていない出来事や事実を前提にしない",
+            "- すでに答えの出ている質問を繰り返さない。一般論(「趣味は何ですか」など)は避ける",
+            "- 3つは互いに違う切り口にする",
+        ]
+        label = "質問候補(キャラ)"
+    parts += ["", "## 直近の会話", *recent]
+    return "\n".join(parts), label
+
+
+def _room_suggest_prompt(store: Store, chat: dict[str, Any]) -> tuple[str, str] | None:
+    """会話室の演出指示の候補のプロンプト。発言がまだ無ければ None。"""
+    names = _name_map(store)
+    lines: list[str] = []
+    spoken = False
+    for m in chat["messages"]:
+        content = m.get("content")
+        if not isinstance(content, str) or not content.strip():
+            continue
+        if m.get("role") == "user":
+            lines.append(f"（演出: {_clip_line(content)}）")
+        elif m.get("role") == "assistant":
+            sp = m.get("speaker")
+            lines.append(f"{names.get(sp, sp or '?')}「{_clip_line(content)}」")
+            spoken = True
+    if not spoken:
+        return None
+    who = "、".join(names.get(p, p) for p in (chat.get("participants") or []))
+    parts = [
+        f"以下は、物語の登場人物どうし({who})の試しの会話の直近です。",
+        "作者は会話に参加せず、演出家として指示だけを出します(（演出: …）の行が過去の指示)。",
+        "作者が次に出す演出の指示を3つ作ってください。",
+        "",
+        "条件:",
+        "- 演出家から人物たちへの指示文として書く。40字以内、日本語、「〜して」「〜させて」の形",
+        "- 誰が何をするかを名前で指す。直前のやり取りに出た言葉・話題・食い違いを拾う",
+        "- 台詞そのものは書かない(何を話すか・どう振る舞うかを指示する)",
+        "- 会話に出ていない出来事や事実を前提にしない。すでに出した指示を繰り返さない",
+        "- 3つは互いに違う向きにする(掘り下げる / ぶつける・問い詰める / 話題や空気を変える など)",
+        "",
+        "## 直近の会話",
+        *lines[-SUGGEST_ROOM_MESSAGES:],
+    ]
+    return "\n".join(parts), "演出候補"
+
+
 async def suggest_questions(
     store: Store,
     base_url: str,
     chat_id: str | None,
     anchor_node: str | None,
     scope: str,
+    char_id: str | None = None,
+    mode: str = "interview",
 ) -> list[str]:
+    """候補チップに足す文を最大 3 件。相談は質問、キャラとの会話は質問(interview)か
+    台詞・行動(roleplay)、会話室は演出の指示。char_id / mode は会話がまだ無いときの相手
+    (キャラ・会話室は会話が始まるまで作らないので、空を返すためだけに見る)。"""
     if chat_id:
         chat = store.get_chat(chat_id)
         if chat is not None:
@@ -1441,6 +1554,25 @@ async def suggest_questions(
             scope = chat["scope"]
     else:
         chat = None
+    if chat is None and (char_id or mode == "room"):
+        return []
+    if chat is not None and (chat.get("char_id") or chat.get("mode") == "room"):
+        built = (
+            _character_suggest_prompt(store, chat) if chat.get("char_id") else _room_suggest_prompt(store, chat)
+        )
+        if built is None:
+            return []
+        prompt, label = built
+        result = await llm.chat_json(
+            [{"role": "user", "content": prompt}],
+            base_url=base_url,
+            schema=QUESTIONS_SCHEMA,
+            max_tokens=512,
+            temperature=SUGGEST_TEMPERATURE,
+            label=label,
+        )
+        items = [q.strip() for q in (result.get("questions") or []) if isinstance(q, str) and q.strip()]
+        return items[:3]
     path = _visible_path(store, anchor_node, scope)
     if not path:
         return []

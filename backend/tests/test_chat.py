@@ -994,3 +994,101 @@ def test_author_rules_settings_validate_and_preserve_other_settings(store, monke
             production_agent.gate.active = False
             assert (await client.put("/settings", json={"values": {"author_chat_rules": ""}})).status_code == 200
     asyncio.run(check())
+
+
+# ---- キャラとの会話・会話室の候補(docs/design/chat.md §6.5) ----
+
+
+def _capture_chat_json(monkeypatch, questions):
+    seen = {"calls": 0}
+
+    async def fake_chat_json(messages, **kwargs):
+        seen["calls"] += 1
+        seen["prompt"] = messages[0]["content"]
+        seen["label"] = kwargs.get("label")
+        return {"questions": questions}
+
+    monkeypatch.setattr(llm_mod, "chat_json", fake_chat_json)
+    return seen
+
+
+def test_suggest_character_interview_uses_only_the_conversation(store, monkeypatch):
+    """インタビューの候補は直近の会話だけから作る(シーン一覧・記憶は渡さない)。"""
+    seen = _capture_chat_json(monkeypatch, ["なぜ黙っていたのですか?", " ", "いつ気づきましたか?"])
+    anchor = store.canon_path()[-1]
+    chat = store.create_chat(anchor, "upto", char_id="aya", mode="interview")
+    store.save_chat_messages(chat["id"], [
+        {"role": "user", "content": "いま一番気がかりなことは何ですか?"},
+        {"role": "assistant", "content": None, "tool_calls": [_tool_call("recall", {"query": "ケン"})]},
+        {"role": "tool", "tool_call_id": "tc1", "content": "{\"memories\": []}"},
+        {"role": "assistant", "content": "ケンに言えなかったことがある。"},
+    ])
+    result = asyncio.run(chat_agent.suggest_questions(store, "http://fake", chat["id"], anchor, "upto"))
+    assert result == ["なぜ黙っていたのですか?", "いつ気づきましたか?"]
+    prompt = seen["prompt"]
+    assert "作者が物語の登場人物「アヤ」本人にインタビューしている" in prompt
+    assert "作者: いま一番気がかりなことは何ですか?" in prompt
+    assert "アヤ: ケンに言えなかったことがある。" in prompt
+    # 本人が知らないことを混ぜないよう、物語の材料は渡さない
+    assert "第一話" not in prompt and "石橋" not in prompt and "memories" not in prompt
+
+
+def test_suggest_character_roleplay_asks_for_lines_and_actions(store, monkeypatch):
+    seen = _capture_chat_json(monkeypatch, ["（黙って隣に腰を下ろす）"])
+    anchor = store.canon_path()[-1]
+    chat = store.create_chat(anchor, "upto", char_id="aya", mode="roleplay")
+    store.save_chat_messages(chat["id"], [
+        {"role": "user", "content": "こんばんは。"},
+        {"role": "assistant", "content": "……誰?"},
+    ])
+    result = asyncio.run(chat_agent.suggest_questions(store, "http://fake", chat["id"], anchor, "upto"))
+    assert result == ["（黙って隣に腰を下ろす）"]
+    assert "台詞、または取る行動" in seen["prompt"]
+    assert "あなた: こんばんは。" in seen["prompt"]
+    assert "アヤ: ……誰?" in seen["prompt"]
+
+
+def test_suggest_room_asks_for_directions(store, monkeypatch):
+    seen = _capture_chat_json(monkeypatch, ["アヤに、石橋の件を問い詰めさせて"])
+    anchor = store.canon_path()[-1]
+    chat = store.create_chat(anchor, "upto", mode="room", participants=["aya", "ken"])
+    store.save_chat_messages(chat["id"], [
+        {"role": "user", "content": "まず挨拶から。"},
+        {"role": "assistant", "speaker": "aya", "content": "久しぶり。"},
+        {"role": "assistant", "speaker": "ken", "content": "ああ。"},
+    ])
+    result = asyncio.run(chat_agent.suggest_questions(store, "http://fake", chat["id"], anchor, "upto"))
+    assert result == ["アヤに、石橋の件を問い詰めさせて"]
+    prompt = seen["prompt"]
+    assert "登場人物どうし(アヤ、ケン)" in prompt
+    assert "演出の指示を3つ" in prompt
+    assert "（演出: まず挨拶から。）" in prompt
+    assert "アヤ「久しぶり。」" in prompt and "ケン「ああ。」" in prompt
+
+
+def test_suggest_character_and_room_wait_for_the_conversation(store, monkeypatch):
+    """会話がまだ無い(返事が無い)うちは LLM を呼ばず、固定の候補のままにする。"""
+    seen = _capture_chat_json(monkeypatch, ["出ないはず"])
+    anchor = store.canon_path()[-1]
+    run = lambda *args, **kwargs: asyncio.run(chat_agent.suggest_questions(store, "http://fake", *args, **kwargs))
+    # 新しい会話(chat_id なし)
+    assert run(None, anchor, "upto", char_id="aya") == []
+    assert run(None, anchor, "upto", mode="room") == []
+    # 送ったが返事がまだ無い / 演出指示だけで発言が無い
+    asked = store.create_chat(anchor, "upto", char_id="aya", mode="interview")
+    store.save_chat_messages(asked["id"], [{"role": "user", "content": "聞こえますか?"}])
+    assert run(asked["id"], anchor, "upto") == []
+    room = store.create_chat(anchor, "upto", mode="room", participants=["aya", "ken"])
+    store.save_chat_messages(room["id"], [{"role": "user", "content": "挨拶から。"}])
+    assert run(room["id"], anchor, "upto") == []
+    assert seen["calls"] == 0
+
+
+def test_suggest_consult_still_uses_the_story(store, monkeypatch):
+    """相談の質問候補は今までどおりシーン一覧から作る。"""
+    seen = _capture_chat_json(monkeypatch, ["アヤはケンを許せるか相談したい"])
+    anchor = store.canon_path()[-1]
+    result = asyncio.run(chat_agent.suggest_questions(store, "http://fake", None, anchor, "upto"))
+    assert result == ["アヤはケンを許せるか相談したい"]
+    assert "## シーン一覧" in seen["prompt"] and "第一話" in seen["prompt"]
+    assert seen["label"] == "質問候補"

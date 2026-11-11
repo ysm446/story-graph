@@ -274,8 +274,8 @@ export default function ChatDrawer({
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
   const [history, setHistory] = useState<ChatSummary[]>([])
-  // 候補チップは常に入力欄の右上に積む。全部出すと縦を食うので窓を 3 件に
-  // 絞り、⟳ で次の 3 件へ送る(ランダムではなく決まった順。docs/design/chat.md)
+  // 候補チップは会話の末尾に積む。全部出すと縦を食うので窓を TEMPLATE_WINDOW 件に
+  // 絞り、⟳ で次の窓へ送る(ランダムではなく決まった順。docs/design/chat.md)
   const [templateOffset, setTemplateOffset] = useState(0)
 
   // 発言の編集(ホバーアクションの ✎)。turn = messages 上の位置
@@ -283,8 +283,16 @@ export default function ChatDrawer({
   const [editText, setEditText] = useState('')
   // 返事の生成に送った内容をモーダルで見る(null = 閉じている)
   const [promptView, setPromptView] = useState<Array<Record<string, unknown>> | null>(null)
-  // 内容から作られた質問(最大 2 件。固定の候補の下=入力欄側に出す)
+  // LLM が作った候補(最大 3 件。固定の候補の下=入力欄側に出す)。相談は物語の内容からの質問、
+  // キャラとの会話は会話の流れからの質問(劇中会話は台詞・行動)、会話室は演出の指示
   const [dynamicQuestions, setDynamicQuestions] = useState<string[]>([])
+  // 候補の取得は数秒かかるので、その間に相手や会話を替えると前の会話の候補が後から届く。
+  // 最後に頼んだ分だけを採用する(消すときも番号を進めて、届く途中の分を捨てる)
+  const suggestSeqRef = useRef(0)
+  const clearSuggestions = (): void => {
+    suggestSeqRef.current += 1
+    setDynamicQuestions([])
+  }
   // コンテキスト使用量(lm-chat のドーナツリング相当)
   const [usage, setUsage] = useState<{ tokens: number; ctx: number; estimated: boolean } | null>(null)
   const abortRef = useRef<AbortController | null>(null)
@@ -348,9 +356,14 @@ export default function ChatDrawer({
     id ? characters.find((c) => c.id === id) ?? null : null
   const roomChars = participants.map((id) => charById(id)).filter((c): c is Character => c !== null)
   const roomReady = participants.length >= 2
-  // キャラモード・会話室は固定テンプレを差し替え、内容ベースの生成は使わない
+  // キャラモード・会話室は固定テンプレを差し替える。LLM の候補はどのモードでも下に足す
   const templates = room ? ROOM_TEMPLATES : charId ? CHAR_TEMPLATES : TEMPLATES
-  const dynamicShown = dynamicSuggestions && !charId && !room ? dynamicQuestions.slice(0, MAX_DYNAMIC) : []
+  const dynamicShown = dynamicSuggestions ? dynamicQuestions.slice(0, MAX_DYNAMIC) : []
+  const dynamicTip = room
+    ? '会話の流れから作られた演出の指示'
+    : charId
+      ? roleplay ? '会話の流れから作られた台詞・行動' : '会話の流れから作られた質問'
+      : '物語の内容から作られた質問'
   // 固定の候補で残りの枠を埋める(固定が上、生成された質問が下)
   const chips = [
     ...Array.from(
@@ -361,8 +374,10 @@ export default function ChatDrawer({
   ]
   const chipsKey = chips.map((c) => c.text).join('\n')
 
-  // 内容ベースの質問候補を取り直す。失敗・未起動・設定オフはすべて無視して
-  // 固定の候補のまま(バックエンドが空配列を返す)。キャラモードでは使わない
+  // LLM の候補を取り直す。失敗・未起動・設定オフはすべて無視して
+  // 固定の候補のまま(バックエンドが空配列を返す)。
+  // キャラとの会話・会話室は直近の会話から作るので、会話が始まるまでは頼まない
+  // (相手・枠組みは保存済みの会話からバックエンドが読む)。
   // 会話の読み込み直後は state がまだ古いので、呼び出し側から上書き値を渡せる
   const refreshSuggestions = async (
     cid: string | null,
@@ -372,9 +387,11 @@ export default function ChatDrawer({
     const c = overrides?.charId !== undefined ? overrides.charId : charId
     const r = overrides?.room !== undefined ? overrides.room : room
     const sc = overrides?.scope ?? scope
-    if (!dynamicSuggestions || c || r) return
+    const seq = ++suggestSeqRef.current
+    if (!dynamicSuggestions || ((c || r) && !cid)) return
     try {
-      const res = await chatApi.suggestQuestions({ chat_id: cid, anchor_node: anchor, scope: sc })
+      const res = await chatApi.suggestQuestions({ chat_id: cid, anchor_node: anchor, scope: c || r ? 'upto' : sc })
+      if (seq !== suggestSeqRef.current) return // 相手・会話が替わった、または新しい要求に追い越された
       if (res.questions.length > 0) setDynamicQuestions(res.questions)
     } catch {
       /* 候補は無くても困らないので黙って諦める */
@@ -489,7 +506,7 @@ export default function ChatDrawer({
     // 始める前にシーンを選び直してもアンカーが動かなくなる
     setAnchorNode(null)
     const anchor = anchorCandidateId ?? canonTailId
-    setDynamicQuestions([]) // 新しいアンカーの候補を取り直す
+    clearSuggestions() // 新しいアンカーの候補を取り直す
     void refreshSuggestions(null, anchor)
     void refreshUsage(null, anchor)
   }
@@ -504,7 +521,7 @@ export default function ChatDrawer({
     setCharId(nextCharId)
     setChatId(null)
     setItems([])
-    setDynamicQuestions([])
+    clearSuggestions()
     setEditingTurn(null)
     setTemplateOffset(0)
     setNextSpeaker(null)
@@ -544,11 +561,11 @@ export default function ChatDrawer({
     setRoom(isRoom)
     if (isRoom) setParticipants(chat.participants ?? [])
     setNextSpeaker(null)
-    setDynamicQuestions([])
+    clearSuggestions()
     // turn は会話ごとの添字なので、別の会話に持ち越すと同じ位置のメッセージに
     // 前の会話の編集欄(と本文)が現れてしまう
     setEditingTurn(null)
-    if (!chat.char_id && !isRoom) void refreshSuggestions(chat.id, chat.anchor_node, { charId: null, room: false, scope: nextScope })
+    void refreshSuggestions(chat.id, chat.anchor_node, { charId: chat.char_id ?? null, room: isRoom, scope: nextScope })
     void refreshUsage(chat.id, chat.anchor_node, chat.char_id ?? null, isRoom ? chat.participants : null, chat.mode === 'roleplay')
     setItems(buildDisplay(chat.messages))
   }
@@ -656,6 +673,8 @@ export default function ChatDrawer({
       setLiveText('')
       setLiveSpeaker(null)
       if (!latestChatId) setAnchorNode(null)
+      // 発言のあとに、会話の流れを踏まえた演出の指示へ差し替える
+      void refreshSuggestions(latestChatId, effectiveAnchor)
       void refreshUsage(latestChatId, effectiveAnchor)
       void refreshHistory()
       void syncItems(latestChatId)
@@ -1370,7 +1389,7 @@ export default function ChatDrawer({
                     borderColor: c.dynamic ? 'var(--accent-border)' : 'var(--border-strong)',
                     color: c.dynamic ? 'var(--text)' : 'var(--text-dim)'
                   }}
-                  data-tip={c.dynamic ? `${c.text}(物語の内容から作られた質問)` : c.text}
+                  data-tip={c.dynamic ? `${c.text}(${dynamicTip})` : c.text}
                 >
                   {c.dynamic && <Icon name="sparkle" size={11} className="shrink-0" />}
                   <span className="truncate">{c.text}</span>

@@ -2802,7 +2802,8 @@ async def chat_token_usage(body: ChatSuggestIn) -> dict[str, Any]:
 
 @app.post("/chat/suggest_questions")
 async def chat_suggest_questions(body: ChatSuggestIn) -> dict[str, Any]:
-    """内容ベースの質問候補。設定が無効、LLM 未起動、生成失敗のときは空を返す
+    """内容ベースの候補(相談は質問、キャラとの会話は質問か台詞・行動、会話室は演出の指示)。
+    設定が無効、LLM 未起動、生成失敗のときは空を返す
     (UI 側は固定の候補を出したままにするので、失敗をエラーとして扱わない)。"""
     settings = store.get_settings()
     if settings.get("chat_dynamic_suggestions") == "0":
@@ -2812,7 +2813,9 @@ async def chat_suggest_questions(body: ChatSuggestIn) -> dict[str, Any]:
         return {"questions": []}
     anchor = _default_anchor(body.anchor_node)
     try:
-        questions = await chat_agent.suggest_questions(store, base_url, body.chat_id, anchor, body.scope)
+        questions = await chat_agent.suggest_questions(
+            store, base_url, body.chat_id, anchor, body.scope, body.char_id, body.mode
+        )
     except Exception:  # noqa: BLE001
         return {"questions": []}
     return {"questions": questions}

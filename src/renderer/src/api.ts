@@ -1209,7 +1209,8 @@ export const chatApi = {
       method: 'POST',
       body: JSON.stringify({ index, whole_turn: wholeTurn })
     }),
-  // 内容ベースの質問候補。設定オフ・LLM 未起動・生成失敗はすべて空配列で返る
+  // 内容ベースの候補(相談は質問、キャラとの会話は質問か台詞・行動、会話室は演出の指示)。
+  // 設定オフ・LLM 未起動・生成失敗はすべて空配列で返る
   suggestQuestions: (body: { chat_id: string | null; anchor_node: string | null; scope: string }) =>
     request<{ questions: string[] }>('/chat/suggest_questions', {
       method: 'POST',
