@@ -1,3 +1,4 @@
+import { useEscapeKey } from './useEscapeKey'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { libraryNameError } from '../../shared/libraryName'
@@ -29,15 +30,7 @@ export default function NewLibraryDialog({
     nameRef.current?.focus()
   }, [])
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key !== 'Escape' || e.isComposing) return
-      e.stopPropagation()
-      onCancel()
-    }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [onCancel])
+  useEscapeKey(onCancel, true)
 
   const browse = async (): Promise<void> => {
     const picked = await window.storyGraph.chooseLibraryParent(trimmedParent)

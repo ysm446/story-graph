@@ -14,6 +14,22 @@ import httpx
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
 
 
+_ssl_context = None
+
+
+def http_client(**kwargs) -> httpx.AsyncClient:
+    """httpx.AsyncClient を作る。バックエンドの HTTP クライアントはここを通す。
+
+    素の `httpx.AsyncClient()` は作るたびに証明書の束を読み込み、約 100ms かかる(2026-11-15 に実測)。
+    その間イベントループが止まるので、数秒ごとの /llm/status・/comfy/status・/tts/status や LLM の
+    呼び出しのたびに、ほかの API の応答が待たされていた。読み込んだ結果を使い回す(作るのは 1ms 未満になる)。
+    """
+    global _ssl_context
+    if _ssl_context is None:
+        _ssl_context = httpx.create_ssl_context()
+    return httpx.AsyncClient(verify=_ssl_context, **kwargs)
+
+
 async def http_ok(url: str, timeout: float = 2.0) -> bool:
     """url が 200 を返すか。接続だけは短く待つ。
 
@@ -21,7 +37,7 @@ async def http_ok(url: str, timeout: float = 2.0) -> bool:
     数秒ごとに呼ぶ /llm/status・/comfy/status・/tts/status がその分だけ遅くなる(動いていれば数 ms で繋がる)。
     """
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=0.5)) as client:
+        async with http_client(timeout=httpx.Timeout(timeout, connect=0.5)) as client:
             res = await client.get(url)
             return res.status_code == 200
     except (httpx.HTTPError, OSError):

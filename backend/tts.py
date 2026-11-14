@@ -224,7 +224,7 @@ async def health(base_url: str, path: str = "/health", timeout: float = 2.0) -> 
 async def synthesize(base_url: str, body: dict[str, Any], timeout: float = 300.0) -> bytes:
     """`/v1/audio/speech` を呼んで音声のバイト列を返す。失敗はサーバーの detail を添えて RuntimeError。"""
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=10.0)) as client:
+        async with managed_process.http_client(timeout=httpx.Timeout(timeout, connect=10.0)) as client:
             res = await client.post(f"{base_url}/v1/audio/speech", json=body)
     except (httpx.HTTPError, OSError) as e:
         raise RuntimeError(f"TTS サーバーに接続できませんでした({base_url}): {e}") from e

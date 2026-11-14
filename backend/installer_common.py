@@ -12,6 +12,8 @@ from typing import Any, Callable
 
 import httpx
 
+import managed_process
+
 
 def dir_size(path: Path) -> int:
     """フォルダ配下のファイルサイズ合計(消したときに空く量の表示用)。シンボリックリンクは数えない。"""
@@ -59,7 +61,7 @@ async def fetch_github_releases(api: str, build: Callable[[dict[str, Any]], dict
                                 follow_redirects: bool = False) -> list[dict[str, Any]]:
     """GitHub のリリース一覧を取り、下書きを除いて build で変換する(None は使えるアセットが無いので外す)。"""
     headers = {"User-Agent": user_agent, "Accept": "application/vnd.github+json"}
-    async with httpx.AsyncClient(timeout=30.0, follow_redirects=follow_redirects) as client:
+    async with managed_process.http_client(timeout=30.0, follow_redirects=follow_redirects) as client:
         res = await client.get(api, params={"per_page": per_page}, headers=headers)
         if res.status_code == 403:
             raise RuntimeError("GitHub API のレート制限に達した可能性があります。しばらく待って再試行してください。")

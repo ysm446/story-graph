@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { api, isAbortError, ttsSpeak, uploadVoiceRef, voiceApi, voiceFileUrl, type VoiceProfile } from './api'
+import { api, isAbortError, ttsSpeak, uploadVoiceRef, voiceApi, voiceFileUrl, type VoiceProfile, errorText } from './api'
 import AutoTextarea from './AutoTextarea'
 import { Icon } from './icons'
 import { enqueueTask, useTasks } from './tasks'
@@ -93,7 +93,7 @@ export default function VoiceProfileEditor({
     try {
       onChanged(await voiceApi.update(profile.id, patch))
     } catch (e) {
-      setError(String(e).replace(/^Error:\s*/, ''))
+      setError(errorText(e))
     }
   }
 
@@ -132,7 +132,7 @@ export default function VoiceProfileEditor({
     try {
       onChanged(await uploadVoiceRef(profile.id, file))
     } catch (e) {
-      setError(String(e).replace(/^Error:\s*/, ''))
+      setError(errorText(e))
     } finally {
       setUploading(false)
     }
@@ -183,7 +183,7 @@ export default function VoiceProfileEditor({
         seconds: Number.isFinite(audio.duration) ? audio.duration : null
       })
     } catch (e) {
-      setError(`試し読みに失敗しました: ${String(e).replace(/^Error:\s*/, '')}`)
+      setError(`試し読みに失敗しました: ${errorText(e)}`)
     } finally {
       setTesting(false)
     }
@@ -211,7 +211,7 @@ export default function VoiceProfileEditor({
       setNotice('参照音声にしました。これからはこの声を手本に読みます(説明文の話し方も効きます)')
       onChanged(updated)
     } catch (e) {
-      setError(`参照音声にできませんでした: ${String(e).replace(/^Error:\s*/, '')}`)
+      setError(`参照音声にできませんでした: ${errorText(e)}`)
     } finally {
       setPinning(false)
     }
@@ -233,7 +233,7 @@ export default function VoiceProfileEditor({
           setCaption(drafted)
           onChanged(updated)
         } catch (e) {
-          if (!isAbortError(e)) setError(`下書きに失敗しました: ${String(e).replace(/^Error:\s*/, '')}`)
+          if (!isAbortError(e)) setError(`下書きに失敗しました: ${errorText(e)}`)
         }
       }
     })

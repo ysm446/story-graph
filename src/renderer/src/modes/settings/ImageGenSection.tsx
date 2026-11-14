@@ -172,7 +172,7 @@ export default function ImageGenSection({
             <div className="settings-field-controls">
               <span
                 className="inline-block h-2 w-2 rounded-full"
-                style={{ background: status?.healthy ? '#3ecf8e' : 'var(--danger)' }}
+                style={{ background: status?.healthy ? 'var(--ok)' : 'var(--danger)' }}
               />
               <span className="text-[12px]" style={{ color: 'var(--text-dim)' }}>
                 {status?.healthy ? '稼働中' : status?.loading ? '起動中' : '停止'}
@@ -386,7 +386,7 @@ export default function ImageGenSection({
             <div className="settings-field-controls">
               <span
                 className="inline-block h-2 w-2 rounded-full"
-                style={{ background: status?.installed ? '#3ecf8e' : 'var(--text-faint)' }}
+                style={{ background: status?.installed ? 'var(--ok)' : 'var(--text-faint)' }}
               />
               <span className="text-[12px]" style={{ color: 'var(--text-dim)' }}>
                 {status?.installed ? `導入済み(${status.install?.version ?? '?'})` : '未導入'}

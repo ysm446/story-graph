@@ -1,3 +1,4 @@
+import { useEscapeKey } from './useEscapeKey'
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { api } from './api'
@@ -38,15 +39,7 @@ function Frame({
   onClose: () => void
   children: React.ReactNode
 }): React.JSX.Element {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key !== 'Escape' || e.isComposing) return
-      e.stopPropagation()
-      onClose()
-    }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [onClose])
+  useEscapeKey(onClose, true)
   return createPortal(
     <div
       className="fixed inset-0 z-50 flex items-center justify-center"

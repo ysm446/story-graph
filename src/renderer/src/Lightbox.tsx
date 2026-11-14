@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEscapeKey } from './useEscapeKey'
 import { isVideoAsset } from './api'
 
 /** 画像 / 動画の拡大表示(ライトボックス)。
@@ -13,13 +13,7 @@ export default function Lightbox({
   path: string
   onClose: () => void
 }): React.JSX.Element {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
+  useEscapeKey(onClose)
 
   return (
     <div

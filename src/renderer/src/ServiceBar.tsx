@@ -1,3 +1,4 @@
+import { errorText } from './api'
 import { useEffect, useState } from 'react'
 import { EjectIcon, Icon, SpinnerIcon, type IconName } from './icons'
 
@@ -96,7 +97,7 @@ export default function ServiceBar({
       await start()
       setStatus((s) => (s ? { ...s, healthy: true, loading: false } : s))
     } catch (e) {
-      setError(String(e).replace(/^Error:\s*/, ''))
+      setError(errorText(e))
     } finally {
       setStarting(false)
     }

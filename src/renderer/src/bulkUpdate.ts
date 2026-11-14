@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react'
-import { api, isAbortError, renderStream } from './api'
+import { api, isAbortError, renderStream, errorText } from './api'
 import { enqueueTask, notifyGraphChanged, setNodeBusy, type Task } from './tasks'
 
 /** まとめて更新の実行の本体(docs/design/bulk-update.md)。
@@ -143,7 +143,6 @@ function finish(result: BulkUpdateResult): void {
 
 // ---- 実行 -------------------------------------------------------------
 
-const errorText = (error: unknown): string => String(error).replace(/^Error:\s*/, '')
 
 /** まとめて更新をキューに積む。対象は、各段の直前に数え直して決める
  *  (まとめを作り直すと、その先の清書が要更新になり、清書を作り直すと台本が付け直しになるため) */

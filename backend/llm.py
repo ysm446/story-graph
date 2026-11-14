@@ -21,6 +21,20 @@ import managed_process
 log = logging.getLogger(__name__)
 
 DEFAULT_BASE_URL = "http://127.0.0.1:8080"
+DEFAULT_CTX_SIZE = 16384
+
+
+def resolve_base_url(settings: dict[str, str]) -> str:
+    """llama-server の接続先。設定(llm_base_url)が空なら既定の URL。"""
+    return settings.get("llm_base_url") or DEFAULT_BASE_URL
+
+
+def resolve_ctx_size(settings: dict[str, str]) -> int:
+    """設定のコンテキスト長(llm_ctx_size)。空・数字でない値は既定に落とす。"""
+    try:
+        return int(settings.get("llm_ctx_size") or DEFAULT_CTX_SIZE)
+    except ValueError:
+        return DEFAULT_CTX_SIZE
 
 # 思考モード(reasoning)は常に無効化する。処理時間を抑えるため全呼び出しに付与。
 # enable_thinking は Qwen3 等の chat template が参照するキー。参照しない
@@ -98,7 +112,7 @@ async def count_tokens(text: str, *, base_url: str, timeout: float = 10.0) -> in
     サーバーが応答しないときは None(呼び出し側で概算に落とす)。"""
     try:
         # サーバーが居ないときに 2 秒待たない(画面のコンテキスト量表示が入力のたびに呼ぶ)
-        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=0.5)) as client:
+        async with managed_process.http_client(timeout=httpx.Timeout(timeout, connect=0.5)) as client:
             res = await client.post(f"{base_url}/tokenize", json={"content": text})
             res.raise_for_status()
             return len(res.json().get("tokens", []))
@@ -112,7 +126,7 @@ async def server_ctx(base_url: str, timeout: float = 2.0) -> int | None:
     設定の既定(16384)と起動中のサーバー(8192 など)がずれると、使用量の表示も溢れの判定も外れる。
     """
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=0.5)) as client:
+        async with managed_process.http_client(timeout=httpx.Timeout(timeout, connect=0.5)) as client:
             res = await client.get(f"{base_url}/props")
             res.raise_for_status()
             props = res.json()
@@ -156,7 +170,7 @@ async def chat(
     entry = _log_prompt(label, messages, temperature, max_tokens)
     retries = 2
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with managed_process.http_client(timeout=timeout) as client:
             for attempt in range(retries + 1):
                 attempt_payload = payload
                 if attempt > 0:
@@ -207,7 +221,7 @@ async def _stream_chunks(
     """llama-server の SSE を 1 チャンクずつ (obj, choices[0] または None) で返す。[DONE] で終わる。
 
     呼び出し側は contextlib.aclosing で包む(途中で止めたとき接続をすぐ閉じ、サーバーの生成も止めるため)。"""
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    async with managed_process.http_client(timeout=timeout) as client:
         async with client.stream("POST", f"{base_url}/v1/chat/completions", json=payload) as res:
             if res.status_code != 200:
                 body = (await res.aread()).decode("utf-8", errors="replace")

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api } from './api'
+import { api, errorText } from './api'
 import { EjectIcon, SpinnerIcon } from './icons'
 
 interface ModelEntry {
@@ -308,7 +308,7 @@ export default function ModelBar({ refreshKey }: { refreshKey: number }): React.
       setHealthy(true)
     } catch (e) {
       setHealthy(false)
-      setError(String(e).replace(/^Error:\s*/, ''))
+      setError(errorText(e))
     } finally {
       setLoadingPath(null)
     }

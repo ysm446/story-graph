@@ -362,6 +362,34 @@ async def switch_library(body: LibrarySwitchIn) -> dict[str, Any]:
 
 # ---- characters -----------------------------------------------------
 
+def _node_or_404(node_id: str) -> dict[str, Any]:
+    node = store.get_node(node_id)
+    if node is None:
+        raise HTTPException(404, "node not found")
+    return node
+
+
+def _character_or_404(char_id: str) -> dict[str, Any]:
+    char = store.get_character(char_id)
+    if char is None:
+        raise HTTPException(404, "character not found")
+    return char
+
+
+def _place_or_404(place_id: str) -> dict[str, Any]:
+    place = store.get_place(place_id)
+    if place is None:
+        raise HTTPException(404, "place not found")
+    return place
+
+
+def _assets_dir() -> str:
+    assets = store.assets_dir()
+    if assets is None:
+        raise HTTPException(500, "ライブラリが未設定です")
+    return assets
+
+
 @app.get("/characters")
 async def list_characters() -> list[dict[str, Any]]:
     return store.list_characters()
@@ -374,9 +402,7 @@ async def create_character(body: CharacterIn) -> dict[str, Any]:
 
 @app.get("/characters/{char_id}")
 async def get_character(char_id: str) -> dict[str, Any]:
-    char = store.get_character(char_id)
-    if char is None:
-        raise HTTPException(404, "character not found")
+    char = _character_or_404(char_id)
     return char
 
 
@@ -449,9 +475,7 @@ async def create_place(body: PlaceIn) -> dict[str, Any]:
 
 @app.get("/places/{place_id}")
 async def get_place(place_id: str) -> dict[str, Any]:
-    place = store.get_place(place_id)
-    if place is None:
-        raise HTTPException(404, "place not found")
+    place = _place_or_404(place_id)
     return place
 
 
@@ -780,9 +804,7 @@ async def remove_node_from_group(group_id: str, node_id: str) -> dict[str, Any]:
 
 @app.get("/nodes/{node_id}")
 async def get_node(node_id: str) -> dict[str, Any]:
-    node = store.get_node(node_id)
-    if node is None:
-        raise HTTPException(404, "node not found")
+    node = _node_or_404(node_id)
     return node
 
 
@@ -862,9 +884,7 @@ MAX_VIDEO_BYTES = 100 * 1024 * 1024
 
 @app.post("/assets/upload")
 async def upload_asset(file: UploadFile) -> dict[str, str]:
-    assets = store.assets_dir()
-    if assets is None:
-        raise HTTPException(500, "ライブラリが未設定です")
+    assets = _assets_dir()
     ext = Path(file.filename or "").suffix.lower()
     if ext not in ALLOWED_IMAGE_EXTS | ALLOWED_VIDEO_EXTS:
         raise HTTPException(400, f"対応していない形式です: {ext}(画像: png/jpg/gif/webp、動画: mp4/webm)")
@@ -888,21 +908,24 @@ async def get_asset(filename: str) -> FileResponse:
     # <img> の要求は Origin を送らないので CORS ミドルウェアがヘッダを付けず、その応答が
     # ブラウザにキャッシュされると、後から canvas 用に crossOrigin / fetch で読み直したとき
     # CORS 検査に落ちる(切り抜きモーダル)。同じ URL の応答は常に許可ヘッダ付きにしておく
-    return FileResponse(str(path), headers={"Access-Control-Allow-Origin": "*"})
+    # ファイル名は保存のたびに新しく振る(uuid)ので、同じ URL の中身は変わらない。期限を付けないと、
+    # 画面を開き直すたびにカード・アイコンの画像を 1 枚ずつ問い合わせ直す
+    return FileResponse(str(path), headers={
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "private, max-age=31536000, immutable",
+    })
 
 
 @app.post("/nodes/{node_id}/image")
 async def set_node_image(node_id: str, body: NodeImageIn) -> dict[str, str]:
-    if store.get_node(node_id) is None:
-        raise HTTPException(404, "node not found")
+    _node_or_404(node_id)
     store.set_node_image(node_id, body.image_path)
     return {"status": "ok"}
 
 
 @app.post("/nodes/{node_id}/thumb")
 async def set_node_thumb(node_id: str, body: NodeThumbIn) -> dict[str, str]:
-    if store.get_node(node_id) is None:
-        raise HTTPException(404, "node not found")
+    _node_or_404(node_id)
     store.set_node_thumb(node_id, body.thumb_path)
     return {"status": "ok"}
 
@@ -926,14 +949,11 @@ class MediaIn(BaseModel):
 
 def _check_media_owner(owner_type: str, owner_id: str) -> None:
     if owner_type == "node":
-        if store.get_node(owner_id) is None:
-            raise HTTPException(404, "node not found")
+        _node_or_404(owner_id)
     elif owner_type == "character":
-        if store.get_character(owner_id) is None:
-            raise HTTPException(404, "character not found")
+        _character_or_404(owner_id)
     elif owner_type == "place":
-        if store.get_place(owner_id) is None:
-            raise HTTPException(404, "place not found")
+        _place_or_404(owner_id)
     else:
         raise HTTPException(400, f"unknown owner_type: {owner_type}")
 
@@ -1036,16 +1056,14 @@ async def delete_unselected_media(owner_type: str, owner_id: str) -> dict[str, i
 
 @app.post("/nodes/{node_id}/target_chars")
 async def set_node_target_chars(node_id: str, body: NodeTargetCharsIn) -> dict[str, str]:
-    if store.get_node(node_id) is None:
-        raise HTTPException(404, "node not found")
+    _node_or_404(node_id)
     store.set_node_target_chars(node_id, body.target_chars)
     return {"status": "ok"}
 
 
 @app.post("/nodes/{node_id}/position")
 async def set_node_position(node_id: str, body: PositionIn) -> dict[str, str]:
-    if store.get_node(node_id) is None:
-        raise HTTPException(404, "node not found")
+    _node_or_404(node_id)
     store.set_node_position(node_id, body.x, body.y)
     return {"status": "ok"}
 
@@ -1081,8 +1099,7 @@ async def reset_layout() -> dict[str, str]:
 
 @app.put("/nodes/{node_id}/events")
 async def put_events(node_id: str, body: EventsPut) -> dict[str, Any]:
-    if store.get_node(node_id) is None:
-        raise HTTPException(404, "node not found")
+    _node_or_404(node_id)
     events_in = [e.model_dump() for e in body.events]
     # 必須フィールドの無いイベントを保存すると、このノード以降の fold が全部
     # 落ちる(状態・検証・追加が 500 になる)ので、保存前に断る
@@ -1105,8 +1122,7 @@ async def confirm_events(node_id: str) -> dict[str, Any]:
 
 @app.get("/nodes/{node_id}/state")
 async def node_state(node_id: str) -> dict[str, Any]:
-    if store.get_node(node_id) is None:
-        raise HTTPException(404, "node not found")
+    _node_or_404(node_id)
     try:
         return store.get_state(node_id)
     except (KeyError, TypeError, ValueError) as e:
@@ -1118,8 +1134,7 @@ async def node_state(node_id: str) -> dict[str, Any]:
 async def node_state_before(node_id: str) -> dict[str, Any]:
     """そのシーンに入る直前の状態(パス上の 1 つ前のノードの状態。先頭なら空の状態)。
     詳細欄のイベントで、関係が「どこからどこへ」動いたかを出すのに使う"""
-    if store.get_node(node_id) is None:
-        raise HTTPException(404, "node not found")
+    _node_or_404(node_id)
     try:
         return store.state_before(node_id)
     except (KeyError, TypeError, ValueError) as e:
@@ -1206,7 +1221,7 @@ class GenerateBeatIn(BaseModel):
 @app.get("/llm/status")
 async def llm_status() -> dict[str, Any]:
     settings = store.get_settings()
-    base_url = settings.get("llm_base_url") or llm.DEFAULT_BASE_URL
+    base_url = llm.resolve_base_url(settings)
     healthy = await llm.health(base_url)
     info = llama.status()
     # spawn 済みだがまだ応答しない = モデルの読み込み中。生成の自動ロード
@@ -1757,15 +1772,18 @@ async def get_voice_file(filename: str) -> FileResponse:
     path = Path(voices) / Path(filename).name if voices else None  # パストラバーサル防止
     if path is None or not path.exists():
         raise HTTPException(404, "not found")
-    return FileResponse(str(path), headers={"Access-Control-Allow-Origin": "*"})
+    # ファイル名は保存のたびに新しく振る(uuid)ので、同じ URL の中身は変わらない。期限を付けないと、
+    # 画面を開き直すたびにカード・アイコンの画像を 1 枚ずつ問い合わせ直す
+    return FileResponse(str(path), headers={
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "private, max-age=31536000, immutable",
+    })
 
 
 @app.post("/characters/{char_id}/voice_caption")
 async def draft_character_voice_caption(char_id: str) -> dict[str, str]:
     """キャラの資料から声の説明の下書きを LLM で作る(保存はしない)。"""
-    char = store.get_character(char_id)
-    if char is None:
-        raise HTTPException(404, "character not found")
+    char = _character_or_404(char_id)
     try:
         base_url = await llama.ensure_running(store.get_settings())
         return {"caption": await voice.draft_caption(char, base_url)}
@@ -1788,9 +1806,7 @@ class RefImagePromptIn(BaseModel):
 async def character_ref_image_prompt(char_id: str, body: RefImagePromptIn | None = None) -> StreamingResponse:
     """外見・プロフィール(+ 追加指示)から、参照画像の英語プロンプト(人物描写)を LLM でストリーミング生成する。
     SSE: {meta:{suffix}} → {delta}… → {done, prompt} / {error}。保存はしない。"""
-    char = store.get_character(char_id)
-    if char is None:
-        raise HTTPException(404, "character not found")
+    char = _character_or_404(char_id)
     return _image_prompt_sse(image_gen.REF_IMAGE_SUFFIX, image_gen.stream_character_prompt, char, body)
 
 
@@ -1866,12 +1882,8 @@ async def character_ref_image_generate(char_id: str, body: RefImageGenerateIn) -
     採用は UI の「決定」→ POST /media(生成に使ったセット付き、select)。不採用の候補は参照が
     無いので gc_assets が回収する。使ったプロンプト・追加指示・seed はキャラの生成ウインドウの
     保存状態に 1 セットで写し(再現用)、戻り値にも含める(「決定」がそのままストックへ渡す)。"""
-    char = store.get_character(char_id)
-    if char is None:
-        raise HTTPException(404, "character not found")
-    assets = store.assets_dir()
-    if assets is None:
-        raise HTTPException(500, "ライブラリが未設定です")
+    char = _character_or_404(char_id)
+    assets = _assets_dir()
     if not body.prompt.strip():
         raise HTTPException(400, "プロンプトが空です")
     settings = store.get_settings()
@@ -1902,9 +1914,7 @@ async def character_ref_image_generate(char_id: str, body: RefImageGenerateIn) -
 async def place_image_prompt(place_id: str, body: RefImagePromptIn | None = None) -> StreamingResponse:
     """説明・雰囲気(+ 追加指示)から、場所の画像の英語プロンプト(風景描写)を LLM でストリーミング生成する。
     SSE: {meta:{suffix}} → {delta}… → {done, prompt} / {error}。保存はしない。"""
-    place = store.get_place(place_id)
-    if place is None:
-        raise HTTPException(404, "place not found")
+    place = _place_or_404(place_id)
     return _image_prompt_sse(image_gen.PLACE_IMAGE_SUFFIX, image_gen.stream_place_prompt, place, body)
 
 
@@ -1914,11 +1924,8 @@ async def place_image_generate(place_id: str, body: RefImageGenerateIn) -> dict[
 
     採用は UI の「決定」→ POST /media(owner_type='place'、生成に使ったセット付き、select)。
     使ったプロンプト・追加指示・seed・組は場所の生成ウインドウの保存状態に 1 セットで写す。"""
-    if store.get_place(place_id) is None:
-        raise HTTPException(404, "place not found")
-    assets = store.assets_dir()
-    if assets is None:
-        raise HTTPException(500, "ライブラリが未設定です")
+    _place_or_404(place_id)
+    assets = _assets_dir()
     if not body.prompt.strip():
         raise HTTPException(400, "プロンプトが空です")
     settings = store.get_settings()
@@ -1944,9 +1951,7 @@ async def place_image_generate(place_id: str, body: RefImageGenerateIn) -> dict[
 
 def _scene_context(node_id: str) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any] | None]:
     """場面画像用の (node, cast のキャラ(cast 順), 実効ロケーションの場所)。"""
-    node = store.get_node(node_id)
-    if node is None:
-        raise HTTPException(404, "node not found")
+    node = _node_or_404(node_id)
     chars = []
     for cid in node.get("cast") or []:
         c = store.get_character(cid)
@@ -2015,9 +2020,7 @@ async def node_image_generate(node_id: str, body: SceneImageGenerateIn) -> dict[
     使ったプロンプト・追加指示・seed・参照キャラはシーンの生成ウインドウの保存状態に 1 セットで写し
     (再現用)、戻り値にも含める(「決定」がそのままストックへ渡す)。"""
     _node, chars, _place = _scene_context(node_id)
-    assets = store.assets_dir()
-    if assets is None:
-        raise HTTPException(500, "ライブラリが未設定です")
+    assets = _assets_dir()
     if not body.prompt.strip():
         raise HTTPException(400, "プロンプトが空です")
     wanted = set(body.char_ids)
@@ -2064,9 +2067,7 @@ async def image_effect(body: ImageEffectIn) -> dict[str, Any]:
     生成と同じく、採用は UI の「決定」→ POST /media(戻り値をそのまま渡す。source_path 付き)。
     生成ウインドウの保存状態(プロンプト・seed など)には書かない(加工の指示は生成のプロンプトではない)。"""
     _check_media_owner(body.owner_type, body.owner_id)
-    assets = store.assets_dir()
-    if assets is None:
-        raise HTTPException(500, "ライブラリが未設定です")
+    assets = _assets_dir()
     if not body.prompt.strip():
         raise HTTPException(400, "加工の指示が空です")
     if Path(body.source_path).suffix.lower() in ALLOWED_VIDEO_EXTS:
@@ -2221,8 +2222,7 @@ async def embedding_status() -> dict[str, str]:
 
 @app.post("/nodes/{node_id}/extract_events")
 async def extract_events(node_id: str) -> dict[str, Any]:
-    if store.get_node(node_id) is None:
-        raise HTTPException(404, "node not found")
+    _node_or_404(node_id)
     await snapshots.auto(store, "イベント作り直しの前", 60)
     try:
         base_url = await llama.ensure_running(store.get_settings())
@@ -2594,7 +2594,7 @@ async def production_token_usage(body: ProductionUsageIn) -> dict[str, Any]:
     messages = production_agent.build_messages(store, history, body.message.strip(), body.execute, policy,
         production_agent.production_memory.read(store)["checkpoint"], [], [], selection=selection, view=view)
     settings = store.get_settings()
-    return await production_agent.context_usage(store, settings.get("llm_base_url") or llm.DEFAULT_BASE_URL,
+    return await production_agent.context_usage(store, llm.resolve_base_url(settings),
                                                 messages, body.execute)
 
 
@@ -2708,7 +2708,7 @@ async def production_suggest_post(body: ProductionSuggestIn) -> dict[str, Any]:
     unavailable: dict[str, Any] = {"suggestions": [], "generated": False}
     if settings.get("chat_dynamic_suggestions") == "0":
         return unavailable
-    base_url = settings.get("llm_base_url") or llm.DEFAULT_BASE_URL
+    base_url = llm.resolve_base_url(settings)
     if not await llm.health(base_url):
         return unavailable
     _cancel_production_suggest()
@@ -2795,12 +2795,12 @@ async def chat_token_usage(body: ChatSuggestIn) -> dict[str, Any]:
     """相談チャットのコンテキスト使用量。ctx_size は設定値(llama-server の
     --ctx-size に渡している値)。サーバー未起動時は文字数からの概算を返す。"""
     settings = store.get_settings()
-    base_url = settings.get("llm_base_url") or llm.DEFAULT_BASE_URL
+    base_url = llm.resolve_base_url(settings)
     anchor = _default_anchor(body.anchor_node)
     usage = await chat_agent.token_usage(
         store, base_url, body.chat_id, anchor, body.scope, body.char_id, body.mode, body.participants
     )
-    return {**usage, "ctx_size": int(settings.get("llm_ctx_size") or 16384)}
+    return {**usage, "ctx_size": llm.resolve_ctx_size(settings)}
 
 
 @app.post("/chat/suggest_questions")
@@ -2811,7 +2811,7 @@ async def chat_suggest_questions(body: ChatSuggestIn) -> dict[str, Any]:
     settings = store.get_settings()
     if settings.get("chat_dynamic_suggestions") == "0":
         return {"questions": []}
-    base_url = settings.get("llm_base_url") or llm.DEFAULT_BASE_URL
+    base_url = llm.resolve_base_url(settings)
     if not await llm.health(base_url):
         return {"questions": []}
     anchor = _default_anchor(body.anchor_node)

@@ -70,7 +70,7 @@ class LlamaManager:
 
     async def ensure_running(self, settings: dict[str, str]) -> str:
         """healthy な base_url を返す。必要なら spawn する。"""
-        base_url = settings.get("llm_base_url") or f"http://127.0.0.1:{DEFAULT_PORT}"
+        base_url = llm.resolve_base_url(settings)
         if await llm.health(base_url):
             self.base_url = base_url
             return base_url
@@ -89,7 +89,7 @@ class LlamaManager:
     async def switch(self, settings: dict[str, str]) -> str:
         """現在のモデルを止めて、settings のモデルで起動し直す(モデル選択からのロード用)。"""
         async with self._lock:
-            base_url = settings.get("llm_base_url") or f"http://127.0.0.1:{DEFAULT_PORT}"
+            base_url = llm.resolve_base_url(settings)
             was_managed = self.proc is not None and self.proc.poll() is None
             await self.stop_async()
             if not was_managed and await llm.health(base_url):
@@ -113,12 +113,12 @@ class LlamaManager:
 
         server_path = settings.get("llama_server_path") or llama_installer.resolve_server_path() or DEFAULT_SERVER_PATH
         model_path = resolve_model_path(settings)
-        base_url = settings.get("llm_base_url") or f"http://127.0.0.1:{DEFAULT_PORT}"
+        base_url = llm.resolve_base_url(settings)
         try:
             port = urlsplit(base_url).port or DEFAULT_PORT
         except ValueError:
             raise RuntimeError(f"llm_base_url からポートを読めません: {base_url}")
-        ctx_size = int(settings.get("llm_ctx_size") or 16384)
+        ctx_size = llm.resolve_ctx_size(settings)
 
         if not Path(server_path).exists():
             raise RuntimeError(f"llama-server が見つかりません: {server_path}")

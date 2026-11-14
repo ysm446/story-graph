@@ -1,3 +1,5 @@
+import { useEscapeKey } from './useEscapeKey'
+import { fmtSize } from './modes/settings/format'
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { api } from './api'
@@ -13,9 +15,6 @@ const lastDir = (): string => {
     return ''
   }
 }
-
-const fmtSize = (bytes: number): string =>
-  bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`
 
 /** キャラクターカードの書き出し(docs/design/character-card.md)。
  *  アンカー時点のキャラクターを zip に書き出す。入るものを確かめ、時点の呼び名を決めてから保存先を選ぶ。 */
@@ -50,15 +49,7 @@ export default function CharacterCardDialog({
     }
   }, [char.id, anchor])
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key !== 'Escape' || e.isComposing) return
-      e.stopPropagation()
-      onClose()
-    }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [onClose])
+  useEscapeKey(onClose, true)
 
   const submit = async (): Promise<void> => {
     if (!summary || busy) return

@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEscapeKey } from './useEscapeKey'
 import type { ChatStats } from './api'
 import { Icon } from './icons'
 
@@ -148,13 +148,7 @@ export function SystemPromptModal({
   messages: Array<Record<string, unknown>>
   onClose: () => void
 }): React.JSX.Element {
-  useEffect(() => {
-    const onKey = (ev: KeyboardEvent): void => {
-      if (ev.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
+  useEscapeKey(onClose)
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center"

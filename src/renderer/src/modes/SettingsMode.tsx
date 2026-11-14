@@ -362,7 +362,7 @@ export default function SettingsMode({ onImported }: {
                   <div className="settings-field-controls">
                     <span
                       className="inline-block h-2 w-2 rounded-full"
-                      style={{ background: status?.healthy ? '#3ecf8e' : 'var(--danger)' }}
+                      style={{ background: status?.healthy ? 'var(--ok)' : 'var(--danger)' }}
                     />
                     <span className="text-[12px]" style={{ color: 'var(--text-dim)' }}>
                       {status?.healthy ? '稼働中' : '停止'}

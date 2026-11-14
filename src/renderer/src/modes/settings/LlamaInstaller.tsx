@@ -139,7 +139,7 @@ export default function LlamaInstaller(): React.JSX.Element {
         <div className="settings-field-controls">
           <span
             className="inline-block h-2 w-2 rounded-full"
-            style={{ background: serverStatus?.installed ? '#3ecf8e' : 'var(--text-faint)' }}
+            style={{ background: serverStatus?.installed ? 'var(--ok)' : 'var(--text-faint)' }}
           />
           <span className="text-[12px]" style={{ color: 'var(--text-dim)' }}>
             {serverStatus?.installed ? `導入済み(${serverStatus.build ?? '?'})` : '未導入'}

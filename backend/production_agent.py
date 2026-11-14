@@ -879,7 +879,7 @@ async def context_usage(store, base_url, messages, execute, groups=None, ctx=Non
     # ctx はサーバーが実際に確保した長さ(取れなければ設定値)。作業中は始めに 1 回だけ問い合わせて渡す
     text = json.dumps(messages, ensure_ascii=False) + "\n" + json.dumps(tools(execute, production_memory.enabled(store), groups), ensure_ascii=False)
     counted = await llm.count_tokens(text, base_url=base_url)
-    ctx = ctx or await llm.server_ctx(base_url) or int(store.get_settings().get("llm_ctx_size") or 16384)
+    ctx = ctx or await llm.server_ctx(base_url) or llm.resolve_ctx_size(store.get_settings())
     return {"token_count": counted if counted is not None else len(text) // chat_agent.CHAR_PER_TOKEN_FALLBACK,
             "estimated": counted is None, "ctx_size": ctx}
 
@@ -1269,10 +1269,10 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
                             monitor.note_read(name, args, payload)
                         read_error = payload.get("error") if isinstance(payload, dict) else None
                         # 何を読んだかを時系列に残す(作者が LLM の動きを追えるように)。本文は残さない。
-                        step = read_step(store, name, args, repeated=repeated_read, error=read_error)
-                        history.append({"role": "assistant", "content": "", "step": step})
+                        read_info = read_step(store, name, args, repeated=repeated_read, error=read_error)
+                        history.append({"role": "assistant", "content": "", "step": read_info})
                         store.save_chat_messages(chat_id, history)
-                        yield _sse({"step": step})
+                        yield _sse({"step": read_info})
                         if read_error:
                             payload["error"], stalled = tally_error(name, str(payload["error"]))
                             yield _sse({"tool_error": stalled or payload["error"]})

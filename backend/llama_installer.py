@@ -25,6 +25,8 @@ from typing import Any, AsyncIterator
 
 import httpx
 
+import managed_process
+
 from installer_common import dir_size, fetch_github_releases, remove_by_rename, swap_into_place
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -425,7 +427,7 @@ def _tmp_zip(suffix: str) -> Path:
 def _http_client() -> httpx.AsyncClient:
     # 総時間は無制限(巨大 zip)だが、無通信ストールでは read タイムアウトで切る
     timeout = httpx.Timeout(30.0, read=120.0)
-    return httpx.AsyncClient(timeout=timeout, headers={"User-Agent": USER_AGENT})
+    return managed_process.http_client(timeout=timeout, headers={"User-Agent": USER_AGENT})
 
 
 async def _fetch_and_extract(

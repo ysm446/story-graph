@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { api, isAbortError, ttsSpeak, VOICE_EMOTIONS, type VoiceLine, type VoiceScript } from './api'
+import { api, isAbortError, ttsSpeak, VOICE_EMOTIONS, type VoiceLine, type VoiceScript, errorText } from './api'
 import { Icon } from './icons'
 import { enqueueTask, useTasks } from './tasks'
 import type { Character, SceneEntry } from './types'
@@ -142,7 +142,7 @@ export default function VoiceScriptModal({
       audioRef.current = audio
       await audio.play()
     } catch (e) {
-      setError(`試聴に失敗しました: ${String(e).replace(/^Error:\s*/, '')}`)
+      setError(`試聴に失敗しました: ${errorText(e)}`)
     } finally {
       setPreviewing(null)
     }

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { api, isAbortError, voiceApi, type VoiceProfileList } from './api'
+import { api, isAbortError, voiceApi, type VoiceProfileList, errorText } from './api'
 import { Icon } from './icons'
 import { enqueueTask } from './tasks'
 import type { Character } from './types'
@@ -68,7 +68,7 @@ export default function CharacterVoicePanel({
             await voiceApi.update(created.id, { caption })
             await reload()
           } catch (e) {
-            if (!isAbortError(e)) setError(`声の説明の下書きに失敗しました: ${String(e).replace(/^Error:\s*/, '')}`)
+            if (!isAbortError(e)) setError(`声の説明の下書きに失敗しました: ${errorText(e)}`)
           }
         }
       })

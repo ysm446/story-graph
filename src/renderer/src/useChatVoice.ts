@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { api, isAbortError, ttsSpeak, voiceApi, type VoiceLine } from './api'
+import { api, isAbortError, ttsSpeak, voiceApi, type VoiceLine, errorText } from './api'
 import { playBlob, sleep, type PlaybackSlot } from './audioPlayback'
 import { scaledPause } from './voiceRate'
 
@@ -140,7 +140,7 @@ class SpeechQueue {
 
   private fail(e: unknown): void {
     this.stop()
-    this.onError(String(e).replace(/^Error:\s*/, ''))
+    this.onError(errorText(e))
   }
 }
 

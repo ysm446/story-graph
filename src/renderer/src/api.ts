@@ -39,8 +39,10 @@ export async function initApi(): Promise<{ baseUrl: string | null; error: string
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   if (!baseUrl) throw new Error('backend not ready')
+  // Content-Type は本文のあるときだけ付ける。本文の無い GET に付けると「単純リクエスト」でなくなり、
+  // 初めての URL(シーンごとの /nodes/{id}/validate など)のたびに確認の OPTIONS が 1 往復増える
   const res = await fetch(`${baseUrl}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
+    headers: options?.body != null ? { 'Content-Type': 'application/json' } : undefined,
     ...options
   })
   if (!res.ok) {
@@ -637,6 +639,11 @@ function emitRenderSaved(nodeId: string): void {
       // 購読側の失敗で清書のストリームを止めない
     }
   }
+}
+
+/** 例外を画面に出す文にする(先頭の「Error: 」を外す) */
+export function errorText(error: unknown): string {
+  return String(error).replace(/^Error:\s*/, '')
 }
 
 export function isAbortError(error: unknown): boolean {

@@ -1,3 +1,4 @@
+import { useEscapeKey } from './useEscapeKey'
 import { useEffect, useRef, useState } from 'react'
 import { api, assetUrl, isVideoAsset, uploadAsset } from './api'
 import type { MediaEntry, MediaItem } from './types'
@@ -104,13 +105,7 @@ export default function MediaPicker({
     )
   }, [view])
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
+  useEscapeKey(onClose)
 
   const run = async (fn: () => Promise<void>): Promise<void> => {
     setBusy(true)

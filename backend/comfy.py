@@ -36,7 +36,7 @@ async def health(base_url: str, timeout: float = 2.0) -> bool:
 
 async def list_models(base_url: str, folder: str = "checkpoints") -> list[str]:
     """`/models/{folder}` — そのフォルダで ComfyUI が見つけているファイル名(サブフォルダ込み)。"""
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with managed_process.http_client(timeout=10.0) as client:
         res = await client.get(f"{base_url}/models/{folder}")
         if res.status_code != 200:
             raise RuntimeError(f"モデル一覧の取得に失敗しました (HTTP {res.status_code})")
@@ -301,7 +301,7 @@ def build_edit_workflow(
 async def upload_image(base_url: str, data: bytes, name: str) -> str:
     """参照画像を ComfyUI の input フォルダへ置き、LoadImage で使う名前を返す。
     同名は上書き(名前は assets のファイル名 = uuid なので衝突しない)。"""
-    async with httpx.AsyncClient(timeout=60.0) as client:
+    async with managed_process.http_client(timeout=60.0) as client:
         res = await client.post(
             f"{base_url}/upload/image",
             files={"image": (name, data, "image/png")},
@@ -329,7 +329,7 @@ def _format_error(history: dict[str, Any]) -> str:
 async def run_workflow(base_url: str, workflow: dict[str, Any], *, timeout: float = 900.0) -> bytes:
     """ワークフローをキューに入れ、最初の出力画像のバイト列を返す。
     キャンセル(asyncio.CancelledError)時は `/interrupt` を送って GPU を解放する。"""
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with managed_process.http_client(timeout=30.0) as client:
         res = await client.post(f"{base_url}/prompt", json={"prompt": workflow, "client_id": CLIENT_ID})
         if res.status_code != 200:
             detail = res.text[:500]

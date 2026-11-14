@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { api, isAbortError, ttsSpeak, type VoiceLine } from './api'
+import { api, isAbortError, ttsSpeak, type VoiceLine, errorText } from './api'
 import type { SceneEntry } from './types'
 import { abortError, onAbort, playBlob, sleep, type PlaybackSlot } from './audioPlayback'
 import { scaledPause } from './voiceRate'
@@ -276,7 +276,7 @@ export function useReadAloud(onSceneStart?: (nodeId: string) => void): {
         if (isAbortError(e) || signal.aborted) return
         abortRef.current = null
         gateRef.current = null
-        setState({ ...IDLE, error: String(e).replace(/^Error:\s*/, '') })
+        setState({ ...IDLE, error: errorText(e) })
       })
   }, [])
 
