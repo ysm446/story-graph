@@ -493,11 +493,15 @@ def _validate_args(store, name, args):
 
 
 async def apply_edit(store: Store, base_url: str, name: str, args: dict, before_commit=None, policy=None, versions=None,
-                     infer=True):
+                     infer=True, extract=True):
     """コピーで生成・検証を済ませ、成功した本文とイベントだけを同期的に確定する。
 
     infer=False なら、新しいシーンの経過・場所の推測(infer_and_record)を呼び出し側に任せる。
     制作の作業は確定を記録してから推測する(推測の LLM 待ちで止めても、確定した変更が記録から漏れないように)。
+
+    extract=False なら、イベントを抜き出さずに本文だけを確定する。シーンには「イベント要更新 / 未作成」の印が付き、
+    画面が作業の終わりにまとめて作り直す(generation.reextract_stale)。制作の作業はこちらを使う:
+    抜き出しは 1 回 3〜10 秒かかり、書き込みのたびに次の判断を待たせていた(2026-11-14 の計測で所要時間の 3〜4 割)。
     """
     if not isinstance(args, dict):
         raise ValueError("引数はオブジェクトで指定してください")
@@ -568,7 +572,8 @@ async def apply_edit(store: Store, base_url: str, name: str, args: dict, before_
                 added_errors = set(candidate.validate(nid)) - set(store.validate(nid))
                 if added_errors:
                     raise ValueError(f"接続変更後のシーン {nid} に矛盾: " + "; ".join(sorted(added_errors)))
-        if name not in ("delete_scene", "reconnect_scene"):
+        events = None
+        if extract and name not in ("delete_scene", "reconnect_scene"):
             await generation.extract_events(candidate, base_url, node_id)
             errors = candidate.validate(node_id)
             if errors:
@@ -812,27 +817,32 @@ def fit_recent_results(results):
     return kept[::-1]
 
 
+SELECTION_RULES = (
+    "\n『今選択しているノード』『このシーン』は、その発言に添付された送信時の選択を参照します。"
+    "選択は後から変わりません。本文はget_beatsで読み直し、選択だけを編集命令と見なさないでください。"
+    "選択なしで対象が不明なら推測せず確認し、複数選択で単数の対象が曖昧な場合も確認してください。"
+    "過去の発言の選択を今回の選択として扱わないでください。変更範囲・保護指定は選択より優先です。"
+    "選択のkind=chapterは章カードです。章の構成はread_chaptersで読み、本文はその章のシーンのIDでget_beatsへ渡してください(章IDはget_beatsに渡せません)。"
+    "『この章』は選択した章、選択が無ければ送信時に見ていた階層の章を指します。"
+    "見ていた階層は作者がどこを見ているかの手がかりで、選択があれば選択が対象です。")
+
+
 def build_messages(store, history, message, execute, policy, previous_checkpoint, changes, recent_results, run_id=None, selection=None,
                    cancelled_text="", notes=(), plan=None, view=None, groups=None):
-    system = (chat_agent.build_system(store, store.canon_path(), "all", production=True) + "\n" + execute_rules(groups)
-              if execute else chat_agent.build_system(store, store.canon_path(), "all") + CONSULT_RULES)
+    # 並びは「作業中に変わらないもの → 変わりうるもの」。llama-server は前回と同じ先頭部分を読み直さないので、
+    # 変わるものを前に置くと、そこから後ろ(規則・ツール定義)が毎ステップ読み直しになる。
+    # 接続図と長さの目安はシーンを足すたびに変わるので、システムには入れず最新の依頼文に付ける。
+    system = (chat_agent.build_system(store, store.canon_path(), "all", production=True, graph_inline=False) + "\n" + execute_rules(groups)
+              if execute else chat_agent.build_system(store, store.canon_path(), "all", graph_inline=False) + CONSULT_RULES)
+    system += chat_rules.prompt(store)
+    system += SELECTION_RULES
+    system += production_plan.prompt_text(plan)
     if any(m.get("instruction", {}).get("run_id") == run_id and m.get("instruction", {}).get("status") == "reflected" for m in history):
         system += ("実行記録にある変更はすでに確定しています。方針変更だけを理由に取り消してはいけません。"
                    "『ここまでの場面は残す』と指示されたら、追加済みの場面も含めて削除・統合・置き換えで失わせず、指定された残りの作業だけを進めてください。")
-    system += chat_rules.prompt(store)
-    if execute:
-        system += scene_length_hint(store)
     system += production_memory.prompt(store, previous_checkpoint, allow_write=execute)
     system += "\n作者が画面で指定した変更条件（最優先）: " + policy.describe()
     system += cancelled_text
-    system += production_plan.prompt_text(plan)
-    system += ("\n『今選択しているノード』『このシーン』は、その発言に添付された送信時の選択を参照します。"
-               "選択は後から変わりません。本文はget_beatsで読み直し、選択だけを編集命令と見なさないでください。"
-               "選択なしで対象が不明なら推測せず確認し、複数選択で単数の対象が曖昧な場合も確認してください。"
-               "過去の発言の選択を今回の選択として扱わないでください。変更範囲・保護指定は選択より優先です。"
-               "選択のkind=chapterは章カードです。章の構成はread_chaptersで読み、本文はその章のシーンのIDでget_beatsへ渡してください(章IDはget_beatsに渡せません)。"
-               "『この章』は選択した章、選択が無ければ送信時に見ていた階層の章を指します。"
-               "見ていた階層は作者がどこを見ているかの手がかりで、選択があれば選択が対象です。")
     # 各ステップで最新図を作り、本文を含むツール結果は直近だけ保持する。
     # step は読み取りの手順の記録(画面の時系列用)。LLM へ渡す会話には入れない。
     conversation = [{"role": m["role"], "content": _clip(message_content(m), PAST_MESSAGE_LIMIT)} for m in history
@@ -840,7 +850,9 @@ def build_messages(store, history, message, execute, policy, previous_checkpoint
                     and not m.get("step") and not m.get("plan") and not m.get("undo") and not m.get("stale_notice")
                     and m.get("instruction", {}).get("status") != "unapplied"][-12:]
     messages = [{"role": "system", "content": system}, *conversation]
-    messages.append({"role": "user", "content": "今回の依頼: " + message + selection_context(selection or []) + view_context(view) + "\n今回の実行記録: "
+    messages.append({"role": "user", "content": "物語全体の接続図(最新): " + chat_agent.story_graph_text(store)
+                     + (scene_length_hint(store) if execute else "")
+                     + "\n今回の依頼: " + message + selection_context(selection or []) + view_context(view) + "\n今回の実行記録: "
                      + json.dumps(changes, ensure_ascii=False)
                      + "\n今回の途中指示（当初の依頼より優先）: "
                      + json.dumps([message_content(m) for m in history
@@ -1223,7 +1235,7 @@ async def stream(store: Store, base_url: str, chat_id: str | None, message: str,
                                 store.save_chat_messages(chat_id, history)
                                 yield _sse({"stage": lifted})
                             payload = await apply_edit(store, base_url, name, args, before_commit=lambda: run.check_epoch(epoch), policy=policy, versions=versions,
-                                                       infer=False)
+                                                       infer=False, extract=False)
                             versions = NodeVersions(store)
                             # 縮める前の本文(previous_beat)は次の判断のツール結果にだけ渡し、履歴・画面・引継ぎには残さない。
                             operation = {k: v for k, v in payload.items() if k != "previous_beat"}

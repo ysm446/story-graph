@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 from typing import Any, AsyncIterator
 
+import db
 import llm
 import retrieval
 import story_clock
@@ -971,6 +972,75 @@ async def _reextract(
             store.rollback_quietly()
             failed.append({"node_id": nid, "title": title, "error": f"{type(e).__name__}: {e}"})
     yield _sse({"stage": "done", "total": len(order), "failed": failed})
+
+
+def _events_input(node: dict[str, Any]) -> tuple[Any, ...]:
+    """抜き出しの材料(本文・登場人物・場所)。抜き出しの前後で変わっていないかを比べる"""
+    return (node.get("beat"), tuple(sorted(node.get("cast") or [])), node.get("location"))
+
+
+async def extract_events_checked(store: Store, base_url: str, node_id: str) -> str | None:
+    """コピーの上で抜き出して検証し、通ったイベントだけを確定する。確定しなかったときは理由を返す。
+
+    制作が本文だけを確定したシーンの後追い用。作者は待たずに編集を続けられるので、LLM を待つ間に
+    本文やイベントが変わることがある。確定の直前に見直し、変わっていたら書かない(印は残る)。
+    検証に落ちたイベントも書かない: 書くと印が消え、矛盾したまま「最新」に見える。
+    """
+    before = store.get_node(node_id)
+    candidate_conn = db.connect(":memory:")
+    try:
+        store.conn.backup(candidate_conn)
+        candidate = Store(candidate_conn)
+        await extract_events(candidate, base_url, node_id)
+        errors = candidate.validate(node_id)
+        events = candidate.list_events(node_id)
+    finally:
+        candidate_conn.close()
+    if errors:
+        raise ValueError("シーンの検証に失敗: " + "; ".join(errors))
+    # ここから確定まで await しない
+    current = store.get_node(node_id)
+    if current is None:
+        return "削除されました"
+    if _events_input(current) != _events_input(before):
+        return "作り直しの途中で本文が変わりました"
+    if current.get("events_status") is None:
+        return "作者がイベントを保存しました"
+    store.replace_events(
+        node_id,
+        [{"id": e["id"], "type": e["type"], "payload": e["payload"], "source": e["source"]} for e in events],
+    )
+    return None
+
+
+async def reextract_stale(store: Store, base_url: str, node_ids: list[str]) -> AsyncIterator[str]:
+    """指定したシーンのうち、イベントが古い・未作成のものだけを、親から順に作り直す(SSE)。
+
+    制作の作業の後追い(docs/design/production-chat.md「イベントの後追い」)。reextract_nodes との違い:
+    印の無いシーンは触らない(作者が手で整えたイベントを上書きしない)、検証に落ちたら書かない、
+    待っている間に本文が変わったシーンは飛ばす。
+    """
+    def pending(nid):
+        node = store.get_node(nid)
+        return node is not None and not node.get("kind") and node.get("events_status") is not None
+
+    order = sorted((nid for nid in dict.fromkeys(node_ids) if pending(nid)), key=lambda nid: len(store.path_to(nid)))
+    failed: list[dict[str, str]] = []
+    skipped: list[dict[str, str]] = []
+    yield _sse({"stage": "start", "total": len(order)})
+    for index, nid in enumerate(order):
+        if not pending(nid):
+            continue  # 順番を待つ間に、作者が作り直した・印を消した・削除した
+        title = store.get_node(nid)["title"] or "(無題)"
+        yield _sse({"stage": "node", "index": index + 1, "total": len(order), "title": title, "node_id": nid})
+        try:
+            reason = await extract_events_checked(store, base_url, nid)
+            if reason:
+                skipped.append({"node_id": nid, "title": title, "reason": reason})
+        except Exception as e:  # noqa: BLE001 — 1 件の失敗で残りを止めない
+            store.rollback_quietly()
+            failed.append({"node_id": nid, "title": title, "error": f"{type(e).__name__}: {e}"})
+    yield _sse({"stage": "done", "total": len(order), "failed": failed, "skipped": skipped})
 
 
 # ---- 章のまとめ(digest)生成(docs/design/chapters.md §3) ------------

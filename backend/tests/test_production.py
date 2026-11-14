@@ -758,16 +758,12 @@ def test_api_separates_histories_and_blocks_manual_writes(store, monkeypatch):
     run(check())
 
 
-@pytest.mark.parametrize("arrival", ["model", "extraction", "between_calls"])
+# 作業はイベントの抜き出しを待たなくなったので、「抜き出しの途中に届く」場合は無くなった(後追いは reextract_stale)
+@pytest.mark.parametrize("arrival", ["model", "between_calls"])
 def test_instruction_discards_uncommitted_work_and_replans(store, monkeypatch, arrival):
     fake_extraction(monkeypatch)
     prompts = []
     runs = []
-    if arrival == "extraction":
-        async def extract(candidate, base_url, node_id):
-            production.gate.run.submit("keep", "出発は変更せず残してください")
-            return candidate.replace_events(node_id, [])
-        monkeypatch.setattr(generation, "extract_events", extract)
     async def model(messages, **kwargs):
         prompts.append(messages)
         runs.append(production.gate.run)
@@ -1116,7 +1112,7 @@ def test_manual_change_during_extraction_is_not_overwritten(store, monkeypatch):
     assert store.get_node("first")["beat"] == "手動で保存した本文"
 
 
-@pytest.mark.parametrize("arrival", ["model", "extraction"])
+@pytest.mark.parametrize("arrival", ["model"])
 def test_manual_pause_resume_discards_old_operation(store, monkeypatch, arrival):
     fake_extraction(monkeypatch)
     prompts = []
@@ -1125,11 +1121,6 @@ def test_manual_pause_resume_discards_old_operation(store, monkeypatch, arrival)
         active.set_paused(True)
         node_operations.update(store, "first", {"beat": "作者が残した本文"})
         active.set_paused(False)
-    if arrival == "extraction":
-        async def extract(candidate, base_url, node_id):
-            manual_change()
-            candidate.replace_events(node_id, [])
-        monkeypatch.setattr(generation, "extract_events", extract)
     async def model(messages, **kwargs):
         prompts.append(messages)
         if len(prompts) == 1:
@@ -1717,8 +1708,10 @@ def test_length_hint_and_inferred_setting_on_insert(store, monkeypatch):
     hint = production.scene_length_hint(store)
     assert "中央値" in hint and "語り口" in hint
     policy = production.ProductionPolicy(store)
-    assert hint in production.build_messages(store, [], "追記して", True, policy, None, [], [])[0]["content"]
-    assert hint not in production.build_messages(store, [], "追記して", False, policy, None, [], [])[0]["content"]
+    # 目安はシーンを足すたびに変わるので、システムではなく最新の依頼文に付ける(先頭部分のキャッシュを保つ)
+    execute_messages = production.build_messages(store, [], "追記して", True, policy, None, [], [])
+    assert hint in execute_messages[-1]["content"] and hint not in execute_messages[0]["content"]
+    assert hint not in json.dumps(production.build_messages(store, [], "追記して", False, policy, None, [], []), ensure_ascii=False)
     # 挿入で経過・場所を指定しなかったら本文から推測して入れる(根拠が無ければ入れない)
     fake_extraction(monkeypatch)
     store.create_place({"id": "forest", "name": "森", "description": "深い森"})
@@ -1884,3 +1877,117 @@ def test_prompt_over_the_server_ctx_stops_with_a_clear_message(store, monkeypatc
     events = run(collect(store, False))
     assert next(e for e in events if "usage" in e)["usage"]["ctx_size"] == 8192
     assert "コンテキスト長 8192" in next(e for e in events if "error" in e)["error"]
+
+
+def test_stream_commits_text_without_waiting_for_events(store, monkeypatch):
+    """作業は本文だけを確定し、イベントは抜き出さない。シーンには印が残り、後追いが拾う"""
+    async def forbidden(*args, **kwargs):
+        raise AssertionError("作業の途中でイベントを抜き出してはいけない")
+    monkeypatch.setattr(generation, "extract_events", forbidden)
+    store.replace_events("first", [])  # 最新の状態から始める
+    assert store.get_node("first")["events_status"] is None
+    fake_llm(monkeypatch, [
+        call("update_scene", {"node_id": "first", "beat": "夜明けに村を出る", "reason": "時刻を足す"}),
+        call("insert_scene", {"after_id": "first", "title": "峠", "beat": "峠で振り返る", "cast": ["aya"], "reason": "間を足す"}),
+        {"content": "終わりました"},
+    ])
+    events = run(collect(store, True))
+    changed = [e["changed"] for e in events if e.get("changed")]
+    assert [c["action"] for c in changed] == ["update_scene", "insert_scene"]
+    assert store.get_node("first")["beat"] == "夜明けに村を出る"
+    assert store.get_node("first")["events_status"] == "stale"
+    assert store.get_node(changed[1]["node_id"])["events_status"] == "missing"
+
+
+def test_system_prompt_stays_the_same_when_scenes_are_added(store):
+    """シーンを足してもシステムは変わらない(変わると llama-server が規則とツール定義を毎回読み直す)"""
+    # 作業メモ(既定はオフ)をオンにすると、前回の照合からの差分がシステムの末尾に付く。変わるのはその末尾だけ
+    store.set_settings({production_memory.KEY: "0"})
+    policy = production.ProductionPolicy(store)
+    before = production.build_messages(store, [], "追記して", True, policy, None, [], [])
+    store.append_node({"id": "third", "title": "夜", "beat": "焚き火を囲む", "cast": ["aya"]})
+    store.append_node({"id": "fourth", "title": "朝", "beat": "霧の中を歩く", "cast": ["aya"]})
+    after = production.build_messages(store, [], "追記して", True, policy, None, [], [])
+    assert before[0]["content"] == after[0]["content"]
+    assert '"third"' in after[-1]["content"] and '"third"' not in before[-1]["content"]
+
+
+def _reextract(store, node_ids):
+    async def go():
+        return [json.loads(raw.removeprefix("data: ")) async for raw in generation.reextract_stale(store, "fake", node_ids)]
+    return run(go())
+
+
+def test_reextract_stale_only_touches_marked_scenes_in_story_order(store, monkeypatch):
+    order = []
+    async def extract(candidate, base_url, node_id):
+        order.append(node_id)
+        return candidate.replace_events(node_id, [{"type": "memory_add", "source": "llm", "payload": {
+            "char": "aya", "content": candidate.get_node(node_id)["beat"], "importance": 0.8}}])
+    monkeypatch.setattr(generation, "extract_events", extract)
+    store.append_node({"id": "kept", "title": "夜", "beat": "眠る", "cast": ["aya"]})
+    store.replace_events("kept", [{"type": "memory_add", "source": "user", "payload": {
+        "char": "aya", "content": "作者が書いた記憶", "importance": 0.5}}])
+    events = _reextract(store, ["last", "kept", "first", "missing-id"])
+    assert order == ["first", "last"]  # 親が先。印の無いシーンと無いシーンは触らない
+    assert events[-1] == {"stage": "done", "total": 2, "failed": [], "skipped": []}
+    assert store.get_node("first")["events_status"] is None and store.get_node("last")["events_status"] is None
+    assert store.get_node("first")["events"][0]["payload"]["content"] == "村を出る"
+    assert store.get_node("kept")["events"][0]["payload"]["content"] == "作者が書いた記憶"
+
+
+@pytest.mark.parametrize("change", ["text", "events", "delete"])
+def test_reextract_stale_does_not_overwrite_what_the_author_changed_meanwhile(store, monkeypatch, change):
+    async def extract(candidate, base_url, node_id):
+        # LLM を待つ間に、作者が同じシーンを触る
+        if change == "text":
+            store.update_node("first", {"beat": "作者が書き直した本文"})
+        elif change == "events":
+            store.replace_events("first", [{"type": "memory_add", "source": "user", "payload": {
+                "char": "aya", "content": "作者が書いた記憶", "importance": 0.5}}])
+        else:
+            store.delete_node("first")
+        return candidate.replace_events(node_id, [{"type": "memory_add", "source": "llm", "payload": {
+            "char": "aya", "content": "古い本文から抜き出した記憶", "importance": 0.8}}])
+    monkeypatch.setattr(generation, "extract_events", extract)
+    done = _reextract(store, ["first"])[-1]
+    assert done["failed"] == [] and [s["node_id"] for s in done["skipped"]] == ["first"]
+    node = store.get_node("first")
+    if change == "text":
+        assert node["events"] == [] and node["events_status"] == "missing"  # 印が残り、次に拾える
+    elif change == "events":
+        assert [e["payload"]["content"] for e in node["events"]] == ["作者が書いた記憶"]
+    else:
+        assert node is None
+
+
+def test_reextract_stale_keeps_the_mark_when_validation_fails(store, monkeypatch):
+    async def extract(candidate, base_url, node_id):
+        return candidate.replace_events(node_id, [{"type": "memory_add", "source": "llm", "payload": {
+            "char": "nobody", "content": "未登録の人物の記憶", "importance": 0.8}}])
+    monkeypatch.setattr(generation, "extract_events", extract)
+    done = _reextract(store, ["first"])[-1]
+    assert [f["node_id"] for f in done["failed"]] == ["first"] and "検証に失敗" in done["failed"][0]["error"]
+    node = store.get_node("first")
+    assert node["events"] == [] and node["events_status"] == "missing"
+
+
+def test_reextract_api_only_stale(store, monkeypatch):
+    import app as api
+    monkeypatch.setattr(api, "store", store)
+    async def ensure(settings):
+        return "fake"
+    monkeypatch.setattr(api.llama, "ensure_running", ensure)
+    async def no_snapshot(*args, **kwargs):
+        return None
+    monkeypatch.setattr(api.snapshots, "auto", no_snapshot)
+    fake_extraction(monkeypatch)
+    store.replace_events("last", [])
+    async def check():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=api.app), base_url="http://test") as client:
+            res = await client.post("/nodes/reextract", json={"node_ids": ["first", "last"], "only_stale": True})
+            assert res.status_code == 200
+            return [json.loads(line.removeprefix("data: ")) for line in res.text.split("\n\n") if line.strip()]
+    events = run(check())
+    assert [e["node_id"] for e in events if e.get("stage") == "node"] == ["first"]
+    assert store.get_node("last")["events"] == []

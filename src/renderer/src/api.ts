@@ -577,11 +577,14 @@ export interface ReextractStreamEvent {
   title?: string
   node_id?: string
   failed?: Array<{ node_id: string; title: string; error: string }>
+  /** only_stale のときだけ。待っている間に本文やイベントが変わって、書かなかったシーン */
+  skipped?: Array<{ node_id: string; title: string; reason: string }>
 }
 
 /** 選択した複数シーンのイベントを抽出し直す(親から順に逐次、SSE) */
 export async function reextractNodesStream(
-  body: { node_ids: string[]; include_downstream?: boolean },
+  // only_stale: イベントが古い・未作成のシーンだけを、検証してから書く(制作の後追い)
+  body: { node_ids: string[]; include_downstream?: boolean; only_stale?: boolean },
   onEvent: (data: ReextractStreamEvent) => void,
   signal?: AbortSignal
 ): Promise<void> {

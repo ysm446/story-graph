@@ -1079,7 +1079,11 @@ async def _room_impl(
 
 # ---- システムプロンプト ----------------------------------------------
 
-def build_system(store: Store, path: list[str], scope: str, *, production: bool = False) -> str:
+def build_system(store: Store, path: list[str], scope: str, *, production: bool = False,
+                 graph_inline: bool = True) -> str:
+    """graph_inline=False なら接続図の JSON を載せず、読み方だけを書く。図は呼び出し側が story_graph_text で
+    最新の依頼文に付ける(制作チャット。シーンを足すたびに図が変わり、そこから後ろのプロンプトが
+    llama-server のキャッシュから外れて毎回読み直しになっていた。2026-11-14 の計測)。"""
     chars = "\n".join(f"- {c['id']}: {c['name']}" for c in store.list_characters())
     anchor_text = (
         f"あなたに見えているのはシーン {len(path)} までの情報だけです。"
@@ -1116,10 +1120,15 @@ def build_system(store: Store, path: list[str], scope: str, *, production: bool 
                 "別経路の出来事を一続きの出来事として混ぜない。記憶の node_id を接続図と照合する。",
                 "get_state は node_id で経路を選ぶ。省略時は正史末尾であり、全枝を合成した状態ではない。",
                 "過去の会話の取得結果より、この接続図と今回取得する本文を優先する。",
-                json.dumps(_story_graph(store), ensure_ascii=False),
+                story_graph_text(store) if graph_inline
+                else "接続図そのものは、最新の依頼文の先頭に「物語全体の接続図(最新)」として付く。作業で変わるたびに更新される。",
             ] if scope == "all" else []),
         ]
     )
+
+
+def story_graph_text(store: Store) -> str:
+    return json.dumps(_story_graph(store), ensure_ascii=False)
 
 
 # ---- エージェントループ ----------------------------------------------

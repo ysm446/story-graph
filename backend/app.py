@@ -2236,6 +2236,8 @@ class ReextractIn(BaseModel):
     node_ids: list[str]
     include_downstream: bool = False  # 選択したノードの下流も対象にする
     keep_user_events: bool = True
+    # 制作の後追い用: イベントが古い・未作成のシーンだけを、検証してから書く(generation.reextract_stale)
+    only_stale: bool = False
 
 
 @app.post("/nodes/reextract")
@@ -2249,7 +2251,8 @@ async def reextract_nodes(body: ReextractIn) -> StreamingResponse:
     except RuntimeError as e:
         raise HTTPException(500, str(e))
     return StreamingResponse(
-        generation.reextract_nodes(
+        generation.reextract_stale(store, base_url, body.node_ids) if body.only_stale
+        else generation.reextract_nodes(
             store, base_url, body.node_ids, body.include_downstream, body.keep_user_events
         ),
         media_type="text/event-stream",

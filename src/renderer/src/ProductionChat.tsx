@@ -6,7 +6,7 @@ import ProductionPreviewPanel from './ProductionPreviewPanel'
 import AutoTextarea from './AutoTextarea'
 import { sentHistory, submitOnEnter, useInputHistory } from './useInputHistory'
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { chatApi, isAbortError, productionApi, type ChatSummary, type ProductionInstruction, type ProductionPolicy, type ProductionOperation, type ProductionSelectedNode, type ProductionView, type ProductionViewRequest, type ProductionPlan, type ProductionStep, type ProductionUndo } from './api'
+import { chatApi, isAbortError, productionApi, reextractNodesStream, type ChatSummary, type ProductionInstruction, type ProductionPolicy, type ProductionOperation, type ProductionSelectedNode, type ProductionView, type ProductionViewRequest, type ProductionPlan, type ProductionStep, type ProductionUndo } from './api'
 import { Markdown } from './Markdown'
 import { showStatusNotice } from './statusNotice'
 import { setProductionPreview } from './productionPreview'
@@ -214,6 +214,42 @@ function viewLabel(view: ProductionView): string {
 }
 
 /** 制作専用チャット。相談履歴とは分け、選択した送信モードで書き込みの可否を決める。 */
+/** 制作が本文だけを確定したシーンのイベントを、作業の後に作り直す。
+ *
+ * 制作は書き込みのたびにイベントの抜き出しを待たず、シーンに「イベント要更新 / 未作成」の印を残して先へ進む
+ * (docs/design/production-chat.md「イベントの後追い」)。ここで実行キューに積むので、画面のロックは外れたまま、
+ * カードの枠とステータスバーに進み具合が出る。コンポーネントの外に置くのは、制作チャットを閉じても続けるため。
+ */
+function enqueueEventFollowUp(nodeIds: string[]): void {
+  if (nodeIds.length === 0) return
+  enqueueTask({
+    label: 'イベント作り直し',
+    total: nodeIds.length,
+    detail: `制作で書いた ${nodeIds.length} シーン`,
+    runner: async ({ update, signal }) => {
+      let current: string | null = null
+      try {
+        await reextractNodesStream({ node_ids: nodeIds, only_stale: true }, (e) => {
+          if (e.stage === 'node') {
+            update({ done: e.index, total: e.total, detail: e.title })
+            setNodeBusy(current, false)
+            current = e.node_id ?? null
+            setNodeBusy(current, true)
+          }
+          if (e.stage === 'done' && (e.failed ?? []).length > 0) {
+            showStatusNotice(`イベントを作り直せなかったシーンがあります(「イベント要更新」の印が残ります): ${(e.failed ?? []).map((f) => f.title).join('、')}`)
+          }
+        }, signal)
+      } catch (err) {
+        showStatusNotice(isAbortError(err) ? 'イベントの作り直しを中止しました(印の付いたシーンが残ります)' : `イベントを作り直せません: ${String(err)}`)
+      } finally {
+        setNodeBusy(current, false)
+        notifyGraphChanged()
+      }
+    }
+  })
+}
+
 export default function ProductionChat({ beforeExecute, onChanged, onFollowTarget, onManualEdit, nodes, groups, policy, setPolicy, selectedNodeIds, view, chapter, active = true }: {
   /** 選択中のシーンと章カード(章は章ID) */
   selectedNodeIds: string[]
@@ -511,6 +547,8 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
         let completed = false // 停止・エラーでなく最後まで終わった(依頼候補を取り直す)
         // 終了理由(完了 / 上限 / 反復停止 / 空応答 / 報告の途切れ)と件数。サーバーの done が持つ
         let summary: string | null = null
+        // 本文を確定したシーン。イベントは作業の後にまとめて作り直す(enqueueEventFollowUp)
+        const eventTargets = new Set<string>()
         const flush = (): void => {
           const content = text
           if (content) {
@@ -573,6 +611,8 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
             }
             if (event.changed) {
               const operation = event.changed
+              if (operation.action === 'delete_scene') eventTargets.delete(operation.node_id)
+              else if (operation.action === 'insert_scene' || operation.action === 'branch_scene' || operation.action === 'update_scene') eventTargets.add(operation.node_id)
               setPolicy((previous) => previous.allowed_ids === null ? previous : { ...previous,
                 allowed_ids: operation.action === 'insert_scene' || operation.action === 'branch_scene' ? [...previous.allowed_ids, operation.node_id]
                   : operation.action === 'delete_scene' ? previous.allowed_ids.filter((id) => id !== operation.node_id) : previous.allowed_ids })
@@ -627,6 +667,8 @@ export default function ProductionChat({ beforeExecute, onChanged, onFollowTarge
           } catch { /* サーバー終了時は画面に残っている経過を保つ */ }
           // busy が下りる前に取得中にしておく(固定の「この案で進めて」が一瞬出るのを防ぐ)
           if (completed) { setDynamicState('loading'); setSuggestTick((value) => value + 1) }
+          // 止めた・エラーで終わった場合も、確定済みの本文は残っているので作り直す
+          enqueueEventFollowUp([...eventTargets])
           notifyGraphChanged()
           taskRef.current = null
         }
