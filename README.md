@@ -86,7 +86,9 @@ Electron (main)
 | [docs/story-graph-spec.md](docs/story-graph-spec.md) | 正式仕様(データモデル、イベントスキーマ、fold、各モード) |
 | [docs/plan/goals.md](docs/plan/goals.md) | 目的と完成形 |
 | [docs/plan/plan.md](docs/plan/plan.md) | 実装方針・移植元マップ |
-| [docs/plan/progress.md](docs/plan/progress.md) | 進捗・注意点・実装知見 |
+| [docs/plan/progress.md](docs/plan/progress.md) | いまの状態・未完了・注意点・実装知見 |
+| [docs/plan/log/](docs/plan/log/) | 月ごとの作業ログ |
+| [docs/plan/unconfirmed.md](docs/plan/unconfirmed.md) | 実機・実モデルで確かめていないことの一覧 |
 | [docs/design/system-prompts.md](docs/design/system-prompts.md) | LLM プロンプトの構成と編集可能範囲 |
 | [CHANGELOG.md](CHANGELOG.md) | 変更履歴 |
 

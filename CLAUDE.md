@@ -16,7 +16,8 @@
 
 1. [docs/plan/goals.md](docs/plan/goals.md) — プロジェクトの目的、完成形、重視する価値。
 2. [docs/plan/plan.md](docs/plan/plan.md) — 実装方針、優先順位、今後の予定。
-3. [docs/plan/progress.md](docs/plan/progress.md) — 現在の進捗、完了済み作業、未完了作業、注意点。
+3. [docs/plan/progress.md](docs/plan/progress.md) — いまの状態、未完了作業、注意点。
+   過去の作業の経緯が要るときだけ [docs/plan/log/](docs/plan/log/)(月ごとの作業ログ)を引く。毎回は読まない。
 
 今回の依頼が現在の計画や進捗のどこに関係するかを把握してから作業する。方針と矛盾しそうな場合は、実装前に確認する。
 
@@ -45,6 +46,10 @@
   全体設計(プロセス構成・データの流れ・どこに何を書くか)の入口は [docs/design/overview.md](docs/design/overview.md)。
   UI(色・タイポ・余白・部品)の入口は [docs/design/style-guide.md](docs/design/style-guide.md)。
 - `docs/plan/` 配下(goals / plan / progress)は進捗管理用の入口として保つ。
+- 作業の記録は置き場を分ける(progress.md は毎回読むので短く保つ)。
+  - 作業の記録(何をどう変えたか、検証、設計から変えた点)は `docs/plan/log/YYYY-MM.md` の先頭に足す。
+  - `docs/plan/progress.md` には記録を積まない。いまの状態の要約と、未完了・注意点が増えた/消えたときだけ直す。
+  - 実機・実モデルで確かめていないことは `docs/plan/unconfirmed.md` に 1 行足す。確かめたら消す。
 
 ## バージョン管理
 

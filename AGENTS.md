@@ -50,6 +50,11 @@
   全体設計(プロセス構成・データの流れ・どこに何を書くか)の入口は `docs/design/overview.md`。
   UI(色・タイポ・余白・部品)の入口は `docs/design/style-guide.md`。
 - `docs/plan/` 配下(`goals.md` / `plan.md` / `progress.md`)は進捗管理用の入口として保つ。
+- 作業の記録は置き場を分ける(`progress.md` は毎回読むので短く保つ)。
+  - 作業の記録(何をどう変えたか、検証、設計から変えた点)は `docs/plan/log/YYYY-MM.md` の先頭に足す。
+  - `docs/plan/progress.md` には記録を積まない。いまの状態の要約と、未完了・注意点が増えた/消えたときだけ直す。
+  - 実機・実モデルで確かめていないことは `docs/plan/unconfirmed.md` に 1 行足す。確かめたら消す。
+  - 過去の作業の経緯が要るときだけ `docs/plan/log/` を引く。毎回は読まない。
 
 ## バージョン管理
 
