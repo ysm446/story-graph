@@ -1,9 +1,11 @@
 # progress — 進捗と注意点
 
 作成日時: 2026-07-24 22:38
-更新日時: 2026-11-15 05:38
+更新日時: 2026-11-15 06:36
 
 ## 現在の状態
+
+- 2026-11-15 06:36 **「まとめて更新」の段階 2(イベント)を実装**(ユーザー指摘「イベントが更新されていないと、結果が悪くならないか」→ 項目に含める + 警告、で合意)。バックエンド: `bulk_update.plan` に `events`(`_scenes` で `events_status` を計算。正史の道は上流から、分岐・島は深さ順)、`POST /nodes/reextract` に `snapshot`(まとめて更新は始める前に 1 回保存しているので、シーンごとの自動保存を積まない)。画面: `bulkUpdate.ts` にイベントの段(1 シーンずつ `only_stale: true` = `reextract_stale`。検証に落ちたら書かない、待つ間に作者が直したシーンは書かずに「書きませんでした」として結果へ。後者は続けての失敗に数えない)、イベントのチェックは覚えない(`NOT_REMEMBERED`)。`BulkUpdateDialog.tsx` にイベントの 2 項目、選んだときの注意書き、選ばずにまとめ・清書を選んでいるときの警告(`--warn`)。イベントを選んでいる間はまとめ・清書を 0 件でも選べる。**設計から変えた点**: 作り直しの経路を `reextract_nodes` ではなく `reextract_stale` にした(無人なので、矛盾したイベントで印を消さない)。検証: pytest 784 件(`test_bulk_update.py` に 2 件)、typecheck・build、隔離 Electron の `--bulk`(22 項目。偽の LLM サーバーでイベント 4 件を作り直す)・`--eventstale`。**未確認**: 実際の llama-server でのイベントの段。**注意点**: 検証に落ちたイベントが続くと(上流に矛盾がある場合など)、理由を問わない「3 件続けて失敗で止める」に当たって止まりうる。
 
 - 2026-11-15 05:38 **全体レビューと軽量化**(ユーザー依頼「レビュー・重複のまとめ・軽くしたい」)。**計測**: `data/test/` に 120 シーン・8 章・人物 8(挿絵 120 枚・立ち絵 8 枚、計 225MB)のライブラリを作り、隔離 Electron で操作ごとの長いタスク・遅いフレーム・通信を計った。画面側は、シーンの選択・矢印キー・ドラッグ・パン・モード切替・チャット入力・偽の LLM サーバーでの逐次表示のどれも、50ms を超えるタスク 0・34ms を超えるフレーム 0 だった(`/graph` は 328KB で 7ms)。**見つかった原因**: `httpx.AsyncClient()` を作るたびに証明書の束を読み、約 100ms イベントループが止まっていた。`/llm/status`(4 秒ごと)・`/comfy/status`・`/tts/status`(5 秒ごと)、トークン数の問い合わせ、LLM の呼び出しのたびに起きる。`managed_process.http_client` で読み込んだ結果を使い回し、作るのは 0.1ms になった(11 か所を差し替え)。**ほかの軽量化**: `/assets/{name}` に `Cache-Control: immutable`(ファイル名は uuid で中身が変わらない)、`api.ts` の `request` は本文の無いときに `Content-Type` を付けない(URL ごとの OPTIONS が無くなる)。**重複のまとめ(挙動は変えない)**: app.py の `_node_or_404` / `_character_or_404` / `_place_or_404` / `_assets_dir`(25 か所)、`llm.resolve_base_url` / `resolve_ctx_size`(11 か所。数字でない設定値で 500 になっていたのも既定に落ちる)、フロントの `errorText`(12 か所)、`useEscapeKey`(6 か所)、`fmtSize` の写し、直書きの `#3ecf8e` を `var(--ok)` に(6 か所)。`production_agent.stream` で loop 変数 `step` を上書きしていたのを `read_info` に改名。**検証**: pytest 782 件、typecheck・build、隔離 Electron の `--media` `--library` `--card` `--bulk` `--settings`。**未確認**: 実際のライブラリ・実機の窓での体感(計測は画面を出さない描画で、GPU を LLM と取り合う状況は再現していない)。**残した指摘(未着手)**: 人物の画像は縮小版が無く、14px のアイコンにも原寸を使う/`reload` のたびに全カードの data が作り直される/画像生成の 4 つの口(app.py)・`chat_agent` のツールループ・`CharacterEditor` と `PlaceEditor` の編集の仕組み・画像生成ウインドウ 3 つ・設定画面のサービスのカードの重複/`production_agent.stream` の例外時に rollback が無い/ComfyUI の httpx の例外が 500 のまま出る/`auto_images` が参照画像のパスをファイル名に絞っていない/`/nodes/reextract` だけ SSE でなく 500 を返す。
 

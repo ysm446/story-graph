@@ -1,16 +1,15 @@
 """まとめて更新(docs/design/bulk-update.md)。
 
-古くなった章のまとめ・清書・朗読台本(話者と感情)を拾って数える。実行そのものは既存の口
-(`/groups/{id}/digest/generate`・`/render`・`/renders/{id}/voice_script/annotate`)を画面のキューが順に呼ぶので、ここは**何を対象にするか**だけを決める
+古くなったイベント・章のまとめ・清書・朗読台本(話者と感情)を拾って数える。実行そのものは既存の口
+(`/nodes/reextract`・`/groups/{id}/digest/generate`・`/render`・`/renders/{id}/voice_script/annotate`)を
+画面のキューが順に呼ぶので、ここは**何を対象にするか**だけを決める
 (数え方を 1 か所にして、ダイアログの件数と実際に走る対象を食い違わせない)。
-
-段階 1 は章のまとめ・清書・台本。イベント(正史を変える)は段階 2 で足す。
 """
 from __future__ import annotations
 
 from typing import Any
 
-from store import Store
+from store import Store, _with_events_status
 
 
 def render_style(store: Store) -> dict[str, Any]:
@@ -42,8 +41,10 @@ def _scenes(store: Store, include_branches: bool) -> list[dict[str, Any]]:
     (清書は 1 つ前のシーンの清書の末尾につなげるので、親が先に来るようにする)。
     """
     rows = {
-        r["id"]: dict(r)
-        for r in store.conn.execute("SELECT id, title, beat FROM nodes WHERE kind IS NULL")
+        r["id"]: _with_events_status(dict(r))
+        for r in store.conn.execute(
+            'SELECT id, kind, title, beat, "cast", location, events_basis FROM nodes WHERE kind IS NULL'
+        )
     }
     parents = store._parents_map()
     canon = [nid for nid in store.canon_path(parents) if nid in rows]
@@ -105,6 +106,10 @@ def _item(node: dict[str, Any]) -> dict[str, str]:
 def plan(store: Store, include_branches: bool = False) -> dict[str, Any]:
     """更新の対象を、実行する順に並べて返す。
 
+    - events: イベントを作り直すシーン(物語の順。正史の道は上流から、分岐・島はルートからの深さ順)。
+      status はシーンの events_status(docs/design/event-staleness.md §3)
+      - "stale": 本文・登場人物・場所を変えたあと、イベントを作り直していない
+      - "missing": 本文はあるが、イベントを一度も書いていない
     - digests: まとめが「要更新」の章。まとめを一度も作っていない章は拾わない(作るかどうかは作者の判断)
     - renders: 清書し直すシーン(物語の順)。status は次のどちらか
       - "stale": いまの組の最新の清書が「要更新」
@@ -120,6 +125,10 @@ def plan(store: Store, include_branches: bool = False) -> dict[str, Any]:
         for g in store.list_groups()
         if g["has_digest"] and g["digest_stale"] and (include_branches or g["on_canon"])
     ]
+    scenes = _scenes(store, include_branches)
+    events = [
+        {**_item(node), "status": node["events_status"]} for node in scenes if node["events_status"]
+    ]
     renders: list[dict[str, str]] = []
     scripts: list[dict[str, str]] = []
     if style["preset"]:
@@ -128,7 +137,6 @@ def plan(store: Store, include_branches: bool = False) -> dict[str, Any]:
         latest = _latest_stale(store, preset_id, pov_char)
         latest_renders = _latest_renders(store, preset_id, pov_char)
         llm_renders, llm_nodes = _script_sources(store, preset_id, pov_char)
-        scenes = _scenes(store, include_branches)
         for node in scenes:
             if node["id"] not in latest:
                 if (node["beat"] or "").strip():
@@ -144,6 +152,7 @@ def plan(store: Store, include_branches: bool = False) -> dict[str, Any]:
     return {
         **style,
         "include_branches": include_branches,
+        "events": events,
         "digests": digests,
         "renders": renders,
         "scripts": scripts,

@@ -2238,6 +2238,9 @@ class ReextractIn(BaseModel):
     keep_user_events: bool = True
     # 制作の後追い用: イベントが古い・未作成のシーンだけを、検証してから書く(generation.reextract_stale)
     only_stale: bool = False
+    # まとめて更新用: 始める前に 1 回保存してあるので、1 シーンずつ呼ぶたびの自動保存は積まない
+    # (自動保存は 30 件までなので、シーンの数だけ積むと古いものが押し出される)
+    snapshot: bool = True
 
 
 @app.post("/nodes/reextract")
@@ -2245,7 +2248,8 @@ async def reextract_nodes(body: ReextractIn) -> StreamingResponse:
     """選択した複数シーンのイベントを抽出し直す(親から順に逐次、SSE)。"""
     if not body.node_ids:
         raise HTTPException(400, "node_ids が空です")
-    await snapshots.auto(store, "イベント作り直しの前", 60)
+    if body.snapshot:
+        await snapshots.auto(store, "イベント作り直しの前", 60)
     try:
         base_url = await llama.ensure_running(store.get_settings())
     except RuntimeError as e:
@@ -2369,7 +2373,7 @@ async def render(body: RenderIn) -> StreamingResponse:
 
 @app.get("/bulk-update/plan")
 async def bulk_update_plan(include_branches: bool = False) -> dict[str, Any]:
-    """古くなった章のまとめ・清書を、実行する順に並べて返す(書き込まない)。"""
+    """古くなったイベント・章のまとめ・清書・台本を、実行する順に並べて返す(書き込まない)。"""
     return bulk_update.plan(store, include_branches)
 
 

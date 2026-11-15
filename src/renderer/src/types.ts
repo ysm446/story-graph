@@ -288,6 +288,8 @@ export interface BulkUpdatePlan {
   pov: { id: string; name: string } | null
   target_chars: number
   include_branches: boolean
+  /** イベントを作り直すシーン(物語の順)。stale = 本文を変えたあと作り直していない、missing = まだ作っていない */
+  events: Array<{ id: string; title: string; status: 'stale' | 'missing' }>
   /** まとめが要更新の章 */
   digests: Array<{ id: string; title: string }>
   /** 清書し直すシーン。stale = 要更新、missing = まだ清書していない */

@@ -165,3 +165,34 @@ def test_scripts_count_only_the_selected_style(store):
     store.save_render("b", pid, None, "清書二")
     plan = bulk_update.plan(store)
     assert scripts(plan, "missing") == ["b"] and scripts(plan, "stale") == []
+
+
+def events_of(plan, status):
+    return [e["id"] for e in plan["events"] if e["status"] == status]
+
+
+def test_events_stale_and_missing_in_story_order(store):
+    # 一緒に作ったイベントは最新
+    assert bulk_update.plan(store)["events"] == []
+
+    store.update_node("c", {"beat": "三を書き替えた"})
+    store.update_node("a", {"beat": "一を書き替えた"})
+    store.append_node({"id": "d", "beat": "四", "cast": ["aya"], "title": "第四話"})  # イベントなし
+    store.append_node({"id": "e", "beat": "", "cast": []})  # 本文が空なら印なし
+    plan = bulk_update.plan(store)
+    assert events_of(plan, "stale") == ["a", "c"]  # 直した順ではなく物語の順
+    assert events_of(plan, "missing") == ["d"]
+    assert plan["events"][1] == {"id": "c", "title": "(無題)", "status": "stale"}
+
+    # 「このままでよい」で外れる
+    store.confirm_events("a")
+    assert events_of(bulk_update.plan(store), "stale") == ["c"]
+
+
+def test_events_on_branches_only_when_asked(store):
+    store.append_node({"id": "x", "beat": "分岐", "cast": ["aya"]}, parent_id="a")
+    store.append_node({"id": "y", "beat": "分岐の先", "cast": ["aya"]}, parent_id="x")
+    store.update_node("b", {"beat": "二を書き替えた"})
+    assert ids(bulk_update.plan(store)["events"]) == ["b"]
+    got = ids(bulk_update.plan(store, include_branches=True)["events"])
+    assert got[0] == "b" and got.index("x") < got.index("y")  # 親が先(親の状態を前提に作り直すため)

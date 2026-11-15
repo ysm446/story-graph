@@ -1,10 +1,10 @@
 import { useSyncExternalStore } from 'react'
-import { api, isAbortError, renderStream, errorText } from './api'
+import { api, isAbortError, reextractNodesStream, renderStream, errorText } from './api'
 import { enqueueTask, notifyGraphChanged, setNodeBusy, type Task } from './tasks'
 
 /** まとめて更新の実行の本体(docs/design/bulk-update.md)。
  *
- *  古くなった章のまとめ → 清書 → 台本(話者と感情)の順に、1 件ずつ作り直す。人が席にいない間に走るので、
+ *  古くなったイベント → 章のまとめ → 清書 → 台本(話者と感情)の順に、1 件ずつ作り直す。人が席にいない間に走るので、
  *  - 始める前に状態を保存する(保存できなければ始めない)
  *  - 1 件失敗しても次へ進む(続けて失敗したら、サーバーが落ちていると見て止める)
  *  - 終わったら結果を残す(戻ってきたときに読めるように、閉じるまで出したままにする)
@@ -14,6 +14,9 @@ import { enqueueTask, notifyGraphChanged, setNodeBusy, type Task } from './tasks
  */
 
 export interface BulkUpdateOptions {
+  /** イベントは正史を変えるので、ダイアログを開くたびにオフから始める(覚えない) */
+  eventsStale: boolean
+  eventsMissing: boolean
   digests: boolean
   rendersStale: boolean
   rendersMissing: boolean
@@ -24,7 +27,7 @@ export interface BulkUpdateOptions {
 }
 
 export interface BulkUpdateFailure {
-  kind: 'digest' | 'render' | 'script'
+  kind: 'event' | 'digest' | 'render' | 'script'
   title: string
   error: string
 }
@@ -32,10 +35,10 @@ export interface BulkUpdateFailure {
 export interface BulkUpdateResult {
   startedAt: number
   finishedAt: number
-  /** 選ばなかった項目は null(結果に行を出さない) */
+  /** 選ばなかった項目は null(結果に行を出さない)。events と scripts は、それを足す前の版が残した結果には無い */
+  events?: { done: number; failed: number } | null
   digests: { done: number; failed: number } | null
   renders: { done: number; failed: number } | null
-  /** 台本を足す前の版が残した結果には無い */
   scripts?: { done: number; failed: number } | null
   failures: BulkUpdateFailure[]
   /** 最後まで行かなかった理由。null = 最後まで終わった */
@@ -48,6 +51,9 @@ export interface BulkUpdateResult {
 export const BULK_UPDATE_KIND = 'bulk-update'
 export const isBulkUpdateTask = (task: Task): boolean => task.kind === BULK_UPDATE_KIND
 
+/** 覚えない項目(うっかり正史を変えないよう、毎回オフから始める) */
+const NOT_REMEMBERED: ReadonlyArray<keyof BulkUpdateOptions> = ['eventsStale', 'eventsMissing']
+
 /** 続けてこの件数だけ失敗したら止める(サーバーが落ちたまま、残りを全部失敗させない) */
 const MAX_CONSECUTIVE_FAILURES = 3
 
@@ -55,6 +61,8 @@ const OPTIONS_KEY = 'bulkUpdateOptions'
 const RESULT_KEY = 'bulkUpdateLastResult'
 
 const DEFAULT_OPTIONS: BulkUpdateOptions = {
+  eventsStale: false,
+  eventsMissing: false,
   digests: true,
   rendersStale: true,
   rendersMissing: true,
@@ -71,7 +79,7 @@ export function loadBulkUpdateOptions(): BulkUpdateOptions {
     const saved = JSON.parse(localStorage.getItem(OPTIONS_KEY) ?? '{}') as Partial<BulkUpdateOptions>
     const merged = { ...DEFAULT_OPTIONS }
     for (const key of Object.keys(DEFAULT_OPTIONS) as Array<keyof BulkUpdateOptions>) {
-      if (typeof saved[key] === 'boolean') merged[key] = saved[key]
+      if (typeof saved[key] === 'boolean' && !NOT_REMEMBERED.includes(key)) merged[key] = saved[key]
     }
     return merged
   } catch {
@@ -145,8 +153,10 @@ function finish(result: BulkUpdateResult): void {
 
 
 /** まとめて更新をキューに積む。対象は、各段の直前に数え直して決める
- *  (まとめを作り直すと、その先の清書が要更新になり、清書を作り直すと台本が付け直しになるため) */
+ *  (イベントを作り直すとまとめと清書が要更新になり、まとめを作り直すとその先の清書が要更新になり、
+ *  清書を作り直すと台本が付け直しになるため) */
 export function startBulkUpdate(options: BulkUpdateOptions): void {
+  const wantsEvents = options.eventsStale || options.eventsMissing
   const wantsRenders = options.rendersStale || options.rendersMissing
   const wantsScripts = options.scriptsStale || options.scriptsMissing
   enqueueTask({
@@ -157,6 +167,7 @@ export function startBulkUpdate(options: BulkUpdateOptions): void {
       const result: BulkUpdateResult = {
         startedAt: Date.now(),
         finishedAt: 0,
+        events: wantsEvents ? { done: 0, failed: 0 } : null,
         digests: options.digests ? { done: 0, failed: 0 } : null,
         renders: wantsRenders ? { done: 0, failed: 0 } : null,
         scripts: wantsScripts ? { done: 0, failed: 0 } : null,
@@ -168,8 +179,9 @@ export function startBulkUpdate(options: BulkUpdateOptions): void {
       let consecutive = 0
       // 1 件の結果を記録する。false を返したら、これ以上続けない
       const record = (kind: BulkUpdateFailure['kind'], title: string, error: string | null): boolean => {
-        const counter =
-          kind === 'digest' ? result.digests! : kind === 'render' ? result.renders! : result.scripts!
+        const counter = { event: result.events, digest: result.digests, render: result.renders, script: result.scripts }[
+          kind
+        ]!
         if (error === null) {
           counter.done += 1
           consecutive = 0
@@ -194,7 +206,58 @@ export function startBulkUpdate(options: BulkUpdateOptions): void {
         // 始める前の状態を保存する。保存できなければ何も書き替えない
         await api.bulkUpdateStart()
 
-        if (options.digests && !cancelled()) {
+        if (wantsEvents && !cancelled()) {
+          const plan = await api.bulkUpdatePlan(options.includeBranches)
+          const scenes = plan.events.filter((e) =>
+            e.status === 'stale' ? options.eventsStale : options.eventsMissing
+          )
+          for (const [index, scene] of scenes.entries()) {
+            if (cancelled()) break
+            update({ done: index + 1, total: scenes.length, detail: `イベント: ${scene.title}` })
+            setNodeBusy(scene.id, true)
+            let ran = false
+            let error: string | null = null
+            let skipped: string | null = null
+            try {
+              // 上流から 1 シーンずつ(下のシーンは、作り直した上のシーンの状態を前提にする)。
+              // only_stale: 検証に通ったイベントだけを書き、待つ間に作者が本文やイベントを直したシーンは書かない。
+              // 手で足したイベントは残る
+              await reextractNodesStream(
+                { node_ids: [scene.id], only_stale: true, snapshot: false },
+                (e) => {
+                  if (e.stage === 'node') ran = true
+                  if (e.stage === 'done') {
+                    error = e.failed?.[0]?.error ?? null
+                    skipped = e.skipped?.[0]?.reason ?? null
+                  }
+                },
+                signal
+              )
+            } catch (e) {
+              if (isAbortError(e)) {
+                result.stopped = 'cancelled'
+                break
+              }
+              ran = true
+              error = errorText(e)
+            } finally {
+              setNodeBusy(scene.id, false)
+            }
+            notifyGraphChanged()
+            // 順番を待つ間に、作者が作り直した・印を消した(もう古くない)。数えない
+            if (!ran) continue
+            if (skipped !== null) {
+              // サーバーには届いているので、続けての失敗には数えない
+              consecutive = 0
+              result.events!.failed += 1
+              result.failures.push({ kind: 'event', title: scene.title, error: `書きませんでした(${skipped})` })
+              continue
+            }
+            if (!record('event', scene.title, error)) break
+          }
+        }
+
+        if (options.digests && result.stopped === null && !cancelled()) {
           const plan = await api.bulkUpdatePlan(options.includeBranches)
           for (const [index, chapter] of plan.digests.entries()) {
             if (cancelled()) break
@@ -215,7 +278,7 @@ export function startBulkUpdate(options: BulkUpdateOptions): void {
         }
 
         if (wantsRenders && result.stopped === null && !cancelled()) {
-          // まとめの更新で要更新になった清書も拾うため、ここで数え直す
+          // イベントとまとめの更新で要更新になった清書も拾うため、ここで数え直す
           const plan = await api.bulkUpdatePlan(options.includeBranches)
           const scenes = plan.renders.filter((r) =>
             r.status === 'stale' ? options.rendersStale : options.rendersMissing

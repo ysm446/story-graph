@@ -1,7 +1,7 @@
 # 全体設計(アーキテクチャ)
 
 作成日時: 2026-08-09 15:30
-更新日時: 2026-11-15 05:38
+更新日時: 2026-11-15 06:36
 
 このアプリが **どう組まれているか** をまとめた入口。「何を作るか」は
 [story-graph-spec.md](../story-graph-spec.md)(仕様)と [plan/goals.md](../plan/goals.md)(目的・価値)、
@@ -24,7 +24,7 @@
 | [backup.md](backup.md) | 外部バックアップ(zip でライブラリの外へ) |
 | [voice.md](voice.md) | 清書の読み上げ(朗読台本と差し替え可能な TTS エンジン)。設計のみ、未実装 |
 | [event-staleness.md](event-staleness.md) | 本文を書き替えたあとイベントを取り直していないシーンの印 |
-| [bulk-update.md](bulk-update.md) | まとめて更新(古いイベント・章のまとめ・清書を選んで順に作り直す)。まとめと清書まで実装、イベントは未実装 |
+| [bulk-update.md](bulk-update.md) | まとめて更新(古いイベント・章のまとめ・清書を選んで順に作り直す)。イベント・まとめ・清書・台本を実装 |
 | [character-card.md](character-card.md) | ある時点のキャラクターを zip に書き出し、ほかのアプリへ渡す(LLM を使わない段階 1 まで実装) |
 
 ## 1. 全体像

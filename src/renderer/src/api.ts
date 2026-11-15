@@ -585,8 +585,9 @@ export interface ReextractStreamEvent {
 
 /** 選択した複数シーンのイベントを抽出し直す(親から順に逐次、SSE) */
 export async function reextractNodesStream(
-  // only_stale: イベントが古い・未作成のシーンだけを、検証してから書く(制作の後追い)
-  body: { node_ids: string[]; include_downstream?: boolean; only_stale?: boolean },
+  // only_stale: イベントが古い・未作成のシーンだけを、検証してから書く(制作の後追い・まとめて更新)
+  // snapshot: false で、呼ぶたびの自動保存を積まない(まとめて更新は始める前に 1 回保存している)
+  body: { node_ids: string[]; include_downstream?: boolean; only_stale?: boolean; snapshot?: boolean },
   onEvent: (data: ReextractStreamEvent) => void,
   signal?: AbortSignal
 ): Promise<void> {
