@@ -636,7 +636,7 @@ export default function EventsEditor({
     setError(null)
     const targetId = node.id // 実行までにインスペクタが別のシーンを映していても対象は変えない
     enqueueTask({
-      label: 'イベント抽出',
+      label: node.events.length ? 'イベントを作り直す' : 'イベントを作る',
       detail: node.title || '(無題)',
       kind: 'extract',
       nodeId: targetId,
@@ -735,9 +735,9 @@ export default function EventsEditor({
             className="accent-action rounded-md border px-2 py-0.5 text-[11px] font-medium disabled:opacity-50"
             // 何を見て抽出しているかを書く(見ないものまで整えても結果が変わらないため)
             data-tip={[
-              'この場面で起きたこと(イベント)を LLM に取り出させます。',
+              'この場面で起きたこと(イベント)を、LLM が本文から読み取って作ります。',
               '',
-              '抽出に使うもの:',
+              '使うもの:',
               '・シーン本文と、登場キャラ(Cast)・場所',
               '・直前までの状態',
               '・キャラクター一覧',
@@ -749,7 +749,9 @@ export default function EventsEditor({
               ? `処理中… (${extractElapsed}s)`
               : extractTask
                 ? '待機中…'
-                : 'イベント抽出(LLM)'}
+                : node.events.length
+                  ? 'イベントを作り直す'
+                  : 'イベントを作る'}
           </button>
         </div>
       </div>
@@ -792,7 +794,7 @@ export default function EventsEditor({
       )}
       {node.events.length === 0 && (
         <div className="text-[12px]" style={{ color: 'var(--text-faint)' }}>
-          イベントなし。「+ 手動イベント」か「イベント抽出(LLM)」で状態差分を作成できます
+          イベントなし。「+ 手動イベント」か「イベントを作る」で状態差分を作成できます
         </div>
       )}
 

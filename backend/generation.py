@@ -891,7 +891,7 @@ async def extract_events(
                 schema=events_schema(char_ids),
                 temperature=EXTRACTION_TEMPERATURE if attempt == 0 else 0.5,
                 max_tokens=2048,
-                label="イベント抽出",
+                label="イベントを作る",
             )
             break
         except RuntimeError as e:

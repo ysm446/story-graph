@@ -1,6 +1,6 @@
 import DetailSplit from '../../DetailSplit'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { api } from '../../api'
+import { api, assetUrl, isVideoAsset } from '../../api'
 import AutoTextarea from '../../AutoTextarea'
 import { showStatusNotice } from '../../statusNotice'
 import CharAvatar from '../../CharAvatar'
@@ -11,6 +11,16 @@ import { enqueueTask, notifyGraphChanged, useTasks } from '../../tasks'
 import type { Character, EventInput, Group, RenderResult, StoryNode } from '../../types'
 import { chapterCast, chapterCoverNode, NodeThumb } from './StructureNodes'
 import { askConfirm } from '../../ConfirmDialog'
+
+/** 左の列の大きい 1 枚(表紙 / 選んだシーンの挿絵)。動画はシーンの詳細欄と同じく再生する
+ *  (自動再生・消音・ループ)。同時に出るのは 1 本だけなので、カードや一覧の行のように止めた 1 コマにしない */
+function AsideArt({ node }: { node: StoryNode }): React.JSX.Element | null {
+  const src = assetUrl(node.image_path)
+  if (src && isVideoAsset(node.image_path)) {
+    return <video key={src} src={src} autoPlay muted loop playsInline className="h-auto w-full rounded-xl" />
+  }
+  return <NodeThumb node={node} className="h-auto w-full rounded-xl" />
+}
 
 // ---- 章タブ(章ノードを選択したときのインスペクタ。docs/design/chapters.md §6) ----
 
@@ -496,7 +506,7 @@ export function ChapterTab({
             </span>
           </div>
           {shownNode.image_path ? (
-            <NodeThumb node={shownNode} className="h-auto w-full rounded-xl" />
+            <AsideArt node={shownNode} />
           ) : (
             <p className="text-[11px] leading-relaxed" style={{ color: 'var(--text-faint)' }}>
               このシーンには挿絵がありません。
@@ -523,7 +533,7 @@ export function ChapterTab({
               </button>
             )}
           </div>
-          <NodeThumb node={cover} className="h-auto w-full rounded-xl" />
+          <AsideArt node={cover} />
         </div>
       ) : (
         <div>

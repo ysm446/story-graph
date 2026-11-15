@@ -2,7 +2,7 @@
  *  チャット周りの絵文字を置き換えるために用意した最小セット。 */
 
 export type IconName =
-  | 'alignNodes' // 基準線にノードを揃える
+  | 'alignNodes' // 分岐するノードグラフ(カードを接続に沿って整列)。左から右はキャンバスの流れと同じ向き
   | 'robotLock' // AI編集から保護(閉じた鍵)
   | 'robotUnlock' // AI編集を許可(開いた鍵)
   | 'chat' // 吹き出し(相談チャット)
@@ -41,10 +41,10 @@ export type IconName =
 const PATHS: Record<IconName, React.JSX.Element> = {
   alignNodes: (
     <>
-      <path d="M3 21h18" />
-      <rect x="3" y="9" width="4" height="8" rx="1" />
-      <rect x="10" y="3" width="4" height="14" rx="1" />
-      <rect x="17" y="6" width="4" height="11" rx="1" />
+      <rect x="2" y="9" width="6" height="6" rx="1" />
+      <rect x="16" y="3" width="6" height="6" rx="1" />
+      <rect x="16" y="15" width="6" height="6" rx="1" />
+      <path d="M8 12h4M16 6h-4v12h4" />
     </>
   ),
   robotLock: (
