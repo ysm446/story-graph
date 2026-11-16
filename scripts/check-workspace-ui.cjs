@@ -230,8 +230,17 @@ store.save_chat_messages(chat['id'], [
     }
     throw new Error('確認ダイアログが出ません')
   }
+  // CHECK_KEEP_GOING=1 では、不一致で止めずに記録して先へ進む(1 回の実行で不一致を全部拾う。
+  // 画面の変更に検証が追従していない箇所を洗い出すため。操作そのものが失敗したときは従来どおり止まる)
+  let failCount = 0
   const assert = async (condition, message) => {
     if (!await js(condition)) {
+      if (process.env.CHECK_KEEP_GOING) {
+        failCount += 1
+        try { writeFileSync(join(target, `fail-${failCount}.png`), (await win.webContents.capturePage()).toPNG()) } catch {}
+        errors.push('FAIL ' + message); console.log('FAIL ' + message)
+        return
+      }
       try { writeFileSync(join(target, 'fail.png'), (await win.webContents.capturePage()).toPNG()) } catch {}
       if (errors.length) console.error('これまでの不一致: ' + errors.join(' / '))
       throw new Error(message)
@@ -1284,8 +1293,9 @@ store.select_media(m['id'])
     await js(`document.querySelector('button[aria-label="設定"]').click()`)
     await pause(400)
     await click('画像生成')
-    await pause(1500)
     const wf = `document.querySelector('select[aria-label="既定のワークフロー"]')`
+    // 一覧は ComfyUI の状態の確認の後に届く。ComfyUI が止まっていると確認だけで 1〜2 秒かかるので、届くまで待つ
+    for (let i = 0; i < 100; i++) { if (await js(`!!${wf} && !${wf}.disabled`)) break; await pause(100) }
     const models = `[...document.querySelectorAll('[aria-label="このワークフローが使うモデル"] li')].map(e=>e.textContent)`
     await assert(`${wf}.value==='default' && [...${wf}.options].some(o=>o.textContent.startsWith('Krea2 Turbo')) && ${models}.some(t=>t.startsWith('checkpoints'))`, '既定のワークフローの選択があり、未設定なら先頭の組。選んだ組が使うモデルが出る')
     await assert(`!document.body.textContent.includes('ステップ数') && !document.body.textContent.includes('チェックポイント(') && document.body.textContent.includes('ネガティブプロンプト')`, 'チェックポイント・ステップ数などの欄は無く、ネガティブプロンプトは残る')
@@ -2024,7 +2034,7 @@ with zipfile.ZipFile(sys.argv[1]) as zf:
   const INPUT_BORDER = `getComputedStyle(document.querySelector('.chat-composer')).borderColor`
   await assert(`(() => {const box=document.querySelector('.chat-composer');const area=box.querySelector('textarea[aria-label="制作への依頼"]');const b=box.getBoundingClientRect(),a=area.getBoundingClientRect();const inside=(e)=>{const r=e.getBoundingClientRect();return r.left>=b.left && r.right<=b.right && r.top>=a.bottom-1 && r.bottom<=b.bottom};const picked=[...box.querySelectorAll('span')].find(e=>e.textContent.trim().startsWith('選択中:'));return getComputedStyle(area).borderTopWidth==='0px' && !!picked && inside(picked) && inside(box.querySelector('[aria-label="制作チャットの送信モード"]')) && inside(box.querySelector('button[aria-label="送信"]')) && picked.getBoundingClientRect().right<=box.querySelector('[aria-label="制作チャットの送信モード"]').getBoundingClientRect().left && !document.body.textContent.includes('Enterで送信')})()`, '入力欄と下の行は1つの箱で、下の行の左に選択中、右に送信モードと送信。Enter の案内文は無い')
   await assert(`${SEND}.classList.contains('accent-action') && !!${SEND}.querySelector('svg') && ${SEND}.textContent.trim()==='' && !${INPUT_BORDER}.includes('221, 136, 181') && !document.body.textContent.includes('「制作を実行」を選択中')`, '相談のときの送信は紫の↑ボタンで、入力欄の枠は通常の色')
-  await assert(`(() => {const visible=(q)=>[...document.querySelectorAll(q)].find(e=>e.getClientRects().length);const list=visible('button[aria-label="会話一覧"]'),add=visible('button[aria-label="新しい会話"]');const row=list.parentElement;const title=row.querySelector('span');const r=(e)=>e.getBoundingClientRect();const rr=row.getBoundingClientRect();return !!list.querySelector('svg') && !!add.querySelector('svg') && list.textContent.trim()==='' && title.textContent==='新しい会話' && Math.abs(r(title).x-rr.x-24)<1 && r(list).x>=r(title).right-1 && r(add).x>=r(list).right && Math.abs(rr.right-r(add).right-24)<1})()`, '会話名は左端、会話一覧と新しい会話のアイコンは右端に並ぶ')
+  await assert(`(() => {const visible=(q)=>[...document.querySelectorAll(q)].find(e=>e.getClientRects().length);const list=visible('button[aria-label="会話一覧"]'),add=visible('button[aria-label="新しい会話"]'),del=visible('button[aria-label="今の会話を削除"]');const row=list.parentElement;const title=row.querySelector('span');const r=(e)=>e.getBoundingClientRect();const rr=row.getBoundingClientRect();return !!list.querySelector('svg') && !!add.querySelector('svg') && list.textContent.trim()==='' && title.textContent==='新しい会話' && Math.abs(r(title).x-rr.x-24)<1 && r(list).x>=r(title).right-1 && r(add).x>=r(list).right && r(del).x>=r(add).right && del.disabled && Math.abs(rr.right-r(del).right-24)<1})()`, '会話名は左端、会話一覧・新しい会話・今の会話を削除のアイコンは右端に並ぶ')
   // 画面の右端にある部品のツールチップが、細く縦長にならないこと。
   await js(`(() => {const r=${SEND}.getBoundingClientRect();document.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,clientX:r.x+r.width/2,clientY:r.y+r.height/2}))})()`)
   for (let i = 0; i < 30; i++) { if (await js(`!!document.querySelector('[role="tooltip"]') && getComputedStyle(document.querySelector('[role="tooltip"]')).opacity!=='0'`)) break; await pause(100) }
@@ -2090,11 +2100,13 @@ with zipfile.ZipFile(sys.argv[1]) as zf:
   await pause(200)
   await assert(`!document.querySelector('[data-edit-group="identity"] input') && [...document.querySelectorAll('[data-character-name]')].some(e=>e.getClientRects().length && e.textContent.trim()==='検証キャラ')`, 'Escで編集を取り消して読む表示へ戻る')
   writeFileSync(join(target, 'library-character-read.png'), (await win.webContents.capturePage()).toPNG())
-  if (errors.length) throw new Error(errors.join('\n'))
+  if (errors.length && !process.env.CHECK_KEEP_GOING) throw new Error(errors.join('\n'))
   // LLMは起動せず、SSEの到着順と確定済みデータの再読込を検証する。
   await js(`(() => {
     const original = window.fetch;
     window.fetch = (url, options) => {
+      // 候補の取得は「使えなかった」で返す(ユーザーの llama-server に問い合わせない。固定の候補だけを確かめる)
+      if (String(url).endsWith('/production/suggest')) return Promise.resolve(new Response(JSON.stringify({suggestions:[],generated:false}), {headers:{'Content-Type':'application/json'}}));
       if (String(url).endsWith('/production/send')) {
         const stream = new ReadableStream({start(controller) {
           window.workspaceEmit = event => controller.enqueue(new TextEncoder().encode('data: ' + JSON.stringify(event) + '\\n\\n'));
@@ -2221,15 +2233,38 @@ with zipfile.ZipFile(sys.argv[1]) as zf:
   await pause(200)
   await assert(`document.body.textContent.includes('完了しました（経過時間')`, 'モードを切り替えても制作ストリームが完了する')
   await assert(`!document.querySelector('[aria-label="AI編集中の本文プレビュー"]')`, '制作終了で未確定のプレビューを消す')
-  await assert(`(() => {const panel=document.querySelector('[aria-label="制作の依頼候補"]');return panel?.querySelector('button').textContent==='この案で進めて' && panel.textContent.includes('今回の変更をレビュー') && panel.querySelectorAll('button').length<=3})()`, '制作後の候補はこの案で進めてを先頭に最大3件表示')
+  // 候補は押したらその場で送る。Shift＋クリックは送らずに入力欄へ入れる(2026-10-13)。
+  // 「この案で進めて」は、LLM の候補が使えないときに相談の回答の後にだけ出る(実行の完了報告の後には出ない)
+  for (let i = 0; i < 30; i++) { if (await js(`[...document.querySelectorAll('[aria-label="制作の依頼候補"] button')].length>0 && !document.querySelector('[aria-label="制作の依頼候補"]').textContent.includes('ほかの候補を考えています')`)) break; await pause(100) }
+  await assert(`(() => {const labels=[...document.querySelectorAll('[aria-label="制作の依頼候補"] button')].map(e=>e.textContent.trim());return labels.includes('今回の変更をレビュー') && !labels.includes('この案で進めて') && labels.length<=3})()`, '実行の後の候補は今回の変更をレビューを含み、この案で進めては出さない(最大3件)')
   await js(`window.workspaceSuggestionSent=false;const previous=window.fetch;window.fetch=(url,options)=>{if(String(url).endsWith('/production/send'))window.workspaceSuggestionSent=true;return previous(url,options)};void 0`)
-  await click('今回の変更をレビュー')
-  await assert(`document.querySelector('textarea[aria-label="制作への依頼"]').value.includes('制作で作成した設定') && !window.workspaceSuggestionSent`, '候補は対象を含む依頼文を入力するだけで送信しない')
-  await assert(`document.activeElement===document.querySelector('textarea[aria-label="制作への依頼"]') && [...document.querySelectorAll('[aria-label="制作の依頼候補"] button')].every(e=>e.disabled)`, '候補選択で入力欄にフォーカスし下書きの上書きを防ぐ')
-  await assert(`document.querySelector('[aria-label="制作チャットの送信モード"] [aria-pressed="true"]').textContent==='相談する'`, '制作の実行が終わると送信モードは相談に戻り、候補を選んでも変わらない')
+  const chip = (label, shiftKey) => js(`[...document.querySelectorAll('[aria-label="制作の依頼候補"] button')].find(e=>e.textContent.trim()===${JSON.stringify(label)}).dispatchEvent(new MouseEvent('click',{bubbles:true,shiftKey:${shiftKey}}))`)
+  await chip('今回の変更をレビュー', true)
+  await pause(200)
+  await assert(`document.querySelector('textarea[aria-label="制作への依頼"]').value.includes('制作で作成した設定') && !window.workspaceSuggestionSent`, 'Shift＋クリックの候補は対象を含む依頼文を入力するだけで送信しない')
+  await assert(`document.activeElement===document.querySelector('textarea[aria-label="制作への依頼"]') && [...document.querySelectorAll('[aria-label="制作の依頼候補"] button')].every(e=>e.disabled)`, '入力中は候補を選べない(下書きの上書きを防ぐ)')
+  await assert(`document.querySelector('[aria-label="制作チャットの送信モード"] [aria-pressed="true"]').textContent==='相談する'`, '制作の実行が終わると送信モードは相談に戻り、相談の候補を入れても変わらない')
   await input('textarea[aria-label="制作への依頼"]', '')
-  await click('この案で進めて')
-  await assert(`document.querySelector('textarea[aria-label="制作への依頼"]').value.includes('直前の回答で提示された案') && !window.workspaceSuggestionSent`, 'この案で進めては会話の案を対象に入力し自動送信しない')
+  await chip('今回の変更をレビュー', false)
+  await pause(300)
+  await assert(`window.workspaceSuggestionSent && document.querySelector('textarea[aria-label="制作への依頼"]').value==='' && !!document.querySelector('button[aria-label="停止"]')`, '候補はクリックでそのまま送信する')
+  // 終了後の履歴の読み直しと候補の取得には会話の ID が要る。相談の回答で終わる会話を仕込み、その ID を流す
+  const proposalSeed = spawnSync(join(root, '.venv/Scripts/python.exe'), ['-c', `from app import store
+chat = store.create_chat(None, 'upto', mode='production')
+store.save_chat_messages(chat['id'], [{'role':'user','content':'続きの案を出して'},{'role':'assistant','content':'再会の場面を足す案があります。'}])
+print(chat['id'])
+`], {cwd:join(root,'backend'),env:{...process.env,STORY_GRAPH_LIBRARY:target},windowsHide:true,encoding:'utf8'})
+  if (proposalSeed.status !== 0) throw new Error(proposalSeed.stderr)
+  await js(`window.workspaceEmit(${JSON.stringify({chat_id:proposalSeed.stdout.trim()})}); window.workspaceEmit({delta:'再会の場面を足す案があります。'}); window.workspaceEmit({response_end:true}); window.workspaceFinish()`)
+  for (let i = 0; i < 30; i++) { if (await js(`[...document.querySelectorAll('[aria-label="制作の依頼候補"] button')].length>0 && !document.querySelector('[aria-label="制作の依頼候補"]').textContent.includes('ほかの候補を考えています')`)) break; await pause(100) }
+  await assert(`(() => {const chips=[...document.querySelectorAll('[aria-label="制作の依頼候補"] button')];return chips[0]?.textContent.trim()==='この案で進めて' && chips[0].classList.contains('execute-action') && chips.length<=3})()`, '相談の回答の後は、この案で進めて(実行の色)を先頭に最大3件表示')
+  await js(`window.workspaceSuggestionSent=false`)
+  await chip('この案で進めて', true)
+  await pause(200)
+  await assert(`document.querySelector('textarea[aria-label="制作への依頼"]').value.includes('直前の回答で提示された案') && !window.workspaceSuggestionSent && document.querySelector('[aria-label="制作チャットの送信モード"] [aria-pressed="true"]').textContent==='制作を実行'`, 'Shift＋クリックのこの案で進めては依頼文を入力し、送信モードを制作を実行にする(送信はしない)')
+  await click('相談する')
+  await input('textarea[aria-label="制作への依頼"]', '')
+  await click('新しい会話')
   await input('textarea[aria-label="制作への依頼"]', '')
   await click('資料庫')
   await click('追従先の場所')
@@ -2269,11 +2304,17 @@ with zipfile.ZipFile(sys.argv[1]) as zf:
   writeFileSync(join(target, 'library-tree.png'), (await win.webContents.capturePage()).toPNG())
   await click('構造')
   await pause(400)
+  // 画面の外のカードは描かれない(onlyRenderVisibleElements)。A キーの全体表示で章カードを画面に入れる
+  await js(`document.activeElement?.blur(); document.body.dispatchEvent(new KeyboardEvent('keydown',{key:'a',bubbles:true}))`)
+  await pause(700)
+  if (!await js(`!!document.querySelector('.react-flow__node[data-id="chapter:${chapter.id}"]')`)) throw new Error('章カードがありません。見えているカード: ' + await js(`[...document.querySelectorAll('.react-flow__node')].map(e=>e.dataset.id+':'+e.textContent.slice(0,12)).join(', ')`) + ' / 階層: ' + await js(`document.querySelector('nav[aria-label="現在の階層"]')?.textContent`))
   await js(`document.querySelector('.react-flow__node[data-id="chapter:${chapter.id}"]').click()`)
   await pause(300)
   await assert(`[...document.querySelectorAll('[aria-label="制作の依頼候補"] button')].some(e=>e.textContent==='章「制作で改名した章」をレビュー')`, '章カードを選ぶと章レビューの候補を表示')
-  await click('章「制作で改名した章」をレビュー')
-  await assert(`(() => {const v=document.querySelector('textarea[aria-label="制作への依頼"]').value;return v.includes('章ID: ${chapter.id}') && v.includes('保存内容は変更せず') && !window.workspaceSuggestionSent})()`, '章レビューは章IDを含む依頼文を入力するだけで送信しない')
+  await js(`window.workspaceSuggestionSent=false`)
+  await chip('章「制作で改名した章」をレビュー', true)
+  await pause(200)
+  await assert(`(() => {const v=document.querySelector('textarea[aria-label="制作への依頼"]').value;return v.includes('章ID: ${chapter.id}') && v.includes('保存内容は変更せず') && !window.workspaceSuggestionSent})()`, 'Shift＋クリックの章レビューは章IDを含む依頼文を入力するだけで送信しない')
   await input('textarea[aria-label="制作への依頼"]', '')
   // 条件パネル(指示 / 作業メモ / 変更範囲)は「作業対象を追う」の行に開閉ボタンとして並ぶ
   const panelButton = (label) => `[...document.querySelectorAll('button[aria-expanded]')].find(e=>e.textContent.startsWith('${label}'))`
