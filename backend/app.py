@@ -1791,6 +1791,22 @@ async def draft_character_voice_caption(char_id: str) -> dict[str, str]:
         raise HTTPException(502, str(e))
 
 
+class VoiceCaptionPolishIn(BaseModel):
+    text: str
+
+
+@app.post("/voice_caption/polish")
+async def polish_voice_caption(body: VoiceCaptionPolishIn) -> dict[str, str]:
+    """書きかけの声の説明を、TTS に渡す形に LLM で整える(保存はしない)。"""
+    if not body.text.strip():
+        raise HTTPException(400, "声の説明が空です")
+    try:
+        base_url = await llama.ensure_running(store.get_settings())
+        return {"caption": await voice.polish_caption(body.text, base_url)}
+    except RuntimeError as e:
+        raise HTTPException(502, str(e))
+
+
 @app.post("/tts/cache/clear")
 async def tts_cache_clear() -> dict[str, Any]:
     audio = _audio_dir()

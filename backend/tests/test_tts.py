@@ -478,6 +478,31 @@ def test_draft_caption_uses_character_notes(monkeypatch):
     assert "外見" not in captured["user"]
 
 
+def test_polish_caption_sends_memo_and_forbids_additions(monkeypatch):
+    captured = {}
+
+    async def fake_chat(messages, **kwargs):
+        captured["system"] = messages[0]["content"]
+        captured["user"] = messages[1]["content"]
+        return {"content": "「落ち着いた男性。低めの声で、少し疲れた調子で話している」\n"}
+
+    monkeypatch.setattr(llm_mod, "chat", fake_chat)
+    memo = "低めで落ち着いた男、ちょっと疲れてる感じ"
+    assert asyncio.run(voice.polish_caption(f"  {memo}\n", "http://llm")) == "落ち着いた男性。低めの声で、少し疲れた調子で話している"
+    assert memo in captured["user"]
+    # 書かれていない特徴を足させない(資料から作る下書きとの違い)
+    assert "補わない" in captured["system"] and "推し量って" not in captured["system"]
+
+
+def test_polish_caption_raises_on_empty_output(monkeypatch):
+    async def fake_chat(messages, **kwargs):
+        return {"content": "  "}
+
+    monkeypatch.setattr(llm_mod, "chat", fake_chat)
+    with pytest.raises(RuntimeError):
+        asyncio.run(voice.polish_caption("低い声", "http://llm"))
+
+
 # ---- チャットの返答の読み上げ ------------------------------------------------
 
 def test_strip_markdown_drops_symbols_and_code():

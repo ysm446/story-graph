@@ -1025,7 +1025,10 @@ export const voiceApi = {
     }),
   /** キャラの資料から声の説明の下書きを LLM で作る(保存はしない) */
   draftCaption: (charId: string, signal?: AbortSignal) =>
-    request<{ caption: string }>(`/characters/${encodeURIComponent(charId)}/voice_caption`, { method: 'POST', signal })
+    request<{ caption: string }>(`/characters/${encodeURIComponent(charId)}/voice_caption`, { method: 'POST', signal }),
+  /** 書きかけの声の説明を、TTS に渡す形に LLM で整える(保存はしない) */
+  polishCaption: (text: string, signal?: AbortSignal) =>
+    request<{ caption: string }>('/voice_caption/polish', { method: 'POST', body: JSON.stringify({ text }), signal })
 }
 
 /** 失敗した応答の本文から FastAPI の detail を取り出す(JSON でなければ本文のまま) */

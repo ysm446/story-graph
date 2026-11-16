@@ -687,6 +687,36 @@ async def draft_caption(char: dict[str, Any], base_url: str) -> str:
     return text
 
 
+POLISH_PROMPT = """あなたは音声合成(TTS)の声を設計するボイスディレクターです。作者が書いた声のメモを、
+TTS に渡す「声の説明」の形に整えます。
+
+- 1〜2 文の日本語。性別・年代、声の高さと質感、話す速さと調子、話し方の順にまとめる
+- 例: 「落ち着いた大人の男性。深く響く低めの声で、ゆっくりと丁寧に話している」
+  「若く元気な女性の声。明るくハキハキとした少し高めのトーンで、早口気味に話している」
+- メモに書かれていることだけを使う。書かれていない性別・年代・特徴は補わない(分からない項目は書かずに済ませる)
+- 声に関係のないこと(外見・経歴・名前・固有名詞・台詞の引用)は落とす
+- 説明文だけを出力する(前置き・かぎ括弧・箇条書きは付けない)"""
+
+
+async def polish_caption(text: str, base_url: str) -> str:
+    """作者が書いた声のメモを、声の説明の形に LLM で整える。保存はしない。
+    資料から作る draft_caption と違い、書かれていないことは補わせない(意図と違う声にしないため)。"""
+    result = await llm.chat(
+        [
+            {"role": "system", "content": POLISH_PROMPT},
+            {"role": "user", "content": "## 声のメモ\n" + text.strip() + "\n\nこのメモを声の説明に整えてください。"},
+        ],
+        base_url=base_url,
+        max_tokens=300,
+        temperature=CAPTION_TEMPERATURE,
+        label="声の説明を整える",
+    )
+    polished = (result.get("content") or "").strip().strip("「」\"'")
+    if not polished:
+        raise RuntimeError("声の説明を整えられませんでした(LLM の出力が空)")
+    return polished
+
+
 def extra_body(settings: dict[str, str]) -> dict[str, Any]:
     """設定「追加パラメータ(JSON)」。エンジン定義の extra_body の上に重ねる。"""
     text = (settings.get("tts_extra_body") or "").strip()

@@ -1252,6 +1252,37 @@ store.select_media(m['id'])
     if (voiceSettings.tts_chat_directions !== '0') throw new Error('ト書きのオフが保存されていません: ' + voiceSettings.tts_chat_directions)
     console.log('PASS 語り手の声の選択と、ト書きのオフが保存される')
     writeFileSync(join(target, 'settings-voices.png'), (await win.webContents.capturePage()).toPNG())
+    // 声の説明の「説明を整える」: 書きかけのメモを LLM で整えて置き換え、「↩ 元に戻す」で戻せる。LLM は偽のサーバー
+    const polishFake = require('node:http').createServer((req, res) => {
+      if (req.method === 'GET') { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end('{"status":"ok"}'); return }
+      let body = ''
+      req.on('data', (chunk) => { body += chunk })
+      req.on('end', () => {
+        const memo = JSON.parse(body || '{}').messages?.[1]?.content ?? ''
+        const content = memo.includes('低めで落ち着いた男') ? '落ち着いた男性。低めの声で、少し疲れた調子で話している' : 'メモが届いていません'
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ choices: [{ message: { content }, finish_reason: 'stop' }], usage: {} }))
+      })
+    })
+    await new Promise((done) => polishFake.listen(0, '127.0.0.1', done))
+    await fetch(base + '/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ values: { llm_base_url: `http://127.0.0.1:${polishFake.address().port}` } }) })
+    const polishButton = `[...document.querySelectorAll('button')].find(e=>e.textContent.trim()==='説明を整える')`
+    const captionArea = `document.querySelector('textarea[placeholder^="落ち着いた大人の女性"]')`
+    await assert(`${polishButton}?.disabled === true && ![...document.querySelectorAll('button')].some(e=>e.textContent.trim()==='資料から下書き')`, '声の説明が空のうちは「説明を整える」を押せない(設定のページに「資料から下書き」は無い)')
+    await js(`(() => {const el=${captionArea};el.focus();Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(el,'低めで落ち着いた男、ちょっと疲れてる感じ');el.dispatchEvent(new Event('input',{bubbles:true}));el.blur()})()`)
+    await pause(500)
+    await js(`${polishButton}.click()`)
+    await pause(1500)
+    const polished = (await (await fetch(base + '/voice_profiles')).json()).profiles[0].caption
+    if (polished !== '落ち着いた男性。低めの声で、少し疲れた調子で話している') throw new Error('整えた説明が保存されていません: ' + polished)
+    await assert(`${captionArea}.value==='落ち着いた男性。低めの声で、少し疲れた調子で話している' && [...document.querySelectorAll('button')].some(e=>e.textContent.trim()==='↩ 元に戻す')`, '「説明を整える」で欄が整えた説明に置き換わって保存され、「↩ 元に戻す」が出る')
+    writeFileSync(join(target, 'settings-voices-polish.png'), (await win.webContents.capturePage()).toPNG())
+    await click('↩ 元に戻す')
+    await pause(500)
+    const restored = (await (await fetch(base + '/voice_profiles')).json()).profiles[0].caption
+    if (restored !== '低めで落ち着いた男、ちょっと疲れてる感じ') throw new Error('元の説明に戻っていません: ' + restored)
+    await assert(`${captionArea}.value==='低めで落ち着いた男、ちょっと疲れてる感じ' && ![...document.querySelectorAll('button')].some(e=>e.textContent.trim()==='↩ 元に戻す')`, '「↩ 元に戻す」で整える前の説明に戻り、保存される')
+    polishFake.close()
     // 声の削除は一覧の行の右端のゴミ箱(編集欄の下端にあったのを 2026-11-17 に移した)
     await assert(`!!document.querySelector('button[aria-label="声「声 1」を削除"]') && ![...document.querySelectorAll('button')].some(e=>e.textContent.trim()==='この声を削除')`, '声の一覧の行の右端に削除ボタンがあり、編集欄の下端には無い')
     await js(`document.querySelector('button[aria-label="声「声 1」を削除"]').click()`)

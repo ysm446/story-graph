@@ -17,6 +17,8 @@ export const DEFAULT_SAMPLE_TEXT =
   '朝の駅は、いつもより少しだけ静かだった。改札を抜けると、冷たい風が頬をなでる。私は深く息を吸って、ゆっくりと歩き出した。'
 export const characterSampleText = (name: string): string =>
   `「はじめまして、${name}です。最近は朝の散歩が楽しみで、少し早起きするようになりました。今日はどうぞ、よろしくお願いします」`
+// 「説明を整える」の実行キューでの名前(どちらのボタンが走っているかの見分けにも使う)
+const POLISH_TASK_LABEL = '声の説明を整える'
 // 参照音声にするときの目安。これより短いと、手本として声が安定しにくい
 const MIN_REF_SECONDS = 8
 
@@ -58,8 +60,16 @@ export default function VoiceProfileEditor({
   const fileRef = useRef<HTMLInputElement | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const testElapsed = useElapsedSeconds(testing)
-  const drafting = useTasks().some((t) => t.kind === 'voice-caption' && t.nodeId === profile.id)
+  // 声の説明を LLM で書く作業(資料から下書き / 説明を整える)。同じ声に同時には 1 つだけ走らせる
+  const captionTask = useTasks().find((t) => t.kind === 'voice-caption' && t.nodeId === profile.id)
+  const drafting = captionTask !== undefined
+  const polishing = captionTask?.label === POLISH_TASK_LABEL
   const draftElapsed = useElapsedSeconds(drafting)
+  // LLM が説明を置き換える前の文。「↩ 元に戻す」で戻せる(別の声に切り替えるまで)
+  const [captionBackup, setCaptionBackup] = useState<string | null>(null)
+  // 作業はキューで待つことがあるので、終わったときに別の声を開いていたら欄には触らない
+  const profileIdRef = useRef(profile.id)
+  profileIdRef.current = profile.id
 
   // 「この人の声を作る」の下書きは後から届く。入力中でなければ(欄が直前の保存値のまま
   // なら)欄へ反映し、入力中なら巻き戻さない
@@ -79,6 +89,7 @@ export default function VoiceProfileEditor({
     setSeed(profile.seed == null ? '' : String(profile.seed))
     setParams(profile.params ? JSON.stringify(profile.params) : '')
     setError(null)
+    setCaptionBackup(null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile.id])
 
@@ -217,6 +228,7 @@ export default function VoiceProfileEditor({
   const handleDraft = (): void => {
     if (!draftFromCharId) return
     const profileId = profile.id
+    const before = caption.trim()
     enqueueTask({
       label: '声の説明',
       detail: name,
@@ -226,13 +238,49 @@ export default function VoiceProfileEditor({
         try {
           const { caption: drafted } = await voiceApi.draftCaption(draftFromCharId, signal)
           const updated = await voiceApi.update(profileId, { caption: drafted })
-          setCaption(drafted)
+          if (profileIdRef.current === profileId) {
+            setCaptionBackup(before || null)
+            setCaption(drafted)
+          }
           onChanged(updated)
         } catch (e) {
           if (!isAbortError(e)) setError(`下書きに失敗しました: ${errorText(e)}`)
         }
       }
     })
+  }
+
+  // 書きかけの説明(メモ書きでよい)を、TTS に渡す形に LLM で整えて置き換える。書いていない特徴は足させない
+  const handlePolish = (): void => {
+    const before = caption.trim()
+    if (!before) return
+    const profileId = profile.id
+    enqueueTask({
+      label: POLISH_TASK_LABEL,
+      detail: name,
+      kind: 'voice-caption',
+      nodeId: profileId,
+      runner: async ({ signal }) => {
+        try {
+          const { caption: polished } = await voiceApi.polishCaption(before, signal)
+          const updated = await voiceApi.update(profileId, { caption: polished })
+          if (profileIdRef.current === profileId) {
+            setCaptionBackup(before)
+            setCaption(polished)
+          }
+          onChanged(updated)
+        } catch (e) {
+          if (!isAbortError(e)) setError(`説明を整えられませんでした: ${errorText(e)}`)
+        }
+      }
+    })
+  }
+
+  const handleRestoreCaption = (): void => {
+    if (captionBackup === null) return
+    setCaption(captionBackup)
+    setCaptionBackup(null)
+    void save({ caption: captionBackup })
   }
 
   return (
@@ -260,17 +308,42 @@ export default function VoiceProfileEditor({
           <span className="text-[12px]" style={{ color: 'var(--text-dim)' }}>
             声の説明
           </span>
-          {draftFromCharId && (
+          <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+            {captionBackup !== null && !drafting && (
+              <button
+                onClick={handleRestoreCaption}
+                className="rounded-md border px-2 py-0.5 text-[11px]"
+                style={secondaryStyle}
+                data-tip="LLM が書き替える前の説明に戻す"
+              >
+                ↩ 元に戻す
+              </button>
+            )}
             <button
-              onClick={handleDraft}
-              disabled={drafting}
-              className="accent-action ml-auto inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium disabled:opacity-40"
-              data-tip="プロフィール・外見・口調から、声の説明の下書きを LLM で作ります(いまの説明は置き換わります)"
+              onClick={handlePolish}
+              disabled={drafting || !caption.trim()}
+              className="accent-action inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium disabled:opacity-40"
+              data-tip={
+                caption.trim()
+                  ? 'いま書いてある説明(メモ書きでよい)を、音声合成に伝わりやすい形に LLM で整えます。書いていない特徴は足しません(「↩ 元に戻す」で戻せます)'
+                  : '先に、どんな声かを欄に書いてください(メモ書きでよい)'
+              }
             >
               <Icon name="sparkle" size={11} />
-              {drafting ? `作っています…(${draftElapsed}s)` : '資料から下書き'}
+              {polishing ? `整えています…(${draftElapsed}s)` : '説明を整える'}
             </button>
-          )}
+            {draftFromCharId && (
+              <button
+                onClick={handleDraft}
+                disabled={drafting}
+                className="accent-action inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium disabled:opacity-40"
+                data-tip="プロフィール・外見・口調から、声の説明の下書きを LLM で作ります(いまの説明は置き換わります。「↩ 元に戻す」で戻せます)"
+              >
+                <Icon name="sparkle" size={11} />
+                {drafting && !polishing ? `作っています…(${draftElapsed}s)` : '資料から下書き'}
+              </button>
+            )}
+          </div>
         </div>
         <AutoTextarea
           minRows={2}
