@@ -2,8 +2,10 @@ import { useEffect, useState } from 'react'
 import { api, voiceApi, type VoiceProfile, type VoiceProfileList } from './api'
 import type { Character } from './types'
 import VoiceProfileEditor from './VoiceProfileEditor'
+import { askConfirm } from './ConfirmDialog'
+import { Icon } from './icons'
 
-/** 設定 →「音声読み上げ」の声の一覧(docs/design/voice.md §5)。語り手の声を選び、声を足して直す。
+/** 設定 →「読み上げの声」の声の一覧(docs/design/voice.md §5)。語り手の声を選び、声を足して直す。
  *  キャラクターへの割り当てはキャラクター画面で行い、ここでは誰が使っているかだけを見せる。 */
 export default function VoiceProfilesCard(): React.JSX.Element {
   const [list, setList] = useState<VoiceProfileList | null>(null)
@@ -53,6 +55,20 @@ export default function VoiceProfilesCard(): React.JSX.Element {
       const created = await voiceApi.create({ name: `声 ${(list?.profiles.length ?? 0) + 1}` })
       await reload()
       setSelectedId(created.id)
+    } catch (e) {
+      setError(String(e))
+    }
+  }
+
+  const handleDelete = async (profile: VoiceProfile): Promise<void> => {
+    const names = usedBy(profile.id)
+    const users = names.length ? `\n使っているもの(${names.join('、')})は語り手の声で読むようになります。` : ''
+    if (!(await askConfirm(`声「${profile.name}」を削除しますか?${users}`, '削除'))) return
+    setError(null)
+    try {
+      await voiceApi.remove(profile.id)
+      if (selectedId === profile.id) setSelectedId(null)
+      await reload()
     } catch (e) {
       setError(String(e))
     }
@@ -132,27 +148,41 @@ export default function VoiceProfilesCard(): React.JSX.Element {
           {list?.profiles.map((p) => {
             const users = usedBy(p.id)
             return (
-              <button
+              // 行の中に削除ボタンを置くので、行そのものは button にしない(選ぶのは左側の button)
+              <div
                 key={p.id}
-                onClick={() => setSelectedId(p.id)}
-                className="flex items-center gap-2 rounded-lg border px-3 py-1.5 text-left text-[12px]"
+                className="flex items-center gap-2 rounded-lg border py-1 pl-3 pr-1.5 text-[12px]"
                 style={{
                   background: p.id === selectedId ? 'var(--accent-soft)' : 'var(--bg-elevated)',
                   borderColor: p.id === selectedId ? 'var(--accent-border)' : 'var(--border)'
                 }}
               >
-                <span className="min-w-0 flex-1 truncate" style={{ color: 'var(--text)' }}>
-                  {p.name}
-                </span>
-                <span className="shrink-0 truncate text-[11px]" style={{ color: 'var(--text-faint)', maxWidth: '50%' }}>
-                  {users.length ? users.join('、') : '未使用'}
-                </span>
-                {p.ref_paths.length > 0 && (
-                  <span className="shrink-0 rounded px-1 text-[10px]" style={{ background: 'var(--bg-input)', color: 'var(--text-faint)' }}>
-                    参照 {p.ref_paths.length}
+                <button
+                  onClick={() => setSelectedId(p.id)}
+                  aria-pressed={p.id === selectedId}
+                  className="flex min-w-0 flex-1 items-center gap-2 py-0.5 text-left"
+                >
+                  <span className="min-w-0 flex-1 truncate" style={{ color: 'var(--text)' }}>
+                    {p.name}
                   </span>
-                )}
-              </button>
+                  <span className="shrink-0 truncate text-[11px]" style={{ color: 'var(--text-faint)', maxWidth: '50%' }}>
+                    {users.length ? users.join('、') : '未使用'}
+                  </span>
+                  {p.ref_paths.length > 0 && (
+                    <span className="shrink-0 rounded px-1 text-[10px]" style={{ background: 'var(--bg-input)', color: 'var(--text-faint)' }}>
+                      参照 {p.ref_paths.length}
+                    </span>
+                  )}
+                </button>
+                <button
+                  onClick={() => void handleDelete(p)}
+                  className="delete-action inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md border"
+                  aria-label={`声「${p.name}」を削除`}
+                  data-tip="この声を削除する(確認が出ます)"
+                >
+                  <Icon name="trash" size={13} />
+                </button>
+              </div>
             )
           })}
         </div>
@@ -164,10 +194,6 @@ export default function VoiceProfilesCard(): React.JSX.Element {
             profile={selected}
             usedBy={usedBy(selected.id)}
             onChanged={replace}
-            onDeleted={() => {
-              setSelectedId(null)
-              void reload()
-            }}
           />
         </div>
       )}

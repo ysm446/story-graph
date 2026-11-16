@@ -1,6 +1,6 @@
 import { setVoiceRate, useVoiceRate, VOICE_RATES } from './voiceRate'
 
-/** 読み上げの再生速度の選択(鑑賞モードの読み上げ表示と、設定の「音声読み上げ」)。
+/** 読み上げの再生速度の選択(鑑賞モードの読み上げ表示と、設定の「読み上げの声」)。
  *  変えるとその場で鳴っている行にも効き、設定 tts_playback_rate に保存する */
 export default function VoiceRateSelect({ className = '' }: { className?: string }): React.JSX.Element {
   const rate = useVoiceRate()

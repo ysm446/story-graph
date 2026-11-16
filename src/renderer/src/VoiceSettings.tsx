@@ -2,15 +2,13 @@ import { useEffect, useRef, useState } from 'react'
 import { Icon } from './icons'
 import { api, isAbortError, ttsInstallStream, type TtsInstallProgress, type TtsStatus } from './api'
 import AutoTextarea from './AutoTextarea'
-import ReadingDictCard from './ReadingDictCard'
-import VoiceProfilesCard from './VoiceProfilesCard'
-import VoiceRateSelect from './VoiceRateSelect'
 import { useElapsedSeconds } from './useElapsed'
 import { fmtBytes } from './modes/settings/format'
 import { askConfirm } from './ConfirmDialog'
 
-// 設定 →「音声読み上げ」。TTS サーバーの稼働・接続先・モデルフォルダ・語り手の声・インストール・
-// 音声キャッシュ(docs/design/voice.md)。画像生成(ComfyUI)のセクションと同じ並びにしてある
+// 設定 →「音声読み上げ」。この PC に持つ TTS の環境: サーバーの稼働・接続先・モデルフォルダ・追加パラメータ・
+// インストール(docs/design/voice.md)。画像生成(ComfyUI)のセクションと同じ並びにしてある。
+// 声・読み辞書・読み方・音声キャッシュ(作品ごと)は「読み上げの声」(VoiceLibrarySettings.tsx)に置く
 export default function VoiceSettingsSection({
   values,
   setValues,
@@ -118,16 +116,6 @@ export default function VoiceSettingsSection({
     }
   }
 
-  const handleClearCache = async (): Promise<void> => {
-    try {
-      await api.ttsClearCache()
-    } catch (e) {
-      setError(String(e))
-    } finally {
-      void refresh()
-    }
-  }
-
   const textField = (key: string, label: string, placeholder: string, hint: string, width = 'w-full'): React.JSX.Element => (
     <div className="settings-field" key={key}>
       <div className="settings-field-header">
@@ -150,6 +138,9 @@ export default function VoiceSettingsSection({
 
   return (
     <>
+      <p className="settings-field-hint">
+        声の作成と割り当て・読み辞書・読み上げの速さは、「この作品」の「読み上げの声」にあります。
+      </p>
       <div className="settings-card">
         <div className="settings-field">
           <div className="settings-field-header">
@@ -267,53 +258,6 @@ export default function VoiceSettingsSection({
         </div>
       </div>
 
-      <VoiceProfilesCard />
-
-      <ReadingDictCard value={values.tts_reading_dict} save={save} />
-
-      <div className="settings-card">
-        <div className="settings-field">
-          <div className="settings-field-header">
-            <span className="settings-field-label">読み上げの速さ</span>
-            <div className="settings-field-controls">
-              <VoiceRateSelect />
-            </div>
-          </div>
-          <p className="settings-field-hint">
-            鑑賞モードとチャットの読み上げの速さです。合成し直さず再生の速さだけを変えるので、すぐ効きます(声の高さはそのまま、行の間も同じ割合で縮みます)。
-            鑑賞モードの読み上げ中の表示からも変えられます。声の試し読みは、声を確かめるため等速のままです。
-          </p>
-        </div>
-        <div className="settings-field">
-          <div className="settings-field-header">
-            <span className="settings-field-label">チャットの（）のト書き</span>
-            <div className="settings-field-controls">
-              {(() => {
-                const on = (values.tts_chat_directions ?? '1') !== '0'
-                return (
-                  <button
-                    onClick={() => void save({ tts_chat_directions: on ? '0' : '1' })}
-                    className="rounded-md border px-2 py-0.5 text-[11px]"
-                    style={
-                      on
-                        ? { borderColor: 'var(--border-strong)', background: 'var(--accent-soft)', color: 'var(--text)' }
-                        : { borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }
-                    }
-                    data-tip={on ? 'オフにすると（）のト書きは読まず、台詞だけを読みます' : 'オンにすると（）のト書きを語り手の声で読みます'}
-                  >
-                    {on ? '☑' : '☐'} 読む
-                  </button>
-                )
-              })()}
-            </div>
-          </div>
-          <p className="settings-field-hint">
-            キャラとの劇中会話・キャラ同士の会話で、「（小さく笑って）台詞」のような（）の部分を語り手の声で読むかどうか。
-            オフにすると台詞だけが本人の声で流れます。インタビューのト書きはもとから読みません。
-          </p>
-        </div>
-      </div>
-
       <div className="settings-card">
         <div className="settings-field">
           <div className="settings-field-header">
@@ -420,32 +364,6 @@ export default function VoiceSettingsSection({
           <p className="settings-field-hint">
             エンジンのサーバーを git で取得して <code>runtime/tts/{status?.engine.id ?? '<engine>'}/</code> に置き、uv で専用の Python
             環境(PyTorch 込みで数 GB)を作ります。git が必要です。uv が無ければアプリの .venv に入れて使います。モデルは初回の起動時に取得します。
-          </p>
-        </div>
-      </div>
-
-      <div className="settings-card">
-        <div className="settings-field">
-          <div className="settings-field-header">
-            <span className="settings-field-label">音声キャッシュ</span>
-            <div className="settings-field-controls">
-              <span className="text-[12px] tabular-nums" style={{ color: 'var(--text-dim)' }}>
-                {status ? `${status.cache.files} 件・${fmtBytes(status.cache.bytes)}` : '—'}
-              </span>
-              <button
-                onClick={() => void handleClearCache()}
-                disabled={!status || status.cache.files === 0}
-                className="delete-action rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-40"
-                data-tip="合成済みの音声を消します。次に読むときに合成し直します"
-              >
-                キャッシュを消す
-              </button>
-            </div>
-          </div>
-          <p className="settings-field-hint">
-            読み上げた行の音声をライブラリの assets/audio/ に残し、同じ行・同じ声なら合成し直しません。
-            清書の上書き・声や台本の変更・シーンの削除で使われなくなった音声は自動で消します(作り直した清書でも、変わらなかった文の音声は使い回します)。
-            バックアップには含めません。
           </p>
         </div>
       </div>

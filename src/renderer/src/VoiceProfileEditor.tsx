@@ -4,7 +4,6 @@ import AutoTextarea from './AutoTextarea'
 import { Icon } from './icons'
 import { enqueueTask, useTasks } from './tasks'
 import { useElapsedSeconds } from './useElapsed'
-import { askConfirm } from './ConfirmDialog'
 
 const inputStyle = { background: 'var(--bg-input)', borderColor: 'var(--border)' }
 const secondaryStyle = { borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }
@@ -21,20 +20,17 @@ export const characterSampleText = (name: string): string =>
 // 参照音声にするときの目安。これより短いと、手本として声が安定しにくい
 const MIN_REF_SECONDS = 8
 
-/** 声(voice_profiles)1 つの編集欄。設定の「音声読み上げ」とキャラクター画面の両方で使う。
+/** 声(voice_profiles)1 つの編集欄。設定の「読み上げの声」とキャラクター画面の両方で使う。
  *  欄ごとに、欄外へフォーカスが移ったときに保存する(設定画面の他の欄と同じ約束)。 */
 export default function VoiceProfileEditor({
   profile,
   onChanged,
-  onDeleted,
   draftFromCharId,
   sampleText = DEFAULT_SAMPLE_TEXT,
   usedBy
 }: {
   profile: VoiceProfile
   onChanged: (profile: VoiceProfile) => void
-  /** 渡すと「この声を削除」を出す */
-  onDeleted?: () => void
   /** 渡すと「資料から下書き」(キャラの資料から声の説明を LLM で作る)を出す */
   draftFromCharId?: string
   sampleText?: string
@@ -237,17 +233,6 @@ export default function VoiceProfileEditor({
         }
       }
     })
-  }
-
-  const handleDelete = async (): Promise<void> => {
-    const users = usedBy?.length ? `\n使っているもの(${usedBy.join('、')})は語り手の声で読むようになります。` : ''
-    if (!(await askConfirm(`声「${profile.name}」を削除しますか?${users}`, '削除'))) return
-    try {
-      await voiceApi.remove(profile.id)
-      onDeleted?.()
-    } catch (e) {
-      setError(String(e))
-    }
   }
 
   return (
@@ -474,16 +459,6 @@ export default function VoiceProfileEditor({
         <p className="whitespace-pre-wrap text-[12px]" style={{ color: 'var(--danger-text)' }}>
           {error}
         </p>
-      )}
-      {onDeleted && (
-        <div>
-          <button
-            onClick={() => void handleDelete()}
-            className="delete-action rounded-md border px-2 py-0.5 text-[11px]"
-          >
-            この声を削除
-          </button>
-        </div>
       )}
     </div>
   )

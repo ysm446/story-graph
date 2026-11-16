@@ -7,6 +7,7 @@ import { DEFAULT_VIDEO_CROSSFADE_SECONDS } from '../CrossfadeLoopVideo'
 import { ON_OFF, SHOW_HIDE, Segment } from '../Segment'
 import { useElapsedSeconds } from '../useElapsed'
 import VoiceSettingsSection from '../VoiceSettings'
+import VoiceLibrarySection from '../VoiceLibrarySettings'
 import EmbeddingStatusLine from './settings/EmbeddingStatusLine'
 import ExternalBackupSection from './settings/ExternalBackupSection'
 import ImageGenSection from './settings/ImageGenSection'
@@ -86,6 +87,7 @@ const SECTIONS = [
   { id: 'agent', label: '制作エージェントへの指示', group: 'work' },
   { id: 'imageprompts', label: '画像生成プロンプト', group: 'work' },
   { id: 'promptio', label: '書き出し / 読み込み', group: 'work' },
+  { id: 'voices', label: '読み上げの声', group: 'work' },
   { id: 'memory', label: '記憶の検索', group: 'work' },
   { id: 'import', label: '取り込み', group: 'work' },
   { id: 'display', label: '画面', group: 'work' },
@@ -112,7 +114,6 @@ const SAVED_HINT: Record<SectionGroup, string> = {
   work: '今開いているライブラリ(作品)に保存します。'
 }
 const SAVED_HINT_OVERRIDE: Partial<Record<SectionId, string | null>> = {
-  voice: 'サーバー・エンジン・モデルの置き場は、この PC に保存します(どのライブラリでも同じ)。声のプロファイル・声の割り当て・読みの辞書は、今開いているライブラリ(作品)に保存します。',
   promptio: null,
   promptlog: null
 }
@@ -905,6 +906,10 @@ export default function SettingsMode({ onImported }: {
 
           <Section id="voice" current={section} title="音声読み上げ(TTS)">
             <VoiceSettingsSection values={values} setValues={setValues} save={save} />
+          </Section>
+
+          <Section id="voices" current={section} title="読み上げの声">
+            <VoiceLibrarySection values={values} save={save} />
           </Section>
 
           <Section id="backup" current={section} title="バックアップ">

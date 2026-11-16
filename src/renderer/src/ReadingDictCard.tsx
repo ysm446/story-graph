@@ -19,7 +19,7 @@ function parse(value: string | undefined): Entry[] {
   }
 }
 
-/** 設定 →「音声読み上げ」の読み辞書(docs/design/voice.md §4.5)。登録した語を、読み上げの合成の直前に
+/** 設定 →「読み上げの声」の読み辞書(docs/design/voice.md §4.5)。登録した語を、読み上げの合成の直前に
  *  読みへ置き換える(台本・本文の表示は変えない)。キャラ・場所の名前は、それぞれの画面の「読み」欄で入れる。
  *  欄外へフォーカスが移ったときに、一覧まるごと設定 tts_reading_dict に保存する */
 export default function ReadingDictCard({

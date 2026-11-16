@@ -1224,6 +1224,47 @@ store.select_media(m['id'])
     win.destroy()
     return
   }
+  if (process.argv.includes('--voices')) {
+    // 設定の読み上げ: この PC の環境は「音声読み上げ」、作品ごとの声・読み辞書・読み方は「読み上げの声」に分けた
+    await js(`document.querySelector('button[aria-label="設定"]').click()`)
+    await pause(400)
+    await click('音声読み上げ')
+    await pause(600)
+    writeFileSync(join(target, 'settings-voice.png'), (await win.webContents.capturePage()).toPNG())
+    await assert(`(() => {const l=[...document.querySelectorAll('.settings-field-label')].map(e=>e.textContent.trim());return ['TTS サーバーの URL','モデルフォルダ','追加パラメータ(JSON)'].every(x=>l.includes(x)) && ['語り手の声','声の一覧','読み辞書','読み上げの速さ','音声キャッシュ'].every(x=>!l.includes(x))})()`, '「音声読み上げ」にはサーバーの設定だけが並び、声・読み辞書・速さは無い')
+    await click('読み上げの声')
+    await pause(600)
+    await assert(`(() => {const l=[...document.querySelectorAll('.settings-field-label')].map(e=>e.textContent.trim());return ['語り手の声','相談チャットの声','声の一覧','読み辞書','読み上げの速さ','チャットの（）のト書き','音声キャッシュ'].every(x=>l.includes(x)) && !l.includes('モデルフォルダ') && document.body.textContent.includes('保存先: 今開いているライブラリ')})()`, '「読み上げの声」に声・読み辞書・速さ・ト書き・キャッシュが並び、保存先はライブラリ')
+    await click('+ 声を追加')
+    await pause(600)
+    const voiceId = ((await (await fetch(base + '/voice_profiles')).json()).profiles[0] || {}).id
+    if (!voiceId) throw new Error('声が追加されていません')
+    console.log('PASS 「+ 声を追加」で声が作られる')
+    await js(`(() => {const field=[...document.querySelectorAll('.settings-field')].find(e=>e.querySelector('.settings-field-label')?.textContent.trim()==='語り手の声');const el=field.querySelector('select');Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(el,${JSON.stringify(voiceId)});el.dispatchEvent(new Event('change',{bubbles:true}))})()`)
+    await pause(500)
+    await js(`(() => {const field=[...document.querySelectorAll('.settings-field')].find(e=>e.querySelector('.settings-field-label')?.textContent.trim()==='チャットの（）のト書き');field.querySelector('button').click()})()`)
+    await pause(500)
+    const voiceSettings = await (await fetch(base + '/settings')).json()
+    if (voiceSettings.tts_narrator_profile !== voiceId) throw new Error('語り手の声が保存されていません: ' + voiceSettings.tts_narrator_profile)
+    if (voiceSettings.tts_chat_directions !== '0') throw new Error('ト書きのオフが保存されていません: ' + voiceSettings.tts_chat_directions)
+    console.log('PASS 語り手の声の選択と、ト書きのオフが保存される')
+    writeFileSync(join(target, 'settings-voices.png'), (await win.webContents.capturePage()).toPNG())
+    // 声の削除は一覧の行の右端のゴミ箱(編集欄の下端にあったのを 2026-11-17 に移した)
+    await assert(`!!document.querySelector('button[aria-label="声「声 1」を削除"]') && ![...document.querySelectorAll('button')].some(e=>e.textContent.trim()==='この声を削除')`, '声の一覧の行の右端に削除ボタンがあり、編集欄の下端には無い')
+    await js(`document.querySelector('button[aria-label="声「声 1」を削除"]').click()`)
+    await pause(400)
+    await assert(`document.body.textContent.includes('声「声 1」を削除しますか?') && document.body.textContent.includes('使っているもの(語り手)')`, '削除の確認に、使っているもの(語り手)が出る')
+    await click('削除')
+    await pause(600)
+    const voicesLeft = await (await fetch(base + '/voice_profiles')).json()
+    if (voicesLeft.profiles.length !== 0 || voicesLeft.narrator_profile_id) throw new Error('声が消えていません: ' + JSON.stringify(voicesLeft))
+    console.log('PASS 確認して削除すると声が消え、語り手の割り当ても外れる')
+    await assert(`document.body.textContent.includes('まだ声がありません') && !document.body.textContent.includes('声の名前')`, '削除後は一覧が空になり、編集欄が閉じる')
+    if (errors.length) throw new Error(errors.join('\n'))
+    console.log('Screenshots: ' + target)
+    win.destroy()
+    return
+  }
   if (process.argv.includes('--vram')) {
     // 設定の推論パラメータ: Context Length の下に VRAM の目安(GGUF のヘッダーだけを読む)。
     // 検証用のライブラリにモデルのパスを書く(STORY_GRAPH_APP_DATA が無いので、この PC の設定には書かない)

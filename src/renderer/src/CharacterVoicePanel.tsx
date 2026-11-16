@@ -124,7 +124,7 @@ export default function CharacterVoicePanel({
         </button>
       </div>
       <p className="mt-1 text-[11px] leading-relaxed" style={{ color: 'var(--text-faint)' }}>
-        台本でこの人の台詞になった行を、この声で読みます。声の一覧は設定の「音声読み上げ」にもあります。
+        台本でこの人の台詞になった行を、この声で読みます。声の一覧は設定の「読み上げの声」にもあります。
       </p>
       {assigned && open && (
         <div className="mt-2 rounded-lg border p-3" style={{ borderColor: 'var(--border)', background: 'var(--bg-elevated)' }}>
