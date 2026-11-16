@@ -142,7 +142,12 @@ def _voice(store: Store, char: dict[str, Any], build: CardBuild) -> dict[str, An
         build.notes.append("声が割り当てられていません(声なしで書き出します)")
         return {}
     refs = []
-    for name in profile.get("ref_paths") or []:
+    # 参照音声をオフにした声は、アプリでも説明と seed だけで読んでいるので、カードにも入れない
+    ref_names = profile.get("ref_paths") or []
+    if ref_names and not profile.get("ref_enabled", True):
+        build.notes.append(f"声「{profile['name']}」は参照音声をオフにしているため、参照音声を入れません")
+        ref_names = []
+    for name in ref_names:
         source = _asset(store, "voices", name)
         if source is None:
             build.notes.append(f"参照音声のファイルが見つからないため入れません: {Path(name).name}")

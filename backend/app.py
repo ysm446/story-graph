@@ -1660,6 +1660,7 @@ class VoiceProfileIn(BaseModel):
     preset: str | None = None
     params: dict[str, Any] | None = None
     ref_paths: list[str] | None = None  # 並べ替え・取り外し用(取り込みは /refs)
+    ref_enabled: bool | None = None  # False = 参照音声を登録したまま使わない
 
 
 def _voice_profile_or_404(profile_id: str) -> dict[str, Any]:
@@ -1719,7 +1720,8 @@ async def add_voice_ref(profile_id: str, file: UploadFile) -> dict[str, Any]:
     data = await _read_upload(file, MAX_VOICE_BYTES, "音声は取り込めません")
     name = f"{uuid.uuid4().hex[:12]}{ext}"
     await asyncio.to_thread((Path(voices) / name).write_bytes, bytes(data))
-    updated = store.update_voice_profile(profile_id, {"ref_paths": [*profile["ref_paths"], name]})
+    # 取り込んだ音声は使うために足すものなので、オフにしていても使う状態に戻す
+    updated = store.update_voice_profile(profile_id, {"ref_paths": [*profile["ref_paths"], name], "ref_enabled": True})
     _schedule_audio_gc()
     return updated  # type: ignore[return-value]
 
@@ -1760,7 +1762,9 @@ async def add_voice_ref_from_sample(profile_id: str, body: VoiceSampleIn) -> dic
         raise HTTPException(502, str(e))
     name = f"{uuid.uuid4().hex[:12]}.wav"
     await asyncio.to_thread((Path(voices) / name).write_bytes, data)
-    updated = store.update_voice_profile(profile_id, {"ref_paths": [*profile["ref_paths"], name]})
+    # 固定した直後から効くよう、参照音声をオフにしていても使う状態に戻す(オフのあいだの試し読みは
+    # 参照音声なしで合成しているので、いま聞いた声がそのまま手本になる)
+    updated = store.update_voice_profile(profile_id, {"ref_paths": [*profile["ref_paths"], name], "ref_enabled": True})
     _schedule_audio_gc()  # 声が変わるので、前の声で作った音声は使われなくなる
     return updated  # type: ignore[return-value]
 

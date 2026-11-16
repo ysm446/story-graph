@@ -982,6 +982,8 @@ export interface VoiceProfile {
   caption: string | null
   /** 参照音声(ライブラリの assets/voices 内のファイル名) */
   ref_paths: string[]
+  /** false = 参照音声を登録したまま使わない(説明と seed だけで声を作る) */
+  ref_enabled: boolean
   /** null = 既定の seed */
   seed: number | null
   preset: string | null
@@ -1001,7 +1003,7 @@ export interface VoiceProfileList {
   assignments: Record<string, string>
 }
 
-export type VoiceProfilePatch = Partial<Pick<VoiceProfile, 'name' | 'caption' | 'seed' | 'preset' | 'params' | 'ref_paths'>>
+export type VoiceProfilePatch = Partial<Pick<VoiceProfile, 'name' | 'caption' | 'seed' | 'preset' | 'params' | 'ref_paths' | 'ref_enabled'>>
 
 export const voiceApi = {
   list: () => request<VoiceProfileList>('/voice_profiles'),

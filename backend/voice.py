@@ -847,7 +847,9 @@ class VoiceBook:
         )
 
     def profile_voice(self, profile: dict[str, Any]) -> dict[str, Any]:
-        refs = [str(self.voices_dir / name) for name in profile.get("ref_paths") or []] if self.voices_dir else []
+        # 参照音声をオフにした声は、登録したファイルを送らない(説明と seed だけで作る。試し読みも読み上げも同じ)
+        use_refs = self.voices_dir is not None and profile.get("ref_enabled", True)
+        refs = [str(self.voices_dir / name) for name in profile.get("ref_paths") or []] if use_refs else []
         return {
             "caption": profile.get("caption") or "",
             "ref_paths": refs,

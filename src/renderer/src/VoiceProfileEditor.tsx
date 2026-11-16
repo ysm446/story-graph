@@ -364,10 +364,30 @@ export default function VoiceProfileEditor({
           <span className="text-[12px]" style={{ color: 'var(--text-dim)' }}>
             参照音声(任意)
           </span>
+          {/* 登録したまま一時的に使わない(別の声を説明と seed で探すあいだ)。外すとファイルが声から消えるので、戻すにはこちら */}
+          {profile.ref_paths.length > 0 && (
+            <button
+              onClick={() => void save({ ref_enabled: !profile.ref_enabled })}
+              aria-pressed={profile.ref_enabled}
+              className="ml-auto rounded-md border px-2 py-0.5 text-[11px]"
+              style={
+                profile.ref_enabled
+                  ? { borderColor: 'var(--border-strong)', background: 'var(--accent-soft)', color: 'var(--text)' }
+                  : { borderColor: 'var(--border-strong)', color: 'var(--text-faint)' }
+              }
+              data-tip={
+                profile.ref_enabled
+                  ? 'オフにすると、参照音声を残したまま使わず、声の説明と seed だけで声を作ります(試し読みも読み上げも)'
+                  : 'オンにすると、参照音声を手本にして読みます'
+              }
+            >
+              {profile.ref_enabled ? '☑' : '☐'} 使う
+            </button>
+          )}
           <button
             onClick={() => fileRef.current?.click()}
             disabled={uploading}
-            className="ml-auto rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-40"
+            className={`${profile.ref_paths.length > 0 ? '' : 'ml-auto '}rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-40`}
             style={secondaryStyle}
             data-tip="この声を真似る音声を取り込みます(wav / mp3 / flac / ogg。ライブラリの assets/voices に置きます)"
           >
@@ -386,7 +406,7 @@ export default function VoiceProfileEditor({
           />
         </div>
         {profile.ref_paths.length > 0 ? (
-          <div className="flex flex-col gap-1">
+          <div className={`flex flex-col gap-1 ${profile.ref_enabled ? '' : 'opacity-50'}`}>
             {profile.ref_paths.map((file, i) => (
               <div
                 key={file}
@@ -430,6 +450,11 @@ export default function VoiceProfileEditor({
         ) : (
           <p className="text-[11px]" style={{ color: 'var(--text-faint)' }}>
             なし(声の説明だけで声を作ります)
+          </p>
+        )}
+        {profile.ref_paths.length > 0 && !profile.ref_enabled && (
+          <p className={hintClass} style={{ color: 'var(--text-dim)' }}>
+            いまは参照音声を使っていません。声の説明と seed だけで声を作るので、文ごとに声色が少し揺れます。
           </p>
         )}
         <p className={hintClass} style={{ color: 'var(--text-faint)' }}>

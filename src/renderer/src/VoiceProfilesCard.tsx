@@ -162,7 +162,7 @@ export default function VoiceProfilesCard(): React.JSX.Element {
                   </span>
                   {p.ref_paths.length > 0 && (
                     <span className="shrink-0 rounded px-1 text-[10px]" style={{ background: 'var(--bg-input)', color: 'var(--text-faint)' }}>
-                      参照 {p.ref_paths.length}
+                      {p.ref_enabled ? `参照 ${p.ref_paths.length}` : '参照オフ'}
                     </span>
                   )}
                 </button>

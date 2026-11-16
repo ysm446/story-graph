@@ -403,6 +403,26 @@ def test_voicebook_picks_character_then_narrator_voice(lib):
     assert forced["irodori"]["caption"] == "明るい少女"
 
 
+def test_disabled_refs_are_kept_but_not_sent(lib):
+    engine = tts.get_engine("irodori")
+    profile = lib.create_voice_profile({"name": "アヤ", "caption": "明るい少女", "ref_paths": ["a.wav"]})
+    assert profile["ref_enabled"] is True  # 既定は使う
+    line = {"text": "雨。", "kind": "narration"}
+    _, on_body = voice.VoiceBook(lib, lib.get_settings()).line_audio(engine, line, profile["id"])
+    assert on_body["irodori"]["ref_wavs"] == [str(Path(lib.voices_dir()) / "a.wav")]
+
+    off = lib.update_voice_profile(profile["id"], {"ref_enabled": False})
+    assert off["ref_enabled"] is False and off["ref_paths"] == ["a.wav"]  # ファイルは声に残る
+    _, off_body = voice.VoiceBook(lib, lib.get_settings()).line_audio(engine, line, profile["id"])
+    assert "ref_wavs" not in off_body["irodori"] and off_body["irodori"]["caption"] == "明るい少女"
+
+    # ほかの欄の更新では変わらない。戻せば、また送る
+    assert lib.update_voice_profile(profile["id"], {"caption": "低い声"})["ref_enabled"] is False
+    assert lib.update_voice_profile(profile["id"], {"ref_enabled": True})["ref_enabled"] is True
+    _, back_body = voice.VoiceBook(lib, lib.get_settings()).line_audio(engine, line, profile["id"])
+    assert back_body["irodori"]["ref_wavs"] == [str(Path(lib.voices_dir()) / "a.wav")]
+
+
 def test_voicebook_falls_back_to_legacy_narrator_settings(lib):
     book = voice.VoiceBook(lib, {"tts_narrator_caption": "低い男性", "tts_narrator_seed": "3"})
     _, body = book.line_audio(tts.get_engine("irodori"), {"text": "雨。", "kind": "narration"})

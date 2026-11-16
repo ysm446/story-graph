@@ -189,6 +189,7 @@ CREATE TABLE IF NOT EXISTS voice_profiles(
   name TEXT NOT NULL,
   caption TEXT,                    -- 声の説明(ボイスデザイン)
   ref_paths TEXT,                  -- JSON 配列。assets/voices 内のファイル名(参照音声。複数可)
+  ref_enabled INTEGER NOT NULL DEFAULT 1,  -- 0 = 参照音声を登録したまま使わない(説明と seed だけで声を作る)
   seed INTEGER,                    -- NULL = 既定(voice.DEFAULT_SEED)。固定しないと行ごとに声が揺れる
   preset TEXT,                     -- エンジン側に登録済みの声 ID(voice.modes に preset があるエンジン用)
   params TEXT,                     -- JSON。この声だけ /v1/audio/speech に重ねるパラメータ
@@ -344,6 +345,8 @@ def init_schema(conn: sqlite3.Connection) -> None:
         # イベントを書いたときの本文・登場人物・場所の指紋(events_fingerprint)。いまの指紋と違えば
         # 「イベントが古い」。NULL = まだ一度も書いていない(docs/design/event-staleness.md)
         "ALTER TABLE nodes ADD COLUMN events_basis TEXT",
+        # 参照音声を使うか(0 = 登録したまま一時的に使わない。docs/design/voice.md §5)。既存の声は使う(1)のまま
+        "ALTER TABLE voice_profiles ADD COLUMN ref_enabled INTEGER NOT NULL DEFAULT 1",
     ):
         try:
             conn.execute(ddl)

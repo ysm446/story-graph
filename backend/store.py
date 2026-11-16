@@ -1522,6 +1522,7 @@ class Store:
             return None
         profile = dict(row)
         profile["ref_paths"] = json.loads(profile["ref_paths"] or "[]")
+        profile["ref_enabled"] = bool(profile.get("ref_enabled", 1))
         profile["params"] = json.loads(profile["params"]) if profile.get("params") else None
         return profile
 
@@ -1561,6 +1562,8 @@ class Store:
                 updates[key] = data[key]
         if "ref_paths" in data:
             updates["ref_paths"] = json.dumps(data["ref_paths"] or [], ensure_ascii=False)
+        if data.get("ref_enabled") is not None:
+            updates["ref_enabled"] = 1 if data["ref_enabled"] else 0
         if "params" in data:
             updates["params"] = json.dumps(data["params"], ensure_ascii=False) if data["params"] else None
         if updates:
