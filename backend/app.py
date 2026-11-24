@@ -1448,8 +1448,8 @@ async def comfy_uninstall() -> dict[str, Any]:
 
 
 # ---- TTS(清書の読み上げ) -----------------------------------------------
-# 設計: docs/design/voice.md。ComfyUI と同じく「外部起動を優先、無ければ runtime/tts/<engine>/ を
-# spawn」。エンジンの違いは tts_engines/<id>.json に閉じ込め、ここでは中身を解釈しない
+# 設計: docs/design/voice.md。ComfyUI と同じく「外部起動を優先、無ければサーバーの置き場
+# (既定は runtime/tts/<engine>/、設定 tts_server_dir_<engine> で上書き)を spawn」。エンジンの違いは tts_engines/<id>.json に閉じ込め、ここでは中身を解釈しない
 
 def _tts_engine() -> dict[str, Any]:
     with _bad_request():
@@ -1474,7 +1474,7 @@ async def tts_status() -> dict[str, Any]:
     audio = store.audio_dir()
     return {
         **info,
-        **(await asyncio.to_thread(tts_installer.status, engine["id"])),
+        **(await asyncio.to_thread(tts_installer.status, engine["id"], settings)),
         "engine": {"id": engine["id"], "label": engine.get("label") or engine["id"],
                    "description": engine.get("description"), "voice_modes": (engine.get("voice") or {}).get("modes", [])},
         "engines": [{"id": e["id"], "label": e.get("label") or e["id"]} for e in tts.list_engines()],
@@ -1512,7 +1512,7 @@ async def tts_install() -> StreamingResponse:
     if tts_mgr.status()["spawned"]:
         raise HTTPException(409, "TTS サーバーが起動中です。停止してからインストールしてください。")
 
-    return _progress_sse(tts_installer.install(engine))
+    return _progress_sse(tts_installer.install(engine, store.get_settings()))
 
 
 @app.post("/tts/uninstall")
@@ -1520,11 +1520,15 @@ async def tts_uninstall() -> dict[str, Any]:
     engine = _tts_engine()
     if tts_mgr.status()["spawned"]:
         raise HTTPException(409, "TTS サーバーが起動中です。停止してから削除してください。")
+    settings = store.get_settings()
+    if tts_installer.is_external(engine["id"], settings):
+        # 設定で指した外の置き場(共用のことがある)は消さない。外すのは設定を空に戻す操作で行う
+        raise HTTPException(409, tts_installer.EXTERNAL_KEEP_MESSAGE)
     try:
-        await asyncio.to_thread(tts_installer.uninstall, engine["id"])
+        await asyncio.to_thread(tts_installer.uninstall, engine["id"], settings)
     except (RuntimeError, OSError) as e:
         raise HTTPException(500, str(e))
-    return await asyncio.to_thread(tts_installer.status, engine["id"])
+    return await asyncio.to_thread(tts_installer.status, engine["id"], settings)
 
 
 def _render_or_404(render_id: str) -> dict[str, Any]:

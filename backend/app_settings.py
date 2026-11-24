@@ -34,8 +34,9 @@ APP_KEYS = frozenset({
     # 埋め込みモデルを起動時に読み込むか(メモリと起動の重さは PC の事情)
     "embedding_load_on_startup",
 })
-# ComfyUI は接続先・モデル・生成パラメータ・ネガティブプロンプトまで、すべてアプリ単位
-APP_PREFIXES = ("comfy_",)
+# ComfyUI は接続先・モデル・生成パラメータ・ネガティブプロンプトまで、すべてアプリ単位。
+# tts_server_dir_<engine> は TTS サーバー本体の置き場(エンジンごと。tts_installer.install_dir)
+APP_PREFIXES = ("comfy_", "tts_server_dir_")
 
 
 def is_app_key(key: str) -> bool:

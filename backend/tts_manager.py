@@ -2,9 +2,10 @@
 
 - settings の tts_base_url(空ならエンジン定義の default_port)が既に応答していればそれを使う
   (外部起動を優先。その場合は止めない)
-- そうでなければ runtime/tts/<engine>/ から、エンジン定義の launch で spawn する
+- そうでなければサーバーの置き場(tts_installer.install_dir。既定は runtime/tts/<engine>/、
+  設定 tts_server_dir_<engine> で上書き)から、エンジン定義の launch で spawn する
 - 停止はプロセスごと止める(モデルだけ外す API はエンジンによって有無が違うので当てにしない)
-- サーバーの出力は runtime/tts/<engine>/story-graph-server.log に書く(初回のモデル取得や
+- サーバーの出力は置き場の story-graph-server.log に書く(初回のモデル取得や
   起動失敗の理由を後から読めるように)
 """
 
@@ -52,7 +53,7 @@ def launch_spec(engine: dict[str, Any], settings: dict[str, str], uv: str | None
         "uv": uv,
         "host": host,
         "port": port,
-        "install_dir": str(tts_installer.install_dir(engine["id"])),
+        "install_dir": str(tts_installer.install_dir(engine["id"], settings)),
         "models_dir": models_dir.replace("\\", "/") if models_dir else "",
     }
     spec = engine.get("launch") or {}
@@ -68,6 +69,7 @@ class TtsManager:
         self.proc: subprocess.Popen | None = None
         self.engine_id: str | None = None
         self.base_url: str | None = None
+        self._log_path: Path | None = None  # 起動したサーバーのログ(起動時の置き場に書く)
         self._log_file = None
         self._lock = asyncio.Lock()
 
@@ -93,7 +95,7 @@ class TtsManager:
             return await self._start(engine, settings)
 
     async def _start(self, engine: dict[str, Any], settings: dict[str, str]) -> str:
-        if not tts_installer.status(engine["id"])["installed"]:
+        if not tts_installer.status(engine["id"], settings)["installed"]:
             raise RuntimeError(
                 f"{engine.get('label', engine['id'])} がインストールされていません。"
                 "設定 →「音声読み上げ」からインストールするか、起動済みの TTS サーバーの URL を設定してください。"
@@ -102,12 +104,13 @@ class TtsManager:
         if uv is None and "{uv}" in json.dumps((engine.get("launch") or {}).get("cmd") or []):
             raise RuntimeError("uv が見つかりません。設定 →「音声読み上げ」からインストールし直してください。")
         cmd, extra_env = launch_spec(engine, settings, uv)
-        cwd = tts_installer.install_dir(engine["id"])
+        cwd = tts_installer.install_dir(engine["id"], settings)
         base_url = tts.resolve_base_url(settings, engine)
         env = {**os.environ, "PYTHONUTF8": "1", "UV_PYTHON_PREFERENCE": "only-managed", **extra_env}
         log.info("spawning TTS server (%s): %s", engine["id"], cmd)
         self._close_log()
-        self._log_file = open(cwd / LOG_NAME, "wb")  # noqa: SIM115 — プロセスの寿命と同じだけ開いておく
+        self._log_path = cwd / LOG_NAME
+        self._log_file = open(self._log_path, "wb")  # noqa: SIM115 — プロセスの寿命と同じだけ開いておく
         self.proc = subprocess.Popen(
             cmd,
             cwd=str(cwd),
@@ -126,7 +129,7 @@ class TtsManager:
         return base_url
 
     async def _wait_healthy(self, base_url: str, path: str, timeout_sec: float) -> bool:
-        log_path = tts_installer.install_dir(self.engine_id or "") / LOG_NAME
+        log_path = self._log_path or LOG_NAME
         return await managed_process.wait_healthy(
             lambda: self.proc, lambda: tts.health(base_url, path), timeout_sec, "TTS サーバー", f"。ログ: {log_path}"
         )

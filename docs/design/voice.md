@@ -1,7 +1,7 @@
 # 音声読み上げ(TTS 連携)— 朗読台本と差し替え可能なエンジン
 
 作成日時: 2026-09-28 19:58
-更新日時: 2026-11-17 02:13
+更新日時: 2026-11-25 00:30
 
 ローカルの TTS で清書(鑑賞モードの散文)を読み上げる仕組みの設計メモ。2026-09-28 のユーザー発案。
 最初のエンジンは [Irodori-TTS](https://github.com/Aratako/Irodori-TTS)(Aratako、MIT)とするが、
@@ -96,10 +96,20 @@ assets/audio/<hash>.opus                                ← キャッシュ。�
 | 台本化 + 合成の段取り + キャッシュ | `backend/voice.py` | `image_gen.py` |
 
 - **外部起動を優先**: 設定 `tts_base_url`(既定 `http://127.0.0.1:8088`)が応答すればそれを使う。
-  応答しなければ `runtime/tts/<engine>/` から `launch` で spawn する。
-- **本体は `runtime/tts/<engine>/`**(gitignore 済みの `runtime/` の下)。エンジンごとに別フォルダで、
+  応答しなければサーバーの置き場(次の項)から `launch` で spawn する。
+- **本体は既定で `runtime/tts/<engine>/`**(gitignore 済みの `runtime/` の下)。エンジンごとに別フォルダで、
   それぞれが自分の Python 環境(uv の `.venv`)を持つ。**アプリの `.venv` には TTS の依存を入れない**
   (torch のバージョンが衝突しうるため)。
+- **置き場は設定 `tts_server_dir_<engine>` で変えられる**(2026-11-25。モデルの `tts_models_dir` と同じ考え方。
+  ほかのアプリと共用する実行環境を指すため。この PC の Irodori は `D:\ai-models\tts\irodori` を
+  story-graph-voice-chat と共用している)。インストール済みの判定・起動・ログ・インストールは、すべて
+  `tts_installer.install_dir(engine_id, settings)` の 1 か所で決めた場所を見る。
+  **設定で指した外の置き場は、アプリからは消さない**:
+  - アンインストールは断る(`/tts/uninstall` は 409。画面には削除ボタンを出さない)。
+    外すときは設定を空に戻す(「既定に戻す」。フォルダは残る)
+  - インストール・入れ直しは、置き場が無いか空のときだけ行う。中身があれば何も消さずに断る
+    (途中で失敗した残りも自動では消さない。手で空にする)
+  - 既定の場所がリンク(Junction など)のときは、削除でリンクだけを外す(指している先には触らない)
 - **uv が前提。** PATH に無ければ、アプリの `.venv` に `pip install uv` して、その `uv.exe` を使う。
   Irodori-TTS-Server はアプリの `.venv`(3.13)と違う Python のバージョンを指定しているが、uv が Python ごと用意する。
   **`UV_PYTHON_PREFERENCE=only-managed` を付けて実行する**(付けないと uv は PC にある任意の Python ——
@@ -109,7 +119,7 @@ assets/audio/<hash>.opus                                ← キャッシュ。�
   uv sync はプロジェクト自身を editable で入れ、`.pth` に絶対パスを書くため、作った後に動かすと壊れる。
   最後まで通ったら目印(`.story-graph-install.json`)を書き、目印の無いフォルダは「途中で失敗した残り」として
   次のインストールで消してからやり直す。git が要る(依存に git のパッケージがあり、uv も git を呼ぶため)。
-- **サーバーの出力**は `runtime/tts/<engine>/story-graph-server.log` に書く(初回のモデル取得や、
+- **サーバーの出力**は置き場の `story-graph-server.log` に書く(初回のモデル取得や、
   起動に失敗した理由を後から読めるように)。
 - **モデルは `D:\ai-models\tts\`**(ユーザー指定 2026-09-28。既存の `llm` / `diffusion` と並べる)。
   設定 `tts_models_dir` で上書きでき、既定フォルダが無い環境では空 = 各エンジンの既定キャッシュを使う。
@@ -489,6 +499,7 @@ CREATE TABLE IF NOT EXISTS voice_profiles(
 | `tts_engine` | `irodori` | 使うエンジン(`tts_engines/<id>.json`) |
 | `tts_base_url` | エンジンの `default_port` から | 起動済みサーバーの URL。応答すればそれを使う |
 | `tts_models_dir` | `D:\ai-models\tts`(無ければ空) | モデルの置き場 |
+| `tts_server_dir_<engine>` | 空(= `runtime/tts/<engine>/`) | サーバー本体の置き場(エンジンごと。アプリ単位の設定)。指した先はアプリから消さない |
 | `tts_narrator_profile` | 空 | 語り手の声(`voice_profiles.id`) |
 | `tts_chat_profile` | 空 | 相談チャットの声(空なら語り手の声) |
 | `tts_playback_rate` | `1` | 読み上げの再生速度(0.5〜3。合成し直さない) |

@@ -76,6 +76,18 @@ export default function VoiceSettingsSection({
     void refresh()
   }
 
+  // サーバー本体の置き場(エンジンごと)。ほかのアプリと共用する実行環境を指すための設定で、
+  // 指した先はアプリからは消さない(外すのは「既定に戻す」。フォルダは残る)
+  const serverDirKey = status ? `tts_server_dir_${status.engine.id}` : null
+
+  const handleChooseServerDir = async (): Promise<void> => {
+    if (!serverDirKey) return
+    const dir = await window.storyGraph.chooseFolder('TTS サーバーの置き場を選択')
+    if (!dir) return
+    await save({ [serverDirKey]: dir })
+    void refresh()
+  }
+
   const handleInstall = async (): Promise<void> => {
     const controller = new AbortController()
     abortRef.current = controller
@@ -92,7 +104,12 @@ export default function VoiceSettingsSection({
       }, controller.signal)
     } catch (e) {
       if (!isAbortError(e)) setError(String(e))
-      else setStep('中止しました(途中まで入ったフォルダは、次のインストールで消してからやり直します)')
+      else
+        setStep(
+          status?.install_external
+            ? '中止しました(途中まで入ったフォルダは残っています。やり直すときは手で空にしてください)'
+            : '中止しました(途中まで入ったフォルダは、次のインストールで消してからやり直します)'
+        )
     } finally {
       abortRef.current = null
       setInstalling(false)
@@ -309,14 +326,16 @@ export default function VoiceSettingsSection({
                   {fmtBytes(status.size_bytes)}
                 </span>
               )}
-              <button
-                onClick={() => void handleUninstall()}
-                disabled={installing || removing || status.spawned}
-                className="delete-action shrink-0 rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-40"
-                data-tip={status.spawned ? '起動中は削除できません(先に停止してください)' : 'このフォルダを丸ごと消して容量を空けます'}
-              >
-                {removing ? '削除しています…' : '削除'}
-              </button>
+              {!status.install_external && (
+                <button
+                  onClick={() => void handleUninstall()}
+                  disabled={installing || removing || status.spawned}
+                  className="delete-action shrink-0 rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-40"
+                  data-tip={status.spawned ? '起動中は削除できません(先に停止してください)' : 'このフォルダを丸ごと消して容量を空けます'}
+                >
+                  {removing ? '削除しています…' : '削除'}
+                </button>
+              )}
             </div>
           )}
           {installing || step ? (
@@ -353,17 +372,66 @@ export default function VoiceSettingsSection({
           {!installing && (
             <button
               onClick={() => void handleInstall()}
-              disabled={!status || status.spawned}
+              disabled={!status || status.spawned || status.install_blocked}
               className="inline-flex items-center gap-1 self-start rounded-md px-3 py-1 text-[12px] font-medium text-white disabled:opacity-50"
               style={{ background: 'var(--accent)' }}
-              data-tip={status?.spawned ? '起動中は入れ替えられません(先に停止してください)' : undefined}
+              data-tip={
+                status?.spawned
+                  ? '起動中は入れ替えられません(先に停止してください)'
+                  : status?.install_blocked
+                    ? '指定した置き場に中身があるので、ここへは入れません(アプリからは消しません)。空のフォルダを選ぶか、置き場を既定に戻してください'
+                    : undefined
+              }
             >
               {status?.installed ? '⟳ 入れ直す' : <><Icon name="download" size={12} /> インストール</>}
             </button>
           )}
           <p className="settings-field-hint">
-            エンジンのサーバーを git で取得して <code>runtime/tts/{status?.engine.id ?? '<engine>'}/</code> に置き、uv で専用の Python
+            エンジンのサーバーを git で取得して下の「サーバーの置き場」に置き、uv で専用の Python
             環境(PyTorch 込みで数 GB)を作ります。git が必要です。uv が無ければアプリの .venv に入れて使います。モデルは初回の起動時に取得します。
+          </p>
+        </div>
+        <div className="settings-field">
+          <div className="settings-field-header">
+            <span className="settings-field-label">サーバーの置き場</span>
+            <div className="settings-field-controls">
+              {serverDirKey && (values[serverDirKey] ?? '') !== '' && (
+                <button
+                  onClick={() => void save({ [serverDirKey]: '' }).then(refresh)}
+                  disabled={installing || status?.spawned}
+                  className="rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-40"
+                  style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+                  data-tip={`既定(${status?.default_install_dir ?? ''})に戻します。いまの置き場のフォルダは消さずに残します`}
+                >
+                  既定に戻す
+                </button>
+              )}
+              <button
+                onClick={() => void handleChooseServerDir()}
+                disabled={!status || installing || status.spawned}
+                className="rounded-md border px-2 py-0.5 text-[11px] disabled:opacity-40"
+                style={{ borderColor: 'var(--border-strong)', color: 'var(--text-dim)' }}
+                data-tip={
+                  status?.spawned
+                    ? '起動中は変えられません(先に停止してください)'
+                    : 'インストール済みのサーバーのフォルダ、またはこれから入れる空のフォルダを選びます'
+                }
+              >
+                変更
+              </button>
+            </div>
+          </div>
+          <span className="block truncate text-[12px]" style={{ color: 'var(--text)' }} data-tip={status?.install_dir}>
+            {status?.install_dir ?? ''}
+            {status && !status.install_external && (
+              <span className="ml-1" style={{ color: 'var(--text-faint)' }}>
+                (既定)
+              </span>
+            )}
+          </span>
+          <p className="settings-field-hint">
+            ほかのアプリと共用している実行環境など、別の場所にあるサーバーを使うときに指定します。インストール済みのフォルダを選べば、そのまま使います。
+            指定した置き場はアプリからは消しません(削除と入れ直しはできません。外すときは「既定に戻す」)。
           </p>
         </div>
       </div>

@@ -956,6 +956,12 @@ export interface TtsStatus {
   incomplete: boolean
   install: { engine: string; repo: string; ref: string | null; commit: string | null; installed_at: string } | null
   install_dir: string
+  /** 既定の置き場(runtime/tts/<engine>/) */
+  default_install_dir: string
+  /** 設定 tts_server_dir_<engine> で外の場所を指している(アプリからは消さない) */
+  install_external: boolean
+  /** 外の置き場に中身があるので、そこへは入れ直せない */
+  install_blocked: boolean
   runtime_dir: string
   size_bytes: number
   models_dir: string

@@ -2,8 +2,13 @@
 
 設計: docs/design/voice.md §3。
 
-- 置き場は runtime/tts/<engine>/ 。エンジン定義(tts_engines/<id>.json)の install.git を
-  clone し、install.setup のコマンド(uv sync など)をその場で順に実行する
+- 置き場は既定で runtime/tts/<engine>/ 。設定 tts_server_dir_<engine> で別の場所を指せる
+  (モデルの tts_models_dir と同じ考え方。ほかのアプリと共用する実行環境を指すため)。
+  エンジン定義(tts_engines/<id>.json)の install.git を clone し、install.setup のコマンド
+  (uv sync など)をその場で順に実行する
+- **設定で指した外の置き場は、アプリからは消さない**(共用のフォルダを黙って消さないため)。
+  アンインストールは断り、インストールは空のフォルダ(または無いフォルダ)にだけ入れる。
+  外すときは設定を空に戻す(フォルダは残る)
 - **clone 先で直接セットアップする**(staging で作ってから rename しない)。uv sync は
   プロジェクト自身を editable で入れ、.pth に絶対パスを書くので、作った後に動かすと壊れるため
 - セットアップが最後まで通ったら目印(MARKER_NAME)を書く。目印が無いフォルダは
@@ -36,8 +41,40 @@ MARKER_NAME = ".story-graph-install.json"
 _NO_WINDOW = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
 
 
-def install_dir(engine_id: str) -> Path:
+SERVER_DIR_PREFIX = "tts_server_dir_"  # + エンジン ID。app_settings でアプリ単位(PC ごと)の設定にしてある
+
+
+def server_dir_key(engine_id: str) -> str:
+    return f"{SERVER_DIR_PREFIX}{engine_id}"
+
+
+def default_install_dir(engine_id: str) -> Path:
     return TTS_DIR / engine_id
+
+
+def install_dir(engine_id: str, settings: dict[str, str] | None = None) -> Path:
+    """サーバー本体の置き場。設定 tts_server_dir_<engine> があればそこ、無ければ runtime/tts/<engine>/。"""
+    configured = ((settings or {}).get(server_dir_key(engine_id)) or "").strip()
+    return Path(configured) if configured else default_install_dir(engine_id)
+
+
+def is_external(engine_id: str, settings: dict[str, str] | None = None) -> bool:
+    """設定で既定以外の場所を指しているか(= アプリが中身を消してはいけない置き場)。"""
+    def norm(path: Path) -> str:
+        return os.path.normcase(os.path.abspath(path))
+
+    return norm(install_dir(engine_id, settings)) != norm(default_install_dir(engine_id))
+
+
+def _is_link(path: Path) -> bool:
+    return path.is_symlink() or path.is_junction()
+
+
+def _has_entries(path: Path) -> bool:
+    try:
+        return any(path.iterdir())
+    except OSError:
+        return path.exists()
 
 
 def _read_marker(path: Path) -> dict[str, Any] | None:
@@ -63,22 +100,43 @@ def _install_size(path: Path, marker: dict[str, Any]) -> int:
     return _size_cache[key]
 
 
-def status(engine_id: str) -> dict[str, Any]:
-    path = install_dir(engine_id)
+def status(engine_id: str, settings: dict[str, str] | None = None) -> dict[str, Any]:
+    path = install_dir(engine_id, settings)
     marker = _read_marker(path) if path.is_dir() else None
+    external = is_external(engine_id, settings)
     return {
         "installed": marker is not None,
         # フォルダはあるが目印が無い = 途中で失敗した(やり直しが要る)
         "incomplete": path.is_dir() and marker is None,
         "install": marker,
         "install_dir": str(path),
+        "default_install_dir": str(default_install_dir(engine_id)),
+        # 設定で外の場所を指している(アプリからは消さない。外すには設定を空に戻す)
+        "install_external": external,
+        # 外の置き場に中身がある = そこへは入れ直せない(消さないので clone できない)
+        "install_blocked": external and _has_entries(path),
         "runtime_dir": str(RUNTIME_DIR),
         "size_bytes": _install_size(path, marker) if marker is not None else 0,
     }
 
 
-def uninstall(engine_id: str) -> None:
-    path = install_dir(engine_id)
+EXTERNAL_KEEP_MESSAGE = (
+    "設定で指定した置き場はアプリからは消しません(ほかのアプリと共用している場合があるため)。"
+    "外すには置き場を「既定に戻す」にしてください(フォルダは残ります)。"
+)
+
+
+def uninstall(engine_id: str, settings: dict[str, str] | None = None) -> None:
+    if is_external(engine_id, settings):
+        raise RuntimeError(EXTERNAL_KEEP_MESSAGE)
+    path = install_dir(engine_id, settings)
+    if _is_link(path):
+        # 既定の場所がリンク(Junction など)なら、リンクだけ外す。指している先の実体には触らない
+        if os.name == "nt":
+            os.rmdir(path)
+        else:
+            path.unlink()
+        return
     if not path.exists():
         return
     # runtime/ 直下へ退避してから消す(残っても llama_installer.cleanup_leftovers が回収する)
@@ -160,9 +218,10 @@ def _kill_tree(proc: subprocess.Popen) -> None:
 
 # ---- インストール --------------------------------------------------------
 
-async def install(engine: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
-    """runtime/tts/<id>/ に clone してセットアップする。起動中のサーバーがあると
-    フォルダを置き換えられないので、呼び出し側で先に停止しておく。"""
+async def install(engine: dict[str, Any], settings: dict[str, str] | None = None) -> AsyncIterator[dict[str, Any]]:
+    """置き場(既定は runtime/tts/<id>/)に clone してセットアップする。起動中のサーバーがあると
+    フォルダを置き換えられないので、呼び出し側で先に停止しておく。
+    設定で指した外の置き場は消さないので、中身があるときは入れずに断る。"""
     spec = engine.get("install") or {}
     repo = spec.get("git")
     if not repo:
@@ -171,13 +230,22 @@ async def install(engine: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
     if git is None:
         raise RuntimeError("git が見つかりません。Git for Windows をインストールしてから再試行してください。")
 
-    dest = install_dir(engine["id"])
-    TTS_DIR.mkdir(parents=True, exist_ok=True)
+    dest = install_dir(engine["id"], settings)
     started = time.time()
 
-    if dest.exists():
-        yield {"phase": "step", "label": "以前のインストールを削除しています"}
-        await asyncio.to_thread(uninstall, engine["id"])
+    if is_external(engine["id"], settings):
+        if _has_entries(dest):
+            raise RuntimeError(
+                f"{dest} には中身があるので、ここへはインストールしません"
+                "(設定で指定した置き場は、ほかのアプリと共用している場合があるためアプリからは消しません)。"
+                "入れ直すときは、空のフォルダを置き場に選ぶか、このフォルダを手で空にしてください。"
+            )
+        dest.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        TTS_DIR.mkdir(parents=True, exist_ok=True)
+        if dest.exists() or _is_link(dest):
+            yield {"phase": "step", "label": "以前のインストールを削除しています"}
+            await asyncio.to_thread(uninstall, engine["id"], settings)
 
     uv = find_uv()
     if uv is None:
